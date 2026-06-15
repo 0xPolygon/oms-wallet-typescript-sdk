@@ -524,6 +524,48 @@ describe("WalletClient transactions", () => {
         });
     });
 
+    it("returns failed transaction status as terminal", async () => {
+        const fetchMock = vi.fn(async (input: RequestInfo | URL) => {
+            const url = input.toString();
+
+            if (url.endsWith("/PrepareEthereumTransaction")) {
+                return jsonResponse({
+                    txnId: "txn-failed",
+                    status: "quoted",
+                    feeOptions: [],
+                    sponsored: true,
+                    expiresAt: "2099-01-01T00:00:00Z",
+                });
+            }
+
+            if (url.endsWith("/Execute")) {
+                return jsonResponse({status: "pending"});
+            }
+
+            if (url.endsWith("/TransactionStatus")) {
+                return jsonResponse({status: "failed"});
+            }
+
+            throw new Error(`Unexpected request: ${url}`);
+        });
+        vi.stubGlobal("fetch", fetchMock);
+
+        const wallet = createWalletWithSession(
+            new MemoryStorageManager(),
+            "0x9999999999999999999999999999999999999999",
+        );
+
+        await expect(wallet.sendTransaction({
+            network: Networks.polygon,
+            to: "0x1111111111111111111111111111111111111111",
+            value: 0n,
+        })).resolves.toEqual({
+            txnId: "txn-failed",
+            status: TransactionStatus.Failed,
+        });
+        expect(fetchMock.mock.calls.filter(([input]) => input.toString().endsWith("/TransactionStatus"))).toHaveLength(1);
+    });
+
     it("exposes transaction status lookup by transaction id", async () => {
         const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
             const url = input.toString();

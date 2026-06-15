@@ -27,8 +27,8 @@ import {
 import {OmsSessionError, OmsTransactionError, OmsWalletSelectionError, toOmsSdkError} from "../errors.js";
 
 import {
-    Wallet as Walletclient,
-    WalletPublic as WalletPublicclient,
+    Waas as WaasClient,
+    WaasPublic as WaasPublicClient,
     WalletType,
     TransactionMode,
     TransactionStatus,
@@ -331,8 +331,8 @@ class PendingWalletSelectionImpl implements PendingWalletSelection {
 }
 
 export class WalletClient<Env extends OmsEnvironment = OmsEnvironment> {
-    private readonly client: Walletclient
-    private readonly publicClient: WalletPublicclient
+    private readonly client: WaasClient
+    private readonly publicClient: WaasPublicClient
     private readonly storage: StorageManager
     private readonly redirectAuthStorage?: StorageManager
     private readonly credentialSigner: CredentialSigner
@@ -407,10 +407,10 @@ export class WalletClient<Env extends OmsEnvironment = OmsEnvironment> {
         }
 
         const signedFetch = createSignedFetch(params.publishableKey, this.credentialSigner, this.projectId)
-        this.client = new Walletclient(params.environment.walletApiUrl, signedFetch)
-        this.publicClient = new WalletPublicclient(
+        this.client = new WaasClient(params.environment.walletApiUrl, signedFetch)
+        this.publicClient = new WaasPublicClient(
             params.environment.walletApiUrl,
-            createAccessKeyFetch(params.publishableKey),
+            createApiKeyFetch(params.publishableKey),
         )
         this.indexerClient = new IndexerClient({
             publishableKey: params.publishableKey,
@@ -1620,7 +1620,11 @@ export class WalletClient<Env extends OmsEnvironment = OmsEnvironment> {
         do {
             lastStatus = await this.client.transactionStatus({txnId: txnId} as TransactionStatusRequest)
             completedPolls += 1
-            if (lastStatus.status === TransactionStatus.Executed || lastStatus.txnHash) {
+            if (
+                lastStatus.status === TransactionStatus.Executed ||
+                lastStatus.status === TransactionStatus.Failed ||
+                lastStatus.txnHash
+            ) {
                 return lastStatus
             }
             const pollDelayMs = this.transactionStatusPollDelayMs(completedPolls, options)
@@ -1854,12 +1858,12 @@ function defaultRedirectAuthStorage(): StorageManager | undefined {
         : undefined
 }
 
-function createAccessKeyFetch(publishableKey: string): Fetch {
+function createApiKeyFetch(publishableKey: string): Fetch {
     return async (input: RequestInfo, init?: RequestInit): Promise<Response> => {
         const existingHeaders = (init?.headers ?? {}) as Record<string, string>
         const headers: Record<string, string> = {
             ...existingHeaders,
-            'X-Access-Key': publishableKey,
+            'Api-Key': publishableKey,
         }
 
         return globalThis.fetch(input, {...init, headers})

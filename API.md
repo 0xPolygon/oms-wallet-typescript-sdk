@@ -96,7 +96,7 @@ new OMSClient(params: {
 
 | Name | Type | Required | Description |
 |---|---|---|---|
-| `publishableKey` | `string` | Yes | Your OMS publishable key. |
+| `publishableKey` | `string` | Yes | Your OMS publishable key. Wallet requests send this as the WaaS `Api-Key` header. |
 | `projectId` | `string` | Yes | Your OMS project ID. Used as the WaaS signing scope for wallet requests and OIDC redirect state. |
 | `environment` | `OmsEnvironment` | No | API endpoint configuration. Defaults to the SDK's configured OMS endpoints. |
 | `storage` | `StorageManager` | No | Storage backend for wallet metadata. Defaults to `LocalStorageManager` when browser `localStorage` is available, otherwise `MemoryStorageManager`. |
@@ -887,7 +887,7 @@ interface OmsEnvironment {
 | `indexerUrlTemplate` | `string` | URL template for the Indexer API. `{value}` is replaced with the selected network name, e.g. `"https://indexer.example.com/{value}"`. |
 | `auth.oidcProviders` | `Record<string, OidcProviderConfig>` | OIDC provider configurations addressable by provider key. |
 
-The default is exported as `defaultOmsEnvironment` and includes the `google` OIDC provider.
+The default is exported as `defaultOmsEnvironment`, uses `https://sandbox-api.dev.polygon-dev.technology` as the WaaS API base URL, and includes the `google` OIDC provider.
 
 Use `defineOmsEnvironment` to preserve typed custom OIDC provider keys:
 

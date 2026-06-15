@@ -51,7 +51,7 @@ describe("WalletClient OIDC redirect auth", () => {
             const url = input.toString();
             const body = JSON.parse(init?.body as string);
 
-            expect(url).toBe("https://wallet.example/rpc/Wallet/CommitVerifier");
+            expect(url).toBe("https://wallet.example/v1/Waas/CommitVerifier");
             expect(body).toMatchObject({
                 identityType: "oidc",
                 authMode: "auth-code-pkce",

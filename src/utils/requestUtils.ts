@@ -7,7 +7,7 @@ export class RequestUtils {
         scope: string,
         payload: string,
     ): string {
-        return `POST /rpc/Wallet${endpoint}\nnonce: ${nonce}\nscope: ${scope}\n\n${payload}`;
+        return `POST /v1/Waas${endpoint}\nnonce: ${nonce}\nscope: ${scope}\n\n${payload}`;
     }
 
     static buildWalletSignatureHeader(

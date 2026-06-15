@@ -28,6 +28,8 @@ const oms = new OMSClient({
 })
 ```
 
+By default, wallet requests use the sandbox WaaS API at `https://sandbox-api.dev.polygon-dev.technology`.
+
 In Vite browser apps, keep those values in local environment variables:
 
 ```typescript

@@ -24,7 +24,7 @@ export interface OmsEnvironment<
 }
 
 export const defaultOmsEnvironment = {
-    walletApiUrl: "https://d26giflyqapd29.cloudfront.net",
+    walletApiUrl: "https://sandbox-api.dev.polygon-dev.technology",
     indexerUrlTemplate: "https://dev-{value}-indexer.sequence.app/rpc/Indexer/",
     auth: {
         oidcProviders: {
