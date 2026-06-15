@@ -75,6 +75,7 @@ import { OMSClient } from '@0xsequence/typescript-sdk'
 
 const oms = new OMSClient({
   publishableKey: 'your-publishable-key',
+  indexerApiKey: 'your-indexer-api-key',
   projectId: 'your-project-id',
 })
 ```
@@ -84,6 +85,7 @@ const oms = new OMSClient({
 ```typescript
 new OMSClient(params: {
   publishableKey: string
+  indexerApiKey: string
   projectId: string
   environment?: OmsEnvironment
   storage?: StorageManager
@@ -97,6 +99,7 @@ new OMSClient(params: {
 | Name | Type | Required | Description |
 |---|---|---|---|
 | `publishableKey` | `string` | Yes | Your OMS publishable key. Wallet requests send this as the WaaS `Api-Key` header. |
+| `indexerApiKey` | `string` | Yes | Your Indexer API key. Indexer requests send this as the `X-Access-Key` header. |
 | `projectId` | `string` | Yes | Your OMS project ID. Used as the WaaS signing scope for wallet requests and OIDC redirect state. |
 | `environment` | `OmsEnvironment` | No | API endpoint configuration. Defaults to the SDK's configured OMS endpoints. |
 | `storage` | `StorageManager` | No | Storage backend for wallet metadata. Defaults to `LocalStorageManager` when browser `localStorage` is available, otherwise `MemoryStorageManager`. |

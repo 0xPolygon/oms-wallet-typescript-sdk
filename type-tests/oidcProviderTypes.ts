@@ -71,20 +71,28 @@ if (false) {
 
 const defaultClient = new OMSClient({
     publishableKey: "publishable-key",
+    indexerApiKey: "indexer-api-key",
     projectId: "project-id",
 });
 // @ts-expect-error publishableKey is required.
-new OMSClient({projectId: "project-id"});
+new OMSClient({indexerApiKey: "indexer-api-key", projectId: "project-id"});
+// @ts-expect-error indexerApiKey is required.
+new OMSClient({publishableKey: "publishable-key", projectId: "project-id"});
 // @ts-expect-error projectId is required.
-new OMSClient({publishableKey: "publishable-key"});
+new OMSClient({publishableKey: "publishable-key", indexerApiKey: "indexer-api-key"});
 // @ts-expect-error old projectAccessKey initializer name is not supported.
-new OMSClient({projectAccessKey: "publishable-key", projectId: "project-id"});
+new OMSClient({projectAccessKey: "publishable-key", indexerApiKey: "indexer-api-key", projectId: "project-id"});
 // @ts-expect-error old publicApiKey initializer name is not supported.
-new OMSClient({publicApiKey: "publishable-key", projectId: "project-id"});
+new OMSClient({publicApiKey: "publishable-key", indexerApiKey: "indexer-api-key", projectId: "project-id"});
 // @ts-expect-error old authorizationScope initializer name is not supported.
-new OMSClient({publishableKey: "publishable-key", authorizationScope: "project-id"});
-// @ts-expect-error session expiry is subscribed through wallet.onSessionExpired, not constructor params.
-new OMSClient({publishableKey: "publishable-key", projectId: "project-id", onSessionExpired: () => {}});
+new OMSClient({publishableKey: "publishable-key", indexerApiKey: "indexer-api-key", authorizationScope: "project-id"});
+new OMSClient({
+    publishableKey: "publishable-key",
+    indexerApiKey: "indexer-api-key",
+    projectId: "project-id",
+    // @ts-expect-error session expiry is subscribed through wallet.onSessionExpired, not constructor params.
+    onSessionExpired: () => {},
+});
 const session: OMSClientSessionState = defaultClient.wallet.session;
 const unsubscribeSessionExpired: () => void = defaultClient.wallet.onSessionExpired(({session}) => {
     void session.sessionEmail;
@@ -194,6 +202,7 @@ const customEnvironmentWithoutProviders = defineOmsEnvironment({
 });
 const customClient = new OMSClient({
     publishableKey: "publishable-key",
+    indexerApiKey: "indexer-api-key",
     projectId: "project-id",
     environment: customEnvironmentWithoutProviders,
 });
@@ -208,6 +217,7 @@ void customClient.wallet.startOidcRedirectAuth({
 
 function createClient(params: {
     publishableKey: string;
+    indexerApiKey: string;
     projectId: string;
     environment?: OmsEnvironment;
 }) {
@@ -216,10 +226,12 @@ function createClient(params: {
 
 void createClient({
     publishableKey: "publishable-key",
+    indexerApiKey: "indexer-api-key",
     projectId: "project-id",
 });
 void createClient({
     publishableKey: "publishable-key",
+    indexerApiKey: "indexer-api-key",
     projectId: "project-id",
     environment: customEnvironmentWithoutProviders,
 });

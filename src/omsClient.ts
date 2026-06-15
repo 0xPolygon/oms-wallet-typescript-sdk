@@ -7,6 +7,7 @@ import {supportedNetworks} from "./networks.js";
 
 interface OMSClientBaseParams {
     publishableKey: string;
+    indexerApiKey: string;
     projectId: string;
     storage?: StorageManager;
     redirectAuthStorage?: StorageManager;
@@ -29,6 +30,7 @@ class OMSClientImpl<Env extends OmsEnvironment = OmsEnvironment> {
 
         this.wallet = new WalletClient({
             publishableKey: params.publishableKey,
+            indexerApiKey: params.indexerApiKey,
             projectId: params.projectId,
             environment,
             storage,
@@ -37,7 +39,7 @@ class OMSClientImpl<Env extends OmsEnvironment = OmsEnvironment> {
         });
 
         this.indexer = new IndexerClient({
-            publishableKey: params.publishableKey,
+            indexerApiKey: params.indexerApiKey,
             environment
         });
     }

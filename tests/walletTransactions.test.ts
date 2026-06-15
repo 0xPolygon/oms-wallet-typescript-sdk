@@ -585,6 +585,7 @@ describe("WalletClient transactions", () => {
 
         const wallet = new WalletClient({
             publishableKey: "publishable-key",
+            indexerApiKey: "indexer-api-key",
             projectId: "project-id",
             environment: testEnvironment(),
             storage: new MemoryStorageManager(),
@@ -644,6 +645,7 @@ describe("WalletClient transactions", () => {
 function createWalletWithSession(storage: MemoryStorageManager, walletAddress: string): WalletClient {
     const wallet = new WalletClient({
         publishableKey: "publishable-key",
+        indexerApiKey: "indexer-api-key",
         projectId: "project-id",
         environment: testEnvironment(),
         storage,

@@ -1573,6 +1573,7 @@ function createOmsClient(params: {
 } = {}): OMSClient {
     const clientParams: ConstructorParameters<typeof OMSClient>[0] = {
         publishableKey: "publishable-key",
+        indexerApiKey: "indexer-api-key",
         projectId: "project-id",
         storage: new MemoryStorageManager(),
         credentialSigner: params.credentialSigner ?? new MockSigner(),

@@ -2,6 +2,7 @@ import readline from "node:readline/promises";
 import {MemoryStorageManager, Networks, OMSClient} from "@0xsequence/typescript-sdk";
 
 const publishableKey = requiredEnv("OMS_PUBLISHABLE_KEY", process.env.OMS_PUBLISHABLE_KEY);
+const indexerApiKey = requiredEnv("OMS_INDEXER_API_KEY", process.env.OMS_INDEXER_API_KEY);
 const projectId = requiredEnv("OMS_PROJECT_ID", process.env.OMS_PROJECT_ID);
 
 async function main() {
@@ -18,6 +19,7 @@ async function main() {
 
     const client = new OMSClient({
         publishableKey,
+        indexerApiKey,
         projectId,
         storage: new MemoryStorageManager(),
     });

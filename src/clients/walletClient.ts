@@ -360,6 +360,7 @@ export class WalletClient<Env extends OmsEnvironment = OmsEnvironment> {
 
     constructor(params: {
         publishableKey: string,
+        indexerApiKey: string,
         projectId: string,
         environment: Env,
         storage?: StorageManager
@@ -413,7 +414,7 @@ export class WalletClient<Env extends OmsEnvironment = OmsEnvironment> {
             createApiKeyFetch(params.publishableKey),
         )
         this.indexerClient = new IndexerClient({
-            publishableKey: params.publishableKey,
+            indexerApiKey: params.indexerApiKey,
             environment: params.environment,
         })
     }

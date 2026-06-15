@@ -31,7 +31,7 @@ describe("IndexerClient", () => {
         vi.stubGlobal("fetch", fetchMock);
 
         const indexer = new IndexerClient({
-            publishableKey: "publishable-key",
+            indexerApiKey: "indexer-api-key",
             environment: testEnvironment(),
         });
 
@@ -68,7 +68,7 @@ describe("IndexerClient", () => {
         vi.stubGlobal("fetch", fetchMock);
 
         const indexer = new IndexerClient({
-            publishableKey: "publishable-key",
+            indexerApiKey: "indexer-api-key",
             environment: testEnvironment(),
         });
 
@@ -89,7 +89,7 @@ describe("IndexerClient", () => {
         vi.stubGlobal("fetch", vi.fn(async () => new Response("<html>Bad Gateway</html>", {status: 502})));
 
         const indexer = new IndexerClient({
-            publishableKey: "publishable-key",
+            indexerApiKey: "indexer-api-key",
             environment: testEnvironment(),
         });
 

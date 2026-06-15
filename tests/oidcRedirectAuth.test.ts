@@ -142,6 +142,7 @@ describe("WalletClient OIDC redirect auth", () => {
         const storage = new MemoryStorageManager();
         const wallet = new WalletClient({
             publishableKey: "publishable-key",
+            indexerApiKey: "indexer-api-key",
             projectId: "project-id",
             environment: testEnvironment(),
             storage,
@@ -810,6 +811,7 @@ function createWalletClient<Env extends OmsEnvironment = ReturnType<typeof testE
     const environment = params.environment ?? testEnvironment() as Env;
     return new WalletClient<Env>({
         publishableKey: "publishable-key",
+        indexerApiKey: "indexer-api-key",
         projectId: params.projectId ?? "project-id",
         environment,
         storage: new MemoryStorageManager(),

@@ -184,6 +184,7 @@ describe("WalletClient signing", () => {
 function createWalletWithSession(walletAddress: string): WalletClient {
     const wallet = new WalletClient({
         publishableKey: "publishable-key",
+        indexerApiKey: "indexer-api-key",
         projectId: "project-id",
         environment: testEnvironment(),
         storage: new MemoryStorageManager(),
