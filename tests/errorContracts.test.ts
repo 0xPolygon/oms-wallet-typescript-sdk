@@ -1168,8 +1168,8 @@ describe("public API error contracts", () => {
         const oms = createOmsClient();
 
         await expect(publicError(() =>
-            oms.indexer.getTokenBalances({
-                network: Networks.polygon,
+            oms.indexer.getBalances({
+                networks: [Networks.polygon],
                 walletAddress: "0x9999999999999999999999999999999999999999",
                 includeMetadata: false,
             }),
@@ -1178,7 +1178,7 @@ describe("public API error contracts", () => {
             "code": "OMS_HTTP_ERROR",
             "message": "Indexer is unavailable",
             "name": "OmsRequestError",
-            "operation": "indexer.getTokenBalances",
+            "operation": "indexer.getBalances",
             "retryable": true,
             "status": 503,
             "txnId": null,
@@ -1204,23 +1204,23 @@ describe("public API error contracts", () => {
         const oms = createOmsClient();
 
         await expect(publicError(() =>
-            oms.indexer.getTokenBalances({
-                network: Networks.polygon,
+            oms.indexer.getBalances({
+                networks: [Networks.polygon],
                 walletAddress: "0x9999999999999999999999999999999999999999",
                 includeMetadata: false,
             }),
         )).resolves.toMatchInlineSnapshot(`
           {
             "code": "OMS_HTTP_ERROR",
-            "message": "indexer.getTokenBalances failed with HTTP 502",
+            "message": "indexer.getBalances failed with HTTP 502",
             "name": "OmsRequestError",
-            "operation": "indexer.getTokenBalances",
+            "operation": "indexer.getBalances",
             "retryable": true,
             "status": 502,
             "txnId": null,
             "upstreamError": {
               "code": null,
-              "message": "indexer.getTokenBalances failed with HTTP 502",
+              "message": "indexer.getBalances failed with HTTP 502",
               "name": null,
               "service": "indexer",
               "status": 502,
@@ -1229,7 +1229,7 @@ describe("public API error contracts", () => {
         `);
     });
 
-    it("snapshots native balance indexer errors with upstream details", async () => {
+    it("snapshots transaction history indexer errors with upstream details", async () => {
         let callCount = 0;
         vi.stubGlobal("fetch", vi.fn(async () => {
             callCount += 1;
@@ -1249,16 +1249,16 @@ describe("public API error contracts", () => {
         const oms = createOmsClient();
 
         await expect(publicErrors([
-            ["indexer.getNativeTokenBalance.http", () => oms.indexer.getNativeTokenBalance({
-                network: Networks.polygon,
+            ["indexer.getTransactionHistory.http", () => oms.indexer.getTransactionHistory({
+                networks: [Networks.polygon],
                 walletAddress: "0x9999999999999999999999999999999999999999",
             })],
-            ["indexer.getNativeTokenBalance.transport", () => oms.indexer.getNativeTokenBalance({
-                network: Networks.polygon,
+            ["indexer.getTransactionHistory.transport", () => oms.indexer.getTransactionHistory({
+                networks: [Networks.polygon],
                 walletAddress: "0x9999999999999999999999999999999999999999",
             })],
-            ["indexer.getNativeTokenBalance.malformed", () => oms.indexer.getNativeTokenBalance({
-                network: Networks.polygon,
+            ["indexer.getTransactionHistory.malformed", () => oms.indexer.getTransactionHistory({
+                networks: [Networks.polygon],
                 walletAddress: "0x9999999999999999999999999999999999999999",
             })],
         ])).resolves.toMatchInlineSnapshot(`
@@ -1268,7 +1268,7 @@ describe("public API error contracts", () => {
                 "code": "OMS_HTTP_ERROR",
                 "message": "Indexer is unavailable",
                 "name": "OmsRequestError",
-                "operation": "indexer.getNativeTokenBalance",
+                "operation": "indexer.getTransactionHistory",
                 "retryable": true,
                 "status": 503,
                 "txnId": null,
@@ -1280,14 +1280,14 @@ describe("public API error contracts", () => {
                   "status": 503,
                 },
               },
-              "label": "indexer.getNativeTokenBalance.http",
+              "label": "indexer.getTransactionHistory.http",
             },
             {
               "error": {
                 "code": "OMS_REQUEST_FAILED",
                 "message": "fetch failed",
                 "name": "OmsRequestError",
-                "operation": "indexer.getNativeTokenBalance",
+                "operation": "indexer.getTransactionHistory",
                 "retryable": true,
                 "status": null,
                 "txnId": null,
@@ -1299,26 +1299,26 @@ describe("public API error contracts", () => {
                   "status": null,
                 },
               },
-              "label": "indexer.getNativeTokenBalance.transport",
+              "label": "indexer.getTransactionHistory.transport",
             },
             {
               "error": {
                 "code": "OMS_INVALID_RESPONSE",
-                "message": "Invalid JSON response from indexer.getNativeTokenBalance",
+                "message": "Invalid JSON response from indexer.getTransactionHistory",
                 "name": "OmsResponseError",
-                "operation": "indexer.getNativeTokenBalance",
+                "operation": "indexer.getTransactionHistory",
                 "retryable": null,
                 "status": 200,
                 "txnId": null,
                 "upstreamError": {
                   "code": null,
-                  "message": "Invalid JSON response from indexer.getNativeTokenBalance",
+                  "message": "Invalid JSON response from indexer.getTransactionHistory",
                   "name": null,
                   "service": "indexer",
                   "status": 200,
                 },
               },
-              "label": "indexer.getNativeTokenBalance.malformed",
+              "label": "indexer.getTransactionHistory.malformed",
             },
           ]
         `);
@@ -1332,8 +1332,8 @@ describe("public API error contracts", () => {
         const oms = createOmsClient();
 
         await expect(publicError(() =>
-            oms.indexer.getTokenBalances({
-                network: Networks.polygon,
+            oms.indexer.getBalances({
+                networks: [Networks.polygon],
                 walletAddress: "0x9999999999999999999999999999999999999999",
                 includeMetadata: false,
             }),
@@ -1342,7 +1342,7 @@ describe("public API error contracts", () => {
             "code": "OMS_REQUEST_FAILED",
             "message": "fetch failed",
             "name": "OmsRequestError",
-            "operation": "indexer.getTokenBalances",
+            "operation": "indexer.getBalances",
             "retryable": true,
             "status": null,
             "txnId": null,
@@ -1363,23 +1363,23 @@ describe("public API error contracts", () => {
         const oms = createOmsClient();
 
         await expect(publicError(() =>
-            oms.indexer.getTokenBalances({
-                network: Networks.polygon,
+            oms.indexer.getBalances({
+                networks: [Networks.polygon],
                 walletAddress: "0x9999999999999999999999999999999999999999",
                 includeMetadata: false,
             }),
         )).resolves.toMatchInlineSnapshot(`
           {
             "code": "OMS_INVALID_RESPONSE",
-            "message": "Invalid JSON response from indexer.getTokenBalances",
+            "message": "Invalid JSON response from indexer.getBalances",
             "name": "OmsResponseError",
-            "operation": "indexer.getTokenBalances",
+            "operation": "indexer.getBalances",
             "retryable": null,
             "status": 200,
             "txnId": null,
             "upstreamError": {
               "code": null,
-              "message": "Invalid JSON response from indexer.getTokenBalances",
+              "message": "Invalid JSON response from indexer.getBalances",
               "name": null,
               "service": "indexer",
               "status": 200,
@@ -1573,13 +1573,12 @@ function createOmsClient(params: {
 } = {}): OMSClient {
     const clientParams: ConstructorParameters<typeof OMSClient>[0] = {
         publishableKey: "publishable-key",
-        indexerApiKey: "indexer-api-key",
         projectId: "project-id",
         storage: new MemoryStorageManager(),
         credentialSigner: params.credentialSigner ?? new MockSigner(),
         environment: {
             walletApiUrl: "https://wallet.example",
-            indexerUrlTemplate: "https://indexer.example/{value}",
+            indexerGatewayUrl: "https://indexer.example",
         },
     };
 

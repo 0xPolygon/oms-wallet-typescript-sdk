@@ -142,7 +142,6 @@ describe("WalletClient OIDC redirect auth", () => {
         const storage = new MemoryStorageManager();
         const wallet = new WalletClient({
             publishableKey: "publishable-key",
-            indexerApiKey: "indexer-api-key",
             projectId: "project-id",
             environment: testEnvironment(),
             storage,
@@ -177,7 +176,7 @@ describe("WalletClient OIDC redirect auth", () => {
             redirectAuthStorage: new MemoryStorageManager(),
             environment: defineOmsEnvironment({
                 walletApiUrl: "https://wallet.example",
-                indexerUrlTemplate: "https://indexer.example/{value}",
+                indexerGatewayUrl: "https://indexer.example",
                 auth: {
                     oidcProviders: {
                         custom: {
@@ -249,7 +248,7 @@ describe("WalletClient OIDC redirect auth", () => {
             projectId: "proj_custom",
             environment: defineOmsEnvironment({
                 walletApiUrl: "https://wallet.example",
-                indexerUrlTemplate: "https://indexer.example/{value}",
+                indexerGatewayUrl: "https://indexer.example",
                 auth: {
                     oidcProviders: {
                         google: googleOidcProvider({
@@ -330,7 +329,7 @@ describe("WalletClient OIDC redirect auth", () => {
             redirectAuthStorage: new MemoryStorageManager(),
             environment: defineOmsEnvironment({
                 walletApiUrl: "https://wallet.example",
-                indexerUrlTemplate: "https://indexer.example/{value}",
+                indexerGatewayUrl: "https://indexer.example",
                 auth: {
                     oidcProviders: {
                         custom: {
@@ -811,7 +810,6 @@ function createWalletClient<Env extends OmsEnvironment = ReturnType<typeof testE
     const environment = params.environment ?? testEnvironment() as Env;
     return new WalletClient<Env>({
         publishableKey: "publishable-key",
-        indexerApiKey: "indexer-api-key",
         projectId: params.projectId ?? "project-id",
         environment,
         storage: new MemoryStorageManager(),
@@ -823,7 +821,7 @@ function createWalletClient<Env extends OmsEnvironment = ReturnType<typeof testE
 function testEnvironment() {
     return defineOmsEnvironment({
         walletApiUrl: "https://wallet.example",
-        indexerUrlTemplate: "https://indexer.example/{value}",
+        indexerGatewayUrl: "https://indexer.example",
         auth: {
             oidcProviders: {
                 google: googleOidcProvider({clientId: "google-client"}),

@@ -24,7 +24,6 @@ import { OMSClient } from '@0xsequence/typescript-sdk'
 
 const oms = new OMSClient({
   publishableKey: 'your-publishable-key',
-  indexerApiKey: 'your-indexer-api-key',
   projectId: 'your-project-id',
 })
 ```
@@ -43,7 +42,6 @@ function requiredEnv(name: string, value: string | undefined): string {
 
 const oms = new OMSClient({
   publishableKey: requiredEnv('VITE_OMS_PUBLISHABLE_KEY', import.meta.env.VITE_OMS_PUBLISHABLE_KEY),
-  indexerApiKey: requiredEnv('VITE_OMS_INDEXER_API_KEY', import.meta.env.VITE_OMS_INDEXER_API_KEY),
   projectId: requiredEnv('VITE_OMS_PROJECT_ID', import.meta.env.VITE_OMS_PROJECT_ID),
 })
 ```
@@ -71,7 +69,7 @@ To run it locally from the repository root:
 
 ```bash
 cp examples/react/.env.example examples/react/.env.local
-# Fill VITE_OMS_PUBLISHABLE_KEY, VITE_OMS_INDEXER_API_KEY, and VITE_OMS_PROJECT_ID in examples/react/.env.local
+# Fill VITE_OMS_PUBLISHABLE_KEY and VITE_OMS_PROJECT_ID in examples/react/.env.local
 pnpm dev:example
 ```
 
@@ -97,7 +95,7 @@ To run it locally from the repository root:
 
 ```bash
 cp examples/wagmi/.env.example examples/wagmi/.env.local
-# Fill VITE_OMS_PUBLISHABLE_KEY, VITE_OMS_INDEXER_API_KEY, and VITE_OMS_PROJECT_ID in examples/wagmi/.env.local
+# Fill VITE_OMS_PUBLISHABLE_KEY and VITE_OMS_PROJECT_ID in examples/wagmi/.env.local
 pnpm dev:wagmi-example
 ```
 
@@ -111,7 +109,7 @@ To run it locally from the repository root:
 
 ```bash
 cp examples/trails-actions/.env.example examples/trails-actions/.env.local
-# Fill VITE_OMS_PUBLISHABLE_KEY, VITE_OMS_INDEXER_API_KEY, and VITE_OMS_PROJECT_ID in examples/trails-actions/.env.local
+# Fill VITE_OMS_PUBLISHABLE_KEY and VITE_OMS_PROJECT_ID in examples/trails-actions/.env.local
 pnpm dev:trails-actions-example
 ```
 
@@ -123,7 +121,6 @@ import { parseUnits } from 'viem'
 
 const oms = new OMSClient({
   publishableKey: 'your-publishable-key',
-  indexerApiKey: 'your-indexer-api-key',
   projectId: 'your-project-id',
 })
 
@@ -191,7 +188,6 @@ Google redirect auth is configured on the default environment. The redirect auth
 ```typescript
 const oms = new OMSClient({
   publishableKey: 'your-publishable-key',
-  indexerApiKey: 'your-indexer-api-key',
   projectId: 'your-project-id',
 })
 ```
@@ -247,7 +243,6 @@ The SDK makes expired sessions inactive before protected wallet operations and t
 ```typescript
 const oms = new OMSClient({
   publishableKey: 'your-publishable-key',
-  indexerApiKey: 'your-indexer-api-key',
   projectId: 'your-project-id',
 })
 
@@ -428,16 +423,15 @@ const tx = await oms.wallet.sendTransaction({
 ```typescript
 const oms = new OMSClient({
   publishableKey: 'your-publishable-key',
-  indexerApiKey: 'your-indexer-api-key',
   projectId: 'your-project-id',
   environment: {
     walletApiUrl: 'https://staging-wallet.example.com',
-    indexerUrlTemplate: 'https://staging-indexer.example.com/{value}',
+    indexerGatewayUrl: 'https://staging-indexer.example.com/v1/IndexerGateway/',
   },
 })
 ```
 
-For indexer requests, `{value}` is replaced with the selected `Network.name`, such as `polygon` or `amoy`.
+For indexer requests, `indexerGatewayUrl` points at the IndexerGateway base URL.
 
 ### Custom Storage and Signing
 
@@ -448,7 +442,6 @@ import { MemoryStorageManager, OMSClient } from '@0xsequence/typescript-sdk'
 
 const oms = new OMSClient({
   publishableKey: 'your-publishable-key',
-  indexerApiKey: 'your-indexer-api-key',
   projectId: 'your-project-id',
   storage: new MemoryStorageManager(),
 })
@@ -506,31 +499,28 @@ const tx = await oms.wallet.callContract({
 })
 ```
 
-### Query Token and Native Balances
+### Query Balances
 
 ```typescript
 const { walletAddress } = oms.wallet
 if (!walletAddress) throw new Error('No active wallet session')
 
-const result = await oms.indexer.getTokenBalances({
-  network: Networks.polygon,
+const result = await oms.indexer.getBalances({
+  networks: [Networks.polygon],
   walletAddress,
   includeMetadata: true,
 })
 
+for (const b of result.nativeBalances) {
+  console.log(b.symbol, b.balance)
+}
+
 for (const b of result.balances) {
   console.log(b.contractInfo?.symbol, b.balance, b.contractInfo?.decimals)
 }
-
-const nativeBalance = await oms.indexer.getNativeTokenBalance({
-  network: Networks.polygon,
-  walletAddress,
-})
-
-console.log(nativeBalance?.balance)
 ```
 
-Pass `contractAddress` to filter balances to one token contract. With `includeMetadata: true`, ERC-20 decimals are available as `contractInfo.decimals`. The response is paginated; pass `page` when requesting later pages.
+Pass `contractAddresses` to filter balances to specific token contracts. Omit `networks` to query mainnets by default, or pass `networkType: 'TESTNETS'` / `'ALL'`. With `includeMetadata: true`, ERC-20 decimals are available as `contractInfo.decimals`. The response is paginated; pass `page` when requesting later pages.
 
 ### Manage Access
 

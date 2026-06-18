@@ -12,7 +12,7 @@ Run it from the repository root:
 pnpm install
 pnpm build
 cp examples/react/.env.example examples/react/.env.local
-# Fill VITE_OMS_PUBLISHABLE_KEY, VITE_OMS_INDEXER_API_KEY, and VITE_OMS_PROJECT_ID
+# Fill VITE_OMS_PUBLISHABLE_KEY and VITE_OMS_PROJECT_ID
 pnpm dev:example
 ```
 
@@ -24,7 +24,7 @@ The example requires a publishable key and project ID. Configure them locally be
 
 ```bash
 cp examples/react/.env.example examples/react/.env.local
-# Fill VITE_OMS_PUBLISHABLE_KEY, VITE_OMS_INDEXER_API_KEY, and VITE_OMS_PROJECT_ID
+# Fill VITE_OMS_PUBLISHABLE_KEY and VITE_OMS_PROJECT_ID
 ```
 
 The Amoy-only "ERC20 example" panel includes a WalletKit Dollar example using

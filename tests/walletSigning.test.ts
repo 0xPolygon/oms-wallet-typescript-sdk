@@ -184,7 +184,6 @@ describe("WalletClient signing", () => {
 function createWalletWithSession(walletAddress: string): WalletClient {
     const wallet = new WalletClient({
         publishableKey: "publishable-key",
-        indexerApiKey: "indexer-api-key",
         projectId: "project-id",
         environment: testEnvironment(),
         storage: new MemoryStorageManager(),
@@ -204,6 +203,6 @@ function jsonResponse(body: unknown): Response {
 function testEnvironment() {
     return {
         walletApiUrl: "https://wallet.example",
-        indexerUrlTemplate: "https://indexer.example/{value}",
+        indexerGatewayUrl: "https://indexer.example",
     };
 }

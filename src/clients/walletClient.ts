@@ -360,7 +360,6 @@ export class WalletClient<Env extends OmsEnvironment = OmsEnvironment> {
 
     constructor(params: {
         publishableKey: string,
-        indexerApiKey: string,
         projectId: string,
         environment: Env,
         storage?: StorageManager
@@ -414,7 +413,7 @@ export class WalletClient<Env extends OmsEnvironment = OmsEnvironment> {
             createApiKeyFetch(params.publishableKey),
         )
         this.indexerClient = new IndexerClient({
-            indexerApiKey: params.indexerApiKey,
+            publishableKey: params.publishableKey,
             environment: params.environment,
         })
     }
@@ -1535,20 +1534,38 @@ export class WalletClient<Env extends OmsEnvironment = OmsEnvironment> {
             throw new Error('No active wallet session')
         }
 
-        const nativeBalance = feeOptions.some(option => this.isNativeToken(option))
-            ? await this.loadNativeTokenBalance(network, walletAddress)
-            : undefined
-
         const contractAddresses = Array.from(new Set(
             feeOptions
                 .map(option => this.normalizeAddress(option.token.contractAddress))
                 .filter((address): address is string => Boolean(address)),
         ))
+        const balances = await this.indexerClient.getBalances({
+            networks: [network],
+            contractAddresses,
+            walletAddress,
+            includeMetadata: false,
+        }).catch(() => undefined)
+        const nativeBalance = feeOptions.some(option => this.isNativeToken(option))
+            ? balances?.nativeBalances.find(balance => balance.chainId === network.id)
+            : undefined
         const tokenBalances = new Map<string, TokenBalance | undefined>(
-            await Promise.all(contractAddresses.map(async contractAddress => [
+            contractAddresses.map(contractAddress => [
                 contractAddress,
-                await this.loadTokenBalanceOrZero(network, contractAddress, walletAddress),
-            ] as const)),
+                balances
+                    ? balances.balances.find(balance =>
+                        this.normalizeAddress(balance.contractAddress) === contractAddress,
+                    ) ?? {
+                        contractType: 'ERC20',
+                        contractAddress,
+                        accountAddress: walletAddress,
+                        tokenId: undefined,
+                        balance: '0',
+                        blockHash: undefined,
+                        blockNumber: undefined,
+                        chainId: network.id,
+                    }
+                    : undefined,
+            ]),
         )
 
         return feeOptions.map(feeOption => {
@@ -1566,40 +1583,6 @@ export class WalletClient<Env extends OmsEnvironment = OmsEnvironment> {
                 decimals,
             }
         })
-    }
-
-    private async loadNativeTokenBalance(
-        network: Network,
-        walletAddress: Address,
-    ): Promise<TokenBalance | undefined> {
-        return this.indexerClient.getNativeTokenBalance({
-            network,
-            walletAddress,
-        }).catch(() => undefined)
-    }
-
-    private async loadTokenBalanceOrZero(
-        network: Network,
-        contractAddress: string,
-        walletAddress: Address,
-    ): Promise<TokenBalance | undefined> {
-        return this.indexerClient.getTokenBalances({
-            network,
-            contractAddress,
-            walletAddress,
-            includeMetadata: false,
-        }).then(result => result.balances.find(balance =>
-            this.normalizeAddress(balance.contractAddress) === contractAddress,
-        ) ?? {
-            contractType: 'ERC20',
-            contractAddress,
-            accountAddress: walletAddress,
-            tokenId: undefined,
-            balance: '0',
-            blockHash: undefined,
-            blockNumber: undefined,
-            chainId: network.id,
-        }).catch(() => undefined)
     }
 
     private defaultFeeOptionSelection(

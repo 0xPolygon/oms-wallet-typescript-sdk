@@ -94,7 +94,6 @@ describe("WalletClient access management", () => {
 function createWalletWithSession(): WalletClient {
     const wallet = new WalletClient({
         publishableKey: "publishable-key",
-        indexerApiKey: "indexer-api-key",
         projectId: "project-id",
         environment: testEnvironment(),
         storage: new MemoryStorageManager(),
@@ -122,6 +121,6 @@ function testCredential(seed = "11", isCaller = true) {
 function testEnvironment() {
     return {
         walletApiUrl: "https://wallet.example",
-        indexerUrlTemplate: "https://indexer.example/{value}",
+        indexerGatewayUrl: "https://indexer.example",
     };
 }

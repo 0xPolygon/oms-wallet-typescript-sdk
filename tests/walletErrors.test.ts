@@ -33,7 +33,6 @@ describe("WalletClient errors", () => {
     it("wraps local validation failures separately from request failures", async () => {
         const wallet = new WalletClient({
             publishableKey: "publishable-key",
-            indexerApiKey: "indexer-api-key",
             projectId: "project-id",
             environment: testEnvironment(),
             storage: new MemoryStorageManager(),
@@ -55,7 +54,6 @@ describe("WalletClient errors", () => {
 
         const wallet = new WalletClient({
             publishableKey: "publishable-key",
-            indexerApiKey: "indexer-api-key",
             projectId: "project-id",
             environment: testEnvironment(),
             storage: new MemoryStorageManager(),
@@ -88,7 +86,6 @@ describe("WalletClient errors", () => {
 
         const wallet = new WalletClient({
             publishableKey: "publishable-key",
-            indexerApiKey: "indexer-api-key",
             projectId: "project-id",
             environment: testEnvironment(),
             storage: new MemoryStorageManager(),
@@ -128,6 +125,6 @@ function jsonResponse(body: unknown, status = 200): Response {
 function testEnvironment() {
     return {
         walletApiUrl: "https://wallet.example",
-        indexerUrlTemplate: "https://indexer.example/{value}",
+        indexerGatewayUrl: "https://indexer.example",
     };
 }

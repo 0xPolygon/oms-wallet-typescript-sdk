@@ -12,7 +12,6 @@ import { omsWalletConnector } from '@0xsequence/oms-wallet-wagmi-connector'
 
 const oms = new OMSClient({
   publishableKey: import.meta.env.VITE_OMS_PUBLISHABLE_KEY,
-  indexerApiKey: import.meta.env.VITE_OMS_INDEXER_API_KEY,
   projectId: import.meta.env.VITE_OMS_PROJECT_ID,
 })
 

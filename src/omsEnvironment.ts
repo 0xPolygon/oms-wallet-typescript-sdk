@@ -19,13 +19,13 @@ export interface OmsEnvironment<
     OidcProviders extends Record<string, OidcProviderConfig> = Record<string, OidcProviderConfig>,
 > {
     walletApiUrl: string;
-    indexerUrlTemplate: string;
+    indexerGatewayUrl: string;
     auth?: OmsAuthConfig<OidcProviders>;
 }
 
 export const defaultOmsEnvironment = {
     walletApiUrl: "https://sandbox-api.dev.polygon-dev.technology",
-    indexerUrlTemplate: "https://dev-{value}-indexer.sequence.app/rpc/Indexer/",
+    indexerGatewayUrl: "https://api.dev.polygon-dev.technology/v1/IndexerGateway/",
     auth: {
         oidcProviders: {
             google: googleOidcProvider(),

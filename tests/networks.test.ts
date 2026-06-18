@@ -51,7 +51,6 @@ describe("Networks", () => {
     it("is available from OMSClient", () => {
         const oms = new OMSClient({
             publishableKey: "publishable-key",
-            indexerApiKey: "indexer-api-key",
             projectId: "project-id",
         });
 

@@ -13,18 +13,22 @@ import {
     type OmsSdkError,
     type OmsSdkErrorCode,
     type OmsUpstreamError,
+    type BalancesResult,
+    type GetBalancesParams,
+    type GetTransactionHistoryParams,
+    type IndexerNetworkType,
     type TokenBalance,
     type TokenBalancesPage,
-    type TokenBalancesResult,
     type TokenContractInfo,
     type TokenMetadata,
+    type TransactionHistoryResult,
 } from "../src/index";
 import {defineOmsEnvironment, type OmsEnvironment} from "../src/omsEnvironment";
 import {googleOidcProvider} from "../src/oidc";
 
 const environment = defineOmsEnvironment({
     walletApiUrl: "https://wallet.example",
-    indexerUrlTemplate: "https://indexer.example/{value}",
+    indexerGatewayUrl: "https://indexer.example",
     auth: {
         oidcProviders: {
             google: googleOidcProvider(),
@@ -71,24 +75,20 @@ if (false) {
 
 const defaultClient = new OMSClient({
     publishableKey: "publishable-key",
-    indexerApiKey: "indexer-api-key",
     projectId: "project-id",
 });
 // @ts-expect-error publishableKey is required.
-new OMSClient({indexerApiKey: "indexer-api-key", projectId: "project-id"});
-// @ts-expect-error indexerApiKey is required.
-new OMSClient({publishableKey: "publishable-key", projectId: "project-id"});
+new OMSClient({projectId: "project-id"});
 // @ts-expect-error projectId is required.
-new OMSClient({publishableKey: "publishable-key", indexerApiKey: "indexer-api-key"});
+new OMSClient({publishableKey: "publishable-key"});
 // @ts-expect-error old projectAccessKey initializer name is not supported.
-new OMSClient({projectAccessKey: "publishable-key", indexerApiKey: "indexer-api-key", projectId: "project-id"});
+new OMSClient({projectAccessKey: "publishable-key", projectId: "project-id"});
 // @ts-expect-error old publicApiKey initializer name is not supported.
-new OMSClient({publicApiKey: "publishable-key", indexerApiKey: "indexer-api-key", projectId: "project-id"});
+new OMSClient({publicApiKey: "publishable-key", projectId: "project-id"});
 // @ts-expect-error old authorizationScope initializer name is not supported.
-new OMSClient({publishableKey: "publishable-key", indexerApiKey: "indexer-api-key", authorizationScope: "project-id"});
+new OMSClient({publishableKey: "publishable-key", authorizationScope: "project-id"});
 new OMSClient({
     publishableKey: "publishable-key",
-    indexerApiKey: "indexer-api-key",
     projectId: "project-id",
     // @ts-expect-error session expiry is subscribed through wallet.onSessionExpired, not constructor params.
     onSessionExpired: () => {},
@@ -119,7 +119,14 @@ const tokenBalance: TokenBalance = {
     priceUSD: "1",
 };
 const tokenBalancesPage: TokenBalancesPage = {page: 0, pageSize: 40, more: false};
-const tokenBalancesResult: TokenBalancesResult = {status: 200, page: tokenBalancesPage, balances: [tokenBalance]};
+const tokenBalancesResult: BalancesResult = {
+    status: 200,
+    page: tokenBalancesPage,
+    nativeBalances: [tokenBalance],
+    balances: [tokenBalance],
+};
+const indexerNetworkType: IndexerNetworkType = "MAINNETS";
+const transactionHistoryResult: TransactionHistoryResult = {status: 200, page: tokenBalancesPage, transactions: []};
 const upstreamError: OmsUpstreamError = {
     service: "waas",
     name: "CommitmentConsumed",
@@ -140,52 +147,51 @@ void allNetworks;
 void tokenContractInfo;
 void tokenMetadata;
 void tokenBalancesResult;
+void indexerNetworkType;
+void transactionHistoryResult;
 void upstreamError;
 void maybeUpstreamError;
 void transactionExecutionCode;
 void defaultClient.supportedNetworks;
 // @ts-expect-error findNetworkById accepts numeric chain IDs only.
 findNetworkById("80002");
-void defaultClient.indexer.getTokenBalances({
-    network: Networks.polygon,
-    contractAddress: "0x2222222222222222222222222222222222222222",
+void defaultClient.indexer.getBalances({
+    networks: [Networks.polygon],
+    contractAddresses: ["0x2222222222222222222222222222222222222222"],
     walletAddress: "0x9999999999999999999999999999999999999999",
     includeMetadata: false,
 });
-void defaultClient.indexer.getTokenBalances({
-    network: Networks.polygon,
+void defaultClient.indexer.getBalances({
+    networks: [Networks.polygon],
     walletAddress: "0x9999999999999999999999999999999999999999",
     includeMetadata: true,
     page: {page: 1, pageSize: 25},
 });
-void defaultClient.indexer.getTokenBalances({
+void defaultClient.indexer.getBalances({
     // @ts-expect-error Indexer public methods accept Network objects, not numeric chain IDs.
-    network: 137,
-    contractAddress: "0x2222222222222222222222222222222222222222",
+    networks: [137],
+    contractAddresses: ["0x2222222222222222222222222222222222222222"],
     walletAddress: "0x9999999999999999999999999999999999999999",
     includeMetadata: false,
 });
-void defaultClient.indexer.getTokenBalances({
+void defaultClient.indexer.getBalances({
     // @ts-expect-error chainId is not a public indexer parameter.
     chainId: 137,
-    contractAddress: "0x2222222222222222222222222222222222222222",
+    contractAddresses: ["0x2222222222222222222222222222222222222222"],
     walletAddress: "0x9999999999999999999999999999999999999999",
     includeMetadata: false,
 });
-void defaultClient.indexer.getNativeTokenBalance({
-    network: Networks.polygon,
+const getBalancesParams: GetBalancesParams = {
     walletAddress: "0x9999999999999999999999999999999999999999",
-});
-void defaultClient.indexer.getNativeTokenBalance({
-    // @ts-expect-error Indexer public methods accept Network objects, not numeric chain IDs.
-    network: 137,
+    networkType: "TESTNETS",
+};
+void defaultClient.indexer.getBalances(getBalancesParams);
+const transactionHistoryParams: GetTransactionHistoryParams = {
     walletAddress: "0x9999999999999999999999999999999999999999",
-});
-void defaultClient.indexer.getNativeTokenBalance({
-    // @ts-expect-error chainId is not a public indexer parameter.
-    chainId: 137,
-    walletAddress: "0x9999999999999999999999999999999999999999",
-});
+    networks: [Networks.polygon],
+    includeMetadata: true,
+};
+void defaultClient.indexer.getTransactionHistory(transactionHistoryParams);
 void defaultClient.wallet.startOidcRedirectAuth({
     provider: "google",
     redirectUri: "https://app.example/auth/callback",
@@ -198,11 +204,10 @@ void defaultClient.wallet.startOidcRedirectAuth({
 
 const customEnvironmentWithoutProviders = defineOmsEnvironment({
     walletApiUrl: "https://wallet.example",
-    indexerUrlTemplate: "https://indexer.example/{value}",
+    indexerGatewayUrl: "https://indexer.example",
 });
 const customClient = new OMSClient({
     publishableKey: "publishable-key",
-    indexerApiKey: "indexer-api-key",
     projectId: "project-id",
     environment: customEnvironmentWithoutProviders,
 });
@@ -217,7 +222,6 @@ void customClient.wallet.startOidcRedirectAuth({
 
 function createClient(params: {
     publishableKey: string;
-    indexerApiKey: string;
     projectId: string;
     environment?: OmsEnvironment;
 }) {
@@ -226,12 +230,10 @@ function createClient(params: {
 
 void createClient({
     publishableKey: "publishable-key",
-    indexerApiKey: "indexer-api-key",
     projectId: "project-id",
 });
 void createClient({
     publishableKey: "publishable-key",
-    indexerApiKey: "indexer-api-key",
     projectId: "project-id",
     environment: customEnvironmentWithoutProviders,
 });

@@ -14,7 +14,6 @@ loadDotenv({path: join(exampleDir, ".env.local"), quiet: true});
 loadDotenv({path: join(exampleDir, ".env"), quiet: true});
 
 const publishableKey = requiredEnv("OMS_PUBLISHABLE_KEY", process.env.OMS_PUBLISHABLE_KEY);
-const indexerApiKey = requiredEnv("OMS_INDEXER_API_KEY", process.env.OMS_INDEXER_API_KEY);
 const projectId = requiredEnv("OMS_PROJECT_ID", process.env.OMS_PROJECT_ID);
 const defaultDeployerAddress = "0xce0042B868300000d44A59004Da54A005ffdcf9f" as const satisfies Address;
 const deployerAddress = optionalAddress("DEPLOYER_ADDRESS", process.env.DEPLOYER_ADDRESS) ?? defaultDeployerAddress;
@@ -46,7 +45,6 @@ async function main() {
 
     const client = new OMSClient({
         publishableKey,
-        indexerApiKey,
         projectId,
         storage: new MemoryStorageManager(),
     });

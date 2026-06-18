@@ -183,20 +183,18 @@ export function requirePreparedYieldTransactions(
 }
 
 export async function getPolygonBalances(walletAddress: Address): Promise<BalanceState> {
-  const [polBalance, usdcResult] = await Promise.all([
-    oms.indexer.getNativeTokenBalance({
-      network: POLYGON_NETWORK,
-      walletAddress,
-    }),
-    oms.indexer.getTokenBalances({
-      network: POLYGON_NETWORK,
-      contractAddress: POLYGON_USDC,
-      walletAddress,
-      includeMetadata: false,
-    }),
-  ])
+  const balances = await oms.indexer.getBalances({
+    networks: [POLYGON_NETWORK],
+    contractAddresses: [POLYGON_USDC],
+    walletAddress,
+    includeMetadata: false,
+  })
+  const polBalance = balances.nativeBalances.find(balance => balance.chainId === POLYGON_NETWORK.id)
+  const usdcBalance = balances.balances.find(balance =>
+    balance.contractAddress?.toLowerCase() === POLYGON_USDC.toLowerCase(),
+  )
   const polRaw = polBalance?.balance ?? '0'
-  const usdcRaw = usdcResult.balances[0]?.balance ?? '0'
+  const usdcRaw = usdcBalance?.balance ?? '0'
 
   return {
     pol: formatTokenAmount(polRaw, 18, 'POL'),

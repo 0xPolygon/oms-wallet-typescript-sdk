@@ -33,8 +33,8 @@
   - [listAccessPages](#listaccesspages)
   - [revokeAccess](#revokeaccess)
 - [IndexerClient](#indexerclient)
-  - [getTokenBalances](#gettokenbalances)
-  - [getNativeTokenBalance](#getnativetokenbalance)
+  - [getBalances](#getbalances)
+  - [getTransactionHistory](#gettransactionhistory)
 - [Errors](#errors)
 - [Types](#types)
   - [Network](#network)
@@ -55,7 +55,8 @@
   - [SendTransactionResponse](#sendtransactionresponse)
   - [TransactionStatusPollingOptions](#transactionstatuspollingoptions)
   - [FeeOptionSelector](#feeoptionselector)
-  - [TokenBalancesResult](#tokenbalancesresult)
+  - [BalancesResult](#balancesresult)
+  - [TransactionHistoryResult](#transactionhistoryresult)
   - [TokenBalancesPage](#tokenbalancespage)
   - [TokenBalance](#tokenbalance)
   - [TokenContractInfo](#tokencontractinfo)
@@ -75,7 +76,6 @@ import { OMSClient } from '@0xsequence/typescript-sdk'
 
 const oms = new OMSClient({
   publishableKey: 'your-publishable-key',
-  indexerApiKey: 'your-indexer-api-key',
   projectId: 'your-project-id',
 })
 ```
@@ -85,7 +85,6 @@ const oms = new OMSClient({
 ```typescript
 new OMSClient(params: {
   publishableKey: string
-  indexerApiKey: string
   projectId: string
   environment?: OmsEnvironment
   storage?: StorageManager
@@ -98,8 +97,7 @@ new OMSClient(params: {
 
 | Name | Type | Required | Description |
 |---|---|---|---|
-| `publishableKey` | `string` | Yes | Your OMS publishable key. Wallet requests send this as the WaaS `Api-Key` header. |
-| `indexerApiKey` | `string` | Yes | Your Indexer API key. Indexer requests send this as the `X-Access-Key` header. |
+| `publishableKey` | `string` | Yes | Your OMS publishable key. Wallet and IndexerGateway requests send this as the `Api-Key` header. |
 | `projectId` | `string` | Yes | Your OMS project ID. Used as the WaaS signing scope for wallet requests and OIDC redirect state. |
 | `environment` | `OmsEnvironment` | No | API endpoint configuration. Defaults to the SDK's configured OMS endpoints. |
 | `storage` | `StorageManager` | No | Storage backend for wallet metadata. Defaults to `LocalStorageManager` when browser `localStorage` is available, otherwise `MemoryStorageManager`. |
@@ -703,36 +701,39 @@ if (other) {
 
 ## IndexerClient
 
-Accessed via `oms.indexer`. Queries on-chain token balances through the OMS Indexer API.
+Accessed via `oms.indexer`. Queries on-chain balances and transaction history through IndexerGateway.
 
-### getTokenBalances
+### getBalances
 
 ```typescript
-getTokenBalances(params: {
-  network: Network
-  contractAddress?: string
+getBalances(params: {
   walletAddress: string
-  includeMetadata: boolean
-  page?: {
-    page?: number
-    pageSize?: number
-  }
-}): Promise<TokenBalancesResult>
+  networks?: Network[]
+  networkType?: 'MAINNETS' | 'TESTNETS' | 'ALL'
+  contractAddresses?: string[]
+  includeMetadata?: boolean
+  omitPrices?: boolean
+  tokenIds?: string[]
+  page?: TokenBalancesPage
+}): Promise<BalancesResult>
 ```
 
-Fetches token balances for a wallet on a given network. Omit `contractAddress` to query balances across contracts; provide it to filter to one token contract. The default request returns page `0` with up to `40` entries. When `includeMetadata` is `true`, token display data is returned on `contractInfo` and `tokenMetadata`; ERC-20 decimals are available as `contractInfo.decimals`.
+Fetches native and token balances for a wallet. Pass `networks` to query explicit SDK network objects. If `networks` is omitted, the request defaults to `networkType: 'MAINNETS'`. The default request returns page `0` with up to `40` entries. `includeMetadata` defaults to `true`; token display data is returned on `contractInfo` and `tokenMetadata`, and ERC-20 decimals are available as `contractInfo.decimals`.
 
 **Parameters**
 
 | Name | Type | Description |
 |---|---|---|
-| `network` | `Network` | The network to query. Use an exported registry value such as `Networks.polygon`. |
-| `contractAddress` | `string` | Optional token contract filter. Omit to query balances across contracts. |
 | `walletAddress` | `string` | The wallet address whose balances to fetch. Use `oms.wallet.walletAddress` after checking it is defined. |
-| `includeMetadata` | `boolean` | When `true`, the response includes token metadata such as name, symbol, and decimals. |
-| `page` | `{ page?: number; pageSize?: number }` | Optional pagination request. Defaults to `{ page: 0, pageSize: 40 }`. |
+| `networks` | `Network[]` | Optional explicit networks to query. Use exported registry values such as `Networks.polygon`. |
+| `networkType` | `'MAINNETS' \| 'TESTNETS' \| 'ALL'` | Optional gateway network group when `networks` is omitted. Defaults to `'MAINNETS'`. |
+| `contractAddresses` | `string[]` | Optional token contract filter. Omit to query balances across contracts. |
+| `includeMetadata` | `boolean` | Optional metadata flag. Defaults to `true`. |
+| `omitPrices` | `boolean` | Optional price exclusion flag. |
+| `tokenIds` | `string[]` | Optional token ID filter. |
+| `page` | `TokenBalancesPage` | Optional pagination request. Defaults to `{ page: 0, pageSize: 40 }`. |
 
-**Returns** `Promise<TokenBalancesResult>` — see [TokenBalancesResult](#tokenbalancesresult).
+**Returns** `Promise<BalancesResult>` — see [BalancesResult](#balancesresult).
 
 **Example**
 
@@ -740,11 +741,15 @@ Fetches token balances for a wallet on a given network. Omit `contractAddress` t
 const { walletAddress } = oms.wallet
 if (!walletAddress) throw new Error('No active wallet session')
 
-const result = await oms.indexer.getTokenBalances({
-  network: Networks.polygon,
+const result = await oms.indexer.getBalances({
+  networks: [Networks.polygon],
   walletAddress,
   includeMetadata: true,
 })
+
+for (const b of result.nativeBalances) {
+  console.log(b.symbol, b.balance)
+}
 
 for (const b of result.balances) {
   console.log(b.contractAddress, b.balance, b.tokenId)
@@ -753,16 +758,26 @@ for (const b of result.balances) {
 
 ---
 
-### getNativeTokenBalance
+### getTransactionHistory
 
 ```typescript
-getNativeTokenBalance(params: {
-  network: Network
+getTransactionHistory(params: {
   walletAddress: string
-}): Promise<TokenBalance | undefined>
+  networks?: Network[]
+  networkType?: 'MAINNETS' | 'TESTNETS' | 'ALL'
+  contractAddresses?: string[]
+  transactionHashes?: string[]
+  metaTransactionIds?: string[]
+  fromBlock?: number
+  toBlock?: number
+  tokenId?: string
+  includeMetadata?: boolean
+  omitPrices?: boolean
+  page?: TokenBalancesPage
+}): Promise<TransactionHistoryResult>
 ```
 
-Fetches the native token balance for a wallet. This is also used internally to enrich transaction fee options.
+Fetches mined transaction history for a wallet. Pass `networks` to query explicit SDK network objects. If `networks` is omitted, the request defaults to `networkType: 'MAINNETS'`. `includeMetadata` defaults to `true`.
 
 ---
 
@@ -877,7 +892,7 @@ findNetworkByName(name: string): Network | undefined
 ```typescript
 interface OmsEnvironment {
   walletApiUrl: string
-  indexerUrlTemplate: string
+  indexerGatewayUrl: string
   auth?: {
     oidcProviders?: Record<string, OidcProviderConfig>
   }
@@ -887,7 +902,7 @@ interface OmsEnvironment {
 | Field | Type | Description |
 |---|---|---|
 | `walletApiUrl` | `string` | Base URL of the WaaS Wallet RPC host. |
-| `indexerUrlTemplate` | `string` | URL template for the Indexer API. `{value}` is replaced with the selected network name, e.g. `"https://indexer.example.com/{value}"`. |
+| `indexerGatewayUrl` | `string` | Base URL of the IndexerGateway host, e.g. `"https://api.example.com/v1/IndexerGateway/"`. |
 | `auth.oidcProviders` | `Record<string, OidcProviderConfig>` | OIDC provider configurations addressable by provider key. |
 
 The default is exported as `defaultOmsEnvironment`, uses `https://sandbox-api.dev.polygon-dev.technology` as the WaaS API base URL, and includes the `google` OIDC provider.
@@ -1185,12 +1200,13 @@ that fee option.
 
 ---
 
-### TokenBalancesResult
+### BalancesResult
 
 ```typescript
-interface TokenBalancesResult {
+interface BalancesResult {
   status: number
   page?: TokenBalancesPage
+  nativeBalances: TokenBalance[]
   balances: TokenBalance[]
 }
 ```
@@ -1199,7 +1215,26 @@ interface TokenBalancesResult {
 |---|---|---|
 | `status` | `number` | HTTP status code of the indexer response. |
 | `page` | `TokenBalancesPage` | Pagination metadata, if present. |
+| `nativeBalances` | `TokenBalance[]` | Native token balances for the requested address. |
 | `balances` | `TokenBalance[]` | Array of token balance entries for the requested address. |
+
+---
+
+### TransactionHistoryResult
+
+```typescript
+interface TransactionHistoryResult {
+  status: number
+  page?: TokenBalancesPage
+  transactions: Transaction[]
+}
+```
+
+| Field | Type | Description |
+|---|---|---|
+| `status` | `number` | HTTP status code of the indexer response. |
+| `page` | `TokenBalancesPage` | Pagination metadata, if present. |
+| `transactions` | `Transaction[]` | Flattened transaction entries across the requested networks. |
 
 ---
 
@@ -1207,17 +1242,21 @@ interface TokenBalancesResult {
 
 ```typescript
 interface TokenBalancesPage {
-  page: number
-  pageSize: number
-  more: boolean
+  page?: number
+  pageSize?: number
+  more?: boolean
+  before?: unknown
+  after?: unknown
 }
 ```
 
 | Field | Type | Description |
 |---|---|---|
 | `page` | `number` | Current page index (zero-based). |
-| `pageSize` | `number` | Number of entries per page (up to 40). |
+| `pageSize` | `number` | Number of entries per page. |
 | `more` | `boolean` | `true` if additional pages are available. |
+| `before` | `unknown` | Gateway cursor before the current page, when returned. |
+| `after` | `unknown` | Gateway cursor after the current page, when returned. |
 
 ---
 

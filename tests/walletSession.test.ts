@@ -52,7 +52,6 @@ describe("WalletClient session storage", () => {
 
         const client = new OMSClient({
             publishableKey: "publishable-key",
-            indexerApiKey: "indexer-api-key",
             projectId: "project-id",
             environment: testEnvironment(),
             credentialSigner: new MockSigner(),
@@ -71,7 +70,6 @@ describe("WalletClient session storage", () => {
 
         const wallet = new WalletClient({
             publishableKey: "publishable-key",
-            indexerApiKey: "indexer-api-key",
             projectId: "project-id",
             environment: testEnvironment(),
             storage,
@@ -96,7 +94,6 @@ describe("WalletClient session storage", () => {
         const onSessionExpired = vi.fn();
         const wallet = new WalletClient({
             publishableKey: "publishable-key",
-            indexerApiKey: "indexer-api-key",
             projectId: "project-id",
             environment: testEnvironment(),
             storage,
@@ -156,7 +153,6 @@ describe("WalletClient session storage", () => {
         const onSessionExpired = vi.fn();
         const wallet = new WalletClient({
             publishableKey: "publishable-key",
-            indexerApiKey: "indexer-api-key",
             projectId: "project-id",
             environment: testEnvironment(),
             storage,
@@ -203,7 +199,6 @@ describe("WalletClient session storage", () => {
 
         const client = new OMSClient({
             publishableKey: "publishable-key",
-            indexerApiKey: "indexer-api-key",
             projectId: "project-id",
             environment: testEnvironment(),
             storage,
@@ -240,7 +235,6 @@ describe("WalletClient session storage", () => {
         const nextOnSessionExpired = vi.fn();
         const nextClient = new OMSClient({
             publishableKey: "publishable-key",
-            indexerApiKey: "indexer-api-key",
             projectId: "project-id",
             environment: testEnvironment(),
             storage,
@@ -275,7 +269,6 @@ describe("WalletClient session storage", () => {
 
         const client = new OMSClient({
             publishableKey: "publishable-key",
-            indexerApiKey: "indexer-api-key",
             projectId: "project-id",
             environment: testEnvironment(),
             storage,
@@ -304,7 +297,6 @@ describe("WalletClient session storage", () => {
 
         const client = new OMSClient({
             publishableKey: "publishable-key",
-            indexerApiKey: "indexer-api-key",
             projectId: "project-id",
             environment: testEnvironment(),
             storage,
@@ -336,7 +328,6 @@ describe("WalletClient session storage", () => {
         const onSessionExpired = vi.fn();
         const wallet = new WalletClient({
             publishableKey: "publishable-key",
-            indexerApiKey: "indexer-api-key",
             projectId: "project-id",
             environment: testEnvironment(),
             storage,
@@ -386,7 +377,6 @@ describe("WalletClient session storage", () => {
         const onSessionExpired = vi.fn();
         const wallet = new WalletClient({
             publishableKey: "publishable-key",
-            indexerApiKey: "indexer-api-key",
             projectId: "project-id",
             environment: testEnvironment(),
             storage: new MemoryStorageManager(),
@@ -416,7 +406,6 @@ describe("WalletClient session storage", () => {
         const onSessionExpired = vi.fn();
         const wallet = new WalletClient({
             publishableKey: "publishable-key",
-            indexerApiKey: "indexer-api-key",
             projectId: "project-id",
             environment: testEnvironment(),
             storage: new MemoryStorageManager(),
@@ -489,7 +478,6 @@ describe("WalletClient session storage", () => {
 
         const wallet = new WalletClient({
             publishableKey: "publishable-key",
-            indexerApiKey: "indexer-api-key",
             projectId: "project-id",
             environment: testEnvironment(),
             storage: new MemoryStorageManager(),
@@ -534,7 +522,6 @@ describe("WalletClient session storage", () => {
         redirectAuthStorage.set(Constants.redirectAuthStorageKey, JSON.stringify({verifier: "old-verifier"}));
         const wallet = new WalletClient({
             publishableKey: "publishable-key",
-            indexerApiKey: "indexer-api-key",
             projectId: "project-id",
             environment: testEnvironment(),
             storage,
@@ -595,7 +582,6 @@ describe("WalletClient session storage", () => {
 
         const wallet = new WalletClient({
             publishableKey: "publishable-key",
-            indexerApiKey: "indexer-api-key",
             projectId: "project-id",
             environment: testEnvironment(),
             storage,
@@ -625,7 +611,6 @@ describe("WalletClient session storage", () => {
 
         const client = new OMSClient({
             publishableKey: "publishable-key",
-            indexerApiKey: "indexer-api-key",
             projectId: "project-id",
             environment: testEnvironment(),
             storage,
@@ -682,7 +667,6 @@ describe("WalletClient session storage", () => {
 
         const wallet = new WalletClient({
             publishableKey: "publishable-key",
-            indexerApiKey: "indexer-api-key",
             projectId: "project-id",
             environment: testEnvironment(),
             storage,
@@ -742,7 +726,6 @@ describe("WalletClient session storage", () => {
 
         const wallet = new WalletClient({
             publishableKey: "publishable-key",
-            indexerApiKey: "indexer-api-key",
             projectId: "project-id",
             environment: testEnvironment(),
             storage: new MemoryStorageManager(),
@@ -777,7 +760,6 @@ describe("WalletClient session storage", () => {
 
         const wallet = new WalletClient({
             publishableKey: "publishable-key",
-            indexerApiKey: "indexer-api-key",
             projectId: "project-id",
             environment: testEnvironment(),
             storage: new MemoryStorageManager(),
@@ -845,7 +827,6 @@ describe("WalletClient session storage", () => {
 
         const wallet = new WalletClient({
             publishableKey: "publishable-key",
-            indexerApiKey: "indexer-api-key",
             projectId: "project-id",
             environment: testEnvironment(),
             storage: new MemoryStorageManager(),
@@ -907,7 +888,6 @@ describe("WalletClient session storage", () => {
 
         const wallet = new WalletClient({
             publishableKey: "publishable-key",
-            indexerApiKey: "indexer-api-key",
             projectId: "project-id",
             environment: testEnvironment(),
             storage: new MemoryStorageManager(),
@@ -963,7 +943,6 @@ describe("WalletClient session storage", () => {
 
         const wallet = new WalletClient({
             publishableKey: "publishable-key",
-            indexerApiKey: "indexer-api-key",
             projectId: "project-id",
             environment: testEnvironment(),
             storage: new MemoryStorageManager(),
@@ -1023,7 +1002,6 @@ describe("WalletClient session storage", () => {
         const storage = new MemoryStorageManager();
         const wallet = new WalletClient({
             publishableKey: "publishable-key",
-            indexerApiKey: "indexer-api-key",
             projectId: "project-id",
             environment: testEnvironment(),
             storage,
@@ -1092,7 +1070,6 @@ describe("WalletClient session storage", () => {
 
         const wallet = new WalletClient({
             publishableKey: "publishable-key",
-            indexerApiKey: "indexer-api-key",
             projectId: "project-id",
             environment: testEnvironment(),
             storage: new MemoryStorageManager(),
@@ -1135,7 +1112,6 @@ describe("WalletClient session storage", () => {
 
         const wallet = new WalletClient({
             publishableKey: "publishable-key",
-            indexerApiKey: "indexer-api-key",
             projectId: "project-id",
             environment: testEnvironment(),
             storage: new MemoryStorageManager(),
@@ -1191,7 +1167,6 @@ describe("WalletClient session storage", () => {
 
         const wallet = new WalletClient({
             publishableKey: "publishable-key",
-            indexerApiKey: "indexer-api-key",
             projectId: "project-id",
             environment: testEnvironment(),
             storage: new MemoryStorageManager(),
@@ -1244,7 +1219,6 @@ describe("WalletClient session storage", () => {
 
         const wallet = new WalletClient({
             publishableKey: "publishable-key",
-            indexerApiKey: "indexer-api-key",
             projectId: "project-id",
             environment: testEnvironment(),
             storage: new MemoryStorageManager(),
@@ -1290,7 +1264,6 @@ describe("WalletClient session storage", () => {
 
         const wallet = new WalletClient({
             publishableKey: "publishable-key",
-            indexerApiKey: "indexer-api-key",
             projectId: "project-id",
             environment: testEnvironment(),
             storage: new MemoryStorageManager(),
@@ -1342,7 +1315,6 @@ describe("WalletClient session storage", () => {
 
         const wallet = new WalletClient({
             publishableKey: "publishable-key",
-            indexerApiKey: "indexer-api-key",
             projectId: "project-id",
             environment: testEnvironment(),
             storage: new MemoryStorageManager(),
@@ -1394,7 +1366,6 @@ describe("WalletClient session storage", () => {
 
         const wallet = new WalletClient({
             publishableKey: "publishable-key",
-            indexerApiKey: "indexer-api-key",
             projectId: "project-id",
             environment: testEnvironment(),
             storage: new MemoryStorageManager(),
@@ -1446,7 +1417,6 @@ describe("WalletClient session storage", () => {
 
         const wallet = new WalletClient({
             publishableKey: "publishable-key",
-            indexerApiKey: "indexer-api-key",
             projectId: "project-id",
             environment: testEnvironment(),
             storage: new MemoryStorageManager(),
@@ -1478,7 +1448,6 @@ describe("WalletClient session storage", () => {
 
         const wallet = new WalletClient({
             publishableKey: "publishable-key",
-            indexerApiKey: "indexer-api-key",
             projectId: "project-id",
             environment: testEnvironment(),
             storage: new MemoryStorageManager(),
@@ -1520,7 +1489,6 @@ describe("WalletClient session storage", () => {
 
         const wallet = new WalletClient({
             publishableKey: "publishable-key",
-            indexerApiKey: "indexer-api-key",
             projectId: "project-id",
             environment: testEnvironment(),
             storage,
@@ -1573,7 +1541,6 @@ describe("WalletClient session storage", () => {
         const storage = new MemoryStorageManager();
         const wallet = new WalletClient({
             publishableKey: "publishable-key",
-            indexerApiKey: "indexer-api-key",
             projectId: "project-id",
             environment: testEnvironment(),
             storage,
@@ -1619,7 +1586,6 @@ describe("WalletClient session storage", () => {
 
         const wallet = new WalletClient({
             publishableKey: "publishable-key",
-            indexerApiKey: "indexer-api-key",
             projectId: "project-id",
             environment: testEnvironment(),
             storage: new MemoryStorageManager(),
@@ -1644,7 +1610,7 @@ describe("WalletClient session storage", () => {
 function testEnvironment() {
     return {
         walletApiUrl: "https://wallet.example",
-        indexerUrlTemplate: "https://indexer.example/{value}",
+        indexerGatewayUrl: "https://indexer.example",
     };
 }
 
