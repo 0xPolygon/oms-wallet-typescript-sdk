@@ -348,7 +348,7 @@ function normalizeChainId(chainId: Hex | bigint | number | string | undefined): 
     } else if (typeof chainId === "string" && isHex(chainId)) {
         normalized = Number(hexToBigInt(chainId));
     } else if (typeof chainId === "string") {
-        normalized = Number(chainId);
+        normalized = /^[1-9]\d*$/u.test(chainId) ? Number(chainId) : Number.NaN;
     } else {
         throw invalidParams("Chain ID is required.");
     }

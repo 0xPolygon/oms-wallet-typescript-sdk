@@ -228,6 +228,30 @@ describe("omsWalletConnector", () => {
         expect(client.wallet.sendTransaction).not.toHaveBeenCalled();
     });
 
+    it("rejects non-decimal transaction request chainId strings before calling OMS", async () => {
+        const client = createClient({walletAddress: "0x9999999999999999999999999999999999999999"});
+        const config = createWagmiConfig(client);
+        const connector = config.connectors[0];
+
+        await connect(config, {connector});
+        const provider = await connector.getProvider();
+
+        await expect(provider.request({
+            method: "eth_sendTransaction",
+            params: [{
+                from: client.wallet.walletAddress,
+                to: "0x1111111111111111111111111111111111111111",
+                value: "0x1",
+                chainId: "1e2",
+            }],
+        })).rejects.toMatchObject({
+            name: "OmsWalletProviderRpcError",
+            code: -32602,
+            message: "Chain ID must be a positive safe integer.",
+        });
+        expect(client.wallet.sendTransaction).not.toHaveBeenCalled();
+    });
+
     it("rejects non-quantity transaction values at the provider boundary", async () => {
         const client = createClient({walletAddress: "0x9999999999999999999999999999999999999999"});
         const config = createWagmiConfig(client);
