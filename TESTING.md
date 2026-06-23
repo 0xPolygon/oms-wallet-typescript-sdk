@@ -48,8 +48,6 @@ How testing works in this repo. `AGENTS.md` points here so agents know how to ve
 - Bug fixes should include a regression test that would have caught the bug
 - Do not add tests that assert private implementation — test the externally visible promise
 - Network boundaries are stubbed; don't require live secrets for `pnpm test`
-- Integration tests that need `OMS_PROJECT_ACCESS_KEY` are gated behind the CI secret; they
-  may be skipped locally when the env var is absent
 
 ### Public error contract tests
 

@@ -36,8 +36,6 @@ jobs:
         run: pnpm exec tsc --noEmit
 
       - name: Run tests
-        env:
-          OMS_PROJECT_ACCESS_KEY: ${{ secrets.OMS_PROJECT_ACCESS_KEY }}
         run: pnpm test
 
       - name: Build SDK

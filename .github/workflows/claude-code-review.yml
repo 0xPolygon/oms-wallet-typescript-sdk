@@ -2,15 +2,28 @@ name: Claude Code Review
 
 on:
   pull_request:
-    types: [opened, synchronize]
+    types: [opened]
+  issue_comment:
+    types: [created]
 
 jobs:
   claude-review:
-    if: github.event.pull_request.user.login != 'dependabot[bot]'
+    if: |
+      (
+        github.event_name == 'pull_request' &&
+        github.event.pull_request.user.login != 'dependabot[bot]'
+      ) ||
+      (
+        github.event_name == 'issue_comment' &&
+        github.event.issue.pull_request &&
+        github.event.issue.user.login != 'dependabot[bot]' &&
+        contains(github.event.comment.body, '@claude review')
+      )
     runs-on: ubuntu-latest
     permissions:
       contents: read
       pull-requests: write
+      issues: write
       id-token: write
     steps:
       - name: Checkout
@@ -21,6 +34,7 @@ jobs:
       - uses: anthropics/claude-code-action@beta
         with:
           anthropic_api_key: ${{ secrets.ANTHROPIC_API_KEY_GITHUB_ACTIONS }}
+          model: "claude-opus-4-8"
           direct_prompt: |
             Review this pull request. Focus on:
             - Correctness of SDK behavior changes (wallet auth, signing, transactions, indexer)
