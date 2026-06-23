@@ -2,6 +2,7 @@ import {WalletClient, type OidcProviderName} from "../src/clients/walletClient";
 import {
     Networks,
     OMSClient,
+    defineOmsAuthConfig,
     findNetworkById,
     findNetworkByName,
     supportedNetworks,
@@ -17,24 +18,22 @@ import {
     type GetBalancesParams,
     type GetTransactionHistoryParams,
     type IndexerNetworkType,
+    type OmsAuthConfig,
     type TokenBalance,
     type TokenBalancesPage,
     type TokenContractInfo,
     type TokenMetadata,
     type TransactionHistoryResult,
 } from "../src/index";
-import {defineOmsEnvironment, type OmsEnvironment} from "../src/omsEnvironment";
+import {omsEnvironmentFromPublishableKey} from "../src/omsEnvironment";
 import {googleOidcProvider} from "../src/oidc";
 
-const environment = defineOmsEnvironment({
-    walletApiUrl: "https://wallet.example",
-    indexerGatewayUrl: "https://indexer.example",
-    auth: {
-        oidcProviders: {
-            google: googleOidcProvider(),
-        },
+const auth = defineOmsAuthConfig({
+    oidcProviders: {
+        google: googleOidcProvider(),
     },
 });
+const environment = omsEnvironmentFromPublishableKey("pk_dev_sdbx_project_key", auth);
 
 type ProviderName = OidcProviderName<typeof environment>;
 
@@ -74,20 +73,20 @@ if (false) {
 }
 
 const defaultClient = new OMSClient({
-    publishableKey: "pk_test_sdbx_project_key",
+    publishableKey: "pk_dev_sdbx_project_key",
 });
 // @ts-expect-error publishableKey is required.
 new OMSClient({});
 // @ts-expect-error projectId is not a constructor parameter.
-new OMSClient({publishableKey: "pk_test_sdbx_project_key", projectId: "project-id"});
+new OMSClient({publishableKey: "pk_dev_sdbx_project_key", projectId: "project-id"});
 // @ts-expect-error projectAccessKey initializer name is not supported.
-new OMSClient({projectAccessKey: "pk_test_sdbx_project_key"});
+new OMSClient({projectAccessKey: "pk_dev_sdbx_project_key"});
 // @ts-expect-error publicApiKey initializer name is not supported.
-new OMSClient({publicApiKey: "pk_test_sdbx_project_key"});
+new OMSClient({publicApiKey: "pk_dev_sdbx_project_key"});
 // @ts-expect-error authorizationScope initializer name is not supported.
-new OMSClient({publishableKey: "pk_test_sdbx_project_key", authorizationScope: "project-id"});
+new OMSClient({publishableKey: "pk_dev_sdbx_project_key", authorizationScope: "project-id"});
 new OMSClient({
-    publishableKey: "pk_test_sdbx_project_key",
+    publishableKey: "pk_dev_sdbx_project_key",
     // @ts-expect-error session expiry is subscribed through wallet.onSessionExpired, not constructor params.
     onSessionExpired: () => {},
 });
@@ -195,39 +194,49 @@ void defaultClient.wallet.startOidcRedirectAuth({
     redirectUri: "https://app.example/auth/callback",
 });
 void defaultClient.wallet.startOidcRedirectAuth({
-    // @ts-expect-error github is not configured on the default environment.
+    // @ts-expect-error github is not configured on the default auth config.
     provider: "github",
     redirectUri: "https://app.example/auth/callback",
 });
 
-const customEnvironmentWithoutProviders = defineOmsEnvironment({
-    walletApiUrl: "https://wallet.example",
-    indexerGatewayUrl: "https://indexer.example",
-});
 const customClient = new OMSClient({
-    publishableKey: "pk_test_sdbx_project_key",
-    environment: customEnvironmentWithoutProviders,
+    publishableKey: "pk_dev_sdbx_project_key",
+    auth,
 });
 let broadlyTypedClient: OMSClient;
 broadlyTypedClient = customClient;
 void broadlyTypedClient;
 void customClient.wallet.startOidcRedirectAuth({
-    // @ts-expect-error string provider names are not available without configured providers.
     provider: "google",
     redirectUri: "https://app.example/auth/callback",
 });
 
+const noProviderClient = new OMSClient({
+    publishableKey: "pk_dev_sdbx_project_key",
+    auth: {},
+});
+void noProviderClient.wallet.startOidcRedirectAuth({
+    // @ts-expect-error string provider names are not available without configured providers.
+    provider: "google",
+    redirectUri: "https://app.example/auth/callback",
+});
+new OMSClient({
+    publishableKey: "pk_dev_sdbx_project_key",
+    // @ts-expect-error environment URL overrides are not constructor parameters.
+    environment,
+});
+
 function createClient(params: {
     publishableKey: string;
-    environment?: OmsEnvironment;
+    auth?: OmsAuthConfig;
 }) {
     return new OMSClient(params);
 }
 
 void createClient({
-    publishableKey: "pk_test_sdbx_project_key",
+    publishableKey: "pk_dev_sdbx_project_key",
 });
 void createClient({
-    publishableKey: "pk_test_sdbx_project_key",
-    environment: customEnvironmentWithoutProviders,
+    publishableKey: "pk_dev_sdbx_project_key",
+    auth,
 });

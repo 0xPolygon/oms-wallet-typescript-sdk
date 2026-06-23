@@ -50,7 +50,7 @@ describe("Networks", () => {
 
     it("is available from OMSClient", () => {
         const oms = new OMSClient({
-            publishableKey: "pk_test_sdbx_project_key",
+            publishableKey: "pk_dev_sdbx_project_key",
         });
 
         expect(oms.supportedNetworks).toBe(supportedNetworks);

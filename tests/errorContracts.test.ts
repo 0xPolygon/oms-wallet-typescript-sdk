@@ -1572,13 +1572,9 @@ function createOmsClient(params: {
     redirectAuthStorage?: MemoryStorageManager | null
 } = {}): OMSClient {
     const clientParams: ConstructorParameters<typeof OMSClient>[0] = {
-        publishableKey: "pk_test_sdbx_project_key",
+        publishableKey: "pk_dev_sdbx_project_key",
         storage: new MemoryStorageManager(),
         credentialSigner: params.credentialSigner ?? new MockSigner(),
-        environment: {
-            walletApiUrl: "https://wallet.example",
-            indexerGatewayUrl: "https://indexer.example",
-        },
     };
 
     if (params.redirectAuthStorage !== null) {

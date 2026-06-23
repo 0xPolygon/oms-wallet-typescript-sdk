@@ -1,10 +1,9 @@
 export { OMSClient } from './omsClient.js'
 export {
-    defineOmsEnvironment,
-    defaultOmsEnvironment,
+    defaultOmsAuthConfig,
+    defineOmsAuthConfig,
     type OidcProviderConfig,
     type OmsAuthConfig,
-    type OmsEnvironment,
 } from './omsEnvironment.js'
 export {
     googleOidcProvider,

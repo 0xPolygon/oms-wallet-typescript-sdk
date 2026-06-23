@@ -1,4 +1,5 @@
 import {googleOidcProvider} from "./oidc.js";
+import {parsePublishableKey} from "./publishableKey.js";
 
 export interface OidcProviderConfig {
     clientId: string;
@@ -23,16 +24,41 @@ export interface OmsEnvironment<
     auth?: OmsAuthConfig<OidcProviders>;
 }
 
-export const defaultOmsEnvironment = {
-    walletApiUrl: "https://sandbox-api.dev.polygon-dev.technology",
-    indexerGatewayUrl: "https://api.dev.polygon-dev.technology/v1/IndexerGateway/",
-    auth: {
-        oidcProviders: {
-            google: googleOidcProvider(),
-        },
-    },
-} satisfies OmsEnvironment;
+const defaultOidcProviders = {
+    google: googleOidcProvider(),
+};
 
-export function defineOmsEnvironment<const Env extends OmsEnvironment>(environment: Env): Env {
-    return environment;
+export const defaultOmsAuthConfig = {
+    oidcProviders: defaultOidcProviders,
+} satisfies OmsAuthConfig<typeof defaultOidcProviders>;
+
+export type DefaultOmsEnvironment = OmsEnvironment<typeof defaultOidcProviders>;
+
+type OidcProvidersFromAuth<Auth extends OmsAuthConfig> =
+    Auth extends {oidcProviders?: infer OidcProviders}
+        ? NonNullable<OidcProviders> extends Record<string, OidcProviderConfig>
+            ? NonNullable<OidcProviders>
+            : never
+        : never;
+
+type ProvidersFromAuth<Auth extends OmsAuthConfig | undefined> =
+    Auth extends OmsAuthConfig
+        ? OidcProvidersFromAuth<Auth>
+        : typeof defaultOidcProviders;
+
+export function defineOmsAuthConfig<const Auth extends OmsAuthConfig>(auth: Auth): Auth {
+    return auth;
+}
+
+export function omsEnvironmentFromPublishableKey<const Auth extends OmsAuthConfig | undefined>(
+    publishableKey: string,
+    auth?: Auth,
+): OmsEnvironment<ProvidersFromAuth<Auth>> {
+    const parsedKey = parsePublishableKey(publishableKey);
+
+    return {
+        walletApiUrl: parsedKey.walletApiUrl,
+        indexerGatewayUrl: parsedKey.indexerGatewayUrl,
+        auth: auth ?? defaultOmsAuthConfig,
+    } as OmsEnvironment<ProvidersFromAuth<Auth>>;
 }

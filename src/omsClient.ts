@@ -1,36 +1,48 @@
 import { WalletClient } from "./clients/walletClient.js";
-import {defaultOmsEnvironment, OmsEnvironment} from "./omsEnvironment.js";
+import {
+    DefaultOmsEnvironment,
+    omsEnvironmentFromPublishableKey,
+    OmsAuthConfig,
+    OmsEnvironment,
+} from "./omsEnvironment.js";
 import {createDefaultStorage, StorageManager} from "./storageManager.js";
 import {IndexerClient} from "./clients/indexerClient.js";
 import type {CredentialSigner} from "./credentialSigner.js";
 import {supportedNetworks} from "./networks.js";
-import {OmsValidationError} from "./errors.js";
+import {parsePublishableKey} from "./publishableKey.js";
 
 interface OMSClientBaseParams {
     publishableKey: string;
+    auth?: OmsAuthConfig;
+    environment?: never;
     storage?: StorageManager;
     redirectAuthStorage?: StorageManager;
     credentialSigner?: CredentialSigner;
 }
 
-export type OMSClientParams<Env extends OmsEnvironment = OmsEnvironment> =
-    OMSClientBaseParams & {environment: Env};
+export type OMSClientParams<Auth extends OmsAuthConfig | undefined = undefined> =
+    OMSClientBaseParams & (Auth extends OmsAuthConfig ? {auth: Auth} : {auth?: undefined});
 
-type DefaultOMSClientParams = OMSClientBaseParams & {environment?: undefined};
+type ProvidersFromAuth<Auth extends OmsAuthConfig> =
+    Auth extends {oidcProviders?: infer OidcProviders}
+        ? NonNullable<OidcProviders> extends Record<string, unknown>
+            ? NonNullable<OidcProviders>
+            : never
+        : never;
 
-class OMSClientImpl<Env extends OmsEnvironment = OmsEnvironment> {
+class OMSClientImpl<Env extends OmsEnvironment = DefaultOmsEnvironment> {
     public readonly wallet: WalletClient<Env>;
     public readonly indexer: IndexerClient;
     public readonly supportedNetworks = supportedNetworks;
 
-    constructor(params: OMSClientBaseParams & {environment?: Env}) {
-        const environment = (params.environment ?? defaultOmsEnvironment) as Env;
+    constructor(params: OMSClientBaseParams) {
+        const parsedKey = parsePublishableKey(params.publishableKey);
+        const environment = omsEnvironmentFromPublishableKey(params.publishableKey, params.auth) as Env;
         const storage = params.storage ?? createDefaultStorage()
-        const projectId = projectIdFromPublishableKey(params.publishableKey)
 
         this.wallet = new WalletClient({
             publishableKey: params.publishableKey,
-            projectId,
+            projectId: parsedKey.projectId,
             environment,
             storage,
             redirectAuthStorage: params.redirectAuthStorage,
@@ -44,22 +56,12 @@ class OMSClientImpl<Env extends OmsEnvironment = OmsEnvironment> {
     }
 }
 
-export type OMSClient<Env extends OmsEnvironment = OmsEnvironment> = OMSClientImpl<Env>;
+export type OMSClient<Env extends OmsEnvironment = DefaultOmsEnvironment> = OMSClientImpl<Env>;
 
 interface OMSClientConstructor {
-    new(params: DefaultOMSClientParams): OMSClient<typeof defaultOmsEnvironment>;
-    new<const Env extends OmsEnvironment>(params: OMSClientParams<Env>): OMSClient<Env>;
-    new(params: OMSClientBaseParams & {environment?: OmsEnvironment}): OMSClient;
+    new(params: OMSClientParams): OMSClient<DefaultOmsEnvironment>;
+    new<const Auth extends OmsAuthConfig>(params: OMSClientParams<Auth>): OMSClient<OmsEnvironment<ProvidersFromAuth<Auth>>>;
+    new(params: OMSClientBaseParams): OMSClient;
 }
 
 export const OMSClient: OMSClientConstructor = OMSClientImpl as unknown as OMSClientConstructor;
-
-function projectIdFromPublishableKey(publishableKey: string): string {
-    const match = /^pk_[^_]+_[^_]+_([^_]+)_[^_]+$/.exec(publishableKey);
-    if (!match) {
-        throw new OmsValidationError({
-            message: "Invalid publishableKey.",
-        });
-    }
-    return `prj_${match[1]}`;
-}
