@@ -76,7 +76,6 @@ import { OMSClient } from '@0xsequence/typescript-sdk'
 
 const oms = new OMSClient({
   publishableKey: 'your-publishable-key',
-  projectId: 'your-project-id',
 })
 ```
 
@@ -85,7 +84,6 @@ const oms = new OMSClient({
 ```typescript
 new OMSClient(params: {
   publishableKey: string
-  projectId: string
   environment?: OmsEnvironment
   storage?: StorageManager
   redirectAuthStorage?: StorageManager
@@ -98,7 +96,6 @@ new OMSClient(params: {
 | Name | Type | Required | Description |
 |---|---|---|---|
 | `publishableKey` | `string` | Yes | Your OMS publishable key. Wallet and IndexerGateway requests send this as the `Api-Key` header. |
-| `projectId` | `string` | Yes | Your OMS project ID. Used as the WaaS signing scope for wallet requests and OIDC redirect state. |
 | `environment` | `OmsEnvironment` | No | API endpoint configuration. Defaults to the SDK's configured OMS endpoints. |
 | `storage` | `StorageManager` | No | Storage backend for wallet metadata. Defaults to `LocalStorageManager` when browser `localStorage` is available, otherwise `MemoryStorageManager`. |
 | `redirectAuthStorage` | `StorageManager` | No | Transient storage for OIDC redirect verifier/state. Defaults to `sessionStorage` when available. |

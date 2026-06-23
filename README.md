@@ -17,20 +17,19 @@ npm install @0xsequence/typescript-sdk
 yarn add @0xsequence/typescript-sdk
 ```
 
-Then initialize the client with your OMS project credentials:
+Then initialize the client with your OMS publishable key:
 
 ```typescript
 import { OMSClient } from '@0xsequence/typescript-sdk'
 
 const oms = new OMSClient({
   publishableKey: 'your-publishable-key',
-  projectId: 'your-project-id',
 })
 ```
 
 By default, wallet requests use the sandbox WaaS API at `https://sandbox-api.dev.polygon-dev.technology`.
 
-In Vite browser apps, keep those values in local environment variables:
+In Vite browser apps, keep that value in local environment variables:
 
 ```typescript
 function requiredEnv(name: string, value: string | undefined): string {
@@ -42,7 +41,6 @@ function requiredEnv(name: string, value: string | undefined): string {
 
 const oms = new OMSClient({
   publishableKey: requiredEnv('VITE_OMS_PUBLISHABLE_KEY', import.meta.env.VITE_OMS_PUBLISHABLE_KEY),
-  projectId: requiredEnv('VITE_OMS_PROJECT_ID', import.meta.env.VITE_OMS_PROJECT_ID),
 })
 ```
 
@@ -69,7 +67,7 @@ To run it locally from the repository root:
 
 ```bash
 cp examples/react/.env.example examples/react/.env.local
-# Fill VITE_OMS_PUBLISHABLE_KEY and VITE_OMS_PROJECT_ID in examples/react/.env.local
+# Fill VITE_OMS_PUBLISHABLE_KEY in examples/react/.env.local
 pnpm dev:example
 ```
 
@@ -95,7 +93,7 @@ To run it locally from the repository root:
 
 ```bash
 cp examples/wagmi/.env.example examples/wagmi/.env.local
-# Fill VITE_OMS_PUBLISHABLE_KEY and VITE_OMS_PROJECT_ID in examples/wagmi/.env.local
+# Fill VITE_OMS_PUBLISHABLE_KEY in examples/wagmi/.env.local
 pnpm dev:wagmi-example
 ```
 
@@ -109,7 +107,7 @@ To run it locally from the repository root:
 
 ```bash
 cp examples/trails-actions/.env.example examples/trails-actions/.env.local
-# Fill VITE_OMS_PUBLISHABLE_KEY and VITE_OMS_PROJECT_ID in examples/trails-actions/.env.local
+# Fill VITE_OMS_PUBLISHABLE_KEY in examples/trails-actions/.env.local
 pnpm dev:trails-actions-example
 ```
 
@@ -121,7 +119,6 @@ import { parseUnits } from 'viem'
 
 const oms = new OMSClient({
   publishableKey: 'your-publishable-key',
-  projectId: 'your-project-id',
 })
 
 // 1. Send a one-time code to the user's email
@@ -188,7 +185,6 @@ Google redirect auth is configured on the default environment. The redirect auth
 ```typescript
 const oms = new OMSClient({
   publishableKey: 'your-publishable-key',
-  projectId: 'your-project-id',
 })
 ```
 
@@ -243,7 +239,6 @@ The SDK makes expired sessions inactive before protected wallet operations and t
 ```typescript
 const oms = new OMSClient({
   publishableKey: 'your-publishable-key',
-  projectId: 'your-project-id',
 })
 
 const unsubscribe = oms.wallet.onSessionExpired(({ session }) => {
@@ -423,7 +418,6 @@ const tx = await oms.wallet.sendTransaction({
 ```typescript
 const oms = new OMSClient({
   publishableKey: 'your-publishable-key',
-  projectId: 'your-project-id',
   environment: {
     walletApiUrl: 'https://staging-wallet.example.com',
     indexerGatewayUrl: 'https://staging-indexer.example.com/v1/IndexerGateway/',
@@ -442,7 +436,6 @@ import { MemoryStorageManager, OMSClient } from '@0xsequence/typescript-sdk'
 
 const oms = new OMSClient({
   publishableKey: 'your-publishable-key',
-  projectId: 'your-project-id',
   storage: new MemoryStorageManager(),
 })
 ```

@@ -4,10 +4,10 @@ import {createDefaultStorage, StorageManager} from "./storageManager.js";
 import {IndexerClient} from "./clients/indexerClient.js";
 import type {CredentialSigner} from "./credentialSigner.js";
 import {supportedNetworks} from "./networks.js";
+import {OmsValidationError} from "./errors.js";
 
 interface OMSClientBaseParams {
     publishableKey: string;
-    projectId: string;
     storage?: StorageManager;
     redirectAuthStorage?: StorageManager;
     credentialSigner?: CredentialSigner;
@@ -26,10 +26,11 @@ class OMSClientImpl<Env extends OmsEnvironment = OmsEnvironment> {
     constructor(params: OMSClientBaseParams & {environment?: Env}) {
         const environment = (params.environment ?? defaultOmsEnvironment) as Env;
         const storage = params.storage ?? createDefaultStorage()
+        const projectId = projectIdFromPublishableKey(params.publishableKey)
 
         this.wallet = new WalletClient({
             publishableKey: params.publishableKey,
-            projectId: params.projectId,
+            projectId,
             environment,
             storage,
             redirectAuthStorage: params.redirectAuthStorage,
@@ -52,3 +53,13 @@ interface OMSClientConstructor {
 }
 
 export const OMSClient: OMSClientConstructor = OMSClientImpl as unknown as OMSClientConstructor;
+
+function projectIdFromPublishableKey(publishableKey: string): string {
+    const match = /^pk_[^_]+_[^_]+_([^_]+)_[^_]+$/.exec(publishableKey);
+    if (!match) {
+        throw new OmsValidationError({
+            message: "Invalid publishableKey.",
+        });
+    }
+    return `prj_${match[1]}`;
+}

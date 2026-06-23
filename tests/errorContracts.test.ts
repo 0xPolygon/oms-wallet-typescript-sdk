@@ -1572,8 +1572,7 @@ function createOmsClient(params: {
     redirectAuthStorage?: MemoryStorageManager | null
 } = {}): OMSClient {
     const clientParams: ConstructorParameters<typeof OMSClient>[0] = {
-        publishableKey: "publishable-key",
-        projectId: "project-id",
+        publishableKey: "pk_test_sdbx_project_key",
         storage: new MemoryStorageManager(),
         credentialSigner: params.credentialSigner ?? new MockSigner(),
         environment: {

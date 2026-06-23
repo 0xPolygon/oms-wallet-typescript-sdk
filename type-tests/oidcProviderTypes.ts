@@ -74,22 +74,20 @@ if (false) {
 }
 
 const defaultClient = new OMSClient({
-    publishableKey: "publishable-key",
-    projectId: "project-id",
+    publishableKey: "pk_test_sdbx_project_key",
 });
 // @ts-expect-error publishableKey is required.
-new OMSClient({projectId: "project-id"});
-// @ts-expect-error projectId is required.
-new OMSClient({publishableKey: "publishable-key"});
-// @ts-expect-error old projectAccessKey initializer name is not supported.
-new OMSClient({projectAccessKey: "publishable-key", projectId: "project-id"});
-// @ts-expect-error old publicApiKey initializer name is not supported.
-new OMSClient({publicApiKey: "publishable-key", projectId: "project-id"});
-// @ts-expect-error old authorizationScope initializer name is not supported.
-new OMSClient({publishableKey: "publishable-key", authorizationScope: "project-id"});
+new OMSClient({});
+// @ts-expect-error projectId is not a constructor parameter.
+new OMSClient({publishableKey: "pk_test_sdbx_project_key", projectId: "project-id"});
+// @ts-expect-error projectAccessKey initializer name is not supported.
+new OMSClient({projectAccessKey: "pk_test_sdbx_project_key"});
+// @ts-expect-error publicApiKey initializer name is not supported.
+new OMSClient({publicApiKey: "pk_test_sdbx_project_key"});
+// @ts-expect-error authorizationScope initializer name is not supported.
+new OMSClient({publishableKey: "pk_test_sdbx_project_key", authorizationScope: "project-id"});
 new OMSClient({
-    publishableKey: "publishable-key",
-    projectId: "project-id",
+    publishableKey: "pk_test_sdbx_project_key",
     // @ts-expect-error session expiry is subscribed through wallet.onSessionExpired, not constructor params.
     onSessionExpired: () => {},
 });
@@ -207,8 +205,7 @@ const customEnvironmentWithoutProviders = defineOmsEnvironment({
     indexerGatewayUrl: "https://indexer.example",
 });
 const customClient = new OMSClient({
-    publishableKey: "publishable-key",
-    projectId: "project-id",
+    publishableKey: "pk_test_sdbx_project_key",
     environment: customEnvironmentWithoutProviders,
 });
 let broadlyTypedClient: OMSClient;
@@ -222,18 +219,15 @@ void customClient.wallet.startOidcRedirectAuth({
 
 function createClient(params: {
     publishableKey: string;
-    projectId: string;
     environment?: OmsEnvironment;
 }) {
     return new OMSClient(params);
 }
 
 void createClient({
-    publishableKey: "publishable-key",
-    projectId: "project-id",
+    publishableKey: "pk_test_sdbx_project_key",
 });
 void createClient({
-    publishableKey: "publishable-key",
-    projectId: "project-id",
+    publishableKey: "pk_test_sdbx_project_key",
     environment: customEnvironmentWithoutProviders,
 });

@@ -51,8 +51,7 @@ describe("WalletClient session storage", () => {
         vi.stubGlobal("localStorage", undefined);
 
         const client = new OMSClient({
-            publishableKey: "publishable-key",
-            projectId: "project-id",
+            publishableKey: "pk_test_sdbx_project_key",
             environment: testEnvironment(),
             credentialSigner: new MockSigner(),
         });
@@ -198,8 +197,7 @@ describe("WalletClient session storage", () => {
         storage.set(Constants.sessionEmailStorageKey, "user@example.com");
 
         const client = new OMSClient({
-            publishableKey: "publishable-key",
-            projectId: "project-id",
+            publishableKey: "pk_test_sdbx_project_key",
             environment: testEnvironment(),
             storage,
             credentialSigner: signer,
@@ -234,8 +232,7 @@ describe("WalletClient session storage", () => {
 
         const nextOnSessionExpired = vi.fn();
         const nextClient = new OMSClient({
-            publishableKey: "publishable-key",
-            projectId: "project-id",
+            publishableKey: "pk_test_sdbx_project_key",
             environment: testEnvironment(),
             storage,
             credentialSigner: signer,
@@ -268,8 +265,7 @@ describe("WalletClient session storage", () => {
         storage.set(Constants.sessionEmailStorageKey, "user@example.com");
 
         const client = new OMSClient({
-            publishableKey: "publishable-key",
-            projectId: "project-id",
+            publishableKey: "pk_test_sdbx_project_key",
             environment: testEnvironment(),
             storage,
             credentialSigner: signer,
@@ -296,8 +292,7 @@ describe("WalletClient session storage", () => {
         storage.set(Constants.sessionEmailStorageKey, "user@example.com");
 
         const client = new OMSClient({
-            publishableKey: "publishable-key",
-            projectId: "project-id",
+            publishableKey: "pk_test_sdbx_project_key",
             environment: testEnvironment(),
             storage,
             credentialSigner: signer,
@@ -610,8 +605,7 @@ describe("WalletClient session storage", () => {
         storage.set(Constants.sessionEmailStorageKey, "user@example.com");
 
         const client = new OMSClient({
-            publishableKey: "publishable-key",
-            projectId: "project-id",
+            publishableKey: "pk_test_sdbx_project_key",
             environment: testEnvironment(),
             storage,
             credentialSigner: new MockSigner(),
