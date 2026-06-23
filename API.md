@@ -38,7 +38,7 @@
 - [Errors](#errors)
 - [Types](#types)
   - [Network](#network)
-  - [OmsEnvironment](#omsenvironment)
+  - [OmsAuthConfig](#omsauthconfig)
   - [OidcProviderConfig](#oidcproviderconfig)
   - [StorageManager](#storagemanager)
   - [CredentialSigner](#credentialsigner)
@@ -84,7 +84,7 @@ const oms = new OMSClient({
 ```typescript
 new OMSClient(params: {
   publishableKey: string
-  environment?: OmsEnvironment
+  auth?: OmsAuthConfig
   storage?: StorageManager
   redirectAuthStorage?: StorageManager
   credentialSigner?: CredentialSigner
@@ -95,11 +95,22 @@ new OMSClient(params: {
 
 | Name | Type | Required | Description |
 |---|---|---|---|
-| `publishableKey` | `string` | Yes | Your OMS publishable key. Wallet and IndexerGateway requests send this as the `Api-Key` header. |
-| `environment` | `OmsEnvironment` | No | API endpoint configuration. Defaults to the SDK's configured OMS endpoints. |
+| `publishableKey` | `string` | Yes | Your OMS publishable key. Wallet and IndexerGateway requests send this as the `Api-Key` header and derive service endpoints from its prefix. |
+| `auth` | `OmsAuthConfig` | No | OIDC provider configuration. Defaults to the built-in Google provider. |
 | `storage` | `StorageManager` | No | Storage backend for wallet metadata. Defaults to `LocalStorageManager` when browser `localStorage` is available, otherwise `MemoryStorageManager`. |
 | `redirectAuthStorage` | `StorageManager` | No | Transient storage for OIDC redirect verifier/state. Defaults to `sessionStorage` when available. |
 | `credentialSigner` | `CredentialSigner` | No | Request credential signer. Defaults to a non-extractable WebCrypto P-256 signer (`ecdsa-p256-sha256`) where WebCrypto is available. |
+
+`OMSClient` derives the WaaS API base URL from the publishable key prefix. IndexerGateway uses the same base URL with `/v1/IndexerGateway/`.
+
+| Publishable key prefix | API base URL |
+|---|---|
+| `pk_dev_sdbx_` | `https://sandbox-api.dev.polygon-dev.technology` |
+| `pk_dev_live_` | `https://api.dev.polygon-dev.technology` |
+| `pk_stg_sdbx_` | `https://sandbox-api.stg.polygon-dev.technology` |
+| `pk_stg_live_` | `https://api.stg.polygon-dev.technology` |
+| `pk_sdbx_` | `https://sandbox-api.polygon.technology` |
+| `pk_live_` | `https://api.polygon.technology` |
 
 **Properties**
 
@@ -266,7 +277,7 @@ startOidcRedirectAuth(params: {
 
 Starts an OIDC authorization-code PKCE flow and returns the provider authorization URL. If a wallet session is already active, it is cleared before the new auth attempt starts. The pending verifier/state is stored in transient redirect auth storage so the callback can complete after a full-page redirect.
 
-If `provider` is a string, it must match a configured `environment.auth.oidcProviders` key. Passing an `OidcProviderConfig` object directly is also supported.
+If `provider` is a string, it must match a configured `auth.oidcProviders` key. Passing an `OidcProviderConfig` object directly is also supported.
 
 In direct mode, `redirect_uri` is `redirectUri`. In relay mode, `redirect_uri` is `relayRedirectUri`, and the encoded state includes the final app `redirect_uri`.
 
@@ -884,38 +895,32 @@ findNetworkByName(name: string): Network | undefined
 | `Networks.avalancheTestnet` | 43113 | `avalanche-testnet` | `Avalanche Testnet` | `AVAX` | `https://subnets-test.avax.network/c-chain` |
 | `Networks.katana` | 747474 | `katana` | `Katana` | `ETH` | `https://katanascan.com` |
 
-### OmsEnvironment
+### OmsAuthConfig
 
 ```typescript
-interface OmsEnvironment {
-  walletApiUrl: string
-  indexerGatewayUrl: string
-  auth?: {
-    oidcProviders?: Record<string, OidcProviderConfig>
-  }
+interface OmsAuthConfig {
+  oidcProviders?: Record<string, OidcProviderConfig>
 }
 ```
 
 | Field | Type | Description |
 |---|---|---|
-| `walletApiUrl` | `string` | Base URL of the WaaS Wallet RPC host. |
-| `indexerGatewayUrl` | `string` | Base URL of the IndexerGateway host, e.g. `"https://api.example.com/v1/IndexerGateway/"`. |
-| `auth.oidcProviders` | `Record<string, OidcProviderConfig>` | OIDC provider configurations addressable by provider key. |
+| `oidcProviders` | `Record<string, OidcProviderConfig>` | OIDC provider configurations addressable by provider key. |
 
-The default is exported as `defaultOmsEnvironment`, uses `https://sandbox-api.dev.polygon-dev.technology` as the WaaS API base URL, and includes the `google` OIDC provider.
+When `auth` is omitted, the SDK configures the built-in `google` provider. Passing `auth` replaces the configured provider set.
 
-Use `defineOmsEnvironment` to preserve typed custom OIDC provider keys:
+Use `defineOmsAuthConfig` to preserve typed custom OIDC provider keys:
 
 ```typescript
-const environment = defineOmsEnvironment({
-  ...defaultOmsEnvironment,
-  auth: {
-    ...defaultOmsEnvironment.auth,
-    oidcProviders: {
-      ...defaultOmsEnvironment.auth?.oidcProviders,
-      custom: customOidcProvider,
-    },
+const auth = defineOmsAuthConfig({
+  oidcProviders: {
+    custom: customOidcProvider,
   },
+})
+
+const oms = new OMSClient({
+  publishableKey: 'your-publishable-key',
+  auth,
 })
 ```
 

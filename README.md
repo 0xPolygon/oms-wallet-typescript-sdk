@@ -27,9 +27,9 @@ const oms = new OMSClient({
 })
 ```
 
-By default, wallet requests use the sandbox WaaS API at `https://sandbox-api.dev.polygon-dev.technology`.
+The SDK derives the WaaS API and IndexerGateway endpoints from the publishable key prefix.
 
-In Vite browser apps, keep that value in local environment variables:
+In Vite browser apps, keep the publishable key in local environment variables:
 
 ```typescript
 function requiredEnv(name: string, value: string | undefined): string {
@@ -180,7 +180,7 @@ The returned pending selection is bound to the verified auth flow and signer. Ho
 
 ### OIDC Redirect Auth
 
-Google redirect auth is configured on the default environment. The redirect auth APIs are provider-neutral, so custom environments can add or replace providers.
+Google redirect auth is configured by default. The redirect auth APIs are provider-neutral, so `auth.oidcProviders` can replace the configured provider set.
 
 ```typescript
 const oms = new OMSClient({
@@ -413,19 +413,35 @@ const tx = await oms.wallet.sendTransaction({
 
 ## Configuration
 
-### Custom Environment
+### Publishable-Key Routing
+
+`OMSClient` derives service endpoints from the publishable key. WaaS requests use the API base URL directly; indexer requests use the same base URL with `/v1/IndexerGateway/`.
+
+| Publishable key prefix | API base URL |
+|---|---|
+| `pk_dev_sdbx_` | `https://sandbox-api.dev.polygon-dev.technology` |
+| `pk_dev_live_` | `https://api.dev.polygon-dev.technology` |
+| `pk_stg_sdbx_` | `https://sandbox-api.stg.polygon-dev.technology` |
+| `pk_stg_live_` | `https://api.stg.polygon-dev.technology` |
+| `pk_sdbx_` | `https://sandbox-api.polygon.technology` |
+| `pk_live_` | `https://api.polygon.technology` |
+
+### Custom OIDC Providers
 
 ```typescript
 const oms = new OMSClient({
   publishableKey: 'your-publishable-key',
-  environment: {
-    walletApiUrl: 'https://staging-wallet.example.com',
-    indexerGatewayUrl: 'https://staging-indexer.example.com/v1/IndexerGateway/',
+  auth: {
+    oidcProviders: {
+      custom: {
+        clientId: 'custom-client-id',
+        issuer: 'https://issuer.example',
+        authorizationUrl: 'https://issuer.example/oauth/authorize',
+      },
+    },
   },
 })
 ```
-
-For indexer requests, `indexerGatewayUrl` points at the IndexerGateway base URL.
 
 ### Custom Storage and Signing
 
