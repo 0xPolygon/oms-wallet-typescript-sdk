@@ -1,10 +1,9 @@
 export { OMSClient } from './omsClient.js'
 export {
-    defineOmsEnvironment,
-    defaultOmsEnvironment,
+    defaultOmsAuthConfig,
+    defineOmsAuthConfig,
     type OidcProviderConfig,
     type OmsAuthConfig,
-    type OmsEnvironment,
 } from './omsEnvironment.js'
 export {
     googleOidcProvider,
@@ -73,12 +72,21 @@ export type {
     WalletSelectionBehavior,
 } from './clients/walletClient.js'
 export type {
+    BalancesResult,
+    ContractVerificationStatus,
+    GetBalancesParams,
+    GetTransactionHistoryParams,
+    IndexerNetworkType,
+    MetadataOptions,
+    SortBy,
     TokenContractInfo,
     TokenBalance,
     TokenBalancesPage,
-    TokenBalancesResult,
     TokenMetadata,
     TokenMetadataAsset,
+    Transaction,
+    TransactionHistoryResult,
+    TransactionTransfer,
 } from './clients/indexerClient.js'
 export type {
     AccessGrant,

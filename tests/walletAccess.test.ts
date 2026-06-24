@@ -121,6 +121,6 @@ function testCredential(seed = "11", isCaller = true) {
 function testEnvironment() {
     return {
         walletApiUrl: "https://wallet.example",
-        indexerUrlTemplate: "https://indexer.example/{value}",
+        indexerGatewayUrl: "https://indexer.example",
     };
 }

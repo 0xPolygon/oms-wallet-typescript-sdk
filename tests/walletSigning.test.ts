@@ -37,7 +37,7 @@ describe("WalletClient signing", () => {
             const body = JSON.parse(init?.body as string);
             const headers = init?.headers as Record<string, string>;
 
-            expect(headers["X-Access-Key"]).toBe("publishable-key");
+            expect(headers["Api-Key"]).toBe("publishable-key");
             expect(headers["OMS-Wallet-Signature"]).toContain('alg="ecdsa-p256-sha256"');
             expect(headers.Authorization).toBeUndefined();
 
@@ -95,7 +95,7 @@ describe("WalletClient signing", () => {
             const url = input.toString();
             const body = JSON.parse(init?.body as string);
 
-            expect((init?.headers as Record<string, string>)["X-Access-Key"]).toBe("publishable-key");
+            expect((init?.headers as Record<string, string>)["Api-Key"]).toBe("publishable-key");
             const headers = init?.headers as Record<string, string>;
             expect(headers["OMS-Wallet-Signature"]).toContain('alg="ecdsa-p256-sha256"');
             expect(headers.Authorization).toBeUndefined();
@@ -136,7 +136,7 @@ describe("WalletClient signing", () => {
             const body = JSON.parse(init?.body as string);
             const headers = init?.headers as Record<string, string>;
 
-            expect(headers["X-Access-Key"]).toBe("publishable-key");
+            expect(headers["Api-Key"]).toBe("publishable-key");
             expect(headers["OMS-Wallet-Signature"]).toBeUndefined();
             expect(headers.Authorization).toBeUndefined();
 
@@ -203,6 +203,6 @@ function jsonResponse(body: unknown): Response {
 function testEnvironment() {
     return {
         walletApiUrl: "https://wallet.example",
-        indexerUrlTemplate: "https://indexer.example/{value}",
+        indexerGatewayUrl: "https://indexer.example",
     };
 }

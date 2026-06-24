@@ -36,8 +36,6 @@ jobs:
         run: pnpm exec tsc --noEmit
 
       - name: Run tests
-        env:
-          OMS_PROJECT_ACCESS_KEY: ${{ secrets.OMS_PROJECT_ACCESS_KEY }}
         run: pnpm test
 
       - name: Build SDK
@@ -52,18 +50,15 @@ jobs:
       - name: Build React example
         run: pnpm build:example
         env:
-          VITE_OMS_PUBLISHABLE_KEY: ci-publishable-key
-          VITE_OMS_PROJECT_ID: ci-project-id
+          VITE_OMS_PUBLISHABLE_KEY: pk_ci_sdbx_ciproject_cikey
 
       - name: Build Trails Actions example
         run: pnpm build:trails-actions-example
         env:
-          VITE_OMS_PUBLISHABLE_KEY: ci-publishable-key
-          VITE_OMS_PROJECT_ID: ci-project-id
+          VITE_OMS_PUBLISHABLE_KEY: pk_ci_sdbx_ciproject_cikey
 
       - name: Build Wagmi example
         run: pnpm --filter wagmi-example build
         env:
-          VITE_OMS_PUBLISHABLE_KEY: ci-publishable-key
-          VITE_OMS_PROJECT_ID: ci-project-id
+          VITE_OMS_PUBLISHABLE_KEY: pk_ci_sdbx_ciproject_cikey
           VITE_TRAILS_API_KEY: ci-trails-key

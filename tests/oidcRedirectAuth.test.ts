@@ -2,7 +2,7 @@ import {afterEach, describe, expect, it, vi} from "vitest";
 
 import {WalletClient} from "../src/clients/walletClient";
 import type {CredentialSigner} from "../src/credentialSigner";
-import {defineOmsEnvironment, type OidcProviderConfig, type OmsEnvironment} from "../src/omsEnvironment";
+import {type OidcProviderConfig, type OmsEnvironment} from "../src/omsEnvironment";
 import {googleOidcProvider} from "../src/oidc";
 import {MemoryStorageManager} from "../src/storageManager";
 import {WalletType} from "../src/generated/waas.gen";
@@ -51,7 +51,7 @@ describe("WalletClient OIDC redirect auth", () => {
             const url = input.toString();
             const body = JSON.parse(init?.body as string);
 
-            expect(url).toBe("https://wallet.example/rpc/Wallet/CommitVerifier");
+            expect(url).toBe("https://wallet.example/v1/Waas/CommitVerifier");
             expect(body).toMatchObject({
                 identityType: "oidc",
                 authMode: "auth-code-pkce",
@@ -174,9 +174,9 @@ describe("WalletClient OIDC redirect auth", () => {
 
         const wallet = createWalletClient({
             redirectAuthStorage: new MemoryStorageManager(),
-            environment: defineOmsEnvironment({
+            environment: {
                 walletApiUrl: "https://wallet.example",
-                indexerUrlTemplate: "https://indexer.example/{value}",
+                indexerGatewayUrl: "https://indexer.example",
                 auth: {
                     oidcProviders: {
                         custom: {
@@ -186,7 +186,7 @@ describe("WalletClient OIDC redirect auth", () => {
                         },
                     },
                 },
-            }),
+            },
         });
 
         const result = await wallet.startOidcRedirectAuth({
@@ -246,9 +246,9 @@ describe("WalletClient OIDC redirect auth", () => {
             redirectAuthStorage: new MemoryStorageManager(),
             credentialSigner: signer,
             projectId: "proj_custom",
-            environment: defineOmsEnvironment({
+            environment: {
                 walletApiUrl: "https://wallet.example",
-                indexerUrlTemplate: "https://indexer.example/{value}",
+                indexerGatewayUrl: "https://indexer.example",
                 auth: {
                     oidcProviders: {
                         google: googleOidcProvider({
@@ -257,7 +257,7 @@ describe("WalletClient OIDC redirect auth", () => {
                         }),
                     },
                 },
-            }),
+            },
         });
 
         const result = await wallet.startOidcRedirectAuth({
@@ -327,9 +327,9 @@ describe("WalletClient OIDC redirect auth", () => {
         })));
         const wallet = createWalletClient({
             redirectAuthStorage: new MemoryStorageManager(),
-            environment: defineOmsEnvironment({
+            environment: {
                 walletApiUrl: "https://wallet.example",
-                indexerUrlTemplate: "https://indexer.example/{value}",
+                indexerGatewayUrl: "https://indexer.example",
                 auth: {
                     oidcProviders: {
                         custom: {
@@ -343,7 +343,7 @@ describe("WalletClient OIDC redirect auth", () => {
                         },
                     },
                 },
-            }),
+            },
         });
 
         const result = await wallet.startOidcRedirectAuth({
@@ -819,15 +819,15 @@ function createWalletClient<Env extends OmsEnvironment = ReturnType<typeof testE
 }
 
 function testEnvironment() {
-    return defineOmsEnvironment({
+    return {
         walletApiUrl: "https://wallet.example",
-        indexerUrlTemplate: "https://indexer.example/{value}",
+        indexerGatewayUrl: "https://indexer.example",
         auth: {
             oidcProviders: {
                 google: googleOidcProvider({clientId: "google-client"}),
             },
         },
-    });
+    };
 }
 
 function jsonResponse(body: unknown): Response {

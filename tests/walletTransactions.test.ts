@@ -82,34 +82,36 @@ describe("WalletClient transactions", () => {
                 });
             }
 
-            if (url.endsWith("/GetNativeTokenBalance")) {
-                expect(body).toEqual({
-                    accountAddress: "0x9999999999999999999999999999999999999999",
-                });
-                return jsonResponse({
-                    balance: {
-                        accountAddress: "0x9999999999999999999999999999999999999999",
-                        balanceWei: "1000000000000000000",
-                        chainId: 137,
-                    },
-                });
-            }
-
-            if (url.endsWith("/GetTokenBalances")) {
+            if (url.endsWith("/GetTokenBalancesDetails")) {
                 expect(body).toMatchObject({
-                    contractAddress: "0x2222222222222222222222222222222222222222",
-                    accountAddress: "0x9999999999999999999999999999999999999999",
-                    includeMetadata: false,
+                    chainIds: [137],
+                    filter: {
+                        accountAddresses: ["0x9999999999999999999999999999999999999999"],
+                        contractWhitelist: ["0x2222222222222222222222222222222222222222"],
+                        omitNativeBalances: false,
+                    },
+                    omitMetadata: true,
                 });
                 return jsonResponse({
                     page: {page: 0, pageSize: 40, more: false},
-                    balances: [{
-                        contractType: "ERC20",
-                        contractAddress: "0x2222222222222222222222222222222222222222",
-                        accountAddress: "0x9999999999999999999999999999999999999999",
-                        tokenID: null,
-                        balance: "2500000",
+                    nativeBalances: [{
                         chainId: 137,
+                        results: [{
+                            accountAddress: "0x9999999999999999999999999999999999999999",
+                            balance: "1000000000000000000",
+                            chainId: 137,
+                        }],
+                    }],
+                    balances: [{
+                        chainId: 137,
+                        results: [{
+                            contractType: "ERC20",
+                            contractAddress: "0x2222222222222222222222222222222222222222",
+                            accountAddress: "0x9999999999999999999999999999999999999999",
+                            tokenID: null,
+                            balance: "2500000",
+                            chainId: 137,
+                        }],
                     }],
                 });
             }
@@ -186,7 +188,7 @@ describe("WalletClient transactions", () => {
                 });
             }
 
-            if (url.endsWith("/GetNativeTokenBalance") || url.endsWith("/GetTokenBalances")) {
+            if (url.endsWith("/GetTokenBalancesDetails")) {
                 throw new Error("default fee selection should not load balances");
             }
 
@@ -324,17 +326,30 @@ describe("WalletClient transactions", () => {
                 });
             }
 
-            if (url.endsWith("/GetTokenBalances")) {
-                const balance = body.contractAddress === daiAddress ? "100" : "2000";
+            if (url.endsWith("/GetTokenBalancesDetails")) {
+                expect(body.filter.contractWhitelist).toEqual([daiAddress, usdcAddress]);
                 return jsonResponse({
                     page: {page: 0, pageSize: 40, more: false},
                     balances: [{
-                        contractType: "ERC20",
-                        contractAddress: body.contractAddress,
-                        accountAddress: body.accountAddress,
-                        tokenID: null,
-                        balance,
                         chainId: 137,
+                        results: [
+                            {
+                                contractType: "ERC20",
+                                contractAddress: daiAddress,
+                                accountAddress: "0x9999999999999999999999999999999999999999",
+                                tokenID: null,
+                                balance: "100",
+                                chainId: 137,
+                            },
+                            {
+                                contractType: "ERC20",
+                                contractAddress: usdcAddress,
+                                accountAddress: "0x9999999999999999999999999999999999999999",
+                                tokenID: null,
+                                balance: "2000",
+                                chainId: 137,
+                            },
+                        ],
                     }],
                 });
             }
@@ -399,16 +414,19 @@ describe("WalletClient transactions", () => {
                 });
             }
 
-            if (url.endsWith("/GetTokenBalances")) {
+            if (url.endsWith("/GetTokenBalancesDetails")) {
                 return jsonResponse({
                     page: {page: 0, pageSize: 40, more: false},
                     balances: [{
-                        contractType: "ERC20",
-                        contractAddress: body.contractAddress,
-                        accountAddress: body.accountAddress,
-                        tokenID: null,
-                        balance: "100",
                         chainId: 137,
+                        results: [{
+                            contractType: "ERC20",
+                            contractAddress: usdcAddress,
+                            accountAddress: "0x9999999999999999999999999999999999999999",
+                            tokenID: null,
+                            balance: "100",
+                            chainId: 137,
+                        }],
                     }],
                 });
             }
@@ -524,6 +542,48 @@ describe("WalletClient transactions", () => {
         });
     });
 
+    it("returns failed transaction status as terminal", async () => {
+        const fetchMock = vi.fn(async (input: RequestInfo | URL) => {
+            const url = input.toString();
+
+            if (url.endsWith("/PrepareEthereumTransaction")) {
+                return jsonResponse({
+                    txnId: "txn-failed",
+                    status: "quoted",
+                    feeOptions: [],
+                    sponsored: true,
+                    expiresAt: "2099-01-01T00:00:00Z",
+                });
+            }
+
+            if (url.endsWith("/Execute")) {
+                return jsonResponse({status: "pending"});
+            }
+
+            if (url.endsWith("/TransactionStatus")) {
+                return jsonResponse({status: "failed"});
+            }
+
+            throw new Error(`Unexpected request: ${url}`);
+        });
+        vi.stubGlobal("fetch", fetchMock);
+
+        const wallet = createWalletWithSession(
+            new MemoryStorageManager(),
+            "0x9999999999999999999999999999999999999999",
+        );
+
+        await expect(wallet.sendTransaction({
+            network: Networks.polygon,
+            to: "0x1111111111111111111111111111111111111111",
+            value: 0n,
+        })).resolves.toEqual({
+            txnId: "txn-failed",
+            status: TransactionStatus.Failed,
+        });
+        expect(fetchMock.mock.calls.filter(([input]) => input.toString().endsWith("/TransactionStatus"))).toHaveLength(1);
+    });
+
     it("exposes transaction status lookup by transaction id", async () => {
         const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
             const url = input.toString();
@@ -621,6 +681,6 @@ function jsonResponse(body: unknown): Response {
 function testEnvironment() {
     return {
         walletApiUrl: "https://wallet.example",
-        indexerUrlTemplate: "https://indexer.example/{value}",
+        indexerGatewayUrl: "https://indexer.example",
     };
 }

@@ -32,7 +32,7 @@ export function createSignedFetch(
         const existingHeaders = (init?.headers ?? {}) as Record<string, string>
         const headers: Record<string, string> = {
             ...existingHeaders,
-            'X-Access-Key': publishableKey,
+            'Api-Key': publishableKey,
             'OMS-Wallet-Signature': signatureHeader,
         }
 

@@ -27,8 +27,8 @@ import {
 import {OmsSessionError, OmsTransactionError, OmsWalletSelectionError, toOmsSdkError} from "../errors.js";
 
 import {
-    Wallet as Walletclient,
-    WalletPublic as WalletPublicclient,
+    Waas as WaasClient,
+    WaasPublic as WaasPublicClient,
     WalletType,
     TransactionMode,
     TransactionStatus,
@@ -331,8 +331,8 @@ class PendingWalletSelectionImpl implements PendingWalletSelection {
 }
 
 export class WalletClient<Env extends OmsEnvironment = OmsEnvironment> {
-    private readonly client: Walletclient
-    private readonly publicClient: WalletPublicclient
+    private readonly client: WaasClient
+    private readonly publicClient: WaasPublicClient
     private readonly storage: StorageManager
     private readonly redirectAuthStorage?: StorageManager
     private readonly credentialSigner: CredentialSigner
@@ -407,10 +407,10 @@ export class WalletClient<Env extends OmsEnvironment = OmsEnvironment> {
         }
 
         const signedFetch = createSignedFetch(params.publishableKey, this.credentialSigner, this.projectId)
-        this.client = new Walletclient(params.environment.walletApiUrl, signedFetch)
-        this.publicClient = new WalletPublicclient(
+        this.client = new WaasClient(params.environment.walletApiUrl, signedFetch)
+        this.publicClient = new WaasPublicClient(
             params.environment.walletApiUrl,
-            createAccessKeyFetch(params.publishableKey),
+            createApiKeyFetch(params.publishableKey),
         )
         this.indexerClient = new IndexerClient({
             publishableKey: params.publishableKey,
@@ -1534,20 +1534,38 @@ export class WalletClient<Env extends OmsEnvironment = OmsEnvironment> {
             throw new Error('No active wallet session')
         }
 
-        const nativeBalance = feeOptions.some(option => this.isNativeToken(option))
-            ? await this.loadNativeTokenBalance(network, walletAddress)
-            : undefined
-
         const contractAddresses = Array.from(new Set(
             feeOptions
                 .map(option => this.normalizeAddress(option.token.contractAddress))
                 .filter((address): address is string => Boolean(address)),
         ))
+        const balances = await this.indexerClient.getBalances({
+            networks: [network],
+            contractAddresses,
+            walletAddress,
+            includeMetadata: false,
+        }).catch(() => undefined)
+        const nativeBalance = feeOptions.some(option => this.isNativeToken(option))
+            ? balances?.nativeBalances.find(balance => balance.chainId === network.id)
+            : undefined
         const tokenBalances = new Map<string, TokenBalance | undefined>(
-            await Promise.all(contractAddresses.map(async contractAddress => [
+            contractAddresses.map(contractAddress => [
                 contractAddress,
-                await this.loadTokenBalanceOrZero(network, contractAddress, walletAddress),
-            ] as const)),
+                balances
+                    ? balances.balances.find(balance =>
+                        this.normalizeAddress(balance.contractAddress) === contractAddress,
+                    ) ?? {
+                        contractType: 'ERC20',
+                        contractAddress,
+                        accountAddress: walletAddress,
+                        tokenId: undefined,
+                        balance: '0',
+                        blockHash: undefined,
+                        blockNumber: undefined,
+                        chainId: network.id,
+                    }
+                    : undefined,
+            ]),
         )
 
         return feeOptions.map(feeOption => {
@@ -1565,40 +1583,6 @@ export class WalletClient<Env extends OmsEnvironment = OmsEnvironment> {
                 decimals,
             }
         })
-    }
-
-    private async loadNativeTokenBalance(
-        network: Network,
-        walletAddress: Address,
-    ): Promise<TokenBalance | undefined> {
-        return this.indexerClient.getNativeTokenBalance({
-            network,
-            walletAddress,
-        }).catch(() => undefined)
-    }
-
-    private async loadTokenBalanceOrZero(
-        network: Network,
-        contractAddress: string,
-        walletAddress: Address,
-    ): Promise<TokenBalance | undefined> {
-        return this.indexerClient.getTokenBalances({
-            network,
-            contractAddress,
-            walletAddress,
-            includeMetadata: false,
-        }).then(result => result.balances.find(balance =>
-            this.normalizeAddress(balance.contractAddress) === contractAddress,
-        ) ?? {
-            contractType: 'ERC20',
-            contractAddress,
-            accountAddress: walletAddress,
-            tokenId: undefined,
-            balance: '0',
-            blockHash: undefined,
-            blockNumber: undefined,
-            chainId: network.id,
-        }).catch(() => undefined)
     }
 
     private defaultFeeOptionSelection(
@@ -1620,7 +1604,11 @@ export class WalletClient<Env extends OmsEnvironment = OmsEnvironment> {
         do {
             lastStatus = await this.client.transactionStatus({txnId: txnId} as TransactionStatusRequest)
             completedPolls += 1
-            if (lastStatus.status === TransactionStatus.Executed || lastStatus.txnHash) {
+            if (
+                lastStatus.status === TransactionStatus.Executed ||
+                lastStatus.status === TransactionStatus.Failed ||
+                lastStatus.txnHash
+            ) {
                 return lastStatus
             }
             const pollDelayMs = this.transactionStatusPollDelayMs(completedPolls, options)
@@ -1854,12 +1842,12 @@ function defaultRedirectAuthStorage(): StorageManager | undefined {
         : undefined
 }
 
-function createAccessKeyFetch(publishableKey: string): Fetch {
+function createApiKeyFetch(publishableKey: string): Fetch {
     return async (input: RequestInfo, init?: RequestInit): Promise<Response> => {
         const existingHeaders = (init?.headers ?? {}) as Record<string, string>
         const headers: Record<string, string> = {
             ...existingHeaders,
-            'X-Access-Key': publishableKey,
+            'Api-Key': publishableKey,
         }
 
         return globalThis.fetch(input, {...init, headers})

@@ -17,18 +17,19 @@ npm install @0xsequence/typescript-sdk
 yarn add @0xsequence/typescript-sdk
 ```
 
-Then initialize the client with your OMS project credentials:
+Then initialize the client with your OMS publishable key:
 
 ```typescript
 import { OMSClient } from '@0xsequence/typescript-sdk'
 
 const oms = new OMSClient({
   publishableKey: 'your-publishable-key',
-  projectId: 'your-project-id',
 })
 ```
 
-In Vite browser apps, keep those values in local environment variables:
+The SDK derives the WaaS API and IndexerGateway endpoints from the publishable key prefix.
+
+In Vite browser apps, keep the publishable key in local environment variables:
 
 ```typescript
 function requiredEnv(name: string, value: string | undefined): string {
@@ -40,7 +41,6 @@ function requiredEnv(name: string, value: string | undefined): string {
 
 const oms = new OMSClient({
   publishableKey: requiredEnv('VITE_OMS_PUBLISHABLE_KEY', import.meta.env.VITE_OMS_PUBLISHABLE_KEY),
-  projectId: requiredEnv('VITE_OMS_PROJECT_ID', import.meta.env.VITE_OMS_PROJECT_ID),
 })
 ```
 
@@ -67,7 +67,7 @@ To run it locally from the repository root:
 
 ```bash
 cp examples/react/.env.example examples/react/.env.local
-# Fill VITE_OMS_PUBLISHABLE_KEY and VITE_OMS_PROJECT_ID in examples/react/.env.local
+# Fill VITE_OMS_PUBLISHABLE_KEY in examples/react/.env.local
 pnpm dev:example
 ```
 
@@ -93,7 +93,7 @@ To run it locally from the repository root:
 
 ```bash
 cp examples/wagmi/.env.example examples/wagmi/.env.local
-# Fill VITE_OMS_PUBLISHABLE_KEY and VITE_OMS_PROJECT_ID in examples/wagmi/.env.local
+# Fill VITE_OMS_PUBLISHABLE_KEY in examples/wagmi/.env.local
 pnpm dev:wagmi-example
 ```
 
@@ -107,7 +107,7 @@ To run it locally from the repository root:
 
 ```bash
 cp examples/trails-actions/.env.example examples/trails-actions/.env.local
-# Fill VITE_OMS_PUBLISHABLE_KEY and VITE_OMS_PROJECT_ID in examples/trails-actions/.env.local
+# Fill VITE_OMS_PUBLISHABLE_KEY in examples/trails-actions/.env.local
 pnpm dev:trails-actions-example
 ```
 
@@ -119,7 +119,6 @@ import { parseUnits } from 'viem'
 
 const oms = new OMSClient({
   publishableKey: 'your-publishable-key',
-  projectId: 'your-project-id',
 })
 
 // 1. Send a one-time code to the user's email
@@ -181,12 +180,11 @@ The returned pending selection is bound to the verified auth flow and signer. Ho
 
 ### OIDC Redirect Auth
 
-Google redirect auth is configured on the default environment. The redirect auth APIs are provider-neutral, so custom environments can add or replace providers.
+Google redirect auth is configured by default. The redirect auth APIs are provider-neutral, so `auth.oidcProviders` can replace the configured provider set.
 
 ```typescript
 const oms = new OMSClient({
   publishableKey: 'your-publishable-key',
-  projectId: 'your-project-id',
 })
 ```
 
@@ -241,7 +239,6 @@ The SDK makes expired sessions inactive before protected wallet operations and t
 ```typescript
 const oms = new OMSClient({
   publishableKey: 'your-publishable-key',
-  projectId: 'your-project-id',
 })
 
 const unsubscribe = oms.wallet.onSessionExpired(({ session }) => {
@@ -416,20 +413,35 @@ const tx = await oms.wallet.sendTransaction({
 
 ## Configuration
 
-### Custom Environment
+### Publishable-Key Routing
+
+`OMSClient` derives service endpoints from the publishable key. WaaS requests use the API base URL directly; indexer requests use the same base URL with `/v1/IndexerGateway/`.
+
+| Publishable key prefix | API base URL |
+|---|---|
+| `pk_dev_sdbx_` | `https://sandbox-api.dev.polygon-dev.technology` |
+| `pk_dev_live_` | `https://api.dev.polygon-dev.technology` |
+| `pk_stg_sdbx_` | `https://sandbox-api.stg.polygon-dev.technology` |
+| `pk_stg_live_` | `https://api.stg.polygon-dev.technology` |
+| `pk_sdbx_` | `https://sandbox-api.polygon.technology` |
+| `pk_live_` | `https://api.polygon.technology` |
+
+### Custom OIDC Providers
 
 ```typescript
 const oms = new OMSClient({
   publishableKey: 'your-publishable-key',
-  projectId: 'your-project-id',
-  environment: {
-    walletApiUrl: 'https://staging-wallet.example.com',
-    indexerUrlTemplate: 'https://staging-indexer.example.com/{value}',
+  auth: {
+    oidcProviders: {
+      custom: {
+        clientId: 'custom-client-id',
+        issuer: 'https://issuer.example',
+        authorizationUrl: 'https://issuer.example/oauth/authorize',
+      },
+    },
   },
 })
 ```
-
-For indexer requests, `{value}` is replaced with the selected `Network.name`, such as `polygon` or `amoy`.
 
 ### Custom Storage and Signing
 
@@ -440,7 +452,6 @@ import { MemoryStorageManager, OMSClient } from '@0xsequence/typescript-sdk'
 
 const oms = new OMSClient({
   publishableKey: 'your-publishable-key',
-  projectId: 'your-project-id',
   storage: new MemoryStorageManager(),
 })
 ```
@@ -497,31 +508,28 @@ const tx = await oms.wallet.callContract({
 })
 ```
 
-### Query Token and Native Balances
+### Query Balances
 
 ```typescript
 const { walletAddress } = oms.wallet
 if (!walletAddress) throw new Error('No active wallet session')
 
-const result = await oms.indexer.getTokenBalances({
-  network: Networks.polygon,
+const result = await oms.indexer.getBalances({
+  networks: [Networks.polygon],
   walletAddress,
   includeMetadata: true,
 })
 
+for (const b of result.nativeBalances) {
+  console.log(b.symbol, b.balance)
+}
+
 for (const b of result.balances) {
   console.log(b.contractInfo?.symbol, b.balance, b.contractInfo?.decimals)
 }
-
-const nativeBalance = await oms.indexer.getNativeTokenBalance({
-  network: Networks.polygon,
-  walletAddress,
-})
-
-console.log(nativeBalance?.balance)
 ```
 
-Pass `contractAddress` to filter balances to one token contract. With `includeMetadata: true`, ERC-20 decimals are available as `contractInfo.decimals`. The response is paginated; pass `page` when requesting later pages.
+Pass `contractAddresses` to filter balances to specific token contracts. Omit `networks` to query mainnets by default, or pass `networkType: 'TESTNETS'` / `'ALL'`. With `includeMetadata: true`, ERC-20 decimals are available as `contractInfo.decimals`. The response is paginated; pass `page` when requesting later pages.
 
 ### Manage Access
 

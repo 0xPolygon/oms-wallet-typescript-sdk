@@ -1,14 +1,28 @@
-// Converted from Swift IndexerClient.
+// Minimal hand-written IndexerGateway adapter for the SDK surface we expose.
 
 import {HttpClient} from "../httpClient.js";
 import {errorMessage, OmsRequestError, OmsResponseError, type OmsUpstreamError} from "../errors.js";
 import type {Network} from "../networks.js";
 import {IndexerOperation} from "../operations.js";
 
+const WebrpcHeaderValue = "webrpc@v0.31.2;gen-typescript@v0.23.1;sequence-indexer@v0.4.0";
+
+export type IndexerNetworkType = "MAINNETS" | "TESTNETS" | "ALL";
+export type ContractVerificationStatus = "VERIFIED" | "UNVERIFIED" | "ALL";
+
 export interface TokenBalancesPage {
-    page: number;
-    pageSize: number;
-    more: boolean;
+    page?: number;
+    column?: string;
+    before?: unknown;
+    after?: unknown;
+    sort?: SortBy[];
+    pageSize?: number;
+    more?: boolean;
+}
+
+export interface SortBy {
+    column: string;
+    order: "DESC" | "ASC";
 }
 
 export interface TokenContractInfo {
@@ -72,6 +86,8 @@ export interface TokenBalance {
     accountAddress?: string;
     /** Wire format uses `tokenID`; this field is re-mapped during decoding. */
     tokenId?: string;
+    name?: string;
+    symbol?: string;
     balance?: string;
     balanceUSD?: string;
     priceUSD?: string;
@@ -85,26 +101,106 @@ export interface TokenBalance {
     tokenMetadata?: TokenMetadata;
 }
 
-export interface TokenBalancesResult {
+export interface MetadataOptions {
+    verifiedOnly?: boolean;
+    unverifiedOnly?: boolean;
+    includeContracts?: string[];
+}
+
+export interface GetBalancesParams {
+    walletAddress: string;
+    networks?: Network[];
+    networkType?: IndexerNetworkType;
+    contractAddresses?: string[];
+    includeMetadata?: boolean;
+    omitPrices?: boolean;
+    tokenIds?: string[];
+    contractStatus?: ContractVerificationStatus;
+    page?: TokenBalancesPage;
+}
+
+export interface BalancesResult {
     status: number;
     page?: TokenBalancesPage;
+    nativeBalances: TokenBalance[];
     balances: TokenBalance[];
 }
 
-interface NativeTokenBalancePayloadRaw {
-    balance?: NativeTokenBalanceRaw;
+export interface TransactionTransfer {
+    transferType?: string;
+    contractAddress?: string;
+    contractType?: string;
+    from?: string;
+    to?: string;
+    tokenIds?: string[];
+    amounts?: string[];
+    logIndex?: number;
+    amountsUSD?: string[];
+    pricesUSD?: string[];
+    contractInfo?: TokenContractInfo;
+    tokenMetadata?: Record<string, TokenMetadata>;
+}
+
+export interface Transaction {
+    txnHash: string;
+    blockNumber: number;
+    blockHash: string;
+    chainId: number;
+    metaTxnId?: string;
+    transfers?: TransactionTransfer[];
+    timestamp: string;
+}
+
+export interface GetTransactionHistoryParams {
+    walletAddress: string;
+    networks?: Network[];
+    networkType?: IndexerNetworkType;
+    contractAddresses?: string[];
+    transactionHashes?: string[];
+    metaTransactionIds?: string[];
+    fromBlock?: number;
+    toBlock?: number;
+    tokenId?: string;
+    includeMetadata?: boolean;
+    omitPrices?: boolean;
+    metadataOptions?: MetadataOptions;
+    page?: TokenBalancesPage;
+}
+
+export interface TransactionHistoryResult {
+    status: number;
+    page?: TokenBalancesPage;
+    transactions: Transaction[];
+}
+
+interface GatewayNativeTokenBalances {
+    chainId: number;
+    errorReason?: string;
+    results?: NativeTokenBalanceRaw[];
+}
+
+interface GatewayTokenBalance {
+    chainId: number;
+    errorReason?: string;
+    results?: TokenBalanceRaw[];
+}
+
+interface GatewayTransaction {
+    chainId: number;
+    errorReason?: string;
+    results?: TransactionRaw[];
 }
 
 interface NativeTokenBalanceRaw {
     accountAddress?: string;
-    balance?: string;
-    balanceWei?: string;
     chainId?: number;
-}
-
-interface TokenBalancesPayloadRaw {
-    page?: TokenBalancesPage;
-    balances?: TokenBalanceRaw[];
+    name?: string;
+    symbol?: string;
+    balance?: string;
+    balanceUSD?: string;
+    priceUSD?: string;
+    priceUpdatedAt?: string;
+    errorReason?: string;
 }
 
 interface TokenBalanceRaw {
@@ -136,22 +232,75 @@ interface TokenMetadataAssetRaw extends Omit<TokenMetadataAsset, "tokenId"> {
     tokenID?: string;
 }
 
-interface RequestPage {
-    page: number;
-    pageSize: number;
-    more: boolean;
+interface TransactionRaw {
+    txnHash: string;
+    blockNumber: number;
+    blockHash: string;
+    chainId: number;
+    metaTxnID?: string;
+    transfers?: TransactionTransferRaw[];
+    timestamp: string;
 }
 
-interface TokenBalancesRequest {
-    page: RequestPage;
-    contractAddress?: string;
-    accountAddress: string;
-    includeMetadata: boolean;
+interface TransactionTransferRaw extends Omit<TransactionTransfer, "tokenIds" | "tokenMetadata"> {
+    tokenIds?: string[];
+    tokenIDs?: string[];
+    tokenMetadata?: Record<string, TokenMetadataRaw>;
+}
+
+interface TokenBalancesFilter {
+    accountAddresses: string[];
+    contractStatus?: ContractVerificationStatus;
+    contractTypes?: string[];
+    contractWhitelist?: string[];
+    contractBlacklist?: string[];
+    omitNativeBalances: boolean;
+    omitPrices?: boolean;
+    tokenIDs?: string[];
+}
+
+interface GetTokenBalancesDetailsRequest {
+    chainIds?: number[];
+    networkType?: IndexerNetworkType;
+    filter: TokenBalancesFilter;
+    omitMetadata?: boolean;
+    page?: TokenBalancesPage;
+}
+
+interface GetTokenBalancesDetailsResponse {
+    page?: TokenBalancesPage;
+    nativeBalances?: GatewayNativeTokenBalances[];
+    balances?: GatewayTokenBalance[];
+}
+
+interface TransactionHistoryFilter {
+    accountAddresses: string[];
+    contractAddresses?: string[];
+    transactionHashes?: string[];
+    metaTransactionIDs?: string[];
+    fromBlock?: number;
+    toBlock?: number;
+    tokenID?: string;
+    omitPrices?: boolean;
+}
+
+interface GetTransactionHistoryRequest {
+    chainIds?: number[];
+    networkType?: IndexerNetworkType;
+    filter: TransactionHistoryFilter;
+    includeMetadata?: boolean;
+    metadataOptions?: MetadataOptions;
+    page?: TokenBalancesPage;
+}
+
+interface GetTransactionHistoryResponse {
+    page?: TokenBalancesPage;
+    transactions?: GatewayTransaction[];
 }
 
 // Matches the Swift `OmsEnvironment` shape used by IndexerClient.
 export interface OmsEnvironment {
-    indexerUrlTemplate: string;
+    indexerGatewayUrl: string;
 }
 
 export class IndexerClient {
@@ -168,70 +317,65 @@ export class IndexerClient {
         this.client = new HttpClient();
     }
 
-    async getTokenBalances(params: {
-        network: Network
-        contractAddress?: string
-        walletAddress: string
-        includeMetadata: boolean
-        page?: {
-            page?: number
-            pageSize?: number
-        }
-    }): Promise<TokenBalancesResult> {
-        const request: TokenBalancesRequest = {
-            page: {
-                page: params.page?.page ?? 0,
-                pageSize: params.page?.pageSize ?? 40,
-                more: false,
+    async getBalances(params: GetBalancesParams): Promise<BalancesResult> {
+        const request: GetTokenBalancesDetailsRequest = {
+            ...this.chainScope(params),
+            filter: {
+                accountAddresses: [params.walletAddress],
+                contractWhitelist: nonEmpty(params.contractAddresses),
+                contractStatus: params.contractStatus,
+                omitNativeBalances: false,
+                omitPrices: params.omitPrices,
+                tokenIDs: nonEmpty(params.tokenIds),
             },
-            accountAddress: params.walletAddress,
-            includeMetadata: params.includeMetadata,
+            omitMetadata: params.includeMetadata === false,
+            page: this.requestPage(params.page),
         };
-        if (params.contractAddress) {
-            request.contractAddress = params.contractAddress;
-        }
 
-        const bodyString = JSON.stringify(request);
-        const baseUrl = this.indexerUrl(params.network);
-
-        const response = await this.postJson<TokenBalancesPayloadRaw>(IndexerOperation.getTokenBalances, {
-            baseUrl,
-            path: "/GetTokenBalances",
-            body: bodyString,
+        const response = await this.postJson<GetTokenBalancesDetailsResponse>(IndexerOperation.getBalances, {
+            baseUrl: this.indexerGatewayUrl(),
+            path: "/GetTokenBalancesDetails",
+            body: JSON.stringify(request),
             headers: this.defaultHeaders(),
         });
 
         return {
             status: response.statusCode,
             page: response.payload.page,
-            balances: (response.payload.balances ?? []).map(mapTokenBalance),
+            nativeBalances: flattenGatewayResults(response.payload.nativeBalances).map(mapNativeTokenBalance),
+            balances: flattenGatewayResults(response.payload.balances).map(mapTokenBalance),
         };
     }
 
-    async getNativeTokenBalance(params: {
-        network: Network
-        walletAddress: string
-    }): Promise<TokenBalance | undefined> {
-        const response = await this.postJson<NativeTokenBalancePayloadRaw>(IndexerOperation.getNativeTokenBalance, {
-            baseUrl: this.indexerUrl(params.network),
-            path: "/GetNativeTokenBalance",
-            body: JSON.stringify({ accountAddress: params.walletAddress }),
+    async getTransactionHistory(params: GetTransactionHistoryParams): Promise<TransactionHistoryResult> {
+        const request: GetTransactionHistoryRequest = {
+            ...this.chainScope(params),
+            filter: {
+                accountAddresses: [params.walletAddress],
+                contractAddresses: nonEmpty(params.contractAddresses),
+                transactionHashes: nonEmpty(params.transactionHashes),
+                metaTransactionIDs: nonEmpty(params.metaTransactionIds),
+                fromBlock: params.fromBlock,
+                toBlock: params.toBlock,
+                tokenID: params.tokenId,
+                omitPrices: params.omitPrices,
+            },
+            includeMetadata: params.includeMetadata ?? true,
+            metadataOptions: params.metadataOptions,
+            page: this.requestPage(params.page),
+        };
+
+        const response = await this.postJson<GetTransactionHistoryResponse>(IndexerOperation.getTransactionHistory, {
+            baseUrl: this.indexerGatewayUrl(),
+            path: "/GetTransactionHistory",
+            body: JSON.stringify(request),
             headers: this.defaultHeaders(),
         });
 
-        if (!response.payload.balance) {
-            return undefined;
-        }
-
         return {
-            contractType: "NATIVE",
-            contractAddress: undefined,
-            accountAddress: response.payload.balance.accountAddress,
-            tokenId: undefined,
-            balance: response.payload.balance.balance ?? response.payload.balance.balanceWei,
-            blockHash: undefined,
-            blockNumber: undefined,
-            chainId: response.payload.balance.chainId,
+            status: response.statusCode,
+            page: response.payload.page,
+            transactions: flattenGatewayResults(response.payload.transactions).map(mapTransaction),
         };
     }
 
@@ -287,16 +431,78 @@ export class IndexerClient {
         return {statusCode: response.statusCode, payload};
     }
 
-    private indexerUrl(network: Network): string {
-        return this.environment.indexerUrlTemplate.replace("{value}", network.name);
+    private chainScope(params: {
+        networks?: Network[]
+        networkType?: IndexerNetworkType
+    }): {chainIds?: number[], networkType?: IndexerNetworkType} {
+        if (params.networks && params.networks.length > 0) {
+            return {chainIds: params.networks.map(network => network.id)};
+        }
+        return {networkType: params.networkType ?? "MAINNETS"};
+    }
+
+    private requestPage(page: TokenBalancesPage | undefined): TokenBalancesPage {
+        return {
+            ...page,
+            page: page?.page ?? 0,
+            pageSize: page?.pageSize ?? 40,
+        };
+    }
+
+    private indexerGatewayUrl(): string {
+        return this.environment.indexerGatewayUrl;
     }
 
     private defaultHeaders(): Record<string, string> {
-        return {
-            "X-Access-Key": this.publishableKey,
+        const headers: Record<string, string> = {
+            "Api-Key": this.publishableKey,
             Accept: "application/json",
+            Webrpc: WebrpcHeaderValue,
         };
+
+        const origin = this.originHeader();
+        if (origin) {
+            headers.Origin = origin;
+        }
+
+        return headers;
     }
+
+    private originHeader(): string | undefined {
+        if (typeof globalThis.location?.origin === "string") {
+            return undefined;
+        }
+
+        // The dev IndexerGateway currently rejects originless publishable-key requests.
+        // Send the local dev origin from originless runtimes until the gateway accepts them.
+        return "http://localhost:5173";
+    }
+}
+
+function flattenGatewayResults<T>(groups: Array<{results?: T[]}> | undefined): T[] {
+    return groups?.flatMap(group => group.results ?? []) ?? [];
+}
+
+function nonEmpty<T>(values: T[] | undefined): T[] | undefined {
+    return values && values.length > 0 ? values : undefined;
+}
+
+function mapNativeTokenBalance(raw: NativeTokenBalanceRaw): TokenBalance {
+    return {
+        contractType: "NATIVE",
+        contractAddress: undefined,
+        accountAddress: raw.accountAddress,
+        tokenId: undefined,
+        name: raw.name,
+        symbol: raw.symbol,
+        balance: raw.balance,
+        balanceUSD: raw.balanceUSD,
+        priceUSD: raw.priceUSD,
+        priceUpdatedAt: raw.priceUpdatedAt,
+        blockHash: undefined,
+        blockNumber: undefined,
+        chainId: raw.chainId,
+    };
 }
 
 /** Re-maps the wire key `tokenID` onto the camelCase `tokenId` field. */
@@ -320,6 +526,33 @@ function mapTokenBalance(raw: TokenBalanceRaw): TokenBalance {
     };
 }
 
+function mapTransaction(raw: TransactionRaw): Transaction {
+    return {
+        txnHash: raw.txnHash,
+        blockNumber: raw.blockNumber,
+        blockHash: raw.blockHash,
+        chainId: raw.chainId,
+        metaTxnId: raw.metaTxnID,
+        transfers: raw.transfers?.map(mapTransactionTransfer),
+        timestamp: raw.timestamp,
+    };
+}
+
+function mapTransactionTransfer(raw: TransactionTransferRaw): TransactionTransfer {
+    const {tokenIDs, tokenMetadata, ...transfer} = raw;
+    return {
+        ...transfer,
+        tokenIds: raw.tokenIds ?? tokenIDs,
+        tokenMetadata: tokenMetadata ? mapTokenMetadataRecord(tokenMetadata) : undefined,
+    };
+}
+
+function mapTokenMetadataRecord(raw: Record<string, TokenMetadataRaw>): Record<string, TokenMetadata> {
+    return Object.fromEntries(
+        Object.entries(raw).map(([tokenId, metadata]) => [tokenId, mapTokenMetadata(metadata)]),
+    );
+}
+
 function mapTokenMetadata(raw: TokenMetadataRaw): TokenMetadata {
     const {tokenID, assets, ...metadata} = raw;
     return {
@@ -336,11 +569,9 @@ function mapTokenMetadata(raw: TokenMetadataRaw): TokenMetadata {
 }
 
 function responseErrorMessage(payload: unknown, operation: IndexerOperation, status: number): string {
-    if (payload && typeof payload === "object" && "message" in payload) {
-        const message = (payload as {message?: unknown}).message;
-        if (typeof message === "string" && message) {
-            return message;
-        }
+    const message = gatewayErrorMessage(payload);
+    if (message) {
+        return message;
     }
     return `${operation} failed with HTTP ${status}`;
 }
@@ -369,9 +600,15 @@ function indexerResponseError(payload: unknown, status: number, fallbackMessage:
         service: "indexer",
         name: stringField(payload, "name") ?? stringField(payload, "error"),
         code: numberOrStringField(payload, "code"),
-        message: stringField(payload, "message") ?? fallbackMessage,
+        message: gatewayErrorMessage(payload) ?? fallbackMessage,
         status,
     };
+}
+
+function gatewayErrorMessage(payload: unknown): string | undefined {
+    return stringField(payload, "message")
+        ?? stringField(payload, "cause")
+        ?? stringField(payload, "msg");
 }
 
 function stringField(source: unknown, key: string): string | undefined {

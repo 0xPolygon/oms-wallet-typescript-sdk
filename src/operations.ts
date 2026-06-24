@@ -28,8 +28,8 @@ export const WalletOperation = {
 export type WalletOperation = typeof WalletOperation[keyof typeof WalletOperation]
 
 export const IndexerOperation = {
-    getTokenBalances: "indexer.getTokenBalances",
-    getNativeTokenBalance: "indexer.getNativeTokenBalance",
+    getBalances: "indexer.getBalances",
+    getTransactionHistory: "indexer.getTransactionHistory",
 } as const
 
 export type IndexerOperation = typeof IndexerOperation[keyof typeof IndexerOperation]
