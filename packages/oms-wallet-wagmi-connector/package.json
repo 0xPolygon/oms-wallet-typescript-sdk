@@ -1,6 +1,6 @@
 {
   "name": "@0xsequence/oms-wallet-wagmi-connector",
-  "version": "0.1.0-alpha.3",
+  "version": "0.1.0-alpha.4",
   "description": "Wagmi connector for OMS Wallet.",
   "type": "module",
   "main": "dist/index.js",
