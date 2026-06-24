@@ -451,7 +451,7 @@ Signs an arbitrary message using the active wallet session credential.
 
 ```typescript
 import { Networks } from '@0xsequence/typescript-sdk'
-const sigFromNetwork = await oms.wallet.signMessage({ network: Networks.polygon, message: 'some message to sing' })
+const sigFromNetwork = await oms.wallet.signMessage({ network: Networks.polygon, message: 'some message to sign' })
 ```
 
 ---
@@ -799,6 +799,26 @@ getTransactionHistory(params: {
 ```
 
 Fetches mined transaction history for a wallet. Pass `networks` to query explicit SDK network objects. If `networks` is omitted, the request defaults to `networkType: 'MAINNETS'`. `includeMetadata` defaults to `true`. Use `metadataOptions` to tune returned token and contract metadata.
+
+**Parameters**
+
+| Name | Type | Description |
+|---|---|---|
+| `walletAddress` | `string` | The wallet address whose transaction history to fetch. Use `oms.wallet.walletAddress` after checking it is defined. |
+| `networks` | `Network[]` | Optional explicit networks to query. Use exported registry values such as `Networks.polygon`. |
+| `networkType` | `'MAINNETS' \| 'TESTNETS' \| 'ALL'` | Optional network group when `networks` is omitted. Defaults to `'MAINNETS'`. |
+| `contractAddresses` | `string[]` | Optional token contract filter. |
+| `transactionHashes` | `string[]` | Optional transaction hash filter. |
+| `metaTransactionIds` | `string[]` | Optional meta-transaction ID filter. |
+| `fromBlock` | `number` | Optional starting block number. |
+| `toBlock` | `number` | Optional ending block number. |
+| `tokenId` | `string` | Optional token ID filter. |
+| `includeMetadata` | `boolean` | Optional metadata flag. Defaults to `true`. |
+| `omitPrices` | `boolean` | Optional price exclusion flag. |
+| `metadataOptions` | `MetadataOptions` | Optional metadata enrichment filters. See [MetadataOptions](#metadataoptions). |
+| `page` | `TokenBalancesPage` | Optional pagination request. |
+
+**Returns** `Promise<TransactionHistoryResult>` — see [TransactionHistoryResult](#transactionhistoryresult).
 
 ---
 
@@ -1565,7 +1585,13 @@ interface MetadataOptions {
 }
 ```
 
-Options for transaction metadata enrichment.
+Options for transaction metadata enrichment. Use `contractStatus` on [`getBalances`](#getbalances) to filter balance queries by contract verification status; use `metadataOptions` on [`getTransactionHistory`](#gettransactionhistory) to tune metadata returned with transaction history.
+
+| Field | Type | Description |
+|---|---|---|
+| `verifiedOnly` | `boolean` | Request metadata for verified contracts only. |
+| `unverifiedOnly` | `boolean` | Request metadata for unverified contracts only. |
+| `includeContracts` | `string[]` | Limit metadata enrichment to specific contract addresses. |
 
 ---
 

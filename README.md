@@ -301,7 +301,7 @@ The `network` parameter on all transaction and signing methods accepts a `Networ
 ```typescript
 import { Networks, findNetworkById, supportedNetworks } from '@0xsequence/typescript-sdk'
 
-await oms.wallet.signMessage({ network: Networks.polygon, message: 'some message to sing' })
+await oms.wallet.signMessage({ network: Networks.polygon, message: 'some message to sign' })
 
 console.log(supportedNetworks)
 console.log(findNetworkById(80002)) // Networks.amoy
@@ -487,13 +487,13 @@ OIDC redirect auth uses separate transient storage for verifier/state data. In b
 ```typescript
 const signature = await oms.wallet.signMessage({
   network: Networks.polygon,
-  message: 'some message to sing',
+  message: 'some message to sign',
 })
 
 const isValid = await oms.wallet.isValidMessageSignature({
   network: Networks.polygon,
   walletAddress: oms.wallet.walletAddress,
-  message: 'some message to sing',
+  message: 'some message to sign',
   signature,
 })
 ```
