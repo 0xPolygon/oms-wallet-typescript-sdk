@@ -111,6 +111,28 @@ cp examples/trails-actions/.env.example examples/trails-actions/.env.local
 pnpm dev:trails-actions-example
 ```
 
+## Node Example
+
+The Node example walks through email OTP sign-in and message signing from a terminal.
+
+To run it locally from the repository root:
+
+```bash
+OMS_PUBLISHABLE_KEY=your-publishable-key pnpm dev:node-example
+```
+
+## Node Contract Deploy Example
+
+The Node contract deploy example compiles a small ERC-20 contract and submits a Polygon Amoy deployment transaction through the OMS wallet API.
+
+To run it locally from the repository root:
+
+```bash
+cp examples/node-contract-deploy-example/.env.example examples/node-contract-deploy-example/.env.local
+# Fill OMS_PUBLISHABLE_KEY in examples/node-contract-deploy-example/.env.local
+pnpm dev:node-contract-deploy-example
+```
+
 ## Quick Start
 
 ```typescript
