@@ -6,6 +6,8 @@ interface PublishableKeyRoute {
 }
 
 const publishableKeyRoutes: PublishableKeyRoute[] = [
+    {prefix: "pk_local_sdbx_", apiUrl: "https://sandbox-api.local.polygon-dev.technology"},
+    {prefix: "pk_local_live_", apiUrl: "https://api.local.polygon-dev.technology"},
     {prefix: "pk_dev_sdbx_", apiUrl: "https://sandbox-api.dev.polygon-dev.technology"},
     {prefix: "pk_dev_live_", apiUrl: "https://api.dev.polygon-dev.technology"},
     {prefix: "pk_stg_sdbx_", apiUrl: "https://sandbox-api.stg.polygon-dev.technology"},

@@ -12,6 +12,8 @@ afterEach(() => {
 
 describe("OMSClient publishable key routing", () => {
     it.each([
+        ["pk_local_sdbx_project_key", "https://sandbox-api.local.polygon-dev.technology"],
+        ["pk_local_live_project_key", "https://api.local.polygon-dev.technology"],
         ["pk_dev_sdbx_project_key", "https://sandbox-api.dev.polygon-dev.technology"],
         ["pk_dev_live_project_key", "https://api.dev.polygon-dev.technology"],
         ["pk_stg_sdbx_project_key", "https://sandbox-api.stg.polygon-dev.technology"],

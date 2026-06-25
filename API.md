@@ -40,8 +40,14 @@
   - [Network](#network)
   - [OmsAuthConfig](#omsauthconfig)
   - [OidcProviderConfig](#oidcproviderconfig)
+  - [OIDC Provider Helpers](#oidc-provider-helpers)
+  - [Auth Method Types](#auth-method-types)
   - [StorageManager](#storagemanager)
+  - [Storage Helpers](#storage-helpers)
   - [CredentialSigner](#credentialsigner)
+  - [Credential Signing Helpers](#credential-signing-helpers)
+  - [Session Listener Types](#session-listener-types)
+  - [Signing and Validation Method Types](#signing-and-validation-method-types)
   - [OmsWallet](#omswallet)
   - [PendingWalletSelection](#pendingwalletselection)
   - [WalletSelectionBehavior](#walletselectionbehavior)
@@ -49,14 +55,29 @@
   - [AccessGrant](#accessgrant)
   - [ListAccessParams](#listaccessparams)
   - [AccessGrantPage](#accessgrantpage)
+  - [WalletActivationResult](#walletactivationresult)
   - [SendNativeTransactionParams](#sendnativetransactionparams)
   - [SendDataTransactionParams](#senddatatransactionparams)
   - [SendContractTransactionParams](#sendcontracttransactionparams)
   - [SendTransactionResponse](#sendtransactionresponse)
+  - [TransactionStatusResponse](#transactionstatusresponse)
   - [TransactionStatusPollingOptions](#transactionstatuspollingoptions)
+  - [TransactionMode](#transactionmode)
+  - [TransactionStatus](#transactionstatus)
   - [FeeOptionSelector](#feeoptionselector)
+  - [FeeOption](#feeoption)
+  - [FeeOptionSelection](#feeoptionselection)
+  - [FeeOptionWithBalance](#feeoptionwithbalance)
+  - [GetBalancesParams](#getbalancesparams)
+  - [GetTransactionHistoryParams](#gettransactionhistoryparams)
+  - [IndexerNetworkType](#indexernetworktype)
+  - [ContractVerificationStatus](#contractverificationstatus)
+  - [MetadataOptions](#metadataoptions)
+  - [SortBy](#sortby)
   - [BalancesResult](#balancesresult)
   - [TransactionHistoryResult](#transactionhistoryresult)
+  - [Transaction](#transaction)
+  - [TransactionTransfer](#transactiontransfer)
   - [TokenBalancesPage](#tokenbalancespage)
   - [TokenBalance](#tokenbalance)
   - [TokenContractInfo](#tokencontractinfo)
@@ -95,22 +116,11 @@ new OMSClient(params: {
 
 | Name | Type | Required | Description |
 |---|---|---|---|
-| `publishableKey` | `string` | Yes | Your OMS publishable key. Wallet and IndexerGateway requests send this as the `Api-Key` header and derive service endpoints from its prefix. |
+| `publishableKey` | `string` | Yes | Your OMS publishable key. |
 | `auth` | `OmsAuthConfig` | No | OIDC provider configuration. Defaults to the built-in Google provider. |
 | `storage` | `StorageManager` | No | Storage backend for wallet metadata. Defaults to `LocalStorageManager` when browser `localStorage` is available, otherwise `MemoryStorageManager`. |
-| `redirectAuthStorage` | `StorageManager` | No | Transient storage for OIDC redirect verifier/state. Defaults to `sessionStorage` when available. |
+| `redirectAuthStorage` | `StorageManager` | No | Transient storage for OIDC redirect auth state. Defaults to `sessionStorage` when available. |
 | `credentialSigner` | `CredentialSigner` | No | Request credential signer. Defaults to a non-extractable WebCrypto P-256 signer (`ecdsa-p256-sha256`) where WebCrypto is available. |
-
-`OMSClient` derives the WaaS API base URL from the publishable key prefix. IndexerGateway uses the same base URL with `/v1/IndexerGateway/`.
-
-| Publishable key prefix | API base URL |
-|---|---|
-| `pk_dev_sdbx_` | `https://sandbox-api.dev.polygon-dev.technology` |
-| `pk_dev_live_` | `https://api.dev.polygon-dev.technology` |
-| `pk_stg_sdbx_` | `https://sandbox-api.stg.polygon-dev.technology` |
-| `pk_stg_live_` | `https://api.stg.polygon-dev.technology` |
-| `pk_sdbx_` | `https://sandbox-api.polygon.technology` |
-| `pk_live_` | `https://api.polygon.technology` |
 
 **Properties**
 
@@ -220,7 +230,7 @@ completeEmailAuth(params: {
 
 Verifies the OTP code and activates a wallet. Must be called after [`startEmailAuth`](#startemailauth).
 
-This method verifies the code with a one-week WaaS session lifetime by default, loads all wallet pages, then automatically selects an existing wallet matching `walletType`, or creates a new one if none exists. Wallet metadata is persisted to storage. Pass `sessionLifetimeSeconds` to request a shorter or longer WaaS session lifetime. Pass `walletSelection: 'manual'` to return a [`PendingWalletSelection`](#pendingwalletselection) bound to the verified auth flow; complete selection through that object.
+This method verifies the code with a one-week session lifetime by default, loads all wallet pages, then automatically selects an existing wallet matching `walletType`, or creates a new one if none exists. Wallet metadata is persisted to storage. Pass `sessionLifetimeSeconds` to request a shorter or longer session lifetime. Pass `walletSelection: 'manual'` to return a [`PendingWalletSelection`](#pendingwalletselection) bound to the verified auth flow; complete selection through that object.
 
 **Parameters**
 
@@ -229,7 +239,7 @@ This method verifies the code with a one-week WaaS session lifetime by default, 
 | `code` | `string` | Yes | The one-time passcode entered by the user. |
 | `walletType` | `WalletType` | No | The wallet type to load or create. Defaults to `WalletType.Ethereum`. |
 | `walletSelection` | `'automatic' \| 'manual'` | No | Defaults to `'automatic'`. Set to `'manual'` to let the app choose an existing wallet or create one through the returned pending selection. |
-| `sessionLifetimeSeconds` | `number` | No | Requested WaaS session lifetime in seconds. Defaults to one week. |
+| `sessionLifetimeSeconds` | `number` | No | Requested session lifetime in seconds. Defaults to one week. |
 
 **Returns** `Promise<{ walletAddress: Address; wallet: OmsWallet; wallets: OmsWallet[]; credential: WalletCredential }>` by default, or `Promise<PendingWalletSelection>` when `walletSelection` is `'manual'`.
 
@@ -275,11 +285,11 @@ startOidcRedirectAuth(params: {
 }): Promise<{ url: string; state: string; challenge: string }>
 ```
 
-Starts an OIDC authorization-code PKCE flow and returns the provider authorization URL. If a wallet session is already active, it is cleared before the new auth attempt starts. The pending verifier/state is stored in transient redirect auth storage so the callback can complete after a full-page redirect.
+Starts an OIDC authorization-code PKCE flow and returns the provider authorization URL. If a wallet session is already active, it is cleared before the new auth attempt starts. The SDK stores transient redirect auth state so the callback can complete after a full-page redirect.
 
 If `provider` is a string, it must match a configured `auth.oidcProviders` key. Passing an `OidcProviderConfig` object directly is also supported.
 
-In direct mode, `redirect_uri` is `redirectUri`. In relay mode, `redirect_uri` is `relayRedirectUri`, and the encoded state includes the final app `redirect_uri`.
+When `relayRedirectUri` is set, the provider redirects through that relay before returning to the app `redirectUri`.
 
 Pass `loginHint` for Google redirect flows to set the Google `login_hint` authorization parameter, which can prefill or select the expected account. The SDK only sends `login_hint` for providers whose issuer is `https://accounts.google.com`. If omitted, the SDK falls back to the previous active session email when one exists before the redirect auth attempt starts. After `signOut()`, that previous session email is cleared. To force no `login_hint` for a call, pass `loginHint: ''`.
 
@@ -309,7 +319,7 @@ completeOidcRedirectAuth(params: {
 >
 ```
 
-Completes an OIDC redirect flow by validating the persisted state nonce, exchanging the authorization code with WaaS using a one-week session lifetime by default, and activating an existing wallet or creating one. Pass `sessionLifetimeSeconds` to request a shorter or longer WaaS session lifetime. Pass `walletSelection: 'manual'` to return a [`PendingWalletSelection`](#pendingwalletselection) for app-driven wallet selection. `cleanUrl` removes OAuth query parameters after successful completion; outside a browser, pass `replaceUrl`.
+Completes an OIDC redirect flow by validating the callback, completing auth with a one-week session lifetime by default, and activating an existing wallet or creating one. Pass `sessionLifetimeSeconds` to request a shorter or longer session lifetime. Pass `walletSelection: 'manual'` to return a [`PendingWalletSelection`](#pendingwalletselection) for app-driven wallet selection. `cleanUrl` removes OAuth query parameters after successful completion; outside a browser, pass `replaceUrl`.
 
 ```typescript
 const { walletAddress, credential } = await oms.wallet.completeOidcRedirectAuth({
@@ -441,7 +451,7 @@ Signs an arbitrary message using the active wallet session credential.
 
 ```typescript
 import { Networks } from '@0xsequence/typescript-sdk'
-const sigFromNetwork = await oms.wallet.signMessage({ network: Networks.polygon, message: 'some message to sing' })
+const sigFromNetwork = await oms.wallet.signMessage({ network: Networks.polygon, message: 'some message to sign' })
 ```
 
 ---
@@ -473,7 +483,7 @@ isValidMessageSignature(params: {
 }): Promise<boolean>
 ```
 
-Validates a message signature through the WaaS public wallet RPC. If neither `walletAddress` nor `walletId` is provided, the active wallet session id is used when available.
+Validates a message signature. If neither `walletAddress` nor `walletId` is provided, the active wallet session id is used when available.
 
 ---
 
@@ -489,7 +499,7 @@ isValidTypedDataSignature(params: {
 }): Promise<boolean>
 ```
 
-Validates an EIP-712 typed data signature through the WaaS public wallet RPC. If neither `walletAddress` nor `walletId` is provided, the active wallet session id is used when available.
+Validates an EIP-712 typed data signature. If neither `walletAddress` nor `walletId` is provided, the active wallet session id is used when available.
 
 ---
 
@@ -499,7 +509,7 @@ Validates an EIP-712 typed data signature through the WaaS public wallet RPC. If
 getTransactionStatus(params: { txnId: string }): Promise<TransactionStatusResponse>
 ```
 
-Fetches the latest WaaS status for a prepared/executed transaction. This is useful after calling [`sendTransaction`](#sendtransaction) with `waitForStatus: false`.
+Fetches the latest status for a prepared/executed transaction. This is useful after calling [`sendTransaction`](#sendtransaction) with `waitForStatus: false`.
 
 ---
 
@@ -578,8 +588,8 @@ All three variants share the following optional base fields:
 |---|---|---|
 | `value` | `bigint` | Native token value to attach (in wei). |
 | `mode` | `TransactionMode` | Transaction execution mode. Defaults to `TransactionMode.Relayer`. |
-| `selectFeeOption` | `FeeOptionSelector` | Optional callback for choosing a WaaS fee option. |
-| `waitForStatus` | `boolean` | Set to `false` to return immediately after execute without polling WaaS transaction status. |
+| `selectFeeOption` | `FeeOptionSelector` | Optional callback for choosing a fee option. |
+| `waitForStatus` | `boolean` | Set to `false` to return immediately after execute without polling transaction status. |
 | `statusPolling` | `TransactionStatusPollingOptions` | Optional post-execute polling configuration. |
 
 **Returns** `Promise<SendTransactionResponse>` — the prepared transaction ID, latest status, and transaction hash when available.
@@ -587,7 +597,7 @@ All three variants share the following optional base fields:
 **Throws** if no session is active, the transaction reverts, or the request fails.
 
 When fee options are returned, `selectFeeOption` receives `FeeOptionWithBalance[]`.
-Each entry includes the generated `FeeOption` plus the selected wallet's balance
+Each entry includes the `FeeOption` plus the selected wallet's balance
 for that fee token when the indexer can load it. Use
 `FeeOptionSelector.firstAvailable` to choose the first option the wallet can pay,
 or return `option.selection` from a custom selector.
@@ -620,8 +630,8 @@ Calls a state-changing smart contract function using a method signature string a
 | `method` | `string` | Yes | ABI function signature, e.g. `"transfer(address,uint256)"`. |
 | `args` | `AbiArg[]` | No | Ordered list of typed arguments. See [AbiArg](#abiarg). |
 | `mode` | `TransactionMode` | No | Transaction execution mode. Defaults to `TransactionMode.Relayer`. |
-| `selectFeeOption` | `FeeOptionSelector` | No | Optional callback for choosing a WaaS fee option. |
-| `waitForStatus` | `boolean` | No | Set to `false` to return immediately after execute without polling WaaS transaction status. |
+| `selectFeeOption` | `FeeOptionSelector` | No | Optional callback for choosing a fee option. |
+| `waitForStatus` | `boolean` | No | Set to `false` to return immediately after execute without polling transaction status. |
 | `statusPolling` | `TransactionStatusPollingOptions` | No | Optional post-execute polling configuration. |
 
 **Returns** `Promise<SendTransactionResponse>` — the prepared transaction ID, latest status, and transaction hash when available.
@@ -650,7 +660,7 @@ const tx = await oms.wallet.callContract({
 listAccess(params?: ListAccessParams): Promise<AccessGrant[]>
 ```
 
-Returns all credentials that currently have access to this wallet. The SDK follows WaaS cursors internally and flattens all pages into one array.
+Returns all credentials that currently have access to this wallet across all pages.
 
 **Returns** `Promise<AccessGrant[]>` — see [AccessGrant](#accessgrant).
 
@@ -709,7 +719,7 @@ if (other) {
 
 ## IndexerClient
 
-Accessed via `oms.indexer`. Queries on-chain balances and transaction history through IndexerGateway.
+Accessed via `oms.indexer`. Queries on-chain balances and transaction history.
 
 ### getBalances
 
@@ -722,6 +732,7 @@ getBalances(params: {
   includeMetadata?: boolean
   omitPrices?: boolean
   tokenIds?: string[]
+  contractStatus?: ContractVerificationStatus
   page?: TokenBalancesPage
 }): Promise<BalancesResult>
 ```
@@ -739,6 +750,7 @@ Fetches native and token balances for a wallet. Pass `networks` to query explici
 | `includeMetadata` | `boolean` | Optional metadata flag. Defaults to `true`. |
 | `omitPrices` | `boolean` | Optional price exclusion flag. |
 | `tokenIds` | `string[]` | Optional token ID filter. |
+| `contractStatus` | `ContractVerificationStatus` | Optional contract verification filter. |
 | `page` | `TokenBalancesPage` | Optional pagination request. Defaults to `{ page: 0, pageSize: 40 }`. |
 
 **Returns** `Promise<BalancesResult>` — see [BalancesResult](#balancesresult).
@@ -781,11 +793,32 @@ getTransactionHistory(params: {
   tokenId?: string
   includeMetadata?: boolean
   omitPrices?: boolean
+  metadataOptions?: MetadataOptions
   page?: TokenBalancesPage
 }): Promise<TransactionHistoryResult>
 ```
 
-Fetches mined transaction history for a wallet. Pass `networks` to query explicit SDK network objects. If `networks` is omitted, the request defaults to `networkType: 'MAINNETS'`. `includeMetadata` defaults to `true`.
+Fetches mined transaction history for a wallet. Pass `networks` to query explicit SDK network objects. If `networks` is omitted, the request defaults to `networkType: 'MAINNETS'`. `includeMetadata` defaults to `true`. Use `metadataOptions` to tune returned token and contract metadata.
+
+**Parameters**
+
+| Name | Type | Description |
+|---|---|---|
+| `walletAddress` | `string` | The wallet address whose transaction history to fetch. Use `oms.wallet.walletAddress` after checking it is defined. |
+| `networks` | `Network[]` | Optional explicit networks to query. Use exported registry values such as `Networks.polygon`. |
+| `networkType` | `'MAINNETS' \| 'TESTNETS' \| 'ALL'` | Optional network group when `networks` is omitted. Defaults to `'MAINNETS'`. |
+| `contractAddresses` | `string[]` | Optional token contract filter. |
+| `transactionHashes` | `string[]` | Optional transaction hash filter. |
+| `metaTransactionIds` | `string[]` | Optional meta-transaction ID filter. |
+| `fromBlock` | `number` | Optional starting block number. |
+| `toBlock` | `number` | Optional ending block number. |
+| `tokenId` | `string` | Optional token ID filter. |
+| `includeMetadata` | `boolean` | Optional metadata flag. Defaults to `true`. |
+| `omitPrices` | `boolean` | Optional price exclusion flag. |
+| `metadataOptions` | `MetadataOptions` | Optional metadata enrichment filters. See [MetadataOptions](#metadataoptions). |
+| `page` | `TokenBalancesPage` | Optional pagination request. |
+
+**Returns** `Promise<TransactionHistoryResult>` — see [TransactionHistoryResult](#transactionhistoryresult).
 
 ---
 
@@ -954,6 +987,93 @@ googleOidcProvider({
 
 ---
 
+### OIDC Provider Helpers
+
+```typescript
+type OidcProviderName<Env> = string
+type OidcProviderInput<Env> = OidcProviderName<Env> | OidcProviderConfig
+
+interface GoogleOidcProviderParams {
+  clientId?: string
+  relayRedirectUri?: string
+  scopes?: string[]
+  authorizeParams?: Record<string, string>
+}
+
+const defaultOmsAuthConfig: OmsAuthConfig
+```
+
+`OidcProviderName` is narrowed from the configured `auth.oidcProviders` keys when `OMSClient` is constructed with `defineOmsAuthConfig`. `googleOidcProvider(params)` accepts `GoogleOidcProviderParams` and returns an `OidcProviderConfig`. `defaultOmsAuthConfig` contains the SDK's built-in Google provider configuration.
+
+---
+
+### Auth Method Types
+
+```typescript
+interface CompleteEmailAuthParams {
+  code: string
+  walletType?: WalletType
+  walletSelection?: WalletSelectionBehavior
+  sessionLifetimeSeconds?: number
+}
+
+interface CompleteEmailAuthResult {
+  walletAddress: Address
+  wallet: OmsWallet
+  wallets: OmsWallet[]
+  credential: WalletCredential
+}
+
+interface StartOidcRedirectAuthParams<Env> {
+  provider: OidcProviderInput<Env>
+  redirectUri: string
+  walletType?: WalletType
+  relayRedirectUri?: string
+  authorizeParams?: Record<string, string>
+  loginHint?: string
+}
+
+interface StartOidcRedirectAuthResult {
+  url: string
+  state: string
+  challenge: string
+}
+
+interface CompleteOidcRedirectAuthParams {
+  callbackUrl: string
+  cleanUrl?: boolean
+  replaceUrl?: (url: string) => void
+  walletSelection?: WalletSelectionBehavior
+  sessionLifetimeSeconds?: number
+}
+
+interface CompleteOidcRedirectAuthResult {
+  walletAddress: Address
+  wallet: OmsWallet
+  wallets: OmsWallet[]
+  credential: WalletCredential
+}
+
+interface SignInWithOidcRedirectParams<Env> {
+  provider: OidcProviderInput<Env>
+  redirectUri?: string
+  walletType?: WalletType
+  walletSelection?: WalletSelectionBehavior
+  relayRedirectUri?: string
+  authorizeParams?: Record<string, string>
+  loginHint?: string
+  sessionLifetimeSeconds?: number
+  cleanUrl?: boolean
+  currentUrl?: string
+  assignUrl?: (url: string) => void
+  replaceUrl?: (url: string) => void
+}
+```
+
+Exported parameter and result interfaces for the email OTP and OIDC redirect methods documented above.
+
+---
+
 ### StorageManager
 
 ```typescript
@@ -964,15 +1084,31 @@ interface StorageManager {
 }
 ```
 
-Interface for wallet metadata storage. Implement this to use a custom backend. The SDK defaults to `LocalStorageManager` when browser `localStorage` is available and `MemoryStorageManager` otherwise; raw default session private keys are not stored here.
+Interface for wallet metadata storage. Implement this to use a custom backend. The SDK defaults to `LocalStorageManager` when browser `localStorage` is available and `MemoryStorageManager` otherwise.
+
+---
+
+### Storage Helpers
+
+```typescript
+class LocalStorageManager implements StorageManager
+class SessionStorageManager implements StorageManager
+class MemoryStorageManager implements StorageManager
+
+function createDefaultStorage(): StorageManager
+```
+
+`createDefaultStorage()` returns `LocalStorageManager` when browser `localStorage` is available, otherwise `MemoryStorageManager`. OIDC redirect state defaults to `SessionStorageManager` when browser `sessionStorage` is available.
 
 ---
 
 ### CredentialSigner
 
 ```typescript
+type CredentialSigningAlgorithm = 'ecdsa-p256k-eip191' | 'ecdsa-p256-sha256'
+
 interface CredentialSigner {
-  readonly signingAlgorithm: 'ecdsa-p256k-eip191' | 'ecdsa-p256-sha256'
+  readonly signingAlgorithm: CredentialSigningAlgorithm
   credentialId(): Promise<string>
   nextNonce(): Promise<string>
   sign(preimage: string): Promise<string>
@@ -982,6 +1118,82 @@ interface CredentialSigner {
 ```
 
 Interface for request credential signing. The default implementation is `WebCryptoP256CredentialSigner`, which uses `ecdsa-p256-sha256` and a non-extractable WebCrypto private key.
+
+---
+
+### Credential Signing Helpers
+
+```typescript
+class WebCryptoP256CredentialSigner implements CredentialSigner
+class EthereumPrivateKeyCredentialSigner implements CredentialSigner
+```
+
+`WebCryptoP256CredentialSigner` is the browser default. `EthereumPrivateKeyCredentialSigner` signs credential requests with an EVM private key and is useful for Node.js or server-side usage where the caller provides key material directly.
+
+---
+
+### Session Listener Types
+
+```typescript
+type OMSClientSessionLoginType = 'email' | 'google-auth' | 'oidc'
+
+interface OMSClientSessionState {
+  walletAddress: Address | undefined
+  expiresAt: string | undefined
+  loginType: OMSClientSessionLoginType | undefined
+  sessionEmail: string | undefined
+}
+
+interface OMSClientSessionExpiredEvent {
+  session: OMSClientSessionState
+  expiredAt: string
+}
+
+type OMSClientSessionExpiredListener = (
+  event: OMSClientSessionExpiredEvent
+) => void | Promise<void>
+```
+
+Session state and listener types used by [`session`](#session) and [`onSessionExpired`](#onsessionexpired).
+
+---
+
+### Signing and Validation Method Types
+
+```typescript
+interface SignMessageParams {
+  network: Network
+  message: string
+}
+
+interface SignTypedDataParams {
+  network: Network
+  typedData: any
+}
+
+interface GetIdTokenParams {
+  ttlSeconds?: number
+  customClaims?: Record<string, unknown>
+}
+
+interface IsValidMessageSignatureParams {
+  network?: Network
+  walletAddress?: Address
+  walletId?: string
+  message: string
+  signature: string
+}
+
+interface IsValidTypedDataSignatureParams {
+  network?: Network
+  walletAddress?: Address
+  walletId?: string
+  typedData: any
+  signature: string
+}
+```
+
+Exported parameter interfaces for signing, ID token, and signature validation methods.
 
 ---
 
@@ -1065,7 +1277,7 @@ interface ListAccessParams {
 
 | Field | Type | Description |
 |---|---|---|
-| `pageSize` | `number` | Requested page size for WaaS calls. The server applies its own default and maximum. |
+| `pageSize` | `number` | Requested page size. The service applies its own default and maximum. |
 
 ---
 
@@ -1080,6 +1292,19 @@ interface AccessGrantPage {
 | Field | Type | Description |
 |---|---|---|
 | `grants` | `AccessGrant[]` | Credentials yielded for this page. |
+
+---
+
+### WalletActivationResult
+
+```typescript
+interface WalletActivationResult {
+  walletAddress: Address
+  wallet: OmsWallet
+}
+```
+
+Returned when an existing wallet is selected or a new wallet is created and activated.
 
 ---
 
@@ -1154,7 +1379,20 @@ type SendTransactionResponse = {
 }
 ```
 
-`txnHash` is present once WaaS reports a published transaction. If polling times out while the transaction is still pending, use `txnId` to check status later.
+`txnHash` is present once the transaction is published. If polling times out while the transaction is still pending, use `txnId` to check status later.
+
+---
+
+### TransactionStatusResponse
+
+```typescript
+interface TransactionStatusResponse {
+  status: TransactionStatus
+  txnHash?: string
+}
+```
+
+Returned by [`getTransactionStatus`](#gettransactionstatus).
 
 ---
 
@@ -1169,7 +1407,35 @@ type TransactionStatusPollingOptions = {
 }
 ```
 
-Controls how `sendTransaction` polls WaaS transaction status after execute when `waitForStatus` is not `false`.
+Controls how `sendTransaction` polls transaction status after execute when `waitForStatus` is not `false`.
+
+---
+
+### TransactionMode
+
+```typescript
+enum TransactionMode {
+  Native = 'native',
+  Relayer = 'relayer'
+}
+```
+
+Controls how the SDK prepares a wallet transaction. Transaction methods default to `TransactionMode.Relayer`.
+
+---
+
+### TransactionStatus
+
+```typescript
+enum TransactionStatus {
+  Quoted = 'quoted',
+  Pending = 'pending',
+  Executed = 'executed',
+  Failed = 'failed'
+}
+```
+
+Returned in transaction execution and status responses.
 
 ---
 
@@ -1183,7 +1449,54 @@ type FeeOptionSelector = (
 const FeeOptionSelector: {
   firstAvailable: FeeOptionSelector
 }
+```
 
+When no selector is provided, the SDK uses the first required fee option, or no
+fee option for sponsored transactions. `FeeOptionSelector.firstAvailable` uses
+enriched balances to skip underfunded fee options and selects the first option
+the wallet can pay. For custom selectors, return `option.selection` to select
+that fee option.
+
+---
+
+### FeeOption
+
+```typescript
+interface FeeOption {
+  token: {
+    network: string
+    name: string
+    symbol: string
+    type: string
+    decimals?: number
+    logoURL?: string
+    contractAddress?: string
+    tokenID?: string
+  }
+  value: string
+  displayValue: string
+}
+```
+
+A fee token option returned during transaction preparation. `value` is the token amount in base units.
+
+---
+
+### FeeOptionSelection
+
+```typescript
+interface FeeOptionSelection {
+  token: string
+}
+```
+
+The selector payload for a fee option. In custom selectors, return the `selection` field from `FeeOptionWithBalance`.
+
+---
+
+### FeeOptionWithBalance
+
+```typescript
 type FeeOptionWithBalance = {
   feeOption: FeeOption
   selection: FeeOptionSelection
@@ -1194,11 +1507,104 @@ type FeeOptionWithBalance = {
 }
 ```
 
-When no selector is provided, the SDK uses the first required fee option, or no
-fee option for sponsored transactions. `FeeOptionSelector.firstAvailable` uses
-enriched balances to skip underfunded fee options and selects the first option
-the wallet can pay. For custom selectors, return `option.selection` to select
-that fee option.
+Fee option plus the active wallet's indexer balance for that token, when the SDK can load it.
+
+---
+
+### GetBalancesParams
+
+```typescript
+interface GetBalancesParams {
+  walletAddress: string
+  networks?: Network[]
+  networkType?: IndexerNetworkType
+  contractAddresses?: string[]
+  includeMetadata?: boolean
+  omitPrices?: boolean
+  tokenIds?: string[]
+  contractStatus?: ContractVerificationStatus
+  page?: TokenBalancesPage
+}
+```
+
+Parameters for [`getBalances`](#getbalances).
+
+---
+
+### GetTransactionHistoryParams
+
+```typescript
+interface GetTransactionHistoryParams {
+  walletAddress: string
+  networks?: Network[]
+  networkType?: IndexerNetworkType
+  contractAddresses?: string[]
+  transactionHashes?: string[]
+  metaTransactionIds?: string[]
+  fromBlock?: number
+  toBlock?: number
+  tokenId?: string
+  includeMetadata?: boolean
+  omitPrices?: boolean
+  metadataOptions?: MetadataOptions
+  page?: TokenBalancesPage
+}
+```
+
+Parameters for [`getTransactionHistory`](#gettransactionhistory).
+
+---
+
+### IndexerNetworkType
+
+```typescript
+type IndexerNetworkType = 'MAINNETS' | 'TESTNETS' | 'ALL'
+```
+
+Network group used when explicit `networks` are not provided.
+
+---
+
+### ContractVerificationStatus
+
+```typescript
+type ContractVerificationStatus = 'VERIFIED' | 'UNVERIFIED' | 'ALL'
+```
+
+Optional contract verification filter for balance queries.
+
+---
+
+### MetadataOptions
+
+```typescript
+interface MetadataOptions {
+  verifiedOnly?: boolean
+  unverifiedOnly?: boolean
+  includeContracts?: string[]
+}
+```
+
+Options for transaction metadata enrichment. Use `contractStatus` on [`getBalances`](#getbalances) to filter balance queries by contract verification status; use `metadataOptions` on [`getTransactionHistory`](#gettransactionhistory) to tune metadata returned with transaction history.
+
+| Field | Type | Description |
+|---|---|---|
+| `verifiedOnly` | `boolean` | Request metadata for verified contracts only. |
+| `unverifiedOnly` | `boolean` | Request metadata for unverified contracts only. |
+| `includeContracts` | `string[]` | Limit metadata enrichment to specific contract addresses. |
+
+---
+
+### SortBy
+
+```typescript
+interface SortBy {
+  column: string
+  order: 'DESC' | 'ASC'
+}
+```
+
+Sort descriptor used in indexer pagination requests.
 
 ---
 
@@ -1215,7 +1621,7 @@ interface BalancesResult {
 
 | Field | Type | Description |
 |---|---|---|
-| `status` | `number` | HTTP status code of the indexer response. |
+| `status` | `number` | Response status code. |
 | `page` | `TokenBalancesPage` | Pagination metadata, if present. |
 | `nativeBalances` | `TokenBalance[]` | Native token balances for the requested address. |
 | `balances` | `TokenBalance[]` | Array of token balance entries for the requested address. |
@@ -1234,9 +1640,50 @@ interface TransactionHistoryResult {
 
 | Field | Type | Description |
 |---|---|---|
-| `status` | `number` | HTTP status code of the indexer response. |
+| `status` | `number` | Response status code. |
 | `page` | `TokenBalancesPage` | Pagination metadata, if present. |
 | `transactions` | `Transaction[]` | Flattened transaction entries across the requested networks. |
+
+---
+
+### Transaction
+
+```typescript
+interface Transaction {
+  txnHash: string
+  blockNumber: number
+  blockHash: string
+  chainId: number
+  metaTxnId?: string
+  transfers?: TransactionTransfer[]
+  timestamp: string
+}
+```
+
+Indexer transaction entry returned by [`getTransactionHistory`](#gettransactionhistory).
+
+---
+
+### TransactionTransfer
+
+```typescript
+interface TransactionTransfer {
+  transferType?: string
+  contractAddress?: string
+  contractType?: string
+  from?: string
+  to?: string
+  tokenIds?: string[]
+  amounts?: string[]
+  logIndex?: number
+  amountsUSD?: string[]
+  pricesUSD?: string[]
+  contractInfo?: TokenContractInfo
+  tokenMetadata?: Record<string, TokenMetadata>
+}
+```
+
+Token or native transfer details associated with an indexer transaction entry.
 
 ---
 
@@ -1245,20 +1692,24 @@ interface TransactionHistoryResult {
 ```typescript
 interface TokenBalancesPage {
   page?: number
+  column?: string
   pageSize?: number
   more?: boolean
   before?: unknown
   after?: unknown
+  sort?: SortBy[]
 }
 ```
 
 | Field | Type | Description |
 |---|---|---|
 | `page` | `number` | Current page index (zero-based). |
+| `column` | `string` | Pagination column, when returned or requested. |
 | `pageSize` | `number` | Number of entries per page. |
 | `more` | `boolean` | `true` if additional pages are available. |
-| `before` | `unknown` | Gateway cursor before the current page, when returned. |
-| `after` | `unknown` | Gateway cursor after the current page, when returned. |
+| `before` | `unknown` | Cursor before the current page, when returned. |
+| `after` | `unknown` | Cursor after the current page, when returned. |
+| `sort` | `SortBy[]` | Optional sort descriptors. |
 
 ---
 
@@ -1270,6 +1721,8 @@ interface TokenBalance {
   contractAddress?: string
   accountAddress?: string
   tokenId?: string
+  name?: string
+  symbol?: string
   balance?: string
   balanceUSD?: string
   priceUSD?: string
@@ -1290,6 +1743,8 @@ interface TokenBalance {
 | `contractAddress` | `string` | Address of the token contract. |
 | `accountAddress` | `string` | Wallet address this balance belongs to. |
 | `tokenId` | `string` | For ERC-721/ERC-1155 tokens, the token ID. |
+| `name` | `string` | Token name, when returned directly on the balance row. |
+| `symbol` | `string` | Token symbol, when returned directly on the balance row. |
 | `balance` | `string` | Balance in the token's smallest denomination. |
 | `balanceUSD` | `string` | USD value when returned by the Indexer. |
 | `priceUSD` | `string` | Token price in USD when returned by the Indexer. |

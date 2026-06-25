@@ -111,6 +111,28 @@ cp examples/trails-actions/.env.example examples/trails-actions/.env.local
 pnpm dev:trails-actions-example
 ```
 
+## Node Example
+
+The Node example walks through email OTP sign-in and message signing from a terminal.
+
+To run it locally from the repository root:
+
+```bash
+OMS_PUBLISHABLE_KEY=your-publishable-key pnpm dev:node-example
+```
+
+## Node Contract Deploy Example
+
+The Node contract deploy example compiles a small ERC-20 contract and submits a Polygon Amoy deployment transaction through the OMS wallet API.
+
+To run it locally from the repository root:
+
+```bash
+cp examples/node-contract-deploy-example/.env.example examples/node-contract-deploy-example/.env.local
+# Fill OMS_PUBLISHABLE_KEY in examples/node-contract-deploy-example/.env.local
+pnpm dev:node-contract-deploy-example
+```
+
 ## Quick Start
 
 ```typescript
@@ -279,7 +301,7 @@ The `network` parameter on all transaction and signing methods accepts a `Networ
 ```typescript
 import { Networks, findNetworkById, supportedNetworks } from '@0xsequence/typescript-sdk'
 
-await oms.wallet.signMessage({ network: Networks.polygon, message: 'some message to sing' })
+await oms.wallet.signMessage({ network: Networks.polygon, message: 'some message to sign' })
 
 console.log(supportedNetworks)
 console.log(findNetworkById(80002)) // Networks.amoy
@@ -465,13 +487,13 @@ OIDC redirect auth uses separate transient storage for verifier/state data. In b
 ```typescript
 const signature = await oms.wallet.signMessage({
   network: Networks.polygon,
-  message: 'some message to sing',
+  message: 'some message to sign',
 })
 
 const isValid = await oms.wallet.isValidMessageSignature({
   network: Networks.polygon,
   walletAddress: oms.wallet.walletAddress,
-  message: 'some message to sing',
+  message: 'some message to sign',
   signature,
 })
 ```
