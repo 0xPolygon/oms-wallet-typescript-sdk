@@ -84,6 +84,7 @@
   - [TokenMetadata](#tokenmetadata)
   - [TokenMetadataAsset](#tokenmetadataasset)
   - [AbiArg](#abiarg)
+  - [AuthMode](#authmode)
   - [WalletType](#wallettype)
 
 ---
@@ -117,7 +118,7 @@ new OMSClient(params: {
 | Name | Type | Required | Description |
 |---|---|---|---|
 | `publishableKey` | `string` | Yes | Your OMS publishable key. |
-| `auth` | `OmsAuthConfig` | No | OIDC provider configuration. Defaults to the built-in Google provider. |
+| `auth` | `OmsAuthConfig` | No | OIDC provider configuration. Defaults to the built-in Google and Apple providers. |
 | `storage` | `StorageManager` | No | Storage backend for wallet metadata. Defaults to `LocalStorageManager` when browser `localStorage` is available, otherwise `MemoryStorageManager`. |
 | `redirectAuthStorage` | `StorageManager` | No | Transient storage for OIDC redirect auth state. Defaults to `sessionStorage` when available. |
 | `credentialSigner` | `CredentialSigner` | No | Request credential signer. Defaults to a non-extractable WebCrypto P-256 signer (`ecdsa-p256-sha256`) where WebCrypto is available. |
@@ -277,19 +278,25 @@ await selection.createAndSelectWallet({ reference: 'main' })
 ```typescript
 startOidcRedirectAuth(params: {
   provider: string | OidcProviderConfig
-  redirectUri: string
+  redirectUri?: string
   walletType?: WalletType
+  walletSelection?: 'automatic' | 'manual'
+  sessionLifetimeSeconds?: number
   relayRedirectUri?: string
   authorizeParams?: Record<string, string>
   loginHint?: string
 }): Promise<{ url: string; state: string; challenge: string }>
 ```
 
-Starts an OIDC authorization-code PKCE flow and returns the provider authorization URL. If a wallet session is already active, it is cleared before the new auth attempt starts. The SDK stores transient redirect auth state so the callback can complete after a full-page redirect.
+Starts an OIDC authorization-code redirect flow and returns the provider authorization URL. If a wallet session is already active, it is cleared before the new auth attempt starts. The SDK stores transient redirect auth state so the callback can complete after a full-page redirect.
 
 If `provider` is a string, it must match a configured `auth.oidcProviders` key. Passing an `OidcProviderConfig` object directly is also supported.
 
+In browser environments, `redirectUri` defaults to the current page URL without query or hash. Outside a browser, pass `redirectUri`.
+
 When `relayRedirectUri` is set, the provider redirects through that relay before returning to the app `redirectUri`.
+
+Pass `walletSelection` or `sessionLifetimeSeconds` at start to store completion preferences in the pending redirect state. `completeOidcRedirectAuth` uses those stored values after the provider redirects back unless completion params override them.
 
 Pass `loginHint` for Google redirect flows to set the Google `login_hint` authorization parameter, which can prefill or select the expected account. The SDK only sends `login_hint` for providers whose issuer is `https://accounts.google.com`. If omitted, the SDK falls back to the previous active session email when one exists before the redirect auth attempt starts. After `signOut()`, that previous session email is cleared. To force no `login_hint` for a call, pass `loginHint: ''`.
 
@@ -308,24 +315,29 @@ window.location.assign(url)
 
 ```typescript
 completeOidcRedirectAuth(params: {
-  callbackUrl: string
+  callbackUrl?: string
   cleanUrl?: boolean
   replaceUrl?: (url: string) => void
   walletSelection?: 'automatic' | 'manual'
   sessionLifetimeSeconds?: number
-}): Promise<
+} = {}): Promise<
   | { walletAddress: Address; wallet: OmsWallet; wallets: OmsWallet[]; credential: WalletCredential }
   | PendingWalletSelection
+  | void
 >
 ```
 
-Completes an OIDC redirect flow by validating the callback, completing auth with a one-week session lifetime by default, and activating an existing wallet or creating one. Pass `sessionLifetimeSeconds` to request a shorter or longer session lifetime. Pass `walletSelection: 'manual'` to return a [`PendingWalletSelection`](#pendingwalletselection) for app-driven wallet selection. `cleanUrl` removes OAuth query parameters after successful completion; outside a browser, pass `replaceUrl`.
+Completes an OIDC redirect flow by validating the callback, completing auth with a one-week session lifetime by default, and activating an existing wallet or creating one. In browser environments, `callbackUrl` defaults to `window.location.href`; if the current URL has no OIDC callback params, the method returns `undefined` without requiring pending redirect storage.
+
+Pass `sessionLifetimeSeconds` to request a shorter or longer session lifetime. Pass `walletSelection: 'manual'` to return a [`PendingWalletSelection`](#pendingwalletselection) for app-driven wallet selection. If omitted, completion uses values stored by `startOidcRedirectAuth` or `signInWithOidcRedirect`, then falls back to automatic wallet selection and the default one-week lifetime.
+
+When `callbackUrl` is omitted, OAuth query parameters are cleaned by default. Explicit `callbackUrl` calls clean only when `cleanUrl: true`; outside a browser, pass `replaceUrl` when cleaning.
 
 ```typescript
-const { walletAddress, credential } = await oms.wallet.completeOidcRedirectAuth({
-  callbackUrl: window.location.href,
-  cleanUrl: true,
-})
+const result = await oms.wallet.completeOidcRedirectAuth()
+if (result) {
+  console.log(result.walletAddress)
+}
 ```
 
 ---
@@ -342,17 +354,23 @@ signInWithOidcRedirect(params: {
   authorizeParams?: Record<string, string>
   loginHint?: string
   sessionLifetimeSeconds?: number
-  cleanUrl?: boolean
   currentUrl?: string
   assignUrl?: (url: string) => void
-  replaceUrl?: (url: string) => void
-}): Promise<{ walletAddress: Address; wallet: OmsWallet; wallets: OmsWallet[]; credential: WalletCredential } | PendingWalletSelection | void>
+}): Promise<void>
 ```
 
-Browser convenience method for regular web apps. If the current URL has OIDC callback params, it completes auth and returns the same result as [`completeOidcRedirectAuth`](#completeoidcredirectauth). Otherwise it starts auth, redirects with `window.location.assign`, and returns `void`. `loginHint` is passed through to the started redirect flow; `sessionLifetimeSeconds` is used when completing the callback and defaults to one week when omitted. For router-driven apps, prefer [`startOidcRedirectAuth`](#startoidcredirectauth) and [`completeOidcRedirectAuth`](#completeoidcredirectauth).
+Browser convenience method for regular web apps. It starts OIDC redirect auth, stores pending redirect state, redirects with `window.location.assign`, and returns `void`. Use [`completeOidcRedirectAuth`](#completeoidcredirectauth) on the callback page to finish auth.
+
+`redirectUri` defaults to the current page URL without query or hash. Pass `currentUrl` to derive that value from a specific URL, and pass `assignUrl` outside a browser or when testing. `walletSelection` and `sessionLifetimeSeconds` are stored with the pending redirect state and used by `completeOidcRedirectAuth` after the provider redirects back.
 
 ```typescript
 void oms.wallet.signInWithOidcRedirect({ provider: 'google' })
+void oms.wallet.signInWithOidcRedirect({ provider: 'apple' })
+
+const result = await oms.wallet.completeOidcRedirectAuth()
+if (result) {
+  console.log(result.walletAddress)
+}
 ```
 
 ---
@@ -940,7 +958,7 @@ interface OmsAuthConfig {
 |---|---|---|
 | `oidcProviders` | `Record<string, OidcProviderConfig>` | OIDC provider configurations addressable by provider key. |
 
-When `auth` is omitted, the SDK configures the built-in `google` provider. Passing `auth` replaces the configured provider set.
+When `auth` is omitted, the SDK configures the built-in `google` and `apple` providers. Passing `auth` replaces the configured provider set.
 
 Use `defineOmsAuthConfig` to preserve typed custom OIDC provider keys:
 
@@ -969,8 +987,11 @@ type OidcProviderConfig = {
   scopes?: string[]
   relayRedirectUri?: string
   authorizeParams?: Record<string, string>
+  authMode?: AuthMode.AuthCode | AuthMode.AuthCodePKCE
 }
 ```
+
+Provider configs are the source of truth for authorization scopes. If `scopes` is omitted or empty, the SDK does not send a `scope` authorization parameter. `authMode` defaults to `AuthMode.AuthCodePKCE`.
 
 Google can be configured with the `googleOidcProvider` helper:
 
@@ -982,6 +1003,19 @@ googleOidcProvider()
 googleOidcProvider({
   clientId: 'your-google-client-id',
   relayRedirectUri: 'http://localhost:8090/callback',
+})
+```
+
+Apple can be configured with the `appleOidcProvider` helper:
+
+```typescript
+// Uses the SDK default Apple Services ID (`service.oms.polygon.technology`) and relay redirect URI.
+appleOidcProvider()
+
+// Override defaults when needed.
+appleOidcProvider({
+  clientId: 'your-apple-services-id',
+  relayRedirectUri: 'https://app.example/auth/callback',
 })
 ```
 
@@ -998,12 +1032,21 @@ interface GoogleOidcProviderParams {
   relayRedirectUri?: string
   scopes?: string[]
   authorizeParams?: Record<string, string>
+  authMode?: AuthMode.AuthCode | AuthMode.AuthCodePKCE
+}
+
+interface AppleOidcProviderParams {
+  clientId?: string
+  relayRedirectUri?: string
+  scopes?: string[]
+  authorizeParams?: Record<string, string>
+  authMode?: AuthMode.AuthCode | AuthMode.AuthCodePKCE
 }
 
 const defaultOmsAuthConfig: OmsAuthConfig
 ```
 
-`OidcProviderName` is narrowed from the configured `auth.oidcProviders` keys when `OMSClient` is constructed with `defineOmsAuthConfig`. `googleOidcProvider(params)` accepts `GoogleOidcProviderParams` and returns an `OidcProviderConfig`. `defaultOmsAuthConfig` contains the SDK's built-in Google provider configuration.
+`OidcProviderName` is narrowed from the configured `auth.oidcProviders` keys when `OMSClient` is constructed with `defineOmsAuthConfig`. `googleOidcProvider(params)` and `appleOidcProvider(params)` return `OidcProviderConfig` values. `defaultOmsAuthConfig` contains the SDK's built-in Google and Apple provider configuration.
 
 ---
 
@@ -1026,8 +1069,10 @@ interface CompleteEmailAuthResult {
 
 interface StartOidcRedirectAuthParams<Env> {
   provider: OidcProviderInput<Env>
-  redirectUri: string
+  redirectUri?: string
   walletType?: WalletType
+  walletSelection?: WalletSelectionBehavior
+  sessionLifetimeSeconds?: number
   relayRedirectUri?: string
   authorizeParams?: Record<string, string>
   loginHint?: string
@@ -1040,7 +1085,7 @@ interface StartOidcRedirectAuthResult {
 }
 
 interface CompleteOidcRedirectAuthParams {
-  callbackUrl: string
+  callbackUrl?: string
   cleanUrl?: boolean
   replaceUrl?: (url: string) => void
   walletSelection?: WalletSelectionBehavior
@@ -1063,10 +1108,8 @@ interface SignInWithOidcRedirectParams<Env> {
   authorizeParams?: Record<string, string>
   loginHint?: string
   sessionLifetimeSeconds?: number
-  cleanUrl?: boolean
   currentUrl?: string
   assignUrl?: (url: string) => void
-  replaceUrl?: (url: string) => void
 }
 ```
 
@@ -1853,6 +1896,21 @@ A loosely-typed ABI argument used by [`callContract`](#callcontract). For fully-
 |---|---|---|
 | `type` | `string` | Solidity type string, e.g. `"address"`, `"uint256"`, `"bytes32"`, `"bool"`. |
 | `value` | `any` | The argument value. Use a string for large integers to avoid precision loss. |
+
+---
+
+### AuthMode
+
+```typescript
+enum AuthMode {
+  OTP = 'otp',
+  IDToken = 'id-token',
+  AuthCode = 'auth-code',
+  AuthCodePKCE = 'auth-code-pkce'
+}
+```
+
+OIDC provider configs support `AuthMode.AuthCode` and `AuthMode.AuthCodePKCE`. Redirect auth defaults to `AuthMode.AuthCodePKCE` when a provider does not specify `authMode`.
 
 ---
 

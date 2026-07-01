@@ -175,7 +175,7 @@ console.log(tx.txnHash ?? tx.txnId)
 
 ## Authentication Flow
 
-OMS supports email-based OTP and OIDC authorization-code PKCE redirect auth.
+OMS supports email-based OTP and OIDC authorization-code redirect auth.
 
 ### Email OTP Auth
 
@@ -202,7 +202,7 @@ The returned pending selection is bound to the verified auth flow and signer. Ho
 
 ### OIDC Redirect Auth
 
-Google redirect auth is configured by default. The redirect auth APIs are provider-neutral, so `auth.oidcProviders` can replace the configured provider set.
+Google and Apple redirect auth are configured by default. The redirect auth APIs are provider-neutral, so `auth.oidcProviders` can replace the configured provider set when you need custom providers.
 
 ```typescript
 const oms = new OMSClient({
@@ -210,40 +210,49 @@ const oms = new OMSClient({
 })
 ```
 
-For routers such as React Router or Next.js, use the explicit start/complete methods:
+For router-driven apps, use the explicit start/complete methods:
 
 ```typescript
 const { url } = await oms.wallet.startOidcRedirectAuth({
   provider: 'google',
-  redirectUri: `${window.location.origin}/auth/callback`,
+  redirectUri: `${window.location.origin}/auth/callback`, // optional in browser apps
 })
 
 window.location.assign(url)
 
 // On the callback route:
-const { walletAddress, wallet, wallets, credential } = await oms.wallet.completeOidcRedirectAuth({
-  callbackUrl: window.location.href,
-  cleanUrl: true,
-})
+const result = await oms.wallet.completeOidcRedirectAuth()
+if (result) {
+  console.log('Wallet address:', result.walletAddress)
+}
 ```
 
-OIDC redirect auth also supports manual wallet selection by passing `walletSelection: 'manual'` to `completeOidcRedirectAuth`.
+OIDC redirect auth also supports manual wallet selection by passing `walletSelection: 'manual'` to `startOidcRedirectAuth` or `completeOidcRedirectAuth`. Options passed at start are stored with the pending redirect state and used after the provider redirects back.
 
-For simple browser apps, use the one-call convenience method from a sign-in action and from the callback page:
+For simple browser apps, use `signInWithOidcRedirect` from a sign-in action. It calls `startOidcRedirectAuth`, derives the current page as `redirectUri`, and navigates with `window.location.assign`:
 
 ```typescript
 void oms.wallet.signInWithOidcRedirect({ provider: 'google' })
+void oms.wallet.signInWithOidcRedirect({ provider: 'apple' })
+
+// On the callback page:
+const result = await oms.wallet.completeOidcRedirectAuth()
+if (result) {
+  console.log('Wallet address:', result.walletAddress)
+}
 ```
 
 Pass `loginHint` only when you want to prefill or select a specific Google account, such as during session-expiry reauth. The SDK only sends `login_hint` for Google providers. When omitted, the SDK falls back to the previous active session email when one exists before the redirect auth attempt starts. After `signOut()`, that previous session email is cleared. To force no `login_hint` for a call, pass `loginHint: ''`.
 
 Pending redirect state is stored in `sessionStorage` by default. Final wallet session metadata continues to use the configured SDK storage.
 
+`appleOidcProvider()` uses the SDK default Apple Services ID (`service.oms.polygon.technology`), the SDK relay redirect URI, `response_mode=query`, no scopes, and PKCE auth-code mode by default. Requesting Apple `email` or `name` scopes requires Apple `response_mode=form_post`, which is not handled by the SDK's URL-query callback parser without a relay that converts the callback.
+
 ### Session State
 
 Email and OIDC auth both persist the active wallet session in the configured SDK storage. Browser storage defaults to `localStorage` when available; non-browser runtimes fall back to in-memory storage unless you provide a custom `StorageManager`. Browser signing defaults to a non-extractable WebCrypto P-256 credential using `ecdsa-p256-sha256`, so the private session key is not written to `localStorage`. Completed auth requests ask WaaS for a one-week session lifetime.
 
-Pass `sessionLifetimeSeconds` to `completeEmailAuth`, `completeOidcRedirectAuth`, or `signInWithOidcRedirect` to request a different session lifetime for that auth completion.
+Pass `sessionLifetimeSeconds` to `completeEmailAuth`, `startOidcRedirectAuth`, `completeOidcRedirectAuth`, or `signInWithOidcRedirect` to request a different session lifetime. For OIDC redirects, values passed at start are stored with the pending redirect state and used on callback completion unless completion overrides them.
 
 Use `oms.wallet.walletAddress` when you only need the active wallet address. Use `oms.wallet.session` when you also need credential expiry, login type, or the email returned by the wallet API.
 
@@ -459,11 +468,14 @@ const oms = new OMSClient({
         clientId: 'custom-client-id',
         issuer: 'https://issuer.example',
         authorizationUrl: 'https://issuer.example/oauth/authorize',
+        scopes: ['openid', 'email', 'profile'],
       },
     },
   },
 })
 ```
+
+Provider configs are the source of truth for OIDC scopes. If `scopes` is omitted or empty, the SDK does not send a `scope` authorization parameter. OIDC auth mode defaults to PKCE; pass `authMode` when a provider needs a different WaaS auth-code mode.
 
 ### Custom Storage and Signing
 

@@ -1,5 +1,6 @@
 import {WalletClient, type OidcProviderName} from "../src/clients/walletClient";
 import {
+    AuthMode,
     Networks,
     OMSClient,
     defineOmsAuthConfig,
@@ -26,11 +27,12 @@ import {
     type TransactionHistoryResult,
 } from "../src/index";
 import {omsEnvironmentFromPublishableKey} from "../src/omsEnvironment";
-import {googleOidcProvider} from "../src/oidc";
+import {appleOidcProvider, googleOidcProvider} from "../src/oidc";
 
 const auth = defineOmsAuthConfig({
     oidcProviders: {
         google: googleOidcProvider(),
+        apple: appleOidcProvider({authMode: AuthMode.AuthCode}),
     },
 });
 const environment = omsEnvironmentFromPublishableKey("pk_dev_sdbx_project_key", auth);
@@ -39,6 +41,8 @@ type ProviderName = OidcProviderName<typeof environment>;
 
 const configuredProvider: ProviderName = "google";
 void configuredProvider;
+const configuredAppleProvider: ProviderName = "apple";
+void configuredAppleProvider;
 
 // @ts-expect-error github is not configured in this static environment.
 const unknownProvider: ProviderName = "github";
@@ -48,6 +52,10 @@ if (false) {
     const wallet = undefined as unknown as WalletClient<typeof environment>;
     void wallet.startOidcRedirectAuth({
         provider: "google",
+        redirectUri: "https://app.example/auth/callback",
+    });
+    void wallet.startOidcRedirectAuth({
+        provider: "apple",
         redirectUri: "https://app.example/auth/callback",
     });
 
@@ -194,9 +202,43 @@ void defaultClient.wallet.startOidcRedirectAuth({
     redirectUri: "https://app.example/auth/callback",
 });
 void defaultClient.wallet.startOidcRedirectAuth({
+    provider: "google",
+});
+void defaultClient.wallet.startOidcRedirectAuth({
+    provider: "apple",
+    redirectUri: "https://app.example/auth/callback",
+});
+void defaultClient.wallet.completeOidcRedirectAuth();
+void defaultClient.wallet.completeOidcRedirectAuth({
+    walletSelection: "manual",
+    sessionLifetimeSeconds: 120,
+});
+void defaultClient.wallet.startOidcRedirectAuth({
     // @ts-expect-error github is not configured on the default auth config.
     provider: "github",
     redirectUri: "https://app.example/auth/callback",
+});
+void defaultClient.wallet.signInWithOidcRedirect({
+    provider: "google",
+});
+void defaultClient.wallet.signInWithOidcRedirect({
+    provider: "apple",
+});
+void defaultClient.wallet.signInWithOidcRedirect({
+    provider: "google",
+    walletSelection: "manual",
+    sessionLifetimeSeconds: 120,
+});
+// @ts-expect-error provider is required when starting redirect sign-in.
+void defaultClient.wallet.signInWithOidcRedirect();
+// @ts-expect-error provider is required when starting redirect with a redirectUri override.
+void defaultClient.wallet.signInWithOidcRedirect({
+    redirectUri: "https://app.example/auth/callback",
+});
+// @ts-expect-error provider is required when starting redirect with assignUrl.
+void defaultClient.wallet.signInWithOidcRedirect({
+    currentUrl: "https://app.example/login",
+    assignUrl: (url: string) => { void url; },
 });
 
 const customClient = new OMSClient({
@@ -208,6 +250,10 @@ broadlyTypedClient = customClient;
 void broadlyTypedClient;
 void customClient.wallet.startOidcRedirectAuth({
     provider: "google",
+    redirectUri: "https://app.example/auth/callback",
+});
+void customClient.wallet.startOidcRedirectAuth({
+    provider: "apple",
     redirectUri: "https://app.example/auth/callback",
 });
 

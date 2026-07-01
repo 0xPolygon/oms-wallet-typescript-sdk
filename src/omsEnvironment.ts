@@ -1,5 +1,8 @@
-import {googleOidcProvider} from "./oidc.js";
+import {appleOidcProvider, googleOidcProvider} from "./oidc.js";
 import {parsePublishableKey} from "./publishableKey.js";
+import type {AuthMode} from "./generated/waas.gen.js";
+
+export type OidcAuthMode = AuthMode.AuthCode | AuthMode.AuthCodePKCE;
 
 export interface OidcProviderConfig {
     clientId: string;
@@ -8,6 +11,7 @@ export interface OidcProviderConfig {
     scopes?: string[];
     relayRedirectUri?: string;
     authorizeParams?: Record<string, string>;
+    authMode?: OidcAuthMode;
 }
 
 export interface OmsAuthConfig<
@@ -26,6 +30,7 @@ export interface OmsEnvironment<
 
 const defaultOidcProviders = {
     google: googleOidcProvider(),
+    apple: appleOidcProvider(),
 };
 
 export const defaultOmsAuthConfig = {

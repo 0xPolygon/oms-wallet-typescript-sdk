@@ -2,10 +2,10 @@ import {afterEach, describe, expect, it, vi} from "vitest";
 
 import {WalletClient} from "../src/clients/walletClient";
 import type {CredentialSigner} from "../src/credentialSigner";
-import {type OidcProviderConfig, type OmsEnvironment} from "../src/omsEnvironment";
-import {googleOidcProvider} from "../src/oidc";
+import {defaultOmsAuthConfig, type OidcProviderConfig, type OmsEnvironment} from "../src/omsEnvironment";
+import {appleOidcProvider, googleOidcProvider} from "../src/oidc";
 import {MemoryStorageManager} from "../src/storageManager";
-import {WalletType} from "../src/generated/waas.gen";
+import {AuthMode, WalletType} from "../src/generated/waas.gen";
 import {Constants} from "../src/utils/constants";
 import {
     decodeOidcState,
@@ -13,7 +13,8 @@ import {
     redirectUriFromCurrentUrl,
 } from "../src/utils/oidcRedirect";
 
-const expectedDefaultGoogleClientId = "970987756660-0dh5gubqfiugm452raf7mm39qaq639hn.apps.googleusercontent.com";
+const expectedDefaultGoogleClientId = "913882656162-7l4ofa0ou2hqo90umlkenhdop1f5inba.apps.googleusercontent.com";
+const expectedDefaultAppleClientId = "service.oms.polygon.technology";
 const expectedDefaultRelayRedirectUri = "https://waas-cf-relay-staging.0xsequence.workers.dev/callback";
 
 class MockSigner implements CredentialSigner {
@@ -94,6 +95,28 @@ describe("WalletClient OIDC redirect auth", () => {
         expect(redirectAuthStorage.get(Constants.redirectAuthStorageKey)).toContain("verifier-1");
     });
 
+    it("defaults start redirectUri from the current browser URL", async () => {
+        const fetchMock = vi.fn(async () => jsonResponse({
+            verifier: "verifier-1",
+            challenge: "challenge-1",
+        }));
+        vi.stubGlobal("fetch", fetchMock);
+        vi.stubGlobal("window", {
+            location: {
+                href: "https://app.example/login?from=home#section",
+            },
+        });
+
+        const wallet = createWalletClient({redirectAuthStorage: new MemoryStorageManager()});
+
+        const result = await wallet.startOidcRedirectAuth({
+            provider: "google",
+        });
+
+        const state = decodeOidcState(result.state);
+        expect(state.redirect_uri).toBe("https://app.example/login");
+    });
+
     it("uses an explicit login hint", async () => {
         const fetchMock = vi.fn(async () => jsonResponse({
             verifier: "verifier-1",
@@ -162,6 +185,32 @@ describe("WalletClient OIDC redirect auth", () => {
         const authorizeUrl = new URL(result.url);
         expect(authorizeUrl.searchParams.get("login_hint")).toBe("last@example.com");
         expect(storage.get(Constants.walletIdStorageKey)).toBeNull();
+    });
+
+    it("allows callers to suppress the previous session login hint", async () => {
+        const fetchMock = vi.fn(async () => jsonResponse({
+            verifier: "verifier-1",
+            challenge: "challenge-1",
+        }));
+        vi.stubGlobal("fetch", fetchMock);
+
+        const wallet = createWalletClient({
+            redirectAuthStorage: new MemoryStorageManager(),
+        });
+        (wallet as any).persistSession("wallet-id", "0x1111111111111111111111111111111111111111", {
+            expiresAt: "2099-01-01T00:00:00Z",
+            loginType: "google-auth",
+            sessionEmail: "last@example.com",
+        });
+
+        const result = await wallet.startOidcRedirectAuth({
+            provider: "google",
+            redirectUri: "https://app.example/auth/callback",
+            loginHint: "",
+        });
+
+        const authorizeUrl = new URL(result.url);
+        expect(authorizeUrl.searchParams.get("login_hint")).toBeNull();
     });
 
     it("does not add login hints for non-Google providers", async () => {
@@ -317,7 +366,66 @@ describe("WalletClient OIDC redirect auth", () => {
             issuer: "https://accounts.google.com",
             authorizationUrl: "https://accounts.google.com/o/oauth2/v2/auth",
             scopes: ["openid", "email", "profile"],
+            authMode: AuthMode.AuthCodePKCE,
         });
+    });
+
+    it("uses Apple provider defaults", () => {
+        expect(appleOidcProvider()).toMatchObject({
+            clientId: expectedDefaultAppleClientId,
+            relayRedirectUri: expectedDefaultRelayRedirectUri,
+            issuer: "https://appleid.apple.com",
+            authorizationUrl: "https://appleid.apple.com/auth/authorize",
+            scopes: [],
+            authMode: AuthMode.AuthCodePKCE,
+            authorizeParams: {
+                response_mode: "query",
+            },
+        });
+    });
+
+    it("starts an Apple query redirect flow from the default auth config", async () => {
+        const fetchMock = vi.fn(async (_input: RequestInfo | URL, init?: RequestInit) => {
+            const body = JSON.parse(init?.body as string);
+            expect(body).toMatchObject({
+                identityType: "oidc",
+                authMode: "auth-code-pkce",
+                metadata: {
+                    iss: "https://appleid.apple.com",
+                    aud: expectedDefaultAppleClientId,
+                    redirect_uri: expectedDefaultRelayRedirectUri,
+                },
+            });
+            return jsonResponse({
+                verifier: "verifier-1",
+                challenge: "challenge-1",
+            });
+        });
+        vi.stubGlobal("fetch", fetchMock);
+
+        const wallet = createWalletClient({
+            redirectAuthStorage: new MemoryStorageManager(),
+            environment: {
+                walletApiUrl: "https://wallet.example",
+                indexerGatewayUrl: "https://indexer.example",
+                auth: defaultOmsAuthConfig,
+            },
+        });
+
+        const result = await wallet.startOidcRedirectAuth({
+            provider: "apple",
+            redirectUri: "https://app.example/auth/callback",
+        });
+
+        const authorizeUrl = new URL(result.url);
+        expect(authorizeUrl.origin + authorizeUrl.pathname).toBe("https://appleid.apple.com/auth/authorize");
+        expect(authorizeUrl.searchParams.get("client_id")).toBe(expectedDefaultAppleClientId);
+        expect(authorizeUrl.searchParams.get("redirect_uri")).toBe(expectedDefaultRelayRedirectUri);
+        expect(authorizeUrl.searchParams.get("response_type")).toBe("code");
+        expect(authorizeUrl.searchParams.get("response_mode")).toBe("query");
+        expect(authorizeUrl.searchParams.get("scope")).toBeNull();
+        expect(authorizeUrl.searchParams.get("code_challenge")).toBe("challenge-1");
+        expect(authorizeUrl.searchParams.get("code_challenge_method")).toBe("S256");
     });
 
     it("merges provider and method authorize params with method params taking precedence", async () => {
@@ -359,6 +467,100 @@ describe("WalletClient OIDC redirect auth", () => {
         expect(authorizeUrl.searchParams.get("access_type")).toBe("offline");
         expect(authorizeUrl.searchParams.get("prompt")).toBe("select_account");
         expect(authorizeUrl.searchParams.get("audience")).toBe("wallet");
+    });
+
+    it("uses provider auth-code mode without PKCE authorization params", async () => {
+        const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+            const url = input.toString();
+            const body = JSON.parse(init?.body as string);
+
+            if (url.endsWith("/CommitVerifier")) {
+                expect(body).toMatchObject({
+                    identityType: "oidc",
+                    authMode: "auth-code",
+                    metadata: {
+                        iss: "https://issuer.example",
+                        aud: "custom-client",
+                        redirect_uri: "https://app.example/callback",
+                    },
+                });
+                return jsonResponse({
+                    verifier: "verifier-1",
+                    challenge: "challenge-1",
+                });
+            }
+
+            if (url.endsWith("/CompleteAuth")) {
+                expect(body).toEqual({
+                    identityType: "oidc",
+                    authMode: "auth-code",
+                    verifier: "verifier-1",
+                    answer: "auth-code",
+                    lifetime: 604_800,
+                });
+                return jsonResponse({
+                    identity: {type: "oidc", iss: "https://issuer.example", sub: "user-1"},
+                    wallets: [{
+                        id: "wallet-id",
+                        type: WalletType.Ethereum,
+                        address: "0x1111111111111111111111111111111111111111",
+                    }],
+                    credential: testCredential(),
+                });
+            }
+
+            if (url.endsWith("/UseWallet")) {
+                expect(body).toEqual({walletId: "wallet-id"});
+                return jsonResponse({
+                    wallet: {
+                        id: "wallet-id",
+                        type: WalletType.Ethereum,
+                        address: "0x1111111111111111111111111111111111111111",
+                    },
+                });
+            }
+
+            throw new Error(`Unexpected request: ${url}`);
+        });
+        vi.stubGlobal("fetch", fetchMock);
+
+        const wallet = createWalletClient({
+            redirectAuthStorage: new MemoryStorageManager(),
+        });
+        const provider: OidcProviderConfig = {
+            clientId: "custom-client",
+            issuer: "https://issuer.example",
+            authorizationUrl: "https://issuer.example/oauth/authorize",
+            scopes: [],
+            authMode: AuthMode.AuthCode,
+            authorizeParams: {
+                response_mode: "query",
+                scope: "openid email",
+                code_challenge: "manual-challenge",
+                code_challenge_method: "plain",
+            },
+        };
+
+        const started = await wallet.startOidcRedirectAuth({
+            provider,
+            redirectUri: "https://app.example/callback",
+        });
+
+        const authorizeUrl = new URL(started.url);
+        expect(authorizeUrl.searchParams.get("scope")).toBeNull();
+        expect(authorizeUrl.searchParams.get("code_challenge")).toBeNull();
+        expect(authorizeUrl.searchParams.get("code_challenge_method")).toBeNull();
+
+        const completed = await wallet.completeOidcRedirectAuth({
+            callbackUrl: `https://app.example/callback?code=auth-code&state=${started.state}`,
+        });
+
+        expect(completed).toMatchObject({
+            walletAddress: "0x1111111111111111111111111111111111111111",
+            credential: testCredential(),
+        });
+        expect(requestCount(fetchMock, "/CommitVerifier")).toBe(1);
+        expect(requestCount(fetchMock, "/CompleteAuth")).toBe(1);
     });
 
     it("completes an OIDC callback, activates a wallet, cleans the URL, and clears pending state", async () => {
@@ -434,6 +636,77 @@ describe("WalletClient OIDC redirect auth", () => {
         expect(replaceUrl).toHaveBeenCalledWith("https://app.example/auth/callback");
     });
 
+    it("defaults callbackUrl from the current browser URL and cleans callback params", async () => {
+        const redirectAuthStorage = new MemoryStorageManager();
+        const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+            const url = input.toString();
+
+            if (url.endsWith("/CommitVerifier")) {
+                return jsonResponse({
+                    verifier: "verifier-1",
+                    challenge: "challenge-1",
+                });
+            }
+
+            if (url.endsWith("/CompleteAuth")) {
+                return jsonResponse({
+                    identity: {type: "oidc", iss: "https://accounts.google.com", sub: "user-1"},
+                    wallets: [{
+                        id: "wallet-id",
+                        type: WalletType.Ethereum,
+                        address: "0x1111111111111111111111111111111111111111",
+                    }],
+                    credential: testCredential(),
+                });
+            }
+
+            if (url.endsWith("/UseWallet")) {
+                return jsonResponse({
+                    wallet: {
+                        id: "wallet-id",
+                        type: WalletType.Ethereum,
+                        address: "0x1111111111111111111111111111111111111111",
+                    },
+                });
+            }
+
+            throw new Error(`Unexpected request: ${url}`);
+        });
+        vi.stubGlobal("fetch", fetchMock);
+
+        const wallet = createWalletClient({redirectAuthStorage});
+        const started = await wallet.startOidcRedirectAuth({
+            provider: "google",
+            redirectUri: "https://app.example/auth/callback",
+        });
+        vi.stubGlobal("window", {
+            location: {
+                href: `https://app.example/auth/callback?code=auth-code&state=${started.state}&scope=openid`,
+            },
+        });
+        const replaceUrl = vi.fn();
+
+        const completed = await wallet.completeOidcRedirectAuth({replaceUrl});
+
+        expect(completed).toMatchObject({
+            walletAddress: "0x1111111111111111111111111111111111111111",
+            credential: testCredential(),
+        });
+        expect(replaceUrl).toHaveBeenCalledWith("https://app.example/auth/callback");
+    });
+
+    it("returns undefined when browser completion runs outside an OIDC callback URL", async () => {
+        vi.stubGlobal("window", {
+            location: {
+                href: "https://app.example/login",
+            },
+        });
+
+        const wallet = createWalletClient();
+
+        await expect(wallet.completeOidcRedirectAuth()).resolves.toBeUndefined();
+    });
+
     it("uses a requested OIDC auth session lifetime", async () => {
         const redirectAuthStorage = new MemoryStorageManager();
         const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
@@ -478,11 +751,11 @@ describe("WalletClient OIDC redirect auth", () => {
         const started = await wallet.startOidcRedirectAuth({
             provider: "google",
             redirectUri: "https://app.example/auth/callback",
+            sessionLifetimeSeconds: 120,
         });
 
         await wallet.completeOidcRedirectAuth({
             callbackUrl: `https://app.example/auth/callback?code=auth-code&state=${started.state}`,
-            sessionLifetimeSeconds: 120,
         });
 
         expect(requestCount(fetchMock, "/CompleteAuth")).toBe(1);
@@ -540,11 +813,11 @@ describe("WalletClient OIDC redirect auth", () => {
         const started = await wallet.startOidcRedirectAuth({
             provider: "google",
             redirectUri: "https://app.example/auth/callback",
+            walletSelection: "manual",
         });
 
         const selection = await wallet.completeOidcRedirectAuth({
             callbackUrl: `https://app.example/auth/callback?code=auth-code&state=${started.state}`,
-            walletSelection: "manual",
         });
 
         expect(selection).toMatchObject({
@@ -725,7 +998,7 @@ describe("WalletClient OIDC redirect auth", () => {
         })).rejects.toThrow("No pending OIDC redirect auth found");
     });
 
-    it("starts and completes auth through the one-call browser convenience method", async () => {
+    it("starts auth through browser convenience and completes through completeOidcRedirectAuth", async () => {
         const redirectAuthStorage = new MemoryStorageManager();
         const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
             const url = input.toString();
@@ -740,6 +1013,7 @@ describe("WalletClient OIDC redirect auth", () => {
             }
 
             if (url.endsWith("/CompleteAuth")) {
+                expect(body.lifetime).toBe(120);
                 return jsonResponse({
                     identity: {type: "oidc", sub: "user-1"},
                     wallets: [],
@@ -766,6 +1040,8 @@ describe("WalletClient OIDC redirect auth", () => {
         await wallet.signInWithOidcRedirect({
             provider: "google",
             currentUrl: "https://app.example/login?from=home#section",
+            walletSelection: "automatic",
+            sessionLifetimeSeconds: 120,
             assignUrl,
         });
 
@@ -774,9 +1050,9 @@ describe("WalletClient OIDC redirect auth", () => {
         expect(redirectUriFromCurrentUrl("https://app.example/login?from=home#section")).toBe("https://app.example/login");
 
         const replaceUrl = vi.fn();
-        const completed = await wallet.signInWithOidcRedirect({
-            provider: "google",
-            currentUrl: `https://app.example/login?code=auth-code&state=${assignedUrl.searchParams.get("state")}`,
+        const completed = await wallet.completeOidcRedirectAuth({
+            callbackUrl: `https://app.example/login?code=auth-code&state=${assignedUrl.searchParams.get("state")}`,
+            cleanUrl: true,
             replaceUrl,
         });
 
@@ -788,6 +1064,63 @@ describe("WalletClient OIDC redirect auth", () => {
         expect(replaceUrl).toHaveBeenCalledWith("https://app.example/login");
     });
 
+    it("starts Apple auth through the one-call browser convenience method", async () => {
+        const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+            const url = input.toString();
+            const body = JSON.parse(init?.body as string);
+
+            expect(url).toBe("https://wallet.example/v1/Waas/CommitVerifier");
+            expect(body).toMatchObject({
+                identityType: "oidc",
+                authMode: "auth-code-pkce",
+                metadata: {
+                    iss: "https://appleid.apple.com",
+                    aud: expectedDefaultAppleClientId,
+                    redirect_uri: expectedDefaultRelayRedirectUri,
+                },
+            });
+
+            return jsonResponse({
+                verifier: "verifier-1",
+                challenge: "challenge-1",
+            });
+        });
+        vi.stubGlobal("fetch", fetchMock);
+
+        const wallet = createWalletClient({
+            redirectAuthStorage: new MemoryStorageManager(),
+            environment: {
+                walletApiUrl: "https://wallet.example",
+                indexerGatewayUrl: "https://indexer.example",
+                auth: defaultOmsAuthConfig,
+            },
+        });
+        const assignUrl = vi.fn();
+
+        await wallet.signInWithOidcRedirect({
+            provider: "apple",
+            currentUrl: "https://app.example/login",
+            assignUrl,
+        });
+
+        const assignedUrl = new URL(assignUrl.mock.calls[0][0]);
+        expect(assignedUrl.origin + assignedUrl.pathname).toBe("https://appleid.apple.com/auth/authorize");
+        expect(assignedUrl.searchParams.get("client_id")).toBe(expectedDefaultAppleClientId);
+        expect(assignedUrl.searchParams.get("redirect_uri")).toBe(expectedDefaultRelayRedirectUri);
+        expect(assignedUrl.searchParams.get("response_mode")).toBe("query");
+        expect(assignedUrl.searchParams.get("scope")).toBeNull();
+    });
+
+    it("requires provider to start the one-call browser convenience method", async () => {
+        const wallet = createWalletClient({
+            redirectAuthStorage: new MemoryStorageManager(),
+        });
+
+        await expect(wallet.signInWithOidcRedirect({
+            currentUrl: "https://app.example/login",
+        })).rejects.toThrow("signInWithOidcRedirect requires provider to start auth");
+    });
+
     it("rejects unknown configured provider names", async () => {
         const wallet = createWalletClient({
             redirectAuthStorage: new MemoryStorageManager(),
@@ -797,6 +1130,31 @@ describe("WalletClient OIDC redirect auth", () => {
             provider: "github" as any,
             redirectUri: "https://app.example/auth/callback",
         })).rejects.toThrow('OIDC provider "github" is not configured');
+    });
+
+    it("does not clear an existing session when redirect storage preflight fails", async () => {
+        const storage = new MemoryStorageManager();
+        const wallet = new WalletClient({
+            publishableKey: "publishable-key",
+            projectId: "project-id",
+            environment: testEnvironment(),
+            storage,
+            credentialSigner: new MockSigner(),
+        });
+        (wallet as any).persistSession("wallet-id", "0x1111111111111111111111111111111111111111", {
+            expiresAt: "2099-01-01T00:00:00Z",
+            loginType: "google-auth",
+            sessionEmail: "last@example.com",
+        });
+
+        await expect(wallet.startOidcRedirectAuth({
+            provider: "google",
+            redirectUri: "https://app.example/auth/callback",
+        })).rejects.toThrow("OIDC redirect auth requires redirectAuthStorage or browser sessionStorage");
+
+        expect(wallet.walletAddress).toBe("0x1111111111111111111111111111111111111111");
+        expect(storage.get(Constants.walletIdStorageKey)).toBe("wallet-id");
+        expect(storage.get(Constants.walletAddressStorageKey)).toBe("0x1111111111111111111111111111111111111111");
     });
 
 });
