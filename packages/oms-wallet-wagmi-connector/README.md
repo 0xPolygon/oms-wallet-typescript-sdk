@@ -22,7 +22,6 @@ export const wagmiConfig = createConfig({
   connectors: [
     omsWalletConnector({
       client: oms,
-      networks: oms.supportedNetworks,
       initialChainId: polygon.id,
       transactionOptions: {
         selectFeeOption: FeeOptionSelector.firstAvailable,
@@ -52,7 +51,7 @@ await connect({
 })
 ```
 
-For redirect-based OIDC flows such as Google, complete the SDK redirect callback first, then connect through wagmi once the wallet session is active.
+For redirect-based OIDC flows such as Google or Apple, complete the SDK redirect callback first, then connect through wagmi once the wallet session is active.
 
 ## Disconnect
 
@@ -67,7 +66,9 @@ await oms.wallet.signOut()
 
 ## Networks
 
-OMS `Network` values are not wagmi chain definitions. Wagmi still needs viem `Chain` objects with RPC transport configuration. Use `wagmi/chains`, `viem/chains`, or custom viem `Chain` objects, then pass the OMS networks to the connector for OMS support validation.
+OMS `Network` values are not wagmi chain definitions. Wagmi still needs viem `Chain` objects with RPC transport configuration. Use `wagmi/chains`, `viem/chains`, or custom viem `Chain` objects.
+
+By default, the connector validates OMS support with `client.supportedNetworks`. Pass `networks` only when you intentionally want a narrower or custom OMS network set for this connector instance.
 
 The connector validates `initialChainId`, `switchChain`, and provider chain switches against both the wagmi chain list and the OMS network list. A transaction `chainId` is used for that transaction without switching the connector's current chain, and must be supported by OMS.
 

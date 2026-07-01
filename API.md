@@ -173,7 +173,7 @@ wallet.session: OMSClientSessionState
 
 Completed wallet sessions persist `walletAddress`, credential expiry, login type, and returned email in the configured `storage`. Pending email OTP and OIDC redirect state are not exposed through `session`; use the auth method results to drive pending UI.
 
-Expired sessions are made inactive before protected wallet operations and throw `OmsSessionError` with code `OMS_SESSION_EXPIRED`. The SDK clears the active signer/session state, but keeps the expired session metadata in storage until the app explicitly starts a new auth flow or calls `signOut()`. Use `wallet.onSessionExpired` to update app state or route back to sign-in; the event includes the expired session snapshot so apps can reuse `sessionEmail` for email OTP reauth or as a Google `loginHint`, including after a page refresh.
+Expired sessions are made inactive before protected wallet operations and throw `OmsSessionError` with code `OMS_SESSION_EXPIRED`. The SDK clears the active signer/session state, but keeps the expired session metadata in storage until the app explicitly starts a new auth flow or calls `signOut()`. Use `wallet.onSessionExpired` to update app state or route back to sign-in; the event includes the expired session snapshot so apps can reuse `sessionEmail` for email OTP reauth or provider-specific account hints, including Google `loginHint`, after a page refresh.
 
 ### onSessionExpired
 
@@ -1006,7 +1006,7 @@ googleOidcProvider({
 })
 ```
 
-Apple can be configured with the `appleOidcProvider` helper:
+Apple can be configured with the `appleOidcProvider` helper. The default Apple provider uses `response_mode=query`, no scopes, and PKCE auth-code mode:
 
 ```typescript
 // Uses the SDK default Apple Services ID (`service.oms.polygon.technology`) and relay redirect URI.
