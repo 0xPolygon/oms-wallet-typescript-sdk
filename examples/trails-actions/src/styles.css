@@ -273,34 +273,86 @@
 
 .position-row {
   display: grid;
-  grid-template-columns: minmax(0, 1.3fr) minmax(0, 1fr) minmax(64px, 0.4fr) auto;
-  align-items: center;
-  gap: 10px;
-  padding: 10px 12px;
+  gap: 12px;
+  padding: 12px;
   border: 1px solid var(--oms-slate-200);
-  border-radius: 12px;
+  border-radius: var(--oms-radius-input);
   background: var(--oms-surface);
 }
 
-.position-row div {
+.position-header {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px 8px;
+  min-width: 0;
+}
+
+.position-header strong {
+  min-width: 0;
+  line-height: 1.25;
+  overflow-wrap: break-word;
+}
+
+.position-provider {
+  display: inline-flex;
+  align-items: center;
+  width: fit-content;
+  min-height: 22px;
+  padding: 2px 8px;
+  border-radius: var(--oms-radius-pill);
+  color: var(--oms-muted-ink);
+  background: var(--oms-slate-100);
+  font-size: 12px;
+  font-weight: 700;
+  line-height: 1.2;
+}
+
+.position-metrics {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(132px, 1fr));
+  gap: 8px;
+}
+
+.position-metric {
   display: grid;
   gap: 3px;
   min-width: 0;
+  padding: 10px;
+  border: 1px solid var(--oms-slate-200);
+  border-radius: var(--oms-radius-button);
+  background: var(--oms-slate-50);
 }
 
-.position-row strong,
-.position-row small {
-  min-width: 0;
-  overflow-wrap: anywhere;
-}
-
-.position-row small {
+.position-metric small,
+.position-metric span {
   color: var(--oms-muted-ink);
   font-size: 12px;
 }
 
+.position-metric strong {
+  min-width: 0;
+  overflow-wrap: break-word;
+}
+
+.position-footer {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px 12px;
+}
+
+.position-footer .auto-fee-option {
+  flex: 1 1 220px;
+  min-height: 0;
+  padding: 0;
+}
+
 .position-action {
-  justify-items: end;
+  display: flex;
+  flex: 0 0 auto;
+  justify-content: flex-end;
 }
 
 .position-action button {
@@ -329,13 +381,18 @@
 @media (max-width: 720px) {
   .trails-action-grid,
   .balance-grid,
-  .session-info,
-  .position-row {
+  .session-info {
     grid-template-columns: 1fr;
   }
 
-  .position-action {
-    justify-items: stretch;
+  .position-footer {
+    align-items: stretch;
+    flex-direction: column;
+  }
+
+  .position-action,
+  .position-action button {
+    width: 100%;
   }
 
   .trails-action-grid .trails-action-card:last-child {

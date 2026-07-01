@@ -20,7 +20,6 @@ import {
   WalletSelectionPanel,
 } from '../../shared/example-components'
 import {
-  canAffordFeeOption,
   formatLoginType,
   formatOidcProvider,
   formatSessionExpiry,
@@ -835,11 +834,6 @@ function App() {
   }
 
   function chooseFeeOption(option: FeeOptionWithBalance) {
-    if (!canAffordFeeOption(option)) {
-      appendLog(`! Insufficient ${option.feeOption.token.symbol} balance for fee.`)
-      return
-    }
-
     selectedFeeOption.current = option
     feeSelection.current?.resolve(option.selection)
     feeSelection.current = null
@@ -885,7 +879,7 @@ function App() {
     const tx = await oms.wallet.sendTransaction({
       network: POLYGON_NETWORK,
       to: prepared.to,
-      value: BigInt(prepared.value),
+      value: prepared.value,
       data: prepared.data,
       selectFeeOption: selectFeeOption(autoPickFeeOption),
     })
@@ -1154,35 +1148,39 @@ function App() {
                 <div className="position-list">
                   {earnPositions.map((position) => (
                     <div key={position.id} className="position-row">
-                      <div>
+                      <div className="position-header">
                         <strong>{position.marketName}</strong>
-                        <small>{position.provider}</small>
+                        <span className="position-provider">{position.provider}</span>
                       </div>
-                      <div>
-                        <strong>
-                          {position.amountDisplay} {position.tokenSymbol}
-                        </strong>
-                        <small>{position.amountUsd ?? 'USD unavailable'}</small>
+                      <div className="position-metrics">
+                        <div className="position-metric">
+                          <small>Balance</small>
+                          <strong>
+                            {position.amountDisplay} {position.tokenSymbol}
+                          </strong>
+                          <span>{position.amountUsd ?? 'USD unavailable'}</span>
+                        </div>
+                        <div className="position-metric">
+                          <small>APY</small>
+                          <strong>{position.apy}</strong>
+                        </div>
                       </div>
-                      <div>
-                        <strong>{position.apy}</strong>
-                        <small>APY</small>
-                      </div>
-                      <div className="position-action">
-                        <button
-                          type="button"
-                          className="secondary"
-                          onClick={() => withdrawEarnPosition(position)}
-                          disabled={isBusy || !position.canWithdraw}
-                        >
-                          Withdraw
-                        </button>
-                        <small>{position.canWithdraw ? 'All' : 'Unavailable'}</small>
+                      <div className="position-footer">
                         <AutoFeeOptionCheckbox
                           checked={withdrawAutoFeeOptions[position.id] ?? true}
                           disabled={isBusy || !position.canWithdraw}
                           onChange={(value) => updateWithdrawAutoFeeOption(position.id, value)}
                         />
+                        <div className="position-action">
+                          <button
+                            type="button"
+                            className="secondary"
+                            onClick={() => withdrawEarnPosition(position)}
+                            disabled={isBusy || !position.canWithdraw}
+                          >
+                            {position.canWithdraw ? 'Withdraw all' : 'Unavailable'}
+                          </button>
+                        </div>
                       </div>
                       {withdrawStatuses[position.id] ? (
                         <p className="position-status field-hint compact-hint">{withdrawStatuses[position.id]}</p>
