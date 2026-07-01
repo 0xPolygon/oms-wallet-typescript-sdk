@@ -30,7 +30,7 @@ cp examples/react/.env.example examples/react/.env.local
 The Amoy-only "ERC20 example" panel includes a WalletKit Dollar example using
 the demo WKUSD contract deployed on Polygon Amoy.
 
-Google/OIDC redirect sign-in uses the SDK default Google client id.
+Google redirect sign-in uses the SDK default Google client id. Apple redirect sign-in uses the SDK default Apple Services ID.
 
 Build it from the repository root:
 

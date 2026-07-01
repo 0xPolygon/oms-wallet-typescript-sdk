@@ -8,12 +8,33 @@ import {
   type AccessGrant,
   type Network,
   type OMSClientSessionExpiredEvent,
-  type OMSClientSessionLoginType,
   type OmsWallet,
   type PendingWalletSelection,
   type WalletActivationResult,
 } from '@0xsequence/typescript-sdk'
 import './styles.css'
+import {
+  EmailCodeForm,
+  EmailLoginForm,
+  FeeOptionsPanel,
+  OidcButtons,
+  SessionExpiredDialog,
+  SessionOptions,
+  WalletSelectionPanel,
+} from '../../shared/example-components'
+import {
+  canAffordFeeOption,
+  formatCount,
+  formatLoginType,
+  formatOidcProvider,
+  formatSessionExpiry,
+  formatWalletType,
+  hasOidcCallbackParams,
+  isPendingWalletSelection,
+  sameAddress,
+  type OidcRedirectProvider,
+} from '../../shared/example-utils'
+import { useSessionPreferences } from '../../shared/use-session-preferences'
 import { TEST_SESSION_LIFETIME_SECONDS, oms } from './omsClient'
 import { WalletKitDollarExample } from './WalletKitDollarExample'
 
@@ -45,8 +66,6 @@ function App() {
   const [managedWallets, setManagedWallets] = useState<OmsWallet[]>([])
   const [newWalletReference, setNewWalletReference] = useState('')
   const [accessGrants, setAccessGrants] = useState<AccessGrant[]>([])
-  const [useManualWalletSelection, setUseManualWalletSelection] = useState(readManualWalletSelectionPreference)
-  const [sessionLifetimeSeconds, setSessionLifetimeSeconds] = useState(readSessionLifetimePreference)
   const [pendingWalletSelection, setPendingWalletSelection] = useState<PendingWalletSelection | null>(null)
   const [emailAuthStatus, setEmailAuthStatus] = useState('Enter an email to start.')
   const [redirectStatus, setRedirectStatus] = useState('')
@@ -60,6 +79,18 @@ function App() {
 
   const selectedNetwork = supportedNetworks.find(network => network.id === selectedNetworkId) ?? Networks.amoy
   const session = oms.wallet.session
+  const {
+    useManualWalletSelection,
+    setUseManualWalletSelection,
+    sessionLifetimeSeconds,
+    updateSessionLifetime,
+    saveSessionPreferences,
+    walletSelection,
+  } = useSessionPreferences({
+    manualWalletSelectionKey: MANUAL_WALLET_SELECTION_KEY,
+    sessionLifetimeSecondsKey: SESSION_LIFETIME_SECONDS_KEY,
+    defaultSessionLifetimeSeconds: TEST_SESSION_LIFETIME_SECONDS,
+  })
 
   useEffect(() => {
     return oms.wallet.onSessionExpired(showSessionExpired)
@@ -73,8 +104,7 @@ function App() {
       return
     }
 
-    const params = new URLSearchParams(window.location.search)
-    if (params.has('code') || params.has('state') || params.has('error')) {
+    if (hasOidcCallbackParams()) {
       if (oidcCallbackStarted.current) return
       oidcCallbackStarted.current = true
       void completeOidcRedirect()
@@ -93,14 +123,6 @@ function App() {
       setWalletStatus('')
     }
   }, [selectedNetworkId, step])
-
-  useEffect(() => {
-    window.sessionStorage.setItem(MANUAL_WALLET_SELECTION_KEY, useManualWalletSelection ? 'true' : 'false')
-  }, [useManualWalletSelection])
-
-  useEffect(() => {
-    window.sessionStorage.setItem(SESSION_LIFETIME_SECONDS_KEY, sessionLifetimeSeconds.toString())
-  }, [sessionLifetimeSeconds])
 
   async function run(
     label: string,
@@ -133,21 +155,21 @@ function App() {
     await run('Completing sign-in...', setEmailAuthStatus, async () => {
       const result = await oms.wallet.completeEmailAuth({
         code: code.trim(),
-        walletSelection: useManualWalletSelection ? 'manual' : 'automatic',
+        walletSelection,
         sessionLifetimeSeconds,
       })
       handleAuthCompletion(result, 'Email login complete.')
     })
   }
 
-  async function startOidcRedirect() {
-    await run('Redirecting to provider...', setRedirectStatus, async () => {
-      window.sessionStorage.setItem(MANUAL_WALLET_SELECTION_KEY, useManualWalletSelection ? 'true' : 'false')
-      window.sessionStorage.setItem(SESSION_LIFETIME_SECONDS_KEY, sessionLifetimeSeconds.toString())
+  async function startOidcRedirect(provider: OidcRedirectProvider) {
+    const label = formatOidcProvider(provider)
+    await run(`Redirecting to ${label}...`, setRedirectStatus, async () => {
+      saveSessionPreferences()
       setPendingWalletSelection(null)
       await oms.wallet.signInWithOidcRedirect({
-        provider: 'google',
-        loginHint: email.trim() || oms.wallet.session.sessionEmail,
+        provider,
+        walletSelection,
         sessionLifetimeSeconds,
       })
     })
@@ -155,13 +177,9 @@ function App() {
 
   async function completeOidcRedirect() {
     await run('Completing redirect sign-in...', setRedirectStatus, async () => {
-      const result = await oms.wallet.signInWithOidcRedirect({
-        provider: 'google',
-        walletSelection: readManualWalletSelectionPreference() ? 'manual' : 'automatic',
-        sessionLifetimeSeconds: readSessionLifetimePreference(),
-      })
+      const result = await oms.wallet.completeOidcRedirectAuth()
       if (result) {
-        handleAuthCompletion(result, 'Google login complete.')
+        handleAuthCompletion(result, 'Redirect login complete.')
         return
       }
 
@@ -225,12 +243,25 @@ function App() {
     if (expiredSession.loginType === 'google-auth') {
       await run('Redirecting to Google...', setRedirectStatus, async () => {
         setSessionExpiredPrompt(null)
-        window.sessionStorage.setItem(MANUAL_WALLET_SELECTION_KEY, useManualWalletSelection ? 'true' : 'false')
-        window.sessionStorage.setItem(SESSION_LIFETIME_SECONDS_KEY, sessionLifetimeSeconds.toString())
+        saveSessionPreferences()
         setPendingWalletSelection(null)
         await oms.wallet.signInWithOidcRedirect({
           provider: 'google',
-          loginHint: expiredSession.sessionEmail,
+          walletSelection,
+          sessionLifetimeSeconds,
+        })
+      })
+      return
+    }
+
+    if (expiredSession.loginType === 'oidc') {
+      await run('Redirecting to Apple...', setRedirectStatus, async () => {
+        setSessionExpiredPrompt(null)
+        saveSessionPreferences()
+        setPendingWalletSelection(null)
+        await oms.wallet.signInWithOidcRedirect({
+          provider: 'apple',
+          walletSelection,
           sessionLifetimeSeconds,
         })
       })
@@ -257,12 +288,6 @@ function App() {
   function dismissSessionExpiredPrompt() {
     setSessionExpiredPrompt(null)
     setStep('email')
-  }
-
-  function updateSessionLifetime(value: string) {
-    const next = Math.floor(Number(value))
-    if (!Number.isFinite(next)) return
-    setSessionLifetimeSeconds(Math.max(1, next))
   }
 
   async function selectPendingWallet(wallet: OmsWallet) {
@@ -464,152 +489,56 @@ function App() {
           <p className="eyebrow">OMS Client Typescript SDK</p>
           <h1>Wallet Demo</h1>
           {step === 'email' && (
-            <div className="header-options">
-              <label className="checkbox-row">
-                <input
-                  type="checkbox"
-                  checked={useManualWalletSelection}
-                  onChange={(event) => setUseManualWalletSelection(event.target.checked)}
-                  disabled={isBusy}
-                />
-                <span>Use manual wallet selection</span>
-              </label>
-              <label className="session-lifetime-option">
-                <span className="session-lifetime-copy">
-                  <strong>Session lifetime</strong>
-                  <small>Shorten this to test session expiry easier.</small>
-                </span>
-                <span>
-                  <input
-                    type="number"
-                    min={1}
-                    step={1}
-                    value={sessionLifetimeSeconds}
-                    onChange={(event) => updateSessionLifetime(event.target.value)}
-                    disabled={isBusy}
-                  />
-                  <small>seconds</small>
-                </span>
-              </label>
-            </div>
+            <SessionOptions
+              useManualWalletSelection={useManualWalletSelection}
+              sessionLifetimeSeconds={sessionLifetimeSeconds}
+              disabled={isBusy}
+              onManualWalletSelectionChange={setUseManualWalletSelection}
+              onSessionLifetimeChange={updateSessionLifetime}
+            />
           )}
         </header>
 
         {step === 'email' && (
-          <form className="stack" onSubmit={(event) => {
-            event.preventDefault()
-            void startEmailAuth()
-          }}>
+          <div className="stack">
             <h2 className="section-title">Login Options</h2>
-            <div className="field-stack">
-              <button
-                type="button"
-                className="secondary"
-                onClick={startOidcRedirect}
-                disabled={isBusy}
-                aria-describedby="google-status"
-              >
-                Continue with Google
-              </button>
-              {redirectStatus && <p id="google-status" className="field-hint">{redirectStatus}</p>}
-            </div>
+            <OidcButtons
+              providers={['google', 'apple']}
+              disabled={isBusy}
+              status={redirectStatus}
+              onStart={(provider) => void startOidcRedirect(provider)}
+            />
             <div className="divider">or</div>
-            <div className="field-stack">
-              <label>
-                Email
-                <input
-                  type="email"
-                  value={email}
-                  onChange={(event) => setEmail(event.target.value)}
-                  placeholder="user@example.com"
-                  aria-describedby="email-status"
-                />
-              </label>
-              <p id="email-status" className="field-hint">{emailAuthStatus}</p>
-            </div>
-            <button type="submit" disabled={isBusy || !email.trim()}>
-              Send code
-            </button>
-          </form>
+            <EmailLoginForm
+              email={email}
+              disabled={isBusy}
+              status={emailAuthStatus}
+              onEmailChange={setEmail}
+              onSubmit={() => void startEmailAuth()}
+            />
+          </div>
         )}
 
         {step === 'code' && (
-          <form className="stack" onSubmit={(event) => {
-            event.preventDefault()
-            void completeEmailAuth()
-          }}>
-            <div className="field-stack">
-              <label>
-                Code
-                <input
-                  autoFocus
-                  inputMode="numeric"
-                  value={code}
-                  onChange={(event) => setCode(event.target.value)}
-                  placeholder="123456"
-                  aria-describedby="code-status"
-                />
-              </label>
-              <p id="code-status" className="field-hint">{emailAuthStatus}</p>
-            </div>
-            <div className="actions">
-              <button type="submit" disabled={isBusy || !code.trim()}>
-                Complete sign-in
-              </button>
-              <button type="button" className="secondary" onClick={() => setStep('email')} disabled={isBusy}>
-                Back
-              </button>
-            </div>
-          </form>
+          <EmailCodeForm
+            code={code}
+            disabled={isBusy}
+            status={emailAuthStatus}
+            onCodeChange={setCode}
+            onSubmit={() => void completeEmailAuth()}
+            onBack={() => setStep('email')}
+          />
         )}
 
         {step === 'wallet-selection' && pendingWalletSelection && (
-          <div className="stack">
-            <section className="tool wallet-selection">
-              <div className="tool-header">
-                <h2>Choose wallet</h2>
-                <span className="metadata-pill">{formatWalletType(pendingWalletSelection.walletType)}</span>
-              </div>
-              <h3>Existing wallets</h3>
-              {pendingWalletSelection.wallets.length > 0 ? (
-                <div className="wallet-option-list">
-                  {pendingWalletSelection.wallets.map(wallet => (
-                    <button
-                      key={wallet.id}
-                      type="button"
-                      className="wallet-option"
-                      onClick={() => void selectPendingWallet(wallet)}
-                      disabled={isBusy}
-                    >
-                      <span>
-                        <strong>{wallet.reference ?? `${formatWalletType(wallet.type)} wallet`}</strong>
-                        <small>{wallet.id}</small>
-                      </span>
-                      <code>{wallet.address}</code>
-                      <span className="wallet-option-action">Use wallet</span>
-                    </button>
-                  ))}
-                </div>
-              ) : (
-                <p className="field-hint">No existing {formatWalletType(pendingWalletSelection.walletType)} wallets.</p>
-              )}
-
-              <h3>Create new wallet</h3>
-              <button type="button" onClick={() => void createPendingWallet()} disabled={isBusy}>
-                Create wallet
-              </button>
-
-              <button
-                type="button"
-                className="secondary subtle"
-                onClick={() => void cancelPendingWalletSelection()}
-                disabled={isBusy}
-              >
-                Cancel
-              </button>
-            </section>
-            {emailAuthStatus && <output>{emailAuthStatus}</output>}
-          </div>
+          <WalletSelectionPanel
+            pendingWalletSelection={pendingWalletSelection}
+            authStatus={emailAuthStatus}
+            disabled={isBusy}
+            onSelectWallet={(wallet) => void selectPendingWallet(wallet)}
+            onCreateWallet={() => void createPendingWallet()}
+            onCancel={() => void cancelPendingWalletSelection()}
+          />
         )}
 
         {step === 'wallet' && (
@@ -858,83 +787,14 @@ function App() {
       )}
 
       {sessionExpiredPrompt && (
-        <div className="modal-backdrop">
-          <section
-            className="modal"
-            role="dialog"
-            aria-modal="true"
-            aria-labelledby="session-expired-title"
-          >
-            <h2 id="session-expired-title">Session expired</h2>
-            <p>
-              Your wallet session has expired. Reauthenticate to continue using this wallet.
-            </p>
-            {sessionExpiredPrompt.session.sessionEmail && (
-              <p className="modal-detail">
-                Account <strong>{sessionExpiredPrompt.session.sessionEmail}</strong>
-              </p>
-            )}
-            <p className="modal-hint">
-              {sessionExpiredPrompt.session.loginType === 'google-auth'
-                ? 'You will be redirected to Google with the same account selected.'
-                : sessionExpiredPrompt.session.loginType === 'email' && sessionExpiredPrompt.session.sessionEmail
-                  ? 'A new sign-in code will be sent to the same email address.'
-                  : 'Sign in again to continue.'}
-            </p>
-            <div className="modal-actions">
-              <button type="button" onClick={() => void reauthenticateExpiredSession()} disabled={isBusy}>
-                Reauthenticate
-              </button>
-              <button type="button" className="secondary" onClick={dismissSessionExpiredPrompt} disabled={isBusy}>
-                Not now
-              </button>
-            </div>
-          </section>
-        </div>
+        <SessionExpiredDialog
+          event={sessionExpiredPrompt}
+          disabled={isBusy}
+          onReauthenticate={() => void reauthenticateExpiredSession()}
+          onDismiss={dismissSessionExpiredPrompt}
+        />
       )}
     </main>
-  )
-}
-
-function FeeOptionsPanel({
-  feeOptions,
-  onCancel,
-  onChoose,
-}: {
-  feeOptions: FeeOptionWithBalance[]
-  onCancel: () => void
-  onChoose: (option: FeeOptionWithBalance) => void
-}) {
-  return (
-    <div className="fee-modal-backdrop">
-      <section className="tool fee-options" role="dialog" aria-modal="true" aria-labelledby="fee-options-title">
-        <h2 id="fee-options-title">Fee option</h2>
-        <div className="fee-option-list">
-          {feeOptions.map((option) => {
-            const canAfford = canAffordFeeOption(option)
-
-            return (
-              <button
-                key={`${option.feeOption.token.symbol}-${option.feeOption.value}`}
-                type="button"
-                className="fee-option"
-                onClick={() => onChoose(option)}
-                disabled={!canAfford}
-              >
-                <span>
-                  <strong>{option.feeOption.token.symbol}</strong>
-                  <small>{option.feeOption.displayValue || option.feeOption.value}</small>
-                </span>
-                <span>{canAfford ? option.available ?? 'Balance unavailable' : 'Insufficient balance'}</span>
-              </button>
-            )
-          })}
-        </div>
-        <button type="button" className="secondary" onClick={onCancel}>
-          Cancel transaction
-        </button>
-      </section>
-    </div>
   )
 }
 
@@ -946,66 +806,4 @@ createRoot(document.getElementById('root')!).render(
 
 function transactionExplorerUrl(network: Network, txnHash: string): string {
   return `${network.explorerUrl.replace(/\/+$/, '')}/tx/${txnHash}`
-}
-
-function formatLoginType(loginType: OMSClientSessionLoginType | undefined): string {
-  switch (loginType) {
-    case 'email':
-      return 'Email'
-    case 'google-auth':
-      return 'Google'
-    case 'oidc':
-      return 'OIDC'
-    default:
-      return 'Unknown'
-  }
-}
-
-function formatSessionExpiry(expiresAt: string | undefined): string {
-  if (!expiresAt) return 'Unknown'
-
-  const date = new Date(expiresAt)
-  return Number.isNaN(date.getTime()) ? expiresAt : date.toLocaleString()
-}
-
-function formatWalletType(walletType: string): string {
-  return walletType
-    .split(/[-_]/)
-    .map(part => part ? part[0].toUpperCase() + part.slice(1) : part)
-    .join(' ')
-}
-
-function formatCount(count: number, singular: string): string {
-  return `${count} ${singular}${count === 1 ? '' : 's'}`
-}
-
-function sameAddress(left: string, right: string): boolean {
-  return left.toLowerCase() === right.toLowerCase()
-}
-
-function isPendingWalletSelection(
-  result: PendingWalletSelection | WalletActivationResult,
-): result is PendingWalletSelection {
-  return 'selectWallet' in result
-}
-
-function canAffordFeeOption(option: FeeOptionWithBalance): boolean {
-  if (option.availableRaw === undefined) return false
-
-  try {
-    return BigInt(option.availableRaw) >= BigInt(option.feeOption.value)
-  } catch {
-    return false
-  }
-}
-
-function readManualWalletSelectionPreference(): boolean {
-  return window.sessionStorage.getItem(MANUAL_WALLET_SELECTION_KEY) === 'true'
-}
-
-function readSessionLifetimePreference(): number {
-  const stored = Number(window.sessionStorage.getItem(SESSION_LIFETIME_SECONDS_KEY))
-  return Number.isFinite(stored) && stored > 0
-    ? Math.floor(stored)
-    : TEST_SESSION_LIFETIME_SECONDS
 }
