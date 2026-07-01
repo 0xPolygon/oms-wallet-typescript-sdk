@@ -69,7 +69,6 @@ export function WalletKitDollarExample() {
         args: [activeWallet, MINT_AMOUNT],
         statusPolling: {
           timeoutMs: 120_000,
-          intervalMs: 2_000,
         },
       })
 
@@ -103,7 +102,6 @@ export function WalletKitDollarExample() {
         args: [recipient as Address, transferAmount],
         statusPolling: {
           timeoutMs: 120_000,
-          intervalMs: 2_000,
         },
       })
 

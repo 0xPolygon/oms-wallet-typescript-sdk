@@ -22,7 +22,6 @@ import {
   OidcButtons,
 } from '../../shared/example-components'
 import {
-  canAffordFeeOption,
   formatLoginType,
   formatOidcProvider,
   hasOidcCallbackParams,
@@ -395,11 +394,6 @@ export function App() {
   }
 
   function chooseFeeOption(option: FeeOptionWithBalance) {
-    if (!canAffordFeeOption(option)) {
-      setWalletStatus(`Insufficient ${option.feeOption.token.symbol} balance for fee.`)
-      return
-    }
-
     feeOptionSelection.resolveFeeOption(option.selection)
     setWalletStatus(`Selected ${option.feeOption.token.symbol}. Sending transaction...`)
   }

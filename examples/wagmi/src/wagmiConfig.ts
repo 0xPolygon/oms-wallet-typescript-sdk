@@ -51,7 +51,6 @@ export const wagmiConfig = createConfig({
   connectors: [
     omsWalletConnector({
       client: oms,
-      networks: omsWalletNetworks,
       initialChainId: defaultChain.id,
       transactionOptions: {
         selectFeeOption: selectFeeOptionWithAppUi,

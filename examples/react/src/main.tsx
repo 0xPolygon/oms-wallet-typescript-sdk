@@ -23,7 +23,6 @@ import {
   WalletSelectionPanel,
 } from '../../shared/example-components'
 import {
-  canAffordFeeOption,
   formatCount,
   formatLoginType,
   formatOidcProvider,
@@ -428,11 +427,6 @@ function App() {
   }
 
   function chooseFeeOption(option: FeeOptionWithBalance) {
-    if (!canAffordFeeOption(option)) {
-      setWalletStatus(`Insufficient ${option.feeOption.token.symbol} balance for fee.`)
-      return
-    }
-
     feeSelection.current?.resolve(option.selection)
     feeSelection.current = null
     setFeeOptions([])
