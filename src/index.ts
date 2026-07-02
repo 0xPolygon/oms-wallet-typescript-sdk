@@ -6,7 +6,9 @@ export {
     type OmsAuthConfig,
 } from './omsEnvironment.js'
 export {
+    appleOidcProvider,
     googleOidcProvider,
+    type AppleOidcProviderParams,
     type GoogleOidcProviderParams,
 } from './oidc.js'
 export {
@@ -30,6 +32,7 @@ export {
     type Network,
 } from './networks.js'
 export {
+    AuthMode,
     TransactionMode,
     TransactionStatus,
     WalletType,

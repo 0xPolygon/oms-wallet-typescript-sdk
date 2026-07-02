@@ -94,12 +94,13 @@ To run it locally from the repository root:
 ```bash
 cp examples/wagmi/.env.example examples/wagmi/.env.local
 # Fill VITE_OMS_PUBLISHABLE_KEY in examples/wagmi/.env.local
+# Replace VITE_TRAILS_API_KEY only if you need a different Trails project
 pnpm dev:wagmi-example
 ```
 
 ## Trails Actions React Example
 
-The Trails Actions example prepares and sends Polygon swap, deposit, and swap plus deposit flows with `0xtrails/actions`.
+The Trails Actions example prepares and sends Polygon swap, Earn deposit, swap plus Earn deposit, and Earn withdrawal flows with `0xtrails/actions`.
 
 The deployed Trails Actions example is available at [https://0xsequence.github.io/typescript-sdk/trails-actions-example/](https://0xsequence.github.io/typescript-sdk/trails-actions-example/).
 
@@ -156,7 +157,7 @@ console.log('Credential:', credential.credentialId)
 // 4. Send a transaction
 const tx = await oms.wallet.sendTransaction({
   network: Networks.polygon,
-  to: '0xRecipient',
+  to: '0x1111111111111111111111111111111111111111',
   value: parseUnits('1', 18), // 1 POL
   // If this Polygon mainnet transaction is not sponsored, choose the first fee token the wallet can pay.
   selectFeeOption: FeeOptionSelector.firstAvailable,
@@ -175,7 +176,7 @@ console.log(tx.txnHash ?? tx.txnId)
 
 ## Authentication Flow
 
-OMS supports email-based OTP and OIDC authorization-code PKCE redirect auth.
+OMS supports email-based OTP and OIDC authorization-code redirect auth.
 
 ### Email OTP Auth
 
@@ -202,7 +203,7 @@ The returned pending selection is bound to the verified auth flow and signer. Ho
 
 ### OIDC Redirect Auth
 
-Google redirect auth is configured by default. The redirect auth APIs are provider-neutral, so `auth.oidcProviders` can replace the configured provider set.
+Google and Apple redirect auth are configured by default. The redirect auth APIs are provider-neutral, so `auth.oidcProviders` can replace the configured provider set when you need custom providers.
 
 ```typescript
 const oms = new OMSClient({
@@ -210,40 +211,51 @@ const oms = new OMSClient({
 })
 ```
 
-For routers such as React Router or Next.js, use the explicit start/complete methods:
+For router-driven apps, use the explicit start/complete methods:
 
 ```typescript
 const { url } = await oms.wallet.startOidcRedirectAuth({
   provider: 'google',
-  redirectUri: `${window.location.origin}/auth/callback`,
+  redirectUri: `${window.location.origin}/auth/callback`, // optional in browser apps
 })
 
 window.location.assign(url)
 
 // On the callback route:
-const { walletAddress, wallet, wallets, credential } = await oms.wallet.completeOidcRedirectAuth({
-  callbackUrl: window.location.href,
-  cleanUrl: true,
-})
+const result = await oms.wallet.completeOidcRedirectAuth()
+if (result) {
+  console.log('Wallet address:', result.walletAddress)
+}
 ```
 
-OIDC redirect auth also supports manual wallet selection by passing `walletSelection: 'manual'` to `completeOidcRedirectAuth`.
+OIDC redirect auth also supports manual wallet selection by passing `walletSelection: 'manual'` to `startOidcRedirectAuth` or `completeOidcRedirectAuth`. Options passed at start are stored with the pending redirect state and used after the provider redirects back.
 
-For simple browser apps, use the one-call convenience method from a sign-in action and from the callback page:
+For simple browser apps, use `signInWithOidcRedirect` from a sign-in action. It calls `startOidcRedirectAuth`, derives the current page as `redirectUri`, and navigates with `window.location.assign`:
 
 ```typescript
 void oms.wallet.signInWithOidcRedirect({ provider: 'google' })
+void oms.wallet.signInWithOidcRedirect({ provider: 'apple' })
+
+// On the callback page:
+const result = await oms.wallet.completeOidcRedirectAuth()
+if (result) {
+  console.log('Wallet address:', result.walletAddress)
+}
 ```
 
 Pass `loginHint` only when you want to prefill or select a specific Google account, such as during session-expiry reauth. The SDK only sends `login_hint` for Google providers. When omitted, the SDK falls back to the previous active session email when one exists before the redirect auth attempt starts. After `signOut()`, that previous session email is cleared. To force no `login_hint` for a call, pass `loginHint: ''`.
 
 Pending redirect state is stored in `sessionStorage` by default. Final wallet session metadata continues to use the configured SDK storage.
 
+`googleOidcProvider()` uses the SDK default Google client ID, the SDK relay redirect URI, `openid email profile` scopes, and PKCE auth-code mode by default.
+
+`appleOidcProvider()` uses the SDK default Apple Services ID, the SDK relay redirect URI, `openid email` scopes, `response_mode=form_post`, and PKCE auth-code mode by default.
+
 ### Session State
 
 Email and OIDC auth both persist the active wallet session in the configured SDK storage. Browser storage defaults to `localStorage` when available; non-browser runtimes fall back to in-memory storage unless you provide a custom `StorageManager`. Browser signing defaults to a non-extractable WebCrypto P-256 credential using `ecdsa-p256-sha256`, so the private session key is not written to `localStorage`. Completed auth requests ask WaaS for a one-week session lifetime.
 
-Pass `sessionLifetimeSeconds` to `completeEmailAuth`, `completeOidcRedirectAuth`, or `signInWithOidcRedirect` to request a different session lifetime for that auth completion.
+Pass `sessionLifetimeSeconds` to `completeEmailAuth`, `startOidcRedirectAuth`, `completeOidcRedirectAuth`, or `signInWithOidcRedirect` to request a different session lifetime. For OIDC redirects, values passed at start are stored with the pending redirect state and used on callback completion unless completion overrides them.
 
 Use `oms.wallet.walletAddress` when you only need the active wallet address. Use `oms.wallet.session` when you also need credential expiry, login type, or the email returned by the wallet API.
 
@@ -337,7 +349,7 @@ import { parseUnits } from 'viem'
 
 const tx = await oms.wallet.sendTransaction({
   network: Networks.polygon,
-  to: '0xRecipient',
+  to: '0x1111111111111111111111111111111111111111',
   value: parseUnits('1', 18), // 1 POL
 })
 ```
@@ -347,8 +359,8 @@ const tx = await oms.wallet.sendTransaction({
 ```typescript
 const tx = await oms.wallet.sendTransaction({
   network: Networks.polygon,
-  to: '0xContract',
-  data: '0xa9059cbb000000000000000000000000...',
+  to: '0x2222222222222222222222222222222222222222',
+  data: '0x12345678',
 })
 ```
 
@@ -372,10 +384,10 @@ const erc20Abi = [
 
 const tx = await oms.wallet.sendTransaction({
   network: Networks.polygon,
-  to: '0xTokenContract',
+  to: '0x3333333333333333333333333333333333333333',
   abi: erc20Abi,
   functionName: 'transfer',
-  args: ['0xRecipient', parseUnits('1', 18)],
+  args: ['0x1111111111111111111111111111111111111111', parseUnits('1', 18)],
 })
 ```
 
@@ -392,7 +404,7 @@ import { parseUnits } from 'viem'
 
 const tx = await oms.wallet.sendTransaction({
   network: Networks.polygon,
-  to: '0xRecipient',
+  to: '0x1111111111111111111111111111111111111111',
   value: parseUnits('0.001', 18),
   waitForStatus: false,
 })
@@ -407,7 +419,7 @@ import { parseUnits } from 'viem'
 
 await oms.wallet.sendTransaction({
   network: Networks.polygon,
-  to: '0xRecipient',
+  to: '0x1111111111111111111111111111111111111111',
   value: parseUnits('0.001', 18),
   statusPolling: {
     timeoutMs: 30_000,
@@ -424,8 +436,8 @@ wallet can pay, or return `option.selection` from a custom selector.
 ```typescript
 const tx = await oms.wallet.sendTransaction({
   network: Networks.polygon,
-  to: '0xTokenContract',
-  data: '0xa9059cbb000000000000000000000000...',
+  to: '0x3333333333333333333333333333333333333333',
+  data: '0x12345678',
   selectFeeOption: async (feeOptions) => {
     const selected = feeOptions.find(option => option.feeOption.token.symbol === 'USDC')
     return selected?.selection
@@ -459,11 +471,14 @@ const oms = new OMSClient({
         clientId: 'custom-client-id',
         issuer: 'https://issuer.example',
         authorizationUrl: 'https://issuer.example/oauth/authorize',
+        scopes: ['openid', 'email', 'profile'],
       },
     },
   },
 })
 ```
+
+Provider configs are the source of truth for OIDC scopes. If `scopes` is omitted or empty, the SDK does not send a `scope` authorization parameter. OIDC auth mode defaults to PKCE; pass `authMode` when a provider needs a different WaaS auth-code mode.
 
 ### Custom Storage and Signing
 
@@ -521,10 +536,10 @@ import { parseUnits } from 'viem'
 
 const tx = await oms.wallet.callContract({
   network: Networks.polygon,
-  contractAddress: '0xTokenContract',
+  contractAddress: '0x3333333333333333333333333333333333333333',
   method: 'transfer(address,uint256)',
   args: [
-    { type: 'address', value: '0xRecipient' },
+    { type: 'address', value: '0x1111111111111111111111111111111111111111' },
     { type: 'uint256', value: parseUnits('1', 18).toString() },
   ],
 })

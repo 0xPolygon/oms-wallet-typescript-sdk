@@ -7,6 +7,7 @@ This note documents the wallet session expiry flow for maintainers. Public API b
 - A valid stored session is restored into memory and gets an expiry timer.
 - An expired stored session is not restored as active, but its metadata stays in storage so `onSessionExpired` can replay after a page refresh.
 - Active sessions can expire from the timer or from a protected wallet operation checking the session before use.
+- Pending manual wallet selection uses the same auth metadata and expiry timer before a wallet is activated.
 - `signOut()` or a new auth flow clears or replaces stored session metadata, which cancels stale expired-session replay.
 
 ## Flow
@@ -22,6 +23,10 @@ flowchart TD
   E -- "No" --> F["Restore active in-memory session"]
   F --> G["Schedule active session expiry timer"]
 
+  X["Manual auth completion"] --> Y["Create pending wallet selection snapshot"]
+  Y --> Z["Schedule pending selection expiry timer"]
+  Z --> P
+
   E -- "Yes" --> H["Keep expired metadata in storage"]
   H --> I["Do not restore active in-memory session"]
   I --> J["Schedule deferred expiry replay"]
@@ -35,15 +40,14 @@ flowchart TD
   N -- "Yes" --> O["Notify onSessionExpired"]
 
   G --> P["Timer fires"]
-  P --> Q{"In-memory session snapshot still current?"}
+  P --> Q{"Session or pending-selection snapshot still current?"}
   Q -- "No" --> R["Ignore stale timer"]
   Q -- "Yes" --> S{"Session expired now?"}
   S -- "No" --> G
-  S -- "Yes" --> T["Clear in-memory session and signer"]
+  S -- "Yes" --> T["Clear in-memory session or pending selection and signer"]
   T --> U["Keep expired metadata in storage"]
   U --> O
 
   V["signOut or new auth flow"] --> W["Clear or replace stored session"]
   W --> L
 ```
-

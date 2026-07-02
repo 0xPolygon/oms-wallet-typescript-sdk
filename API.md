@@ -56,9 +56,9 @@
   - [ListAccessParams](#listaccessparams)
   - [AccessGrantPage](#accessgrantpage)
   - [WalletActivationResult](#walletactivationresult)
-  - [SendNativeTransactionParams](#sendnativetransactionparams)
-  - [SendDataTransactionParams](#senddatatransactionparams)
-  - [SendContractTransactionParams](#sendcontracttransactionparams)
+  - [Native Transaction Parameters](#native-transaction-parameters)
+  - [Raw Data Transaction Parameters](#raw-data-transaction-parameters)
+  - [ABI-Encoded Transaction Parameters](#abi-encoded-transaction-parameters)
   - [SendTransactionResponse](#sendtransactionresponse)
   - [TransactionStatusResponse](#transactionstatusresponse)
   - [TransactionStatusPollingOptions](#transactionstatuspollingoptions)
@@ -83,7 +83,8 @@
   - [TokenContractInfo](#tokencontractinfo)
   - [TokenMetadata](#tokenmetadata)
   - [TokenMetadataAsset](#tokenmetadataasset)
-  - [AbiArg](#abiarg)
+  - [Contract Call Arguments](#contract-call-arguments)
+  - [AuthMode](#authmode)
   - [WalletType](#wallettype)
 
 ---
@@ -117,7 +118,7 @@ new OMSClient(params: {
 | Name | Type | Required | Description |
 |---|---|---|---|
 | `publishableKey` | `string` | Yes | Your OMS publishable key. |
-| `auth` | `OmsAuthConfig` | No | OIDC provider configuration. Defaults to the built-in Google provider. |
+| `auth` | `OmsAuthConfig` | No | OIDC provider configuration. Defaults to the built-in Google and Apple providers. |
 | `storage` | `StorageManager` | No | Storage backend for wallet metadata. Defaults to `LocalStorageManager` when browser `localStorage` is available, otherwise `MemoryStorageManager`. |
 | `redirectAuthStorage` | `StorageManager` | No | Transient storage for OIDC redirect auth state. Defaults to `sessionStorage` when available. |
 | `credentialSigner` | `CredentialSigner` | No | Request credential signer. Defaults to a non-extractable WebCrypto P-256 signer (`ecdsa-p256-sha256`) where WebCrypto is available. |
@@ -172,7 +173,7 @@ wallet.session: OMSClientSessionState
 
 Completed wallet sessions persist `walletAddress`, credential expiry, login type, and returned email in the configured `storage`. Pending email OTP and OIDC redirect state are not exposed through `session`; use the auth method results to drive pending UI.
 
-Expired sessions are made inactive before protected wallet operations and throw `OmsSessionError` with code `OMS_SESSION_EXPIRED`. The SDK clears the active signer/session state, but keeps the expired session metadata in storage until the app explicitly starts a new auth flow or calls `signOut()`. Use `wallet.onSessionExpired` to update app state or route back to sign-in; the event includes the expired session snapshot so apps can reuse `sessionEmail` for email OTP reauth or as a Google `loginHint`, including after a page refresh.
+Expired sessions are made inactive before protected wallet operations and throw `OmsSessionError` with code `OMS_SESSION_EXPIRED`. The SDK clears the active signer/session state, but keeps the expired session metadata in storage until the app explicitly starts a new auth flow or calls `signOut()`. Use `wallet.onSessionExpired` to update app state or route back to sign-in; the event includes the expired session snapshot so apps can reuse `sessionEmail` for email OTP reauth or provider-specific account hints, including Google `loginHint`, after a page refresh.
 
 ### onSessionExpired
 
@@ -277,19 +278,25 @@ await selection.createAndSelectWallet({ reference: 'main' })
 ```typescript
 startOidcRedirectAuth(params: {
   provider: string | OidcProviderConfig
-  redirectUri: string
+  redirectUri?: string
   walletType?: WalletType
+  walletSelection?: 'automatic' | 'manual'
+  sessionLifetimeSeconds?: number
   relayRedirectUri?: string
   authorizeParams?: Record<string, string>
   loginHint?: string
 }): Promise<{ url: string; state: string; challenge: string }>
 ```
 
-Starts an OIDC authorization-code PKCE flow and returns the provider authorization URL. If a wallet session is already active, it is cleared before the new auth attempt starts. The SDK stores transient redirect auth state so the callback can complete after a full-page redirect.
+Starts an OIDC authorization-code redirect flow and returns the provider authorization URL. If a wallet session is already active, it is cleared before the new auth attempt starts. The SDK stores transient redirect auth state so the callback can complete after a full-page redirect with the same credential signer, credential id, and signing algorithm.
 
 If `provider` is a string, it must match a configured `auth.oidcProviders` key. Passing an `OidcProviderConfig` object directly is also supported.
 
+In browser environments, `redirectUri` defaults to the current page URL without query or hash. Outside a browser, pass `redirectUri`.
+
 When `relayRedirectUri` is set, the provider redirects through that relay before returning to the app `redirectUri`.
+
+Pass `walletSelection` or `sessionLifetimeSeconds` at start to store completion preferences in the pending redirect state. `completeOidcRedirectAuth` uses those stored values after the provider redirects back unless completion params override them.
 
 Pass `loginHint` for Google redirect flows to set the Google `login_hint` authorization parameter, which can prefill or select the expected account. The SDK only sends `login_hint` for providers whose issuer is `https://accounts.google.com`. If omitted, the SDK falls back to the previous active session email when one exists before the redirect auth attempt starts. After `signOut()`, that previous session email is cleared. To force no `login_hint` for a call, pass `loginHint: ''`.
 
@@ -308,24 +315,29 @@ window.location.assign(url)
 
 ```typescript
 completeOidcRedirectAuth(params: {
-  callbackUrl: string
+  callbackUrl?: string
   cleanUrl?: boolean
   replaceUrl?: (url: string) => void
   walletSelection?: 'automatic' | 'manual'
   sessionLifetimeSeconds?: number
-}): Promise<
+} = {}): Promise<
   | { walletAddress: Address; wallet: OmsWallet; wallets: OmsWallet[]; credential: WalletCredential }
   | PendingWalletSelection
+  | void
 >
 ```
 
-Completes an OIDC redirect flow by validating the callback, completing auth with a one-week session lifetime by default, and activating an existing wallet or creating one. Pass `sessionLifetimeSeconds` to request a shorter or longer session lifetime. Pass `walletSelection: 'manual'` to return a [`PendingWalletSelection`](#pendingwalletselection) for app-driven wallet selection. `cleanUrl` removes OAuth query parameters after successful completion; outside a browser, pass `replaceUrl`.
+Completes an OIDC redirect flow by validating the callback, completing auth with a one-week session lifetime by default, and activating an existing wallet or creating one. Completion must run with the same credential signer, credential id, and signing algorithm that started the redirect. In browser environments, `callbackUrl` defaults to `window.location.href`; if the current URL has no OIDC callback params, the method returns `undefined` without requiring pending redirect storage.
+
+Pass `sessionLifetimeSeconds` to request a shorter or longer session lifetime. Pass `walletSelection: 'manual'` to return a [`PendingWalletSelection`](#pendingwalletselection) for app-driven wallet selection. If omitted, completion uses values stored by `startOidcRedirectAuth` or `signInWithOidcRedirect`, then falls back to automatic wallet selection and the default one-week lifetime.
+
+When `callbackUrl` is omitted, OAuth query parameters are cleaned by default. Explicit `callbackUrl` calls clean only when `cleanUrl: true`; outside a browser, pass `replaceUrl` when cleaning.
 
 ```typescript
-const { walletAddress, credential } = await oms.wallet.completeOidcRedirectAuth({
-  callbackUrl: window.location.href,
-  cleanUrl: true,
-})
+const result = await oms.wallet.completeOidcRedirectAuth()
+if (result) {
+  console.log(result.walletAddress)
+}
 ```
 
 ---
@@ -342,17 +354,23 @@ signInWithOidcRedirect(params: {
   authorizeParams?: Record<string, string>
   loginHint?: string
   sessionLifetimeSeconds?: number
-  cleanUrl?: boolean
   currentUrl?: string
   assignUrl?: (url: string) => void
-  replaceUrl?: (url: string) => void
-}): Promise<{ walletAddress: Address; wallet: OmsWallet; wallets: OmsWallet[]; credential: WalletCredential } | PendingWalletSelection | void>
+}): Promise<void>
 ```
 
-Browser convenience method for regular web apps. If the current URL has OIDC callback params, it completes auth and returns the same result as [`completeOidcRedirectAuth`](#completeoidcredirectauth). Otherwise it starts auth, redirects with `window.location.assign`, and returns `void`. `loginHint` is passed through to the started redirect flow; `sessionLifetimeSeconds` is used when completing the callback and defaults to one week when omitted. For router-driven apps, prefer [`startOidcRedirectAuth`](#startoidcredirectauth) and [`completeOidcRedirectAuth`](#completeoidcredirectauth).
+Browser convenience method for regular web apps. It starts OIDC redirect auth, stores pending redirect state, redirects with `window.location.assign`, and returns `void`. Use [`completeOidcRedirectAuth`](#completeoidcredirectauth) on the callback page to finish auth.
+
+`redirectUri` defaults to the current page URL without query or hash. Pass `currentUrl` to derive that value from a specific URL, and pass `assignUrl` outside a browser or when testing. `walletSelection` and `sessionLifetimeSeconds` are stored with the pending redirect state and used by `completeOidcRedirectAuth` after the provider redirects back.
 
 ```typescript
 void oms.wallet.signInWithOidcRedirect({ provider: 'google' })
+void oms.wallet.signInWithOidcRedirect({ provider: 'apple' })
+
+const result = await oms.wallet.completeOidcRedirectAuth()
+if (result) {
+  console.log(result.walletAddress)
+}
 ```
 
 ---
@@ -363,7 +381,7 @@ void oms.wallet.signInWithOidcRedirect({ provider: 'google' })
 signOut(): Promise<void>
 ```
 
-Clears the wallet session metadata from storage and clears the active credential signer where supported. After calling this, `walletAddress` and `session` metadata are no longer available and the user must authenticate again via [`startEmailAuth`](#startemailauth).
+Clears the wallet session metadata from storage and clears the active credential signer where supported. After calling this, `walletAddress` and `session` metadata are no longer available and the user must authenticate again through email auth or OIDC redirect auth.
 
 **Returns** `Promise<void>`
 
@@ -520,7 +538,15 @@ Fetches the latest status for a prepared/executed transaction. This is useful af
 #### Native Token Transfer
 
 ```typescript
-sendTransaction(params: SendNativeTransactionParams): Promise<SendTransactionResponse>
+sendTransaction(params: {
+  network: Network
+  to: Address
+  value: bigint
+  mode?: TransactionMode
+  selectFeeOption?: FeeOptionSelector
+  waitForStatus?: boolean
+  statusPolling?: TransactionStatusPollingOptions
+}): Promise<SendTransactionResponse>
 ```
 
 Sends native tokens (ETH, POL, etc.) to an address.
@@ -530,7 +556,7 @@ import { parseUnits } from 'viem'
 
 const tx = await oms.wallet.sendTransaction({
   network: Networks.polygon,
-  to: '0xRecipient',
+  to: '0x1111111111111111111111111111111111111111',
   value: parseUnits('1', 18), // 1 POL
 })
 ```
@@ -538,7 +564,16 @@ const tx = await oms.wallet.sendTransaction({
 #### Raw Data Transaction
 
 ```typescript
-sendTransaction(params: SendDataTransactionParams): Promise<SendTransactionResponse>
+sendTransaction(params: {
+  network: Network
+  to: Address
+  data: Hex
+  value?: bigint
+  mode?: TransactionMode
+  selectFeeOption?: FeeOptionSelector
+  waitForStatus?: boolean
+  statusPolling?: TransactionStatusPollingOptions
+}): Promise<SendTransactionResponse>
 ```
 
 Sends a transaction with arbitrary calldata as a hex string. Use this when you have pre-encoded calldata.
@@ -546,18 +581,29 @@ Sends a transaction with arbitrary calldata as a hex string. Use this when you h
 ```typescript
 const tx = await oms.wallet.sendTransaction({
   network: Networks.polygon,
-  to: '0xContract',
-  data: '0xa9059cbb000000000000000000000000...',
+  to: '0x2222222222222222222222222222222222222222',
+  data: '0x12345678',
 })
 ```
 
 #### ABI-Encoded Contract Call
 
 ```typescript
-sendTransaction<abi, functionName>(params: SendContractTransactionParams<abi, functionName>): Promise<SendTransactionResponse>
+sendTransaction(params: {
+  network: Network
+  to: Address
+  abi: Abi | readonly unknown[]
+  functionName: string
+  args?: unknown[]
+  value?: bigint
+  mode?: TransactionMode
+  selectFeeOption?: FeeOptionSelector
+  waitForStatus?: boolean
+  statusPolling?: TransactionStatusPollingOptions
+}): Promise<SendTransactionResponse>
 ```
 
-Sends a contract interaction with fully-typed ABI encoding via viem. The calldata is encoded automatically from `abi`, `functionName`, and `args`.
+Sends a contract interaction with ABI encoding via viem. The calldata is encoded automatically from `abi`, `functionName`, and `args`. When `abi` is passed as a const ABI, TypeScript narrows valid `functionName` values and infers `args`.
 
 ```typescript
 import { parseUnits } from 'viem'
@@ -575,14 +621,14 @@ const erc20Abi = [
 
 const tx = await oms.wallet.sendTransaction({
   network: Networks.polygon,
-  to: '0xTokenContract',
+  to: '0x3333333333333333333333333333333333333333',
   abi: erc20Abi,
   functionName: 'transfer',
-  args: ['0xRecipient', parseUnits('1', 18)],
+  args: ['0x1111111111111111111111111111111111111111', parseUnits('1', 18)],
 })
 ```
 
-All three variants share the following optional base fields:
+The transaction variants share these common fields. `value` is required for native token transfers and optional for raw-data and ABI-encoded contract calls.
 
 | Name | Type | Description |
 |---|---|---|
@@ -594,7 +640,7 @@ All three variants share the following optional base fields:
 
 **Returns** `Promise<SendTransactionResponse>` — the prepared transaction ID, latest status, and transaction hash when available.
 
-**Throws** if no session is active, the transaction reverts, or the request fails.
+**Throws** if no session is active, local validation or fee selection fails, or a prepare/execute/status request fails. On-chain failed transaction statuses are returned as transaction status responses.
 
 When fee options are returned, `selectFeeOption` receives `FeeOptionWithBalance[]`.
 Each entry includes the `FeeOption` plus the selected wallet's balance
@@ -611,7 +657,7 @@ callContract(params: {
   network: Network
   contractAddress: Address
   method: string
-  args?: AbiArg[]
+  args?: Array<{ type: string; value: unknown }>
   mode?: TransactionMode
   selectFeeOption?: FeeOptionSelector
   waitForStatus?: boolean
@@ -628,7 +674,7 @@ Calls a state-changing smart contract function using a method signature string a
 | `network` | `Network` | Yes | Network identifier. See [Network](#network). |
 | `contractAddress` | `Address` | Yes | Address of the target contract. |
 | `method` | `string` | Yes | ABI function signature, e.g. `"transfer(address,uint256)"`. |
-| `args` | `AbiArg[]` | No | Ordered list of typed arguments. See [AbiArg](#abiarg). |
+| `args` | `Array<{ type: string; value: unknown }>` | No | Ordered list of typed arguments. See [Contract Call Arguments](#contract-call-arguments). |
 | `mode` | `TransactionMode` | No | Transaction execution mode. Defaults to `TransactionMode.Relayer`. |
 | `selectFeeOption` | `FeeOptionSelector` | No | Optional callback for choosing a fee option. |
 | `waitForStatus` | `boolean` | No | Set to `false` to return immediately after execute without polling transaction status. |
@@ -643,10 +689,10 @@ import { parseUnits } from 'viem'
 
 const tx = await oms.wallet.callContract({
   network: Networks.polygon,
-  contractAddress: '0xTokenContract',
+  contractAddress: '0x3333333333333333333333333333333333333333',
   method: 'transfer(address,uint256)',
   args: [
-    { type: 'address', value: '0xRecipient' },
+    { type: 'address', value: '0x1111111111111111111111111111111111111111' },
     { type: 'uint256', value: parseUnits('1', 18).toString() },
   ],
 })
@@ -940,7 +986,7 @@ interface OmsAuthConfig {
 |---|---|---|
 | `oidcProviders` | `Record<string, OidcProviderConfig>` | OIDC provider configurations addressable by provider key. |
 
-When `auth` is omitted, the SDK configures the built-in `google` provider. Passing `auth` replaces the configured provider set.
+When `auth` is omitted, the SDK configures the built-in `google` and `apple` providers. Passing `auth` replaces the configured provider set.
 
 Use `defineOmsAuthConfig` to preserve typed custom OIDC provider keys:
 
@@ -969,10 +1015,13 @@ type OidcProviderConfig = {
   scopes?: string[]
   relayRedirectUri?: string
   authorizeParams?: Record<string, string>
+  authMode?: AuthMode.AuthCode | AuthMode.AuthCodePKCE
 }
 ```
 
-Google can be configured with the `googleOidcProvider` helper:
+Provider configs are the source of truth for authorization scopes. If `scopes` is omitted or empty, the SDK does not send a `scope` authorization parameter. `authMode` defaults to `AuthMode.AuthCodePKCE`.
+
+Google can be configured with the `googleOidcProvider` helper. The default Google provider uses the SDK default client ID, the SDK relay redirect URI, `openid email profile` scopes, PKCE auth-code mode, and Google authorization parameters `access_type=offline` and `prompt=consent`:
 
 ```typescript
 // Uses the SDK default Google client id and relay redirect URI.
@@ -985,12 +1034,26 @@ googleOidcProvider({
 })
 ```
 
+Apple can be configured with the `appleOidcProvider` helper. The default Apple provider uses `openid email` scopes, `response_mode=form_post`, and PKCE auth-code mode:
+
+```typescript
+// Uses the SDK default Apple Services ID and relay redirect URI.
+appleOidcProvider()
+
+// Override defaults when needed.
+appleOidcProvider({
+  clientId: 'your-apple-services-id',
+  relayRedirectUri: 'https://app.example/auth/callback',
+})
+```
+
 ---
 
 ### OIDC Provider Helpers
 
 ```typescript
-type OidcProviderName<Env> = string
+type OidcProviderName<Env> =
+  keyof NonNullable<NonNullable<Env['auth']>['oidcProviders']> & string
 type OidcProviderInput<Env> = OidcProviderName<Env> | OidcProviderConfig
 
 interface GoogleOidcProviderParams {
@@ -998,12 +1061,21 @@ interface GoogleOidcProviderParams {
   relayRedirectUri?: string
   scopes?: string[]
   authorizeParams?: Record<string, string>
+  authMode?: AuthMode.AuthCode | AuthMode.AuthCodePKCE
+}
+
+interface AppleOidcProviderParams {
+  clientId?: string
+  relayRedirectUri?: string
+  scopes?: string[]
+  authorizeParams?: Record<string, string>
+  authMode?: AuthMode.AuthCode | AuthMode.AuthCodePKCE
 }
 
 const defaultOmsAuthConfig: OmsAuthConfig
 ```
 
-`OidcProviderName` is narrowed from the configured `auth.oidcProviders` keys when `OMSClient` is constructed with `defineOmsAuthConfig`. `googleOidcProvider(params)` accepts `GoogleOidcProviderParams` and returns an `OidcProviderConfig`. `defaultOmsAuthConfig` contains the SDK's built-in Google provider configuration.
+`OidcProviderName` is narrowed from the configured `auth.oidcProviders` keys when `OMSClient` is constructed with `defineOmsAuthConfig`. `googleOidcProvider(params)` and `appleOidcProvider(params)` return `OidcProviderConfig` values. `defaultOmsAuthConfig` contains the SDK's built-in Google and Apple provider configuration.
 
 ---
 
@@ -1026,8 +1098,10 @@ interface CompleteEmailAuthResult {
 
 interface StartOidcRedirectAuthParams<Env> {
   provider: OidcProviderInput<Env>
-  redirectUri: string
+  redirectUri?: string
   walletType?: WalletType
+  walletSelection?: WalletSelectionBehavior
+  sessionLifetimeSeconds?: number
   relayRedirectUri?: string
   authorizeParams?: Record<string, string>
   loginHint?: string
@@ -1040,7 +1114,7 @@ interface StartOidcRedirectAuthResult {
 }
 
 interface CompleteOidcRedirectAuthParams {
-  callbackUrl: string
+  callbackUrl?: string
   cleanUrl?: boolean
   replaceUrl?: (url: string) => void
   walletSelection?: WalletSelectionBehavior
@@ -1063,10 +1137,8 @@ interface SignInWithOidcRedirectParams<Env> {
   authorizeParams?: Record<string, string>
   loginHint?: string
   sessionLifetimeSeconds?: number
-  cleanUrl?: boolean
   currentUrl?: string
   assignUrl?: (url: string) => void
-  replaceUrl?: (url: string) => void
 }
 ```
 
@@ -1124,8 +1196,13 @@ Interface for request credential signing. The default implementation is `WebCryp
 ### Credential Signing Helpers
 
 ```typescript
-class WebCryptoP256CredentialSigner implements CredentialSigner
-class EthereumPrivateKeyCredentialSigner implements CredentialSigner
+class WebCryptoP256CredentialSigner implements CredentialSigner {
+  constructor(id?: string)
+}
+
+class EthereumPrivateKeyCredentialSigner implements CredentialSigner {
+  constructor(privateKey: Uint8Array)
+}
 ```
 
 `WebCryptoP256CredentialSigner` is the browser default. `EthereumPrivateKeyCredentialSigner` signs credential requests with an EVM private key and is useful for Node.js or server-side usage where the caller provides key material directly.
@@ -1308,13 +1385,13 @@ Returned when an existing wallet is selected or a new wallet is created and acti
 
 ---
 
-### SendNativeTransactionParams
+### Native Transaction Parameters
 
 ```typescript
-type SendNativeTransactionParams = {
+{
   network: Network
   to: Address
-  value: bigint        // required — amount in wei
+  value: bigint
   mode?: TransactionMode
   selectFeeOption?: FeeOptionSelector
   waitForStatus?: boolean
@@ -1326,13 +1403,13 @@ Used when sending a native token transfer. `value` is required and `data`/`abi` 
 
 ---
 
-### SendDataTransactionParams
+### Raw Data Transaction Parameters
 
 ```typescript
-type SendDataTransactionParams = {
+{
   network: Network
   to: Address
-  data: Hex            // required — pre-encoded calldata
+  data: Hex
   value?: bigint
   mode?: TransactionMode
   selectFeeOption?: FeeOptionSelector
@@ -1345,18 +1422,15 @@ Used when sending a transaction with raw calldata. `abi` must not be set.
 
 ---
 
-### SendContractTransactionParams
+### ABI-Encoded Transaction Parameters
 
 ```typescript
-type SendContractTransactionParams<
-  abi extends Abi | readonly unknown[],
-  functionName extends ContractFunctionName<abi> | undefined
-> = {
+{
   network: Network
   to: Address
-  abi: abi
-  functionName: functionName
-  args?: ...           // inferred from abi + functionName
+  abi: Abi | readonly unknown[]
+  functionName: string
+  args?: unknown[]
   value?: bigint
   mode?: TransactionMode
   selectFeeOption?: FeeOptionSelector
@@ -1365,7 +1439,7 @@ type SendContractTransactionParams<
 }
 ```
 
-Used for fully-typed ABI-encoded contract calls. `abi` and `functionName` are required; `args` types are inferred from the ABI. `data` must not be set. Calldata is encoded automatically using viem's `encodeFunctionData`.
+Used for ABI-encoded contract calls. `abi` and `functionName` are required; `args` types are inferred from const ABIs. `data` must not be set. Calldata is encoded automatically using viem's `encodeFunctionData`.
 
 ---
 
@@ -1838,21 +1912,36 @@ Media asset metadata associated with token metadata when returned.
 
 ---
 
-### AbiArg
+### Contract Call Arguments
 
 ```typescript
-interface AbiArg {
+{
   type: string
-  value: any
+  value: unknown
 }
 ```
 
-A loosely-typed ABI argument used by [`callContract`](#callcontract). For fully-typed encoding, use the ABI overload of [`sendTransaction`](#abi-encoded-contract-call) instead.
+A loosely-typed ABI argument object used by [`callContract`](#callcontract). For fully-typed encoding, use the ABI overload of [`sendTransaction`](#abi-encoded-contract-call) instead.
 
 | Field | Type | Description |
 |---|---|---|
 | `type` | `string` | Solidity type string, e.g. `"address"`, `"uint256"`, `"bytes32"`, `"bool"`. |
-| `value` | `any` | The argument value. Use a string for large integers to avoid precision loss. |
+| `value` | `unknown` | The argument value. Use a string for large integers to avoid precision loss. |
+
+---
+
+### AuthMode
+
+```typescript
+enum AuthMode {
+  OTP = 'otp',
+  IDToken = 'id-token',
+  AuthCode = 'auth-code',
+  AuthCodePKCE = 'auth-code-pkce'
+}
+```
+
+OIDC provider configs support `AuthMode.AuthCode` and `AuthMode.AuthCodePKCE`. Redirect auth defaults to `AuthMode.AuthCodePKCE` when a provider does not specify `authMode`.
 
 ---
 
@@ -1864,4 +1953,4 @@ enum WalletType {
 }
 ```
 
-Identifies the wallet type to load or create. Passed as the optional `walletType` parameter to [`completeEmailAuth`](#completeemailauth). Defaults to `WalletType.Ethereum`.
+Identifies the wallet type to load or create. Accepted by wallet creation and auth completion flows, including [`completeEmailAuth`](#completeemailauth), [`startOidcRedirectAuth`](#startoidcredirectauth), [`signInWithOidcRedirect`](#signinwithoidcredirect), and [`createWallet`](#createwallet). Defaults to `WalletType.Ethereum`.

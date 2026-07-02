@@ -43,8 +43,10 @@ pnpm check:package-versions
 ```bash
 pnpm test
 pnpm --filter @0xsequence/oms-wallet-wagmi-connector test
+pnpm --filter @0xsequence/oms-wallet-wagmi-connector build
 pnpm build
 pnpm build:node-example
+pnpm build:node-contract-deploy-example
 pnpm build:example
 pnpm build:trails-actions-example
 pnpm build:wagmi-example

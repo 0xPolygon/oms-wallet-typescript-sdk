@@ -14,21 +14,20 @@ const oms = new OMSClient({
   publishableKey: import.meta.env.VITE_OMS_PUBLISHABLE_KEY,
 })
 
+const omsConnector = omsWalletConnector({
+  client: oms,
+  initialChainId: polygon.id,
+  transactionOptions: {
+    selectFeeOption: FeeOptionSelector.firstAvailable,
+  },
+})
+
 export const wagmiConfig = createConfig({
   chains: [polygon],
   transports: {
     [polygon.id]: http(),
   },
-  connectors: [
-    omsWalletConnector({
-      client: oms,
-      networks: oms.supportedNetworks,
-      initialChainId: polygon.id,
-      transactionOptions: {
-        selectFeeOption: FeeOptionSelector.firstAvailable,
-      },
-    }),
-  ],
+  connectors: [omsConnector],
 })
 ```
 
@@ -52,7 +51,7 @@ await connect({
 })
 ```
 
-For redirect-based OIDC flows such as Google, complete the SDK redirect callback first, then connect through wagmi once the wallet session is active.
+For redirect-based OIDC flows such as Google or Apple, complete the SDK redirect callback first, then connect through wagmi once the wallet session is active.
 
 ## Disconnect
 
@@ -67,7 +66,9 @@ await oms.wallet.signOut()
 
 ## Networks
 
-OMS `Network` values are not wagmi chain definitions. Wagmi still needs viem `Chain` objects with RPC transport configuration. Use `wagmi/chains`, `viem/chains`, or custom viem `Chain` objects, then pass the OMS networks to the connector for OMS support validation.
+OMS `Network` values are not wagmi chain definitions. Wagmi still needs viem `Chain` objects with RPC transport configuration. Use `wagmi/chains`, `viem/chains`, or custom viem `Chain` objects.
+
+By default, the connector validates OMS support with `client.supportedNetworks`. Pass `networks` only when you intentionally want a narrower or custom OMS network set for this connector instance.
 
 The connector validates `initialChainId`, `switchChain`, and provider chain switches against both the wagmi chain list and the OMS network list. A transaction `chainId` is used for that transaction without switching the connector's current chain, and must be supported by OMS.
 
@@ -112,7 +113,7 @@ The connector ignores wallet-managed execution fields that OMS Wallet does not a
 
 Use this package through wagmi connector APIs. Do not treat `getProvider()` as a general RPC provider.
 
-Supported provider methods are limited to the wallet operations that map to the SDK today: account discovery, local chain switching across configured OMS networks, `personal_sign`, `eth_signTypedData_v4`, `eth_sendTransaction`, and `wallet_sendTransaction`.
+Supported provider methods are limited to the wallet operations and state queries that map to the SDK today: `eth_chainId`, `net_version`, `eth_accounts`, `eth_requestAccounts`, `wallet_switchEthereumChain`, `personal_sign`, `eth_signTypedData_v4`, `eth_sendTransaction`, `wallet_sendTransaction`, and `wallet_getCapabilities`.
 
 Unsupported methods include direct read/RPC methods such as `eth_call`, `eth_estimateGas`, `eth_getBalance`, `eth_getCode`, `eth_getTransactionCount`, `eth_getTransactionReceipt`, and `eth_blockNumber`. Use wagmi public transports for reads, or use `oms.wallet` directly for OMS SDK operations.
 

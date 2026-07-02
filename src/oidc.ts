@@ -1,13 +1,24 @@
-import type {OidcProviderConfig} from "./omsEnvironment.js";
+import {AuthMode} from "./generated/waas.gen.js";
+import type {OidcAuthMode, OidcProviderConfig} from "./omsEnvironment.js";
 
 export interface GoogleOidcProviderParams {
     clientId?: string;
     relayRedirectUri?: string;
     scopes?: string[];
     authorizeParams?: Record<string, string>;
+    authMode?: OidcAuthMode;
 }
 
-export const defaultGoogleClientId = "970987756660-0dh5gubqfiugm452raf7mm39qaq639hn.apps.googleusercontent.com";
+export interface AppleOidcProviderParams {
+    clientId?: string;
+    relayRedirectUri?: string;
+    scopes?: string[];
+    authorizeParams?: Record<string, string>;
+    authMode?: OidcAuthMode;
+}
+
+export const defaultGoogleClientId = "913882656162-7l4ofa0ou2hqo90umlkenhdop1f5inba.apps.googleusercontent.com";
+export const defaultAppleClientId = "service.oms.polygon.technology";
 export const defaultRelayRedirectUri = "https://waas-cf-relay-staging.0xsequence.workers.dev/callback";
 
 export function googleOidcProvider(params: GoogleOidcProviderParams = {}): OidcProviderConfig {
@@ -17,9 +28,25 @@ export function googleOidcProvider(params: GoogleOidcProviderParams = {}): OidcP
         authorizationUrl: 'https://accounts.google.com/o/oauth2/v2/auth',
         scopes: params.scopes ?? ['openid', 'email', 'profile'],
         relayRedirectUri: params.relayRedirectUri || defaultRelayRedirectUri,
+        authMode: params.authMode ?? AuthMode.AuthCodePKCE,
         authorizeParams: {
             access_type: 'offline',
             prompt: 'consent',
+            ...params.authorizeParams,
+        },
+    };
+}
+
+export function appleOidcProvider(params: AppleOidcProviderParams = {}): OidcProviderConfig {
+    return {
+        clientId: params.clientId || defaultAppleClientId,
+        issuer: 'https://appleid.apple.com',
+        authorizationUrl: 'https://appleid.apple.com/auth/authorize',
+        scopes: params.scopes ?? ['openid', 'email'],
+        relayRedirectUri: params.relayRedirectUri || defaultRelayRedirectUri,
+        authMode: params.authMode ?? AuthMode.AuthCodePKCE,
+        authorizeParams: {
+            response_mode: 'form_post',
             ...params.authorizeParams,
         },
     };

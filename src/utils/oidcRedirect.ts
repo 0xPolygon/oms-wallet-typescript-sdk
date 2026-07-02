@@ -18,6 +18,7 @@ export interface BuildOidcAuthorizationUrlParams {
     scopes: string[];
     state: string;
     challenge: string;
+    usePkce?: boolean;
     authorizeParams?: Record<string, string>;
     loginHint?: string;
 }
@@ -85,10 +86,19 @@ export function buildOidcAuthorizationUrl(params: BuildOidcAuthorizationUrlParam
     url.searchParams.set('client_id', params.clientId);
     url.searchParams.set('redirect_uri', params.redirectUri);
     url.searchParams.set('response_type', 'code');
-    url.searchParams.set('scope', params.scopes.join(' '));
+    if (params.scopes.length > 0) {
+        url.searchParams.set('scope', params.scopes.join(' '));
+    } else {
+        url.searchParams.delete('scope');
+    }
     url.searchParams.set('state', params.state);
-    url.searchParams.set('code_challenge', params.challenge);
-    url.searchParams.set('code_challenge_method', 'S256');
+    if (params.usePkce) {
+        url.searchParams.set('code_challenge', params.challenge);
+        url.searchParams.set('code_challenge_method', 'S256');
+    } else {
+        url.searchParams.delete('code_challenge');
+        url.searchParams.delete('code_challenge_method');
+    }
 
     return url.toString();
 }

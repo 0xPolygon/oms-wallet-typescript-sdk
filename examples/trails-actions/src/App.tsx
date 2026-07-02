@@ -1,14 +1,34 @@
-import { useCallback, useEffect, useMemo, useRef, useState, type FormEvent } from 'react'
-import type {
-  FeeOptionSelection,
-  FeeOptionWithBalance,
-  OMSClientSessionExpiredEvent,
-  OMSClientSessionState,
-  OmsWallet,
-  PendingWalletSelection,
-  SendTransactionResponse,
-  WalletActivationResult,
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import {
+  FeeOptionSelector,
+  type FeeOptionSelection,
+  type FeeOptionWithBalance,
+  type OMSClientSessionExpiredEvent,
+  type OMSClientSessionState,
+  type OmsWallet,
+  type PendingWalletSelection,
+  type SendTransactionResponse,
+  type WalletActivationResult,
 } from '@0xsequence/typescript-sdk'
+import {
+  EmailCodeForm,
+  EmailLoginForm,
+  FeeOptionsPanel,
+  OidcButtons,
+  SessionExpiredDialog,
+  SessionOptions,
+  WalletSelectionPanel,
+} from '../../shared/example-components'
+import {
+  formatLoginType,
+  formatOidcProvider,
+  formatSessionExpiry,
+  formatWalletType,
+  hasOidcCallbackParams,
+  isPendingWalletSelection,
+  type OidcRedirectProvider,
+} from '../../shared/example-utils'
+import { useSessionPreferences } from '../../shared/use-session-preferences'
 import { TEST_SESSION_LIFETIME_SECONDS, oms } from './omsClient'
 import {
   DEFAULT_DEPOSIT_USDC_AMOUNT,
@@ -46,12 +66,18 @@ type FeeSelectionController = {
   resolve: (selection: FeeOptionSelection) => void
   reject: (error: Error) => void
 }
+type AutoFeeOptionKey = 'swap' | 'deposit' | 'earn'
 
 const MANUAL_WALLET_SELECTION_KEY = 'oms-trails-actions-manual-wallet-selection'
 const SESSION_LIFETIME_SECONDS_KEY = 'oms-trails-actions-session-lifetime-seconds'
 const NO_EARN_POSITIONS_STATUS = 'No deposited earn positions.'
 const POST_SEND_REFRESH_ATTEMPTS = 24
 const POST_SEND_REFRESH_DELAY_MS = 2500
+const DEFAULT_AUTO_FEE_OPTIONS: Record<AutoFeeOptionKey, boolean> = {
+  swap: true,
+  deposit: true,
+  earn: true,
+}
 
 type SignedInDataRefresh = {
   balances: BalanceState | null
@@ -64,8 +90,6 @@ function App() {
   const [email, setEmail] = useState('')
   const [code, setCode] = useState('')
   const [pendingWalletSelection, setPendingWalletSelection] = useState<PendingWalletSelection | null>(null)
-  const [useManualWalletSelection, setUseManualWalletSelection] = useState(readManualWalletSelectionPreference)
-  const [sessionLifetimeSeconds, setSessionLifetimeSeconds] = useState(readSessionLifetimePreference)
   const [authStatus, setAuthStatus] = useState('Enter an email to start.')
   const [redirectStatus, setRedirectStatus] = useState('')
   const [sessionExpiredPrompt, setSessionExpiredPrompt] = useState<OMSClientSessionExpiredEvent | null>(null)
@@ -87,6 +111,8 @@ function App() {
   const [withdrawStatuses, setWithdrawStatuses] = useState<Record<string, string>>({})
   const [lastWithdrawTransactions, setLastWithdrawTransactions] = useState<Record<string, TransactionResult>>({})
   const [feeOptions, setFeeOptions] = useState<FeeOptionWithBalance[]>([])
+  const [autoFeeOptions, setAutoFeeOptions] = useState(DEFAULT_AUTO_FEE_OPTIONS)
+  const [withdrawAutoFeeOptions, setWithdrawAutoFeeOptions] = useState<Record<string, boolean>>({})
   const [logLines, setLogLines] = useState(['Ready.'])
   const [loadingAction, setLoadingAction] = useState<string | null>(null)
   const [walletCopyLabel, setWalletCopyLabel] = useState<'Copy' | 'Copied'>('Copy')
@@ -98,6 +124,18 @@ function App() {
   const walletAddress = session.walletAddress
   const isSignedIn = walletAddress != null
   const isBusy = loadingAction != null
+  const {
+    useManualWalletSelection,
+    setUseManualWalletSelection,
+    sessionLifetimeSeconds,
+    updateSessionLifetime,
+    saveSessionPreferences,
+    walletSelection,
+  } = useSessionPreferences({
+    manualWalletSelectionKey: MANUAL_WALLET_SELECTION_KEY,
+    sessionLifetimeSecondsKey: SESSION_LIFETIME_SECONDS_KEY,
+    defaultSessionLifetimeSeconds: TEST_SESSION_LIFETIME_SECONDS,
+  })
   const hasVisibleWithdrawStatus = earnPositions.some((position) => withdrawStatuses[position.id])
   const showEarnPositionsStatus = !hasVisibleWithdrawStatus
     && (earnPositions.length > 0 || earnPositionsStatus !== NO_EARN_POSITIONS_STATUS)
@@ -188,14 +226,6 @@ function App() {
   }, [refreshBalances, refreshEarnPositions, walletAddress])
 
   useEffect(() => {
-    window.sessionStorage.setItem(MANUAL_WALLET_SELECTION_KEY, useManualWalletSelection ? 'true' : 'false')
-  }, [useManualWalletSelection])
-
-  useEffect(() => {
-    window.sessionStorage.setItem(SESSION_LIFETIME_SECONDS_KEY, sessionLifetimeSeconds.toString())
-  }, [sessionLifetimeSeconds])
-
-  useEffect(() => {
     return oms.wallet.onSessionExpired(showSessionExpired)
   }, [])
 
@@ -215,8 +245,7 @@ function App() {
       return
     }
 
-    const params = new URLSearchParams(window.location.search)
-    if (params.has('code') || params.has('state') || params.has('error')) {
+    if (hasOidcCallbackParams()) {
       if (oidcCallbackStarted.current) return
       oidcCallbackStarted.current = true
       void completeOidcRedirect()
@@ -246,8 +275,7 @@ function App() {
     [session.expiresAt, session.loginType, session.sessionEmail],
   )
 
-  function startEmailAuth(event: FormEvent<HTMLFormElement>) {
-    event.preventDefault()
+  function startEmailAuth() {
     void runAction(
       'Start email sign-in',
       async () => {
@@ -267,8 +295,7 @@ function App() {
     )
   }
 
-  function completeEmailAuth(event: FormEvent<HTMLFormElement>) {
-    event.preventDefault()
+  function completeEmailAuth() {
     void runAction(
       'Complete email sign-in',
       async () => {
@@ -277,7 +304,7 @@ function App() {
         setAuthStatus('Verifying code...')
         const result = await oms.wallet.completeEmailAuth({
           code: normalizedCode,
-          walletSelection: useManualWalletSelection ? 'manual' : 'automatic',
+          walletSelection,
           sessionLifetimeSeconds,
         })
         setCode('')
@@ -290,51 +317,45 @@ function App() {
     )
   }
 
-  function startOidcRedirect() {
+  function startOidcRedirect(provider: OidcRedirectProvider) {
+    const providerLabel = formatOidcProvider(provider)
     void runAction(
-      'Start Google sign-in',
+      `Start ${providerLabel} sign-in`,
       async () => {
-        window.sessionStorage.setItem(MANUAL_WALLET_SELECTION_KEY, useManualWalletSelection ? 'true' : 'false')
-        window.sessionStorage.setItem(SESSION_LIFETIME_SECONDS_KEY, sessionLifetimeSeconds.toString())
+        saveSessionPreferences()
         setSessionExpiredPrompt(null)
         setPendingWalletSelection(null)
-        setRedirectStatus('Redirecting to provider...')
+        setRedirectStatus(`Redirecting to ${providerLabel}...`)
         await oms.wallet.signInWithOidcRedirect({
-          provider: 'google',
-          loginHint: email.trim() || oms.wallet.session.sessionEmail,
+          provider,
+          walletSelection,
           sessionLifetimeSeconds,
         })
       },
       (error) => {
-        setRedirectStatus(`Google sign-in error: ${describeError(error)}`)
+        setRedirectStatus(`${providerLabel} sign-in error: ${describeError(error)}`)
       },
     )
   }
 
   function completeOidcRedirect() {
     void runAction(
-      'Complete Google sign-in',
+      'Complete redirect sign-in',
       async () => {
-        const result = await oms.wallet.signInWithOidcRedirect({
-          provider: 'google',
-          walletSelection: readManualWalletSelectionPreference() ? 'manual' : 'automatic',
-          sessionLifetimeSeconds: readSessionLifetimePreference(),
-        })
+        const result = await oms.wallet.completeOidcRedirectAuth()
         if (result) {
-          handleAuthCompletion(result, 'Google login complete.')
+          handleAuthCompletion(result, 'Redirect login complete.')
           return
         }
 
         const restored = refreshSession()
         if (restored.walletAddress) {
-          setRedirectStatus('Google login complete.')
+          setRedirectStatus('Redirect login complete.')
           appendLog(`Wallet ready: ${restored.walletAddress}`)
-        } else {
-          setAuthStatus('Enter an email to start.')
         }
       },
       (error) => {
-        setRedirectStatus(`Google redirect error: ${describeError(error)}`)
+        setRedirectStatus(`Redirect error: ${describeError(error)}`)
       },
     )
   }
@@ -356,9 +377,7 @@ function App() {
   }
 
   function showSessionExpired(event: OMSClientSessionExpiredEvent) {
-    feeSelection.current?.reject(new Error('Session expired'))
-    feeSelection.current = null
-    selectedFeeOption.current = null
+    clearFeeSelection(new Error('Session expired'))
     setPendingWalletSelection(null)
     setSession(oms.wallet.session)
     setAuthStep('email')
@@ -391,18 +410,38 @@ function App() {
         'Reauthenticate with Google',
         async () => {
           setSessionExpiredPrompt(null)
-          window.sessionStorage.setItem(MANUAL_WALLET_SELECTION_KEY, useManualWalletSelection ? 'true' : 'false')
-          window.sessionStorage.setItem(SESSION_LIFETIME_SECONDS_KEY, sessionLifetimeSeconds.toString())
+          saveSessionPreferences()
           setPendingWalletSelection(null)
           setRedirectStatus('Redirecting to Google...')
           await oms.wallet.signInWithOidcRedirect({
             provider: 'google',
-            loginHint: expiredSession.sessionEmail,
+            walletSelection,
             sessionLifetimeSeconds,
           })
         },
         (error) => {
           setRedirectStatus(`Google reauth error: ${describeError(error)}`)
+        },
+      )
+      return
+    }
+
+    if (expiredSession.loginType === 'oidc') {
+      void runAction(
+        'Reauthenticate with Apple',
+        async () => {
+          setSessionExpiredPrompt(null)
+          saveSessionPreferences()
+          setPendingWalletSelection(null)
+          setRedirectStatus('Redirecting to Apple...')
+          await oms.wallet.signInWithOidcRedirect({
+            provider: 'apple',
+            walletSelection,
+            sessionLifetimeSeconds,
+          })
+        },
+        (error) => {
+          setRedirectStatus(`Apple reauth error: ${describeError(error)}`)
         },
       )
       return
@@ -435,12 +474,6 @@ function App() {
   function dismissSessionExpiredPrompt() {
     setSessionExpiredPrompt(null)
     setAuthStep('email')
-  }
-
-  function updateSessionLifetime(value: string) {
-    const next = Math.floor(Number(value))
-    if (!Number.isFinite(next)) return
-    setSessionLifetimeSeconds(Math.max(1, next))
   }
 
   function selectPendingWallet(wallet: OmsWallet) {
@@ -524,9 +557,7 @@ function App() {
   }
 
   function updateSwapPolAmount(value: string) {
-    feeSelection.current?.reject(new Error('Amount changed'))
-    feeSelection.current = null
-    setFeeOptions([])
+    clearFeeSelection(new Error('Amount changed'))
     setSwapPolAmount(normalizeAmountInput(value))
     setPreparedSwap(null)
     setLastSwapTransaction(null)
@@ -534,9 +565,7 @@ function App() {
   }
 
   function updateDepositUsdcAmount(value: string) {
-    feeSelection.current?.reject(new Error('Amount changed'))
-    feeSelection.current = null
-    setFeeOptions([])
+    clearFeeSelection(new Error('Amount changed'))
     setDepositUsdcAmount(normalizeAmountInput(value))
     setPreparedDeposit(null)
     setLastDepositTransaction(null)
@@ -544,9 +573,7 @@ function App() {
   }
 
   function updateEarnPolAmount(value: string) {
-    feeSelection.current?.reject(new Error('Amount changed'))
-    feeSelection.current = null
-    setFeeOptions([])
+    clearFeeSelection(new Error('Amount changed'))
     setEarnPolAmount(normalizeAmountInput(value))
     setPreparedEarn(null)
     setLastEarnTransaction(null)
@@ -612,19 +639,14 @@ function App() {
       async () => {
         const prepared = requirePreparedTransaction(preparedSwap)
         const initialBalances = balances
-        feeSelection.current = null
-        selectedFeeOption.current = null
-        setFeeOptions([])
+        clearFeeSelection()
         try {
-          setSwapStatus('Swap status: sending...')
-          const tx = await oms.wallet.sendTransaction({
-            network: POLYGON_NETWORK,
-            to: prepared.to,
-            value: BigInt(prepared.value),
-            data: prepared.data,
-            selectFeeOption: waitForFeeOptionSelection,
-          })
-          const result = transactionResult(tx)
+          const result = await sendPreparedTransaction(
+            prepared,
+            setSwapStatus,
+            'Swap status: sending...',
+            autoFeeOptions.swap,
+          )
           setLastSwapTransaction(result)
           setSwapStatus(`Swap status: sent ${shortHash(result.value)}. Refreshing balances...`)
           await waitForPostSendRefresh({
@@ -638,9 +660,7 @@ function App() {
             staleStatus: `Swap status: sent ${shortHash(result.value)}. USDC balance has not reached the expected swap output yet.`,
           })
         } finally {
-          feeSelection.current = null
-          selectedFeeOption.current = null
-          setFeeOptions([])
+          clearFeeSelection()
         }
       },
       (error) => {
@@ -654,30 +674,19 @@ function App() {
       'Send deposit',
       async () => {
         const prepared = requirePreparedYieldTransactions(preparedDeposit)
-        let lastResult: TransactionResult | null = null
         const initialBalances = balances
         const initialEarnPositions = earnPositions
-        feeSelection.current = null
-        selectedFeeOption.current = null
-        setFeeOptions([])
+        clearFeeSelection()
 
         try {
-          for (const [index, transaction] of prepared.transactions.entries()) {
-            const label = prepared.transactions.length === 1 ? 'transaction' : `transaction ${index + 1}/${prepared.transactions.length}`
-            setDepositStatus(`Deposit status: sending ${label}...`)
-            const tx = await oms.wallet.sendTransaction({
-              network: POLYGON_NETWORK,
-              to: transaction.to,
-              value: transaction.value,
-              data: transaction.data,
-              selectFeeOption: waitForFeeOptionSelection,
-            })
-            lastResult = transactionResult(tx)
-            setLastDepositTransaction(lastResult)
-            setDepositStatus(`Deposit status: sent ${label} ${shortHash(lastResult.value)}.`)
-          }
-
-          if (!lastResult) throw new Error('Deposit did not send a transaction.')
+          const lastResult = await sendYieldTransactionBatch({
+            autoPickFeeOption: autoFeeOptions.deposit,
+            emptyError: 'Deposit did not send a transaction.',
+            onResult: setLastDepositTransaction,
+            setStatus: setDepositStatus,
+            statusPrefix: 'Deposit status',
+            transactions: prepared.transactions,
+          })
           setDepositStatus(`Deposit status: sent ${shortHash(lastResult.value)}. Refreshing balances and earn positions...`)
           await waitForPostSendRefresh({
             initialBalances,
@@ -689,9 +698,7 @@ function App() {
             staleStatus: `Deposit status: sent ${shortHash(lastResult.value)}. Earn position has not updated yet.`,
           })
         } finally {
-          feeSelection.current = null
-          selectedFeeOption.current = null
-          setFeeOptions([])
+          clearFeeSelection()
         }
       },
       (error) => {
@@ -707,19 +714,14 @@ function App() {
         const prepared = requirePreparedTransaction(preparedEarn)
         const initialBalances = balances
         const initialEarnPositions = earnPositions
-        feeSelection.current = null
-        selectedFeeOption.current = null
-        setFeeOptions([])
+        clearFeeSelection()
         try {
-          setEarnStatus('Swap and Deposit status: sending...')
-          const tx = await oms.wallet.sendTransaction({
-            network: POLYGON_NETWORK,
-            to: prepared.to,
-            value: BigInt(prepared.value),
-            data: prepared.data,
-            selectFeeOption: waitForFeeOptionSelection,
-          })
-          const result = transactionResult(tx)
+          const result = await sendPreparedTransaction(
+            prepared,
+            setEarnStatus,
+            'Swap and Deposit status: sending...',
+            autoFeeOptions.earn,
+          )
           setLastEarnTransaction(result)
           setEarnStatus(`Swap and Deposit status: sent ${shortHash(result.value)}. Refreshing balances and earn positions...`)
           await waitForPostSendRefresh({
@@ -732,9 +734,7 @@ function App() {
             staleStatus: `Swap and Deposit status: sent ${shortHash(result.value)}. Earn position has not updated yet.`,
           })
         } finally {
-          feeSelection.current = null
-          selectedFeeOption.current = null
-          setFeeOptions([])
+          clearFeeSelection()
         }
       },
       (error) => {
@@ -750,10 +750,7 @@ function App() {
         const address = requireWalletAddress(walletAddress)
         const initialBalances = balances
         const initialEarnPositions = earnPositions
-        let lastResult: TransactionResult | null = null
-        feeSelection.current = null
-        selectedFeeOption.current = null
-        setFeeOptions([])
+        clearFeeSelection()
         setWithdrawStatuses((current) => ({
           ...current,
           [position.id]: `Withdraw status: preparing ${position.marketName}...`,
@@ -771,37 +768,22 @@ function App() {
             position,
           })
 
-          for (const [index, transaction] of prepared.transactions.entries()) {
-            const label = prepared.transactions.length === 1
-              ? 'transaction'
-              : `transaction ${index + 1}/${prepared.transactions.length}`
-            setWithdrawStatuses((current) => ({
-              ...current,
-              [position.id]: `Withdraw status: sending ${label}...`,
-            }))
-            setEarnPositionsStatus(`Withdraw status: sending ${label}...`)
-            const tx = await oms.wallet.sendTransaction({
-              network: POLYGON_NETWORK,
-              to: transaction.to,
-              value: transaction.value,
-              data: transaction.data,
-              selectFeeOption: waitForFeeOptionSelection,
-            })
-            const result = transactionResult(tx)
-            lastResult = result
-            setLastWithdrawTransactions((current) => ({
-              ...current,
-              [position.id]: result,
-            }))
-            setWithdrawStatuses((current) => ({
-              ...current,
-              [position.id]: `Withdraw status: sent ${label} ${shortHash(result.value)}.`,
-            }))
-            setEarnPositionsStatus(`Withdraw status: sent ${label} ${shortHash(result.value)}.`)
-          }
-
-          if (!lastResult) throw new Error('Withdraw did not send a transaction.')
-          const sentResult = lastResult
+          const sentResult = await sendYieldTransactionBatch({
+            autoPickFeeOption: withdrawAutoFeeOptions[position.id] ?? true,
+            emptyError: 'Withdraw did not send a transaction.',
+            onResult: (result) => {
+              setLastWithdrawTransactions((current) => ({
+                ...current,
+                [position.id]: result,
+              }))
+            },
+            setStatus: (status) => {
+              setWithdrawStatuses((current) => ({ ...current, [position.id]: status }))
+              setEarnPositionsStatus(status)
+            },
+            statusPrefix: 'Withdraw status',
+            transactions: prepared.transactions,
+          })
           await waitForPostSendRefresh({
             initialBalances,
             initialEarnPositions,
@@ -815,9 +797,7 @@ function App() {
             staleStatus: `Withdraw status: sent ${shortHash(sentResult.value)}. Earn position has not updated yet.`,
           })
         } finally {
-          feeSelection.current = null
-          selectedFeeOption.current = null
-          setFeeOptions([])
+          clearFeeSelection()
         }
       },
       (error) => {
@@ -838,12 +818,22 @@ function App() {
     })
   }
 
-  function chooseFeeOption(option: FeeOptionWithBalance) {
-    if (!canAffordFeeOption(option)) {
-      appendLog(`! Insufficient ${option.feeOption.token.symbol} balance for fee.`)
-      return
+  async function selectFirstAvailableFeeOption(options: FeeOptionWithBalance[]): Promise<FeeOptionSelection> {
+    const selection = await FeeOptionSelector.firstAvailable(options)
+    if (!selection) {
+      throw new Error('No fee option has enough balance.')
     }
 
+    selectedFeeOption.current = options.find((option) => option.selection.token === selection.token) ?? null
+    appendLog(`Selected ${selectedFeeOption.current?.feeOption.token.symbol ?? selection.token} fee automatically.`)
+    return selection
+  }
+
+  function selectFeeOption(autoPickFeeOption: boolean) {
+    return autoPickFeeOption ? selectFirstAvailableFeeOption : waitForFeeOptionSelection
+  }
+
+  function chooseFeeOption(option: FeeOptionWithBalance) {
     selectedFeeOption.current = option
     feeSelection.current?.resolve(option.selection)
     feeSelection.current = null
@@ -852,17 +842,11 @@ function App() {
   }
 
   function cancelFeeSelection() {
-    feeSelection.current?.reject(new Error('Fee option selection cancelled'))
-    feeSelection.current = null
-    selectedFeeOption.current = null
-    setFeeOptions([])
+    clearFeeSelection(new Error('Fee option selection cancelled'))
   }
 
   function clearPreparedState() {
-    feeSelection.current?.reject(new Error('Transaction state cleared'))
-    feeSelection.current = null
-    selectedFeeOption.current = null
-    setFeeOptions([])
+    clearFeeSelection(new Error('Transaction state cleared'))
     setPreparedSwap(null)
     setPreparedDeposit(null)
     setPreparedEarn(null)
@@ -874,6 +858,82 @@ function App() {
     setSwapStatus('Swap status: waiting to prepare.')
     setDepositStatus('Deposit status: waiting to prepare.')
     setEarnStatus('Swap and Deposit status: waiting to prepare.')
+  }
+
+  function clearFeeSelection(error?: Error) {
+    if (error) {
+      feeSelection.current?.reject(error)
+    }
+    feeSelection.current = null
+    selectedFeeOption.current = null
+    setFeeOptions([])
+  }
+
+  async function sendPreparedTransaction(
+    prepared: PreparedTrailsTransaction,
+    setStatus: (status: string) => void,
+    sendingStatus: string,
+    autoPickFeeOption: boolean,
+  ): Promise<TransactionResult> {
+    setStatus(sendingStatus)
+    const tx = await oms.wallet.sendTransaction({
+      network: POLYGON_NETWORK,
+      to: prepared.to,
+      value: prepared.value,
+      data: prepared.data,
+      selectFeeOption: selectFeeOption(autoPickFeeOption),
+    })
+    return transactionResult(tx)
+  }
+
+  async function sendYieldTransactionBatch({
+    autoPickFeeOption,
+    emptyError,
+    onResult,
+    setStatus,
+    statusPrefix,
+    transactions,
+  }: {
+    autoPickFeeOption: boolean
+    emptyError: string
+    onResult: (result: TransactionResult) => void
+    setStatus: (status: string) => void
+    statusPrefix: string
+    transactions: PreparedYieldTransactions['transactions']
+  }): Promise<TransactionResult> {
+    let lastResult: TransactionResult | null = null
+
+    for (const [index, transaction] of transactions.entries()) {
+      const label = transactions.length === 1 ? 'transaction' : `transaction ${index + 1}/${transactions.length}`
+      setStatus(`${statusPrefix}: sending ${label}...`)
+      const tx = await oms.wallet.sendTransaction({
+        network: POLYGON_NETWORK,
+        to: transaction.to,
+        value: transaction.value,
+        data: transaction.data,
+        selectFeeOption: selectFeeOption(autoPickFeeOption),
+      })
+      lastResult = transactionResult(tx)
+      onResult(lastResult)
+      setStatus(`${statusPrefix}: sent ${label} ${shortHash(lastResult.value)}.`)
+    }
+
+    if (!lastResult) throw new Error(emptyError)
+    return lastResult
+  }
+
+  function updateAutoFeeOption(key: AutoFeeOptionKey, value: boolean) {
+    setAutoFeeOptions((current) => ({
+      ...current,
+      [key]: value,
+    }))
+  }
+
+  function updateWithdrawAutoFeeOption(positionId: string, value: boolean) {
+    setWithdrawAutoFeeOptions((current) => ({
+      ...current,
+      [positionId]: value,
+    }))
   }
 
   async function waitForPostSendRefresh({
@@ -926,143 +986,56 @@ function App() {
           <p className="eyebrow">OMS Client TypeScript SDK</p>
           <h1>Trails Actions</h1>
           {!isSignedIn && !pendingWalletSelection && authStep === 'email' && (
-            <div className="header-options">
-              <label className="checkbox-row">
-                <input
-                  type="checkbox"
-                  checked={useManualWalletSelection}
-                  onChange={(event) => setUseManualWalletSelection(event.target.checked)}
-                  disabled={isBusy}
-                />
-                <span>Use manual wallet selection</span>
-              </label>
-              <label className="session-lifetime-option">
-                <span className="session-lifetime-copy">
-                  <strong>Session lifetime</strong>
-                  <small>Shorten this to test session expiry easier.</small>
-                </span>
-                <span>
-                  <input
-                    type="number"
-                    min={1}
-                    step={1}
-                    value={sessionLifetimeSeconds}
-                    onChange={(event) => updateSessionLifetime(event.target.value)}
-                    disabled={isBusy}
-                  />
-                  <small>seconds</small>
-                </span>
-              </label>
-            </div>
+            <SessionOptions
+              useManualWalletSelection={useManualWalletSelection}
+              sessionLifetimeSeconds={sessionLifetimeSeconds}
+              disabled={isBusy}
+              onManualWalletSelectionChange={setUseManualWalletSelection}
+              onSessionLifetimeChange={updateSessionLifetime}
+            />
           )}
         </header>
 
         {!isSignedIn && !pendingWalletSelection && authStep === 'email' && (
-          <form className="stack" onSubmit={startEmailAuth}>
+          <div className="stack">
             <h2 className="section-title">Login Options</h2>
-            <div className="field-stack">
-              <button
-                type="button"
-                className="secondary"
-                onClick={startOidcRedirect}
-                disabled={isBusy}
-                aria-describedby="google-status"
-              >
-                Continue with Google
-              </button>
-              {redirectStatus && <p id="google-status" className="field-hint">{redirectStatus}</p>}
-            </div>
+            <OidcButtons
+              providers={['google', 'apple']}
+              disabled={isBusy}
+              status={redirectStatus}
+              onStart={startOidcRedirect}
+            />
             <div className="divider">or</div>
-            <div className="field-stack">
-              <label>
-                Email
-                <input
-                  type="email"
-                  value={email}
-                  onChange={(event) => setEmail(event.target.value)}
-                  placeholder="user@example.com"
-                  aria-describedby="email-status"
-                  disabled={isBusy}
-                />
-              </label>
-              <p id="email-status" className="field-hint">{authStatus}</p>
-            </div>
-            <button type="submit" disabled={isBusy || !email.trim()}>
-              Send code
-            </button>
-          </form>
+            <EmailLoginForm
+              email={email}
+              disabled={isBusy}
+              status={authStatus}
+              onEmailChange={setEmail}
+              onSubmit={startEmailAuth}
+            />
+          </div>
         )}
 
         {!isSignedIn && !pendingWalletSelection && authStep === 'code' && (
-          <form className="stack" onSubmit={completeEmailAuth}>
-            <div className="field-stack">
-              <label>
-                Code
-                <input
-                  autoFocus
-                  inputMode="numeric"
-                  value={code}
-                  onChange={(event) => setCode(event.target.value)}
-                  placeholder="123456"
-                  aria-describedby="code-status"
-                  disabled={isBusy}
-                />
-              </label>
-              <p id="code-status" className="field-hint">{authStatus}</p>
-            </div>
-            <div className="actions">
-              <button type="submit" disabled={isBusy || !code.trim()}>
-                Complete sign-in
-              </button>
-              <button type="button" className="secondary" onClick={() => setAuthStep('email')} disabled={isBusy}>
-                Back
-              </button>
-            </div>
-          </form>
+          <EmailCodeForm
+            code={code}
+            disabled={isBusy}
+            status={authStatus}
+            onCodeChange={setCode}
+            onSubmit={completeEmailAuth}
+            onBack={() => setAuthStep('email')}
+          />
         )}
 
         {!isSignedIn && pendingWalletSelection && (
-          <div className="stack">
-            <section className="tool wallet-selection">
-              <div className="tool-header">
-                <h2>Choose wallet</h2>
-                <span className="metadata-pill">{formatWalletType(pendingWalletSelection.walletType)}</span>
-              </div>
-              <h3>Existing wallets</h3>
-              {pendingWalletSelection.wallets.length > 0 ? (
-                <div className="wallet-option-list">
-                  {pendingWalletSelection.wallets.map((wallet) => (
-                    <button
-                      key={wallet.id}
-                      type="button"
-                      className="wallet-option"
-                      onClick={() => selectPendingWallet(wallet)}
-                      disabled={isBusy}
-                    >
-                      <span>
-                        <strong>{wallet.reference ?? `${formatWalletType(wallet.type)} wallet`}</strong>
-                        <small>{wallet.id}</small>
-                      </span>
-                      <code>{wallet.address}</code>
-                      <span className="wallet-option-action">Use wallet</span>
-                    </button>
-                  ))}
-                </div>
-              ) : (
-                <p className="field-hint">No existing {formatWalletType(pendingWalletSelection.walletType)} wallets.</p>
-              )}
-
-              <h3>Create new wallet</h3>
-              <button type="button" onClick={createPendingWallet} disabled={isBusy}>
-                Create wallet
-              </button>
-
-              <button type="button" className="secondary subtle" onClick={cancelPendingWalletSelection} disabled={isBusy}>
-                Cancel
-              </button>
-            </section>
-            {authStatus && <output>{authStatus}</output>}
-          </div>
+          <WalletSelectionPanel
+            pendingWalletSelection={pendingWalletSelection}
+            authStatus={authStatus}
+            disabled={isBusy}
+            onSelectWallet={selectPendingWallet}
+            onCreateWallet={createPendingWallet}
+            onCancel={cancelPendingWalletSelection}
+          />
         )}
 
         {isSignedIn && (
@@ -1115,6 +1088,8 @@ function App() {
                 onAmountChange={updateSwapPolAmount}
                 onPrepare={prepareSwap}
                 onSend={sendSwap}
+                autoPickFeeOption={autoFeeOptions.swap}
+                onAutoPickFeeOptionChange={(value) => updateAutoFeeOption('swap', value)}
                 prepared={preparedSwap}
                 result={lastSwapTransaction}
                 disabled={isBusy}
@@ -1129,6 +1104,8 @@ function App() {
                 onAmountChange={updateDepositUsdcAmount}
                 onPrepare={prepareDeposit}
                 onSend={sendDeposit}
+                autoPickFeeOption={autoFeeOptions.deposit}
+                onAutoPickFeeOptionChange={(value) => updateAutoFeeOption('deposit', value)}
                 preparedYield={preparedDeposit}
                 result={lastDepositTransaction}
                 disabled={isBusy}
@@ -1143,6 +1120,8 @@ function App() {
                 onAmountChange={updateEarnPolAmount}
                 onPrepare={prepareEarn}
                 onSend={sendEarn}
+                autoPickFeeOption={autoFeeOptions.earn}
+                onAutoPickFeeOptionChange={(value) => updateAutoFeeOption('earn', value)}
                 prepared={preparedEarn}
                 result={lastEarnTransaction}
                 disabled={isBusy}
@@ -1169,30 +1148,39 @@ function App() {
                 <div className="position-list">
                   {earnPositions.map((position) => (
                     <div key={position.id} className="position-row">
-                      <div>
+                      <div className="position-header">
                         <strong>{position.marketName}</strong>
-                        <small>{position.provider}</small>
+                        <span className="position-provider">{position.provider}</span>
                       </div>
-                      <div>
-                        <strong>
-                          {position.amountDisplay} {position.tokenSymbol}
-                        </strong>
-                        <small>{position.amountUsd ?? 'USD unavailable'}</small>
+                      <div className="position-metrics">
+                        <div className="position-metric">
+                          <small>Balance</small>
+                          <strong>
+                            {position.amountDisplay} {position.tokenSymbol}
+                          </strong>
+                          <span>{position.amountUsd ?? 'USD unavailable'}</span>
+                        </div>
+                        <div className="position-metric">
+                          <small>APY</small>
+                          <strong>{position.apy}</strong>
+                        </div>
                       </div>
-                      <div>
-                        <strong>{position.apy}</strong>
-                        <small>APY</small>
-                      </div>
-                      <div className="position-action">
-                        <button
-                          type="button"
-                          className="secondary"
-                          onClick={() => withdrawEarnPosition(position)}
+                      <div className="position-footer">
+                        <AutoFeeOptionCheckbox
+                          checked={withdrawAutoFeeOptions[position.id] ?? true}
                           disabled={isBusy || !position.canWithdraw}
-                        >
-                          Withdraw
-                        </button>
-                        <small>{position.canWithdraw ? 'All' : 'Unavailable'}</small>
+                          onChange={(value) => updateWithdrawAutoFeeOption(position.id, value)}
+                        />
+                        <div className="position-action">
+                          <button
+                            type="button"
+                            className="secondary"
+                            onClick={() => withdrawEarnPosition(position)}
+                            disabled={isBusy || !position.canWithdraw}
+                          >
+                            {position.canWithdraw ? 'Withdraw all' : 'Unavailable'}
+                          </button>
+                        </div>
                       </div>
                       {withdrawStatuses[position.id] ? (
                         <p className="position-status field-hint compact-hint">{withdrawStatuses[position.id]}</p>
@@ -1223,39 +1211,12 @@ function App() {
       </section>
 
       {sessionExpiredPrompt && (
-        <div className="modal-backdrop">
-          <section
-            className="modal"
-            role="dialog"
-            aria-modal="true"
-            aria-labelledby="session-expired-title"
-          >
-            <h2 id="session-expired-title">Session expired</h2>
-            <p>
-              Your wallet session has expired. Reauthenticate to continue using this wallet.
-            </p>
-            {sessionExpiredPrompt.session.sessionEmail && (
-              <p className="modal-detail">
-                Account <strong>{sessionExpiredPrompt.session.sessionEmail}</strong>
-              </p>
-            )}
-            <p className="modal-hint">
-              {sessionExpiredPrompt.session.loginType === 'google-auth'
-                ? 'You will be redirected to Google with the same account selected.'
-                : sessionExpiredPrompt.session.loginType === 'email' && sessionExpiredPrompt.session.sessionEmail
-                  ? 'A new sign-in code will be sent to the same email address.'
-                  : 'Sign in again to continue.'}
-            </p>
-            <div className="modal-actions">
-              <button type="button" onClick={reauthenticateExpiredSession} disabled={isBusy}>
-                Reauthenticate
-              </button>
-              <button type="button" className="secondary" onClick={dismissSessionExpiredPrompt} disabled={isBusy}>
-                Not now
-              </button>
-            </div>
-          </section>
-        </div>
+        <SessionExpiredDialog
+          event={sessionExpiredPrompt}
+          disabled={isBusy}
+          onReauthenticate={reauthenticateExpiredSession}
+          onDismiss={dismissSessionExpiredPrompt}
+        />
       )}
     </main>
   )
@@ -1267,6 +1228,8 @@ function TrailsActionCard({
   onAmountChange,
   onPrepare,
   onSend,
+  autoPickFeeOption,
+  onAutoPickFeeOptionChange,
   prepared,
   preparedYield,
   result,
@@ -1280,6 +1243,8 @@ function TrailsActionCard({
   onAmountChange: (value: string) => void
   onPrepare: () => void
   onSend: () => void
+  autoPickFeeOption: boolean
+  onAutoPickFeeOptionChange: (value: boolean) => void
   prepared?: PreparedTrailsTransaction | null
   preparedYield?: PreparedYieldTransactions | null
   result: TransactionResult | null
@@ -1308,6 +1273,11 @@ function TrailsActionCard({
           Send
         </button>
       </div>
+      <AutoFeeOptionCheckbox
+        checked={autoPickFeeOption}
+        disabled={disabled}
+        onChange={onAutoPickFeeOptionChange}
+      />
       <p className="field-hint compact-hint">{status}</p>
       {prepared ? <PreparedSummary prepared={prepared} /> : null}
       {preparedYield ? <PreparedYieldSummary prepared={preparedYield} /> : null}
@@ -1316,45 +1286,25 @@ function TrailsActionCard({
   )
 }
 
-function FeeOptionsPanel({
-  feeOptions,
-  onCancel,
-  onChoose,
+function AutoFeeOptionCheckbox({
+  checked,
+  disabled,
+  onChange,
 }: {
-  feeOptions: FeeOptionWithBalance[]
-  onCancel: () => void
-  onChoose: (option: FeeOptionWithBalance) => void
+  checked: boolean
+  disabled: boolean
+  onChange: (value: boolean) => void
 }) {
   return (
-    <div className="fee-modal-backdrop">
-      <section className="tool fee-options" role="dialog" aria-modal="true" aria-labelledby="fee-options-title">
-        <h2 id="fee-options-title">Fee option</h2>
-        <div className="fee-option-list">
-          {feeOptions.map((option) => {
-            const canAfford = canAffordFeeOption(option)
-
-            return (
-              <button
-                key={`${option.feeOption.token.symbol}-${option.feeOption.value}`}
-                type="button"
-                className="fee-option"
-                onClick={() => onChoose(option)}
-                disabled={!canAfford}
-              >
-                <span>
-                  <strong>{option.feeOption.token.symbol}</strong>
-                  <small>{option.feeOption.displayValue || option.feeOption.value}</small>
-                </span>
-                <span>{canAfford ? option.available ?? 'Balance unavailable' : 'Insufficient balance'}</span>
-              </button>
-            )
-          })}
-        </div>
-        <button type="button" className="secondary" onClick={onCancel}>
-          Cancel transaction
-        </button>
-      </section>
-    </div>
+    <label className="auto-fee-option">
+      <input
+        type="checkbox"
+        checked={checked}
+        disabled={disabled}
+        onChange={(event) => onChange(event.target.checked)}
+      />
+      <span>Pick first available fee option</span>
+    </label>
   )
 }
 
@@ -1439,39 +1389,6 @@ function transactionResult(tx: SendTransactionResponse): TransactionResult {
   }
 }
 
-function formatLoginType(loginType: OMSClientSessionState['loginType']): string {
-  switch (loginType) {
-    case 'email':
-      return 'Email'
-    case 'google-auth':
-      return 'Google'
-    case 'oidc':
-      return 'OIDC'
-    default:
-      return 'Unknown'
-  }
-}
-
-function formatSessionExpiry(expiresAt: string | undefined): string {
-  if (!expiresAt) return 'Unknown'
-
-  const date = new Date(expiresAt)
-  return Number.isNaN(date.getTime()) ? expiresAt : date.toLocaleString()
-}
-
-function formatWalletType(walletType: string): string {
-  return walletType
-    .split(/[-_]/)
-    .map((part) => part ? part[0].toUpperCase() + part.slice(1) : part)
-    .join(' ')
-}
-
-function isPendingWalletSelection(
-  result: PendingWalletSelection | WalletActivationResult,
-): result is PendingWalletSelection {
-  return 'selectWallet' in result
-}
-
 function hasPostSendDataUpdate({
   initialBalances,
   initialEarnPositions,
@@ -1527,16 +1444,6 @@ function hasUsdcIncrease({
     const nextUsdc = BigInt(refreshedBalances.usdcRaw)
     const expectedIncrease = BigInt(minIncreaseRaw) - getSelectedUsdcFeeRaw(selectedFeeOption)
     return expectedIncrease > 0n ? nextUsdc >= initialUsdc + expectedIncrease : nextUsdc !== initialUsdc
-  } catch {
-    return false
-  }
-}
-
-function canAffordFeeOption(option: FeeOptionWithBalance): boolean {
-  if (option.availableRaw === undefined) return false
-
-  try {
-    return BigInt(option.availableRaw) >= BigInt(option.feeOption.value)
   } catch {
     return false
   }
@@ -1605,20 +1512,6 @@ function findEarnPosition(positions: EarnPosition[], marketId: string): EarnPosi
 
 function sleep(milliseconds: number): Promise<void> {
   return new Promise((resolve) => window.setTimeout(resolve, milliseconds))
-}
-
-function readManualWalletSelectionPreference(): boolean {
-  return window.sessionStorage.getItem(MANUAL_WALLET_SELECTION_KEY) === 'true'
-}
-
-function readSessionLifetimePreference(): number {
-  const stored = window.sessionStorage.getItem(SESSION_LIFETIME_SECONDS_KEY)
-  if (!stored) return TEST_SESSION_LIFETIME_SECONDS
-
-  const parsed = Number(stored)
-  return Number.isFinite(parsed) && parsed > 0
-    ? Math.floor(parsed)
-    : TEST_SESSION_LIFETIME_SECONDS
 }
 
 export default App

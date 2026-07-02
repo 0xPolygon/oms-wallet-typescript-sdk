@@ -9,6 +9,7 @@ pnpm install
 pnpm build
 cp examples/wagmi/.env.example examples/wagmi/.env.local
 # Fill VITE_OMS_PUBLISHABLE_KEY
+# Replace VITE_TRAILS_API_KEY only if you need a different Trails project
 pnpm dev:wagmi-example
 ```
 
@@ -19,6 +20,7 @@ The deployed example is available at `https://0xsequence.github.io/typescript-sd
 The example authenticates OMS Wallet with the SDK, then connects through wagmi. Account state,
 balance reads, chain switching, message signing, typed-data signing, transaction sending, fee-option
 selection, and transaction receipt polling are all performed with wagmi hooks.
+Google and Apple redirect login use the SDK's default provider helpers.
 
 The Trails widget is configured with the same wagmi runtime through `@0xtrails/adapter-wagmi`.
 

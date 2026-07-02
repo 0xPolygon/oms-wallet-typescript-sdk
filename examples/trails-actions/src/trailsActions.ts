@@ -33,7 +33,7 @@ export type PreparedTrailsTransaction = {
   title: string
   to: Address
   data: Hex
-  value: string
+  value: bigint
   callCount: number
   postSendExpectation: PostSendExpectation
   marketName?: string
@@ -94,7 +94,6 @@ export type BalanceState = {
 }
 
 const TRAILS_API_URL = 'https://trails-api.sequence.app'
-const POLYGON_CHAIN_ID_NUMBER = 137
 const POLYGON_USDC = '0x3c499c542cEF5E3811e1192ce70d8cC03d5c3359'
 const POLYGON_WPOL = '0x0d500B1d8E8eF31E21C99d1Db9A6444d3ADf1270'
 const POL_TO_USDC_SWAP_FEE = '0.05'
@@ -223,7 +222,7 @@ export async function getPolygonEarnPositions(
     ),
     getEarnMarkets(
       {
-        chain: POLYGON_CHAIN_ID_NUMBER,
+        chain: POLYGON_NETWORK.id,
         limit: 100,
       },
       trailsClient,
@@ -270,27 +269,10 @@ export async function prepareSwapPolToUsdc({
 }): Promise<PreparedTrailsTransaction> {
   const amountRaw = parsePositivePolAmount(polAmount)
   const trailsClient = createTrailsClient()
-  const minAmountOutRaw = await getPolToUsdcMinAmountOutRaw(amountRaw)
-  const calls = await resolveActionsToCalls({
-    actions: [
-      custom({
-        to: POLYGON_WPOL,
-        data: WRAPPED_NATIVE_DEPOSIT_CALLDATA,
-        value: amountRaw,
-      }),
-      swap({
-        tokenIn: POLYGON_WPOL,
-        tokenOut: POLYGON_USDC,
-        fee: POL_TO_USDC_SWAP_FEE,
-        amountInRaw: amountRaw,
-        minAmountOutRaw,
-        provider: 'UNISWAP_V3',
-      }),
-    ],
-    destinationChain: POLYGON_CHAIN_ID_NUMBER,
-    userWalletAddress: walletAddress,
+  const { calls, minAmountOutRaw } = await createPolToUsdcSwapCalls({
+    amountRaw,
     trailsClient,
-    publicClient: null,
+    walletAddress,
   })
 
   return encodePreparedTransaction({
@@ -326,11 +308,7 @@ export async function prepareDepositUsdc({
       receiverAddress: walletAddress,
     },
   })
-  const transactions = response.action.transactions
-    .filter((transaction) => !transaction.isMessage)
-    .map((transaction) => parseUnsignedYieldTransaction(transaction.unsignedTransaction))
-
-  assertPolygonTransactions(transactions, 'Deposit')
+  const transactions = parseYieldActionTransactions(response.action.transactions, 'Deposit')
 
   return {
     title: 'Deposit USDC using Earn',
@@ -365,11 +343,7 @@ export async function prepareWithdrawEarnPosition({
       outputTokenNetwork: position.outputTokenNetwork,
     },
   })
-  const transactions = response.action.transactions
-    .filter((transaction) => !transaction.isMessage)
-    .map((transaction) => parseUnsignedYieldTransaction(transaction.unsignedTransaction))
-
-  assertPolygonTransactions(transactions, 'Withdraw')
+  const transactions = parseYieldActionTransactions(response.action.transactions, 'Withdraw')
 
   return {
     title: `Withdraw ${position.marketName}`,
@@ -393,28 +367,11 @@ export async function prepareSwapAndEarnUsdc({
   const amountRaw = parsePositivePolAmount(polAmount)
   const trailsClient = createTrailsClient()
   const market = await findPolygonUsdcEarnMarket(trailsClient)
-  const minAmountOutRaw = await getPolToUsdcMinAmountOutRaw(amountRaw)
-  const calls = await resolveActionsToCalls({
-    actions: [
-      custom({
-        to: POLYGON_WPOL,
-        data: WRAPPED_NATIVE_DEPOSIT_CALLDATA,
-        value: amountRaw,
-      }),
-      swap({
-        tokenIn: POLYGON_WPOL,
-        tokenOut: POLYGON_USDC,
-        fee: POL_TO_USDC_SWAP_FEE,
-        amountInRaw: amountRaw,
-        minAmountOutRaw,
-        provider: 'UNISWAP_V3',
-      }),
-      buildEarnAction(market, walletAddress),
-    ],
-    destinationChain: POLYGON_CHAIN_ID_NUMBER,
-    userWalletAddress: walletAddress,
+  const { calls } = await createPolToUsdcSwapCalls({
+    additionalActions: [buildEarnAction(market, walletAddress)],
+    amountRaw,
     trailsClient,
-    publicClient: null,
+    walletAddress,
   })
 
   return encodePreparedTransaction({
@@ -447,7 +404,7 @@ function parsePositiveUsdcAmount(amount: string): string {
 }
 
 async function getPolToUsdcMinAmountOutRaw(amountRaw: bigint): Promise<bigint> {
-  const quote = await uniswapV3.onChain(POLYGON_CHAIN_ID_NUMBER).quoteSwap({
+  const quote = await uniswapV3.onChain(POLYGON_NETWORK.id).quoteSwap({
     type: 'exactInputSingle',
     tokenIn: POLYGON_WPOL,
     tokenOut: POLYGON_USDC,
@@ -461,6 +418,50 @@ async function getPolToUsdcMinAmountOutRaw(amountRaw: bigint): Promise<bigint> {
 
   const minAmountOutRaw = getAmountWithSlippage(quote.amountOut, MAX_SWAP_SLIPPAGE_BPS)
   return minAmountOutRaw > 0n ? minAmountOutRaw : quote.amountOut
+}
+
+async function createPolToUsdcSwapCalls({
+  additionalActions = [],
+  amountRaw,
+  trailsClient,
+  walletAddress,
+}: {
+  additionalActions?: ActionItem[]
+  amountRaw: bigint
+  trailsClient: TrailsApi
+  walletAddress: Address
+}): Promise<{
+  calls: Awaited<ReturnType<typeof resolveActionsToCalls>>
+  minAmountOutRaw: bigint
+}> {
+  const minAmountOutRaw = await getPolToUsdcMinAmountOutRaw(amountRaw)
+  const calls = await resolveActionsToCalls({
+    actions: [
+      custom({
+        to: POLYGON_WPOL,
+        data: WRAPPED_NATIVE_DEPOSIT_CALLDATA,
+        value: amountRaw,
+      }),
+      swap({
+        tokenIn: POLYGON_WPOL,
+        tokenOut: POLYGON_USDC,
+        fee: POL_TO_USDC_SWAP_FEE,
+        amountInRaw: amountRaw,
+        minAmountOutRaw,
+        provider: 'UNISWAP_V3',
+      }),
+      ...additionalActions,
+    ],
+    destinationChain: POLYGON_NETWORK.id,
+    userWalletAddress: walletAddress,
+    trailsClient,
+    publicClient: null,
+  })
+
+  return {
+    calls,
+    minAmountOutRaw,
+  }
 }
 
 function getPrimaryEarnBalance(balances: EarnBalances): EarnBalance | undefined {
@@ -552,7 +553,7 @@ function isUsdcMarket(market: EarnMarket): boolean {
 async function findPolygonUsdcEarnMarket(trailsClient: TrailsApi): Promise<EarnMarket> {
   const markets = await getEarnMarkets(
     {
-      chain: POLYGON_CHAIN_ID_NUMBER,
+      chain: POLYGON_NETWORK.id,
       search: 'USDC',
       limit: 50,
     },
@@ -614,7 +615,7 @@ function encodePreparedTransaction({
     title,
     to: encoded.recipient,
     data: encoded.destinationCalldata,
-    value: value.toString(),
+    value,
     callCount: calls.length,
     postSendExpectation,
     marketName: market ? getMarketName(market) : undefined,
@@ -642,12 +643,24 @@ function parseUnsignedYieldTransaction(tx: unknown): ParsedYieldTransaction {
   }
 }
 
+function parseYieldActionTransactions(
+  transactions: ReadonlyArray<{ isMessage?: boolean; unsignedTransaction?: unknown }>,
+  label: string,
+): ParsedYieldTransaction[] {
+  const parsedTransactions = transactions
+    .filter((transaction) => !transaction.isMessage)
+    .map((transaction) => parseUnsignedYieldTransaction(transaction.unsignedTransaction))
+
+  assertPolygonTransactions(parsedTransactions, label)
+  return parsedTransactions
+}
+
 function assertPolygonTransactions(transactions: ParsedYieldTransaction[], label: string): void {
   if (transactions.length === 0) {
     throw new Error(`${label} action did not return a transaction.`)
   }
 
-  const unsupportedTransaction = transactions.find((transaction) => transaction.chainId !== POLYGON_CHAIN_ID_NUMBER)
+  const unsupportedTransaction = transactions.find((transaction) => transaction.chainId !== POLYGON_NETWORK.id)
   if (unsupportedTransaction) {
     throw new Error(
       `${label} returned chain ${unsupportedTransaction.chainId}, but this demo only sends Polygon transactions.`,

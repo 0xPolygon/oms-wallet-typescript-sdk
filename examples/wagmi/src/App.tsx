@@ -14,8 +14,22 @@ import {
 } from 'wagmi'
 import { TrailsWidget } from '0xtrails'
 import { formatEther, isAddress, parseEther, type Address, type Hash } from 'viem'
-import type { FeeOptionWithBalance, OMSClientSessionLoginType } from '@0xsequence/typescript-sdk'
-import { TEST_SESSION_LIFETIME_SECONDS, oms } from './omsClient'
+import type { FeeOptionWithBalance } from '@0xsequence/typescript-sdk'
+import {
+  EmailCodeForm,
+  EmailLoginForm,
+  FeeOptionsPanel,
+  OidcButtons,
+} from '../../shared/example-components'
+import {
+  formatLoginType,
+  formatOidcProvider,
+  hasOidcCallbackParams,
+  shortAddress,
+  shortHash,
+  type OidcRedirectProvider,
+} from '../../shared/example-utils'
+import { oms } from './omsClient'
 import { useFeeOptionSelection } from './useFeeOptionSelection'
 import { TRAILS_API_KEY } from './config'
 import { defaultChain, omsWalletChains, omsWalletNetworks, trailsAdapters } from './wagmiConfig'
@@ -77,8 +91,16 @@ export function App() {
   const omsSession = oms.wallet.session
   const activeOmsSessionAddress = omsSession.walletAddress
   const showGoogleAuth = !activeOmsSessionAddress || omsSession.loginType !== 'google-auth'
+  const showAppleAuth = !activeOmsSessionAddress || omsSession.loginType !== 'oidc'
+  const showOidcAuth = showGoogleAuth || showAppleAuth
   const showEmailAuth = !activeOmsSessionAddress || omsSession.loginType !== 'email'
   const showEmailCodeInput = authStep === 'code' && !activeOmsSessionAddress
+  const oidcProviders = useMemo<OidcRedirectProvider[]>(() => {
+    const providers: OidcRedirectProvider[] = []
+    if (showGoogleAuth) providers.push('google')
+    if (showAppleAuth) providers.push('apple')
+    return providers
+  }, [showAppleAuth, showGoogleAuth])
 
   const omsConnector = useMemo(
     () => connectors.find((connector) => connector.type === OMS_WALLET_CONNECTOR_TYPE),
@@ -160,11 +182,10 @@ export function App() {
   }, [])
 
   useEffect(() => {
-    const params = new URLSearchParams(window.location.search)
-    if (!params.has('code') && !params.has('state') && !params.has('error')) return
+    if (!hasOidcCallbackParams()) return
     if (!omsConnector || oidcCallbackStarted.current) return
     oidcCallbackStarted.current = true
-    void completeGoogleRedirect()
+    void completeOidcRedirect()
   }, [omsConnector])
 
   async function startEmailAuth() {
@@ -181,7 +202,6 @@ export function App() {
     await runAuth('Completing email sign-in...', async () => {
       await oms.wallet.completeEmailAuth({
         code: code.trim(),
-        sessionLifetimeSeconds: TEST_SESSION_LIFETIME_SECONDS,
       })
       setAuthStep('email')
       await connectOmsWallet('Email connected.')
@@ -194,24 +214,19 @@ export function App() {
     })
   }
 
-  async function startGoogleAuth() {
-    await runAuth('Redirecting to Google...', async () => {
+  async function startOidcRedirect(provider: OidcRedirectProvider) {
+    const providerLabel = formatOidcProvider(provider)
+    await runAuth(`Redirecting to ${providerLabel}...`, async () => {
       await oms.wallet.signInWithOidcRedirect({
-        provider: 'google',
-        loginHint: email.trim() || oms.wallet.session.sessionEmail,
-        sessionLifetimeSeconds: TEST_SESSION_LIFETIME_SECONDS,
+        provider,
       })
     })
   }
 
-  async function completeGoogleRedirect() {
-    await runAuth('Completing Google sign-in...', async () => {
-      await oms.wallet.signInWithOidcRedirect({
-        provider: 'google',
-        sessionLifetimeSeconds: TEST_SESSION_LIFETIME_SECONDS,
-      })
-      await connectOmsWallet('Google connected.')
-      window.history.replaceState({}, document.title, window.location.pathname)
+  async function completeOidcRedirect() {
+    await runAuth('Completing redirect sign-in...', async () => {
+      await oms.wallet.completeOidcRedirectAuth()
+      await connectOmsWallet('OMS Wallet connected.')
     })
   }
 
@@ -379,11 +394,6 @@ export function App() {
   }
 
   function chooseFeeOption(option: FeeOptionWithBalance) {
-    if (!canAffordFeeOption(option)) {
-      setWalletStatus(`Insufficient ${option.feeOption.token.symbol} balance for fee.`)
-      return
-    }
-
     feeOptionSelection.resolveFeeOption(option.selection)
     setWalletStatus(`Selected ${option.feeOption.token.symbol}. Sending transaction...`)
   }
@@ -409,81 +419,43 @@ export function App() {
             <div className="auth-stack">
               {activeOmsSessionAddress && (
                 <button type="button" className="secondary auth-method-button session-auth-button" onClick={() => void connectActiveOmsSession()} disabled={isBusy}>
-                  <span>{formatSessionLoginType(omsSession.loginType)}</span>
+                  <span>{formatLoginType(omsSession.loginType, 'OMS Wallet')}</span>
                   <small>{formatSessionContinuation(activeOmsSessionAddress, omsSession.sessionEmail)}</small>
                 </button>
               )}
-              {activeOmsSessionAddress && (showGoogleAuth || showEmailAuth) && (
+              {activeOmsSessionAddress && (showOidcAuth || showEmailAuth) && (
                 <div className="divider">
                   <span>or</span>
                 </div>
               )}
-              {showGoogleAuth && (
-                <button type="button" className="secondary auth-method-button" onClick={startGoogleAuth} disabled={isBusy}>
-                  Continue with Google
-                </button>
+              {showOidcAuth && (
+                <OidcButtons
+                  providers={oidcProviders}
+                  disabled={isBusy}
+                  buttonClassName="secondary auth-method-button"
+                  onStart={(provider) => void startOidcRedirect(provider)}
+                />
               )}
-              {showGoogleAuth && showEmailAuth && (
+              {showOidcAuth && showEmailAuth && (
                 <div className="divider">
                   <span>or</span>
                 </div>
               )}
               {showEmailAuth && (showEmailCodeInput ? (
-                <form className="stack" onSubmit={(event) => {
-                  event.preventDefault()
-                  void completeEmailAuth()
-                }}>
-                  <div className="field-stack">
-                    <label>
-                      Code
-                      <input
-                        autoFocus
-                        name="code"
-                        type="text"
-                        value={code}
-                        onChange={(event) => setCode(event.target.value)}
-                        inputMode="numeric"
-                        pattern="[0-9]*"
-                        placeholder="123456"
-                        autoComplete="one-time-code"
-                        disabled={isBusy}
-                      />
-                    </label>
-                  </div>
-                  <div className="actions">
-                    <button type="submit" disabled={isBusy || !code.trim()}>
-                      Complete sign-in
-                    </button>
-                    <button type="button" className="secondary" onClick={() => setAuthStep('email')} disabled={isBusy}>
-                      Back
-                    </button>
-                  </div>
-                </form>
+                <EmailCodeForm
+                  code={code}
+                  disabled={isBusy}
+                  onCodeChange={setCode}
+                  onSubmit={() => void completeEmailAuth()}
+                  onBack={() => setAuthStep('email')}
+                />
               ) : (
-                <form className="stack" onSubmit={(event) => {
-                  event.preventDefault()
-                  void startEmailAuth()
-                }}>
-                  <div className="field-stack">
-                    <label>
-                      Email
-                      <input
-                        name="email"
-                        type="email"
-                        value={email}
-                        onChange={(event) => setEmail(event.target.value)}
-                        placeholder="user@example.com"
-                        autoComplete="email"
-                        autoCapitalize="none"
-                        disabled={isBusy}
-                        spellCheck={false}
-                      />
-                    </label>
-                  </div>
-                  <button type="submit" disabled={isBusy || !email.trim()}>
-                    Send code
-                  </button>
-                </form>
+                <EmailLoginForm
+                  email={email}
+                  disabled={isBusy}
+                  onEmailChange={setEmail}
+                  onSubmit={() => void startEmailAuth()}
+                />
               ))}
               {externalWalletConnectors.map((connector) => (
                 <div className="auth-connector" key={connector.uid}>
@@ -663,76 +635,13 @@ export function App() {
   )
 }
 
-function FeeOptionsPanel({
-  feeOptions,
-  onCancel,
-  onChoose,
-}: {
-  feeOptions: FeeOptionWithBalance[]
-  onCancel: () => void
-  onChoose: (option: FeeOptionWithBalance) => void
-}) {
-  return (
-    <div className="fee-modal-backdrop">
-      <section className="fee-options" role="dialog" aria-modal="true" aria-labelledby="fee-options-title">
-        <h2 id="fee-options-title">Fee option</h2>
-        <div className="fee-option-list">
-          {feeOptions.map((option) => {
-            const canAfford = canAffordFeeOption(option)
-
-            return (
-              <button
-                key={`${option.feeOption.token.symbol}-${option.feeOption.value}`}
-                type="button"
-                className="fee-option"
-                onClick={() => onChoose(option)}
-                disabled={!canAfford}
-              >
-                <span>
-                  <strong>{option.feeOption.token.symbol}</strong>
-                  <small>{option.feeOption.displayValue || option.feeOption.value}</small>
-                </span>
-                <span>{canAfford ? option.available ?? 'Balance unavailable' : 'Insufficient balance'}</span>
-              </button>
-            )
-          })}
-        </div>
-        <button type="button" className="secondary" onClick={onCancel}>
-          Cancel transaction
-        </button>
-      </section>
-    </div>
-  )
-}
-
 function describeError(error: unknown): string {
   return error instanceof Error ? error.message : String(error)
-}
-
-function shortAddress(address: string): string {
-  return `${address.slice(0, 6)}...${address.slice(-4)}`
-}
-
-function shortHash(hash: string): string {
-  return `${hash.slice(0, 10)}...${hash.slice(-8)}`
 }
 
 function formatSessionContinuation(address: string, email: string | undefined): string {
   const label = `Continue as ${shortAddress(address)}`
   return email ? `${label} - ${email}` : label
-}
-
-function formatSessionLoginType(loginType: OMSClientSessionLoginType | undefined): string {
-  switch (loginType) {
-    case 'email':
-      return 'Email'
-    case 'google-auth':
-      return 'Google'
-    case 'oidc':
-      return 'OIDC'
-    default:
-      return 'OMS Wallet'
-  }
 }
 
 function networkForChainId(chainId: number) {
@@ -744,14 +653,4 @@ function networkForChainId(chainId: number) {
     throw new Error(`OMS network ${defaultChain.id} is not configured.`)
   }
   return defaultNetwork
-}
-
-function canAffordFeeOption(option: FeeOptionWithBalance): boolean {
-  if (option.availableRaw === undefined) return false
-
-  try {
-    return BigInt(option.availableRaw) >= BigInt(option.feeOption.value)
-  } catch {
-    return false
-  }
 }

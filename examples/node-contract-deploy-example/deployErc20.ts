@@ -93,7 +93,6 @@ async function main() {
         args: [initCode, salt],
         statusPolling: {
             timeoutMs: 120_000,
-            intervalMs: 2_000,
         },
     });
 
