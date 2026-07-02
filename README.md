@@ -246,7 +246,9 @@ Pass `loginHint` only when you want to prefill or select a specific Google accou
 
 Pending redirect state is stored in `sessionStorage` by default. Final wallet session metadata continues to use the configured SDK storage.
 
-`appleOidcProvider()` uses the SDK default Apple Services ID (`service.oms.polygon.technology`), the SDK relay redirect URI, `response_mode=query`, no scopes, and PKCE auth-code mode by default. Requesting Apple `email` or `name` scopes requires Apple `response_mode=form_post`, which is not handled by the SDK's URL-query callback parser without a relay that converts the callback.
+`googleOidcProvider()` uses the SDK default Google client ID, the SDK relay redirect URI, `openid email profile` scopes, and PKCE auth-code mode by default.
+
+`appleOidcProvider()` uses the SDK default Apple Services ID, the SDK relay redirect URI, `response_mode=query`, no scopes, and PKCE auth-code mode by default. Requesting Apple `email` or `name` scopes requires Apple `response_mode=form_post`, which is not handled by the SDK's URL-query callback parser without a relay that converts the callback.
 
 ### Session State
 

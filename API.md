@@ -993,7 +993,7 @@ type OidcProviderConfig = {
 
 Provider configs are the source of truth for authorization scopes. If `scopes` is omitted or empty, the SDK does not send a `scope` authorization parameter. `authMode` defaults to `AuthMode.AuthCodePKCE`.
 
-Google can be configured with the `googleOidcProvider` helper:
+Google can be configured with the `googleOidcProvider` helper. The default Google provider uses the SDK default client ID, the SDK relay redirect URI, `openid email profile` scopes, and PKCE auth-code mode:
 
 ```typescript
 // Uses the SDK default Google client id and relay redirect URI.
@@ -1009,7 +1009,7 @@ googleOidcProvider({
 Apple can be configured with the `appleOidcProvider` helper. The default Apple provider uses `response_mode=query`, no scopes, and PKCE auth-code mode:
 
 ```typescript
-// Uses the SDK default Apple Services ID (`service.oms.polygon.technology`) and relay redirect URI.
+// Uses the SDK default Apple Services ID and relay redirect URI.
 appleOidcProvider()
 
 // Override defaults when needed.
