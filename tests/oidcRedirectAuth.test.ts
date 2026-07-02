@@ -376,15 +376,15 @@ describe("WalletClient OIDC redirect auth", () => {
             relayRedirectUri: expectedDefaultRelayRedirectUri,
             issuer: "https://appleid.apple.com",
             authorizationUrl: "https://appleid.apple.com/auth/authorize",
-            scopes: [],
+            scopes: ["openid", "email"],
             authMode: AuthMode.AuthCodePKCE,
             authorizeParams: {
-                response_mode: "query",
+                response_mode: "form_post",
             },
         });
     });
 
-    it("starts an Apple query redirect flow from the default auth config", async () => {
+    it("starts an Apple form_post redirect flow from the default auth config", async () => {
         const fetchMock = vi.fn(async (_input: RequestInfo | URL, init?: RequestInit) => {
             const body = JSON.parse(init?.body as string);
             expect(body).toMatchObject({
@@ -422,8 +422,8 @@ describe("WalletClient OIDC redirect auth", () => {
         expect(authorizeUrl.searchParams.get("client_id")).toBe(expectedDefaultAppleClientId);
         expect(authorizeUrl.searchParams.get("redirect_uri")).toBe(expectedDefaultRelayRedirectUri);
         expect(authorizeUrl.searchParams.get("response_type")).toBe("code");
-        expect(authorizeUrl.searchParams.get("response_mode")).toBe("query");
-        expect(authorizeUrl.searchParams.get("scope")).toBeNull();
+        expect(authorizeUrl.searchParams.get("response_mode")).toBe("form_post");
+        expect(authorizeUrl.searchParams.get("scope")).toBe("openid email");
         expect(authorizeUrl.searchParams.get("code_challenge")).toBe("challenge-1");
         expect(authorizeUrl.searchParams.get("code_challenge_method")).toBe("S256");
     });
@@ -1107,8 +1107,8 @@ describe("WalletClient OIDC redirect auth", () => {
         expect(assignedUrl.origin + assignedUrl.pathname).toBe("https://appleid.apple.com/auth/authorize");
         expect(assignedUrl.searchParams.get("client_id")).toBe(expectedDefaultAppleClientId);
         expect(assignedUrl.searchParams.get("redirect_uri")).toBe(expectedDefaultRelayRedirectUri);
-        expect(assignedUrl.searchParams.get("response_mode")).toBe("query");
-        expect(assignedUrl.searchParams.get("scope")).toBeNull();
+        expect(assignedUrl.searchParams.get("response_mode")).toBe("form_post");
+        expect(assignedUrl.searchParams.get("scope")).toBe("openid email");
     });
 
     it("requires provider to start the one-call browser convenience method", async () => {

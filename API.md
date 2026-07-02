@@ -1034,7 +1034,7 @@ googleOidcProvider({
 })
 ```
 
-Apple can be configured with the `appleOidcProvider` helper. The default Apple provider uses `response_mode=query`, no scopes, and PKCE auth-code mode:
+Apple can be configured with the `appleOidcProvider` helper. The default Apple provider uses `openid email` scopes, `response_mode=form_post`, and PKCE auth-code mode:
 
 ```typescript
 // Uses the SDK default Apple Services ID and relay redirect URI.

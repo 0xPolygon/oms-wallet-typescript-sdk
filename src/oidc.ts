@@ -42,11 +42,11 @@ export function appleOidcProvider(params: AppleOidcProviderParams = {}): OidcPro
         clientId: params.clientId || defaultAppleClientId,
         issuer: 'https://appleid.apple.com',
         authorizationUrl: 'https://appleid.apple.com/auth/authorize',
-        scopes: params.scopes ?? [],
+        scopes: params.scopes ?? ['openid', 'email'],
         relayRedirectUri: params.relayRedirectUri || defaultRelayRedirectUri,
         authMode: params.authMode ?? AuthMode.AuthCodePKCE,
         authorizeParams: {
-            response_mode: 'query',
+            response_mode: 'form_post',
             ...params.authorizeParams,
         },
     };
