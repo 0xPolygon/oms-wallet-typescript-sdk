@@ -53,6 +53,7 @@ export {
 export type {
     CompleteEmailAuthParams,
     CompleteEmailAuthResult,
+    CompleteOidcIdTokenAuthResult,
     CompleteOidcRedirectAuthParams,
     CompleteOidcRedirectAuthResult,
     GetIdTokenParams,
@@ -69,6 +70,7 @@ export type {
     OidcProviderInput,
     OidcProviderName,
     PendingWalletSelection,
+    SignInWithOidcIdTokenParams,
     SignMessageParams,
     SignInWithOidcRedirectParams,
     SignTypedDataParams,

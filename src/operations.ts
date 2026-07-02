@@ -3,6 +3,7 @@ export const WalletOperation = {
     pendingWalletSelectionCreateAndSelectWallet: "wallet.pendingWalletSelection.createAndSelectWallet",
     startEmailAuth: "wallet.startEmailAuth",
     completeEmailAuth: "wallet.completeEmailAuth",
+    signInWithOidcIdToken: "wallet.signInWithOidcIdToken",
     startOidcRedirectAuth: "wallet.startOidcRedirectAuth",
     completeOidcRedirectAuth: "wallet.completeOidcRedirectAuth",
     signInWithOidcRedirect: "wallet.signInWithOidcRedirect",

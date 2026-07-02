@@ -619,6 +619,33 @@ describe("WalletClient session storage", () => {
         expect(storage.get(Constants.sessionAuthStorageKey)).toBeNull();
     });
 
+    it("does not restore legacy wallet metadata without structured session auth", () => {
+        const storage = new MemoryStorageManager();
+        storage.set(Constants.walletIdStorageKey, "wallet-id");
+        storage.set(Constants.walletAddressStorageKey, "0x1111111111111111111111111111111111111111");
+        storage.set(Constants.sessionExpiresAtStorageKey, "2099-01-01T00:00:00Z");
+        storage.set("omsWallet_session_login_type", "google-auth");
+        storage.set("omsWallet_session_email", "user@example.com");
+
+        const client = new OMSClient({
+            publishableKey: "pk_dev_sdbx_project_key",
+            storage,
+            credentialSigner: new MockSigner(),
+        });
+
+        expect(client.wallet.session).toEqual({
+            walletAddress: undefined,
+            expiresAt: undefined,
+            auth: undefined,
+        });
+        expect(storage.get(Constants.walletIdStorageKey)).toBeNull();
+        expect(storage.get(Constants.walletAddressStorageKey)).toBeNull();
+        expect(storage.get(Constants.sessionExpiresAtStorageKey)).toBeNull();
+        expect(storage.get(Constants.sessionAuthStorageKey)).toBeNull();
+        expect(storage.get("omsWallet_session_login_type")).toBeNull();
+        expect(storage.get("omsWallet_session_email")).toBeNull();
+    });
+
     it("requests a one-week auth lifetime and stores completed email session metadata", async () => {
         const storage = new MemoryStorageManager();
         const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {

@@ -11,6 +11,7 @@
   - [onSessionExpired](#onsessionexpired)
   - [startEmailAuth](#startemailauth)
   - [completeEmailAuth](#completeemailauth)
+  - [signInWithOidcIdToken](#signinwithoidcidtoken)
   - [startOidcRedirectAuth](#startoidcredirectauth)
   - [completeOidcRedirectAuth](#completeoidcredirectauth)
   - [signInWithOidcRedirect](#signinwithoidcredirect)
@@ -182,7 +183,9 @@ interface OMSClientSessionExpiredEvent {
 wallet.session: OMSClientSessionState
 ```
 
-Completed wallet sessions persist `walletAddress`, credential expiry, and structured auth metadata in the configured `storage`. Pending email OTP and OIDC redirect state are not exposed through `session`; use the auth method results to drive pending UI.
+Completed wallet sessions persist `walletAddress`, credential expiry, and structured auth metadata in the configured `storage`. Storage entries from earlier SDK versions that only contain legacy `loginType` and `sessionEmail` metadata are treated as incomplete and cleared, so those users must authenticate again. Pending email OTP and OIDC redirect state are not exposed through `session`; use the auth method results to drive pending UI.
+
+OIDC redirect auth stores `flow: 'redirect'`. OIDC ID-token auth stores `flow: 'id-token'`.
 
 Expired sessions are made inactive before protected wallet operations and throw `OmsSessionError` with code `OMS_SESSION_EXPIRED`. The SDK clears the active signer/session state, but keeps the expired session metadata in storage until the app explicitly starts a new auth flow or calls `signOut()`. Use `wallet.onSessionExpired` to update app state or route back to sign-in; the event includes the expired session snapshot so apps can reuse `session.auth.email` for email OTP reauth or provider-specific account hints, including Google `loginHint`, after a page refresh.
 
@@ -280,6 +283,70 @@ const selection = await oms.wallet.completeEmailAuth({
 await selection.selectWallet({ walletId: selection.wallets[0].id })
 // or:
 await selection.createAndSelectWallet({ reference: 'main' })
+```
+
+---
+
+### signInWithOidcIdToken
+
+```typescript
+signInWithOidcIdToken(params: {
+  idToken: string
+  issuer: string
+  audience: string
+  walletType?: WalletType
+  walletSelection?: 'automatic' | 'manual'
+  sessionLifetimeSeconds?: number
+  provider?: string
+  providerLabel?: string
+}): Promise<
+  | { walletAddress: Address; wallet: OmsWallet; wallets: OmsWallet[]; credential: WalletCredential }
+  | PendingWalletSelection
+>
+```
+
+Signs in with an OIDC ID token that your app already obtained from an identity provider, such as Google Identity Services, Firebase, Auth0, Cognito, Clerk, or a server/device-code flow. The SDK does not fetch provider tokens. Pass the token plus the `issuer` and `audience` used to mint it; WaaS validates the token during auth completion.
+
+The SDK reads the token `exp` claim, commits a WaaS `id-token` verifier, completes auth with the token, then loads or creates a wallet using the same wallet-selection behavior as email auth. Pass `provider` and `providerLabel` when you want custom session metadata for non-built-in identity providers. When omitted, Google and Apple are derived from the issuer and custom issuers leave those fields `undefined`.
+
+**Parameters**
+
+| Name | Type | Required | Description |
+|---|---|---|---|
+| `idToken` | `string` | Yes | Provider-issued OIDC ID token. |
+| `issuer` | `string` | Yes | Expected token issuer, such as `https://accounts.google.com`. |
+| `audience` | `string` | Yes | Expected token audience/client ID. |
+| `walletType` | `WalletType` | No | The wallet type to load or create. Defaults to `WalletType.Ethereum`. |
+| `walletSelection` | `'automatic' \| 'manual'` | No | Defaults to `'automatic'`. Set to `'manual'` to let the app choose an existing wallet or create one through the returned pending selection. |
+| `sessionLifetimeSeconds` | `number` | No | Requested session lifetime in seconds. Defaults to one week. |
+| `provider` | `string` | No | Stable app-facing provider key stored in `session.auth.provider`. |
+| `providerLabel` | `string` | No | Display label stored in `session.auth.providerLabel`. |
+
+```typescript
+const result = await oms.wallet.signInWithOidcIdToken({
+  idToken: googleIdToken,
+  issuer: 'https://accounts.google.com',
+  audience: 'YOUR_WEB_CLIENT_ID',
+})
+
+if ('walletAddress' in result) {
+  console.log('Wallet ready:', result.walletAddress)
+}
+```
+
+Manual selection:
+
+```typescript
+const selection = await oms.wallet.signInWithOidcIdToken({
+  idToken,
+  issuer: 'https://idp.example',
+  audience: 'custom-client-id',
+  provider: 'enterprise',
+  providerLabel: 'Enterprise SSO',
+  walletSelection: 'manual',
+})
+
+await selection.selectWallet({ walletId: selection.wallets[0].id })
 ```
 
 ---
@@ -1113,6 +1180,24 @@ interface CompleteEmailAuthResult {
   credential: WalletCredential
 }
 
+interface SignInWithOidcIdTokenParams {
+  idToken: string
+  issuer: string
+  audience: string
+  walletType?: WalletType
+  walletSelection?: WalletSelectionBehavior
+  sessionLifetimeSeconds?: number
+  provider?: string
+  providerLabel?: string
+}
+
+interface CompleteOidcIdTokenAuthResult {
+  walletAddress: Address
+  wallet: OmsWallet
+  wallets: OmsWallet[]
+  credential: WalletCredential
+}
+
 interface StartOidcRedirectAuthParams<Env> {
   provider: OidcProviderInput<Env>
   redirectUri?: string
@@ -1159,7 +1244,7 @@ interface SignInWithOidcRedirectParams<Env> {
 }
 ```
 
-Exported parameter and result interfaces for the email OTP and OIDC redirect methods documented above.
+Exported parameter and result interfaces for the email OTP and OIDC methods documented above.
 
 ---
 
@@ -1981,4 +2066,4 @@ enum WalletType {
 }
 ```
 
-Identifies the wallet type to load or create. Accepted by wallet creation and auth completion flows, including [`completeEmailAuth`](#completeemailauth), [`startOidcRedirectAuth`](#startoidcredirectauth), [`signInWithOidcRedirect`](#signinwithoidcredirect), and [`createWallet`](#createwallet). Defaults to `WalletType.Ethereum`.
+Identifies the wallet type to load or create. Accepted by wallet creation and auth completion flows, including [`completeEmailAuth`](#completeemailauth), [`signInWithOidcIdToken`](#signinwithoidcidtoken), [`startOidcRedirectAuth`](#startoidcredirectauth), [`signInWithOidcRedirect`](#signinwithoidcredirect), and [`createWallet`](#createwallet). Defaults to `WalletType.Ethereum`.

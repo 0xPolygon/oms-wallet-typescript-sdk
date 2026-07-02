@@ -24,6 +24,10 @@ import {
     parseOidcCallbackUrl,
     redirectUriFromCurrentUrl,
 } from "../utils/oidcRedirect.js";
+import {
+    oidcIdTokenExpiresAtEpochSeconds,
+    oidcIdTokenHandleHash,
+} from "../utils/oidcIdToken.js";
 import {OmsSessionError, OmsTransactionError, OmsWalletSelectionError, toOmsSdkError} from "../errors.js";
 
 import {
@@ -118,6 +122,17 @@ export interface CompleteEmailAuthParams {
     sessionLifetimeSeconds?: number;
 }
 
+export interface SignInWithOidcIdTokenParams {
+    idToken: string;
+    issuer: string;
+    audience: string;
+    walletType?: WalletType;
+    walletSelection?: WalletSelectionBehavior;
+    sessionLifetimeSeconds?: number;
+    provider?: string;
+    providerLabel?: string;
+}
+
 export type WalletSelectionBehavior = "automatic" | "manual";
 
 type AutomaticWalletSelectionParams<T extends {walletSelection?: WalletSelectionBehavior}> =
@@ -137,19 +152,18 @@ export interface WalletActivationResult {
     wallet: OmsWallet;
 }
 
-export interface CompleteEmailAuthResult {
+interface CompleteWalletAuthResult {
     walletAddress: Address;
     wallet: OmsWallet;
     wallets: Array<OmsWallet>;
     credential: WalletCredential;
 }
 
-export interface CompleteOidcRedirectAuthResult {
-    walletAddress: Address;
-    wallet: OmsWallet;
-    wallets: Array<OmsWallet>;
-    credential: WalletCredential;
-}
+export interface CompleteEmailAuthResult extends CompleteWalletAuthResult {}
+
+export interface CompleteOidcIdTokenAuthResult extends CompleteWalletAuthResult {}
+
+export interface CompleteOidcRedirectAuthResult extends CompleteWalletAuthResult {}
 
 export interface PendingWalletSelection {
     walletType: WalletType;
@@ -534,6 +548,57 @@ export class WalletClient<Env extends OmsEnvironment = OmsEnvironment> {
             })
             attempt.completion = {params: completionParams, promise}
             return promise
+        })
+    }
+
+    /**
+     * Signs in with an app-provided OIDC ID token.
+     *
+     * The application is responsible for obtaining the provider ID token and passing
+     * the issuer and audience used to mint it. The SDK completes WaaS ID-token auth
+     * and then activates an existing wallet or creates one.
+     */
+    async signInWithOidcIdToken(
+        params: ManualWalletSelectionParams<SignInWithOidcIdTokenParams>,
+    ): Promise<PendingWalletSelection>
+    async signInWithOidcIdToken(
+        params: AutomaticWalletSelectionParams<SignInWithOidcIdTokenParams>,
+    ): Promise<CompleteOidcIdTokenAuthResult>
+    async signInWithOidcIdToken(
+        params: SignInWithOidcIdTokenParams,
+    ): Promise<CompleteOidcIdTokenAuthResult | PendingWalletSelection>
+    async signInWithOidcIdToken(
+        params: SignInWithOidcIdTokenParams,
+    ): Promise<CompleteOidcIdTokenAuthResult | PendingWalletSelection> {
+        return this.runOperation(WalletOperation.signInWithOidcIdToken, async () => {
+            await this.clearSession()
+
+            const idTokenExpiresAt = oidcIdTokenExpiresAtEpochSeconds(params.idToken)
+            const request: CommitVerifierRequest = {
+                identityType: IdentityType.OIDC,
+                authMode: AuthMode.IDToken,
+                metadata: {
+                    iss: params.issuer,
+                    aud: params.audience,
+                    exp: idTokenExpiresAt.toString(),
+                },
+                handle: await oidcIdTokenHandleHash(params.idToken),
+            }
+            const commitment = await this.client.commitVerifier(request)
+            const completeRequest: CompleteAuthRequest = {
+                identityType: IdentityType.OIDC,
+                authMode: AuthMode.IDToken,
+                verifier: commitment.verifier,
+                answer: params.idToken,
+                lifetime: params.sessionLifetimeSeconds ?? DEFAULT_SESSION_LIFETIME_SECONDS,
+            }
+            const response = await this.client.completeAuth(completeRequest)
+            return this.completeWalletAuth(
+                response,
+                params.walletType ?? WalletType.Ethereum,
+                params.walletSelection ?? "automatic",
+                this.oidcIdTokenSessionAuthFromParams(params, response),
+            )
         })
     }
 
@@ -991,7 +1056,7 @@ export class WalletClient<Env extends OmsEnvironment = OmsEnvironment> {
         walletSelection: WalletSelectionBehavior,
         auth: OMSClientSessionAuth,
         emailAuthAttempt?: ActiveEmailAuthAttempt,
-    ): Promise<CompleteEmailAuthResult | PendingWalletSelection> {
+    ): Promise<CompleteWalletAuthResult | PendingWalletSelection> {
         this.activePendingWalletSelection = undefined
 
         const metadata = this.sessionMetadataFromAuthResponse(response, auth)
@@ -1330,6 +1395,21 @@ export class WalletClient<Env extends OmsEnvironment = OmsEnvironment> {
     private emailSessionAuthFromResponse(response: CompleteAuthResponse): OMSClientEmailSessionAuth {
         return {
             type: 'email',
+            email: response.email,
+        }
+    }
+
+    private oidcIdTokenSessionAuthFromParams(
+        params: SignInWithOidcIdTokenParams,
+        response: CompleteAuthResponse,
+    ): OMSClientOidcSessionAuth {
+        const issuer = response.identity.iss || params.issuer
+        return {
+            type: 'oidc',
+            flow: 'id-token',
+            issuer,
+            provider: params.provider ?? builtInOidcProviderForIssuer(issuer),
+            providerLabel: params.providerLabel ?? builtInOidcProviderLabelForIssuer(issuer),
             email: response.email,
         }
     }

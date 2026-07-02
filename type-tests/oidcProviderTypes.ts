@@ -7,6 +7,7 @@ import {
     findNetworkById,
     findNetworkByName,
     supportedNetworks,
+    type CompleteOidcIdTokenAuthResult,
     type Network,
     type GetIdTokenParams,
     type OMSClientSessionAuth,
@@ -25,6 +26,7 @@ import {
     type TokenContractInfo,
     type TokenMetadata,
     type TransactionHistoryResult,
+    type SignInWithOidcIdTokenParams,
 } from "../src/index";
 import {omsEnvironmentFromPublishableKey} from "../src/omsEnvironment";
 import {appleOidcProvider, googleOidcProvider} from "../src/oidc";
@@ -77,6 +79,23 @@ if (false) {
         const activatedAuth = await wallet.completeEmailAuth({code: "123456"});
         void activatedAuth.walletAddress;
         void activatedAuth.wallets;
+
+        const manualOidcIdTokenAuth = await wallet.signInWithOidcIdToken({
+            idToken: "jwt",
+            issuer: "https://accounts.google.com",
+            audience: "google-client-id",
+            walletSelection: "manual",
+        });
+        void manualOidcIdTokenAuth.walletType;
+        // @ts-expect-error manual ID-token auth does not activate a wallet.
+        void manualOidcIdTokenAuth.walletAddress;
+
+        const activatedOidcIdTokenAuth = await wallet.signInWithOidcIdToken({
+            idToken: "jwt",
+            issuer: "https://accounts.google.com",
+            audience: "google-client-id",
+        });
+        void activatedOidcIdTokenAuth.walletAddress;
     });
 }
 
@@ -108,6 +127,20 @@ const sessionExpiredListener: OMSClientSessionExpiredListener = ({expiredAt}) =>
 void defaultClient.wallet.onSessionExpired(sessionExpiredListener);
 const idTokenParams: GetIdTokenParams = {ttlSeconds: 300, customClaims: {role: "admin"}};
 const idToken: Promise<string> = defaultClient.wallet.getIdToken(idTokenParams);
+const oidcIdTokenParams: SignInWithOidcIdTokenParams = {
+    idToken: "jwt",
+    issuer: "https://accounts.google.com",
+    audience: "google-client-id",
+    provider: "google",
+    providerLabel: "Google",
+};
+const oidcIdTokenResult: Promise<CompleteOidcIdTokenAuthResult> =
+    defaultClient.wallet.signInWithOidcIdToken({
+        idToken: "jwt",
+        issuer: "https://accounts.google.com",
+        audience: "google-client-id",
+    });
+void defaultClient.wallet.signInWithOidcIdToken(oidcIdTokenParams);
 const sessionAuth: OMSClientSessionAuth | undefined = defaultClient.wallet.session.auth;
 const polygonNetwork: Network = Networks.polygon;
 const polygonDisplayName: string = Networks.polygon.displayName;
@@ -212,6 +245,35 @@ void defaultClient.wallet.completeOidcRedirectAuth();
 void defaultClient.wallet.completeOidcRedirectAuth({
     walletSelection: "manual",
     sessionLifetimeSeconds: 120,
+});
+void defaultClient.wallet.signInWithOidcIdToken({
+    idToken: "jwt",
+    issuer: "https://accounts.google.com",
+    audience: "google-client-id",
+});
+void defaultClient.wallet.signInWithOidcIdToken({
+    idToken: "jwt",
+    issuer: "https://idp.example",
+    audience: "custom-client-id",
+    provider: "enterprise",
+    providerLabel: "Enterprise SSO",
+    walletSelection: "manual",
+    sessionLifetimeSeconds: 120,
+});
+// @ts-expect-error ID-token sign-in requires an ID token.
+void defaultClient.wallet.signInWithOidcIdToken({
+    issuer: "https://accounts.google.com",
+    audience: "google-client-id",
+});
+// @ts-expect-error ID-token sign-in requires an issuer.
+void defaultClient.wallet.signInWithOidcIdToken({
+    idToken: "jwt",
+    audience: "google-client-id",
+});
+// @ts-expect-error ID-token sign-in requires an audience.
+void defaultClient.wallet.signInWithOidcIdToken({
+    idToken: "jwt",
+    issuer: "https://accounts.google.com",
 });
 void defaultClient.wallet.startOidcRedirectAuth({
     // @ts-expect-error github is not configured on the default auth config.

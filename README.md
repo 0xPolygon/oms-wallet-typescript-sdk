@@ -1,6 +1,6 @@
 # OMS Client TypeScript SDK
 
-A TypeScript SDK for the OMS (Open Money Stack) platform. Provides email and OIDC redirect wallet authentication, on-chain transaction submission, message signing, and token balance queries — with automatic session persistence.
+A TypeScript SDK for the OMS (Open Money Stack) platform. Provides email, OIDC ID-token, and OIDC redirect wallet authentication, on-chain transaction submission, message signing, and token balance queries — with automatic session persistence.
 
 ## Usage
 
@@ -230,6 +230,20 @@ if (result) {
 
 OIDC redirect auth also supports manual wallet selection by passing `walletSelection: 'manual'` to `startOidcRedirectAuth` or `completeOidcRedirectAuth`. Options passed at start are stored with the pending redirect state and used after the provider redirects back.
 
+For OIDC ID-token flows, obtain the provider token in your app or backend flow, then pass it to the SDK with the issuer and audience:
+
+```typescript
+const result = await oms.wallet.signInWithOidcIdToken({
+  idToken: googleIdToken,
+  issuer: 'https://accounts.google.com',
+  audience: 'YOUR_WEB_CLIENT_ID',
+})
+
+console.log('Wallet address:', result.walletAddress)
+```
+
+Use `walletSelection: 'manual'` with `signInWithOidcIdToken` when your app needs to present its own wallet picker after the token is verified.
+
 For simple browser apps, use `signInWithOidcRedirect` from a sign-in action. It calls `startOidcRedirectAuth`, derives the current page as `redirectUri`, and navigates with `window.location.assign`:
 
 ```typescript
@@ -255,7 +269,7 @@ Pending redirect state is stored in `sessionStorage` by default. Final wallet se
 
 Email and OIDC auth both persist the active wallet session in the configured SDK storage. Browser storage defaults to `localStorage` when available; non-browser runtimes fall back to in-memory storage unless you provide a custom `StorageManager`. Browser signing defaults to a non-extractable WebCrypto P-256 credential using `ecdsa-p256-sha256`, so the private session key is not written to `localStorage`. Completed auth requests ask WaaS for a one-week session lifetime.
 
-Pass `sessionLifetimeSeconds` to `completeEmailAuth`, `startOidcRedirectAuth`, `completeOidcRedirectAuth`, or `signInWithOidcRedirect` to request a different session lifetime. For OIDC redirects, values passed at start are stored with the pending redirect state and used on callback completion unless completion overrides them.
+Pass `sessionLifetimeSeconds` to `completeEmailAuth`, `signInWithOidcIdToken`, `startOidcRedirectAuth`, `completeOidcRedirectAuth`, or `signInWithOidcRedirect` to request a different session lifetime. For OIDC redirects, values passed at start are stored with the pending redirect state and used on callback completion unless completion overrides them.
 
 Use `oms.wallet.walletAddress` when you only need the active wallet address. Use `oms.wallet.session` when you also need credential expiry or structured auth metadata.
 

@@ -776,6 +776,29 @@ describe("public API error contracts", () => {
         `);
     });
 
+    it("snapshots signInWithOidcIdToken local errors", async () => {
+        const oms = createOmsClient();
+
+        await expect(publicError(() =>
+            oms.wallet.signInWithOidcIdToken({
+                idToken: "not-a-jwt",
+                issuer: "https://accounts.google.com",
+                audience: "google-client-id",
+            }),
+        )).resolves.toMatchInlineSnapshot(`
+          {
+            "code": "OMS_VALIDATION_ERROR",
+            "message": "OIDC ID token must contain header and payload sections",
+            "name": "OmsValidationError",
+            "operation": "wallet.signInWithOidcIdToken",
+            "retryable": null,
+            "status": null,
+            "txnId": null,
+            "upstreamError": null,
+          }
+        `);
+    });
+
     it("snapshots signature validation backend failures with upstream details", async () => {
         vi.stubGlobal("fetch", vi.fn(async () => {
             throw new TypeError("fetch failed");
