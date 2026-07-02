@@ -56,9 +56,9 @@
   - [ListAccessParams](#listaccessparams)
   - [AccessGrantPage](#accessgrantpage)
   - [WalletActivationResult](#walletactivationresult)
-  - [SendNativeTransactionParams](#sendnativetransactionparams)
-  - [SendDataTransactionParams](#senddatatransactionparams)
-  - [SendContractTransactionParams](#sendcontracttransactionparams)
+  - [Native Transaction Parameters](#native-transaction-parameters)
+  - [Raw Data Transaction Parameters](#raw-data-transaction-parameters)
+  - [ABI-Encoded Transaction Parameters](#abi-encoded-transaction-parameters)
   - [SendTransactionResponse](#sendtransactionresponse)
   - [TransactionStatusResponse](#transactionstatusresponse)
   - [TransactionStatusPollingOptions](#transactionstatuspollingoptions)
@@ -83,7 +83,7 @@
   - [TokenContractInfo](#tokencontractinfo)
   - [TokenMetadata](#tokenmetadata)
   - [TokenMetadataAsset](#tokenmetadataasset)
-  - [AbiArg](#abiarg)
+  - [Contract Call Arguments](#contract-call-arguments)
   - [AuthMode](#authmode)
   - [WalletType](#wallettype)
 
@@ -288,7 +288,7 @@ startOidcRedirectAuth(params: {
 }): Promise<{ url: string; state: string; challenge: string }>
 ```
 
-Starts an OIDC authorization-code redirect flow and returns the provider authorization URL. If a wallet session is already active, it is cleared before the new auth attempt starts. The SDK stores transient redirect auth state so the callback can complete after a full-page redirect.
+Starts an OIDC authorization-code redirect flow and returns the provider authorization URL. If a wallet session is already active, it is cleared before the new auth attempt starts. The SDK stores transient redirect auth state so the callback can complete after a full-page redirect with the same credential signer, credential id, and signing algorithm.
 
 If `provider` is a string, it must match a configured `auth.oidcProviders` key. Passing an `OidcProviderConfig` object directly is also supported.
 
@@ -327,7 +327,7 @@ completeOidcRedirectAuth(params: {
 >
 ```
 
-Completes an OIDC redirect flow by validating the callback, completing auth with a one-week session lifetime by default, and activating an existing wallet or creating one. In browser environments, `callbackUrl` defaults to `window.location.href`; if the current URL has no OIDC callback params, the method returns `undefined` without requiring pending redirect storage.
+Completes an OIDC redirect flow by validating the callback, completing auth with a one-week session lifetime by default, and activating an existing wallet or creating one. Completion must run with the same credential signer, credential id, and signing algorithm that started the redirect. In browser environments, `callbackUrl` defaults to `window.location.href`; if the current URL has no OIDC callback params, the method returns `undefined` without requiring pending redirect storage.
 
 Pass `sessionLifetimeSeconds` to request a shorter or longer session lifetime. Pass `walletSelection: 'manual'` to return a [`PendingWalletSelection`](#pendingwalletselection) for app-driven wallet selection. If omitted, completion uses values stored by `startOidcRedirectAuth` or `signInWithOidcRedirect`, then falls back to automatic wallet selection and the default one-week lifetime.
 
@@ -381,7 +381,7 @@ if (result) {
 signOut(): Promise<void>
 ```
 
-Clears the wallet session metadata from storage and clears the active credential signer where supported. After calling this, `walletAddress` and `session` metadata are no longer available and the user must authenticate again via [`startEmailAuth`](#startemailauth).
+Clears the wallet session metadata from storage and clears the active credential signer where supported. After calling this, `walletAddress` and `session` metadata are no longer available and the user must authenticate again through email auth or OIDC redirect auth.
 
 **Returns** `Promise<void>`
 
@@ -538,7 +538,15 @@ Fetches the latest status for a prepared/executed transaction. This is useful af
 #### Native Token Transfer
 
 ```typescript
-sendTransaction(params: SendNativeTransactionParams): Promise<SendTransactionResponse>
+sendTransaction(params: {
+  network: Network
+  to: Address
+  value: bigint
+  mode?: TransactionMode
+  selectFeeOption?: FeeOptionSelector
+  waitForStatus?: boolean
+  statusPolling?: TransactionStatusPollingOptions
+}): Promise<SendTransactionResponse>
 ```
 
 Sends native tokens (ETH, POL, etc.) to an address.
@@ -548,7 +556,7 @@ import { parseUnits } from 'viem'
 
 const tx = await oms.wallet.sendTransaction({
   network: Networks.polygon,
-  to: '0xRecipient',
+  to: '0x1111111111111111111111111111111111111111',
   value: parseUnits('1', 18), // 1 POL
 })
 ```
@@ -556,7 +564,16 @@ const tx = await oms.wallet.sendTransaction({
 #### Raw Data Transaction
 
 ```typescript
-sendTransaction(params: SendDataTransactionParams): Promise<SendTransactionResponse>
+sendTransaction(params: {
+  network: Network
+  to: Address
+  data: Hex
+  value?: bigint
+  mode?: TransactionMode
+  selectFeeOption?: FeeOptionSelector
+  waitForStatus?: boolean
+  statusPolling?: TransactionStatusPollingOptions
+}): Promise<SendTransactionResponse>
 ```
 
 Sends a transaction with arbitrary calldata as a hex string. Use this when you have pre-encoded calldata.
@@ -564,18 +581,29 @@ Sends a transaction with arbitrary calldata as a hex string. Use this when you h
 ```typescript
 const tx = await oms.wallet.sendTransaction({
   network: Networks.polygon,
-  to: '0xContract',
-  data: '0xa9059cbb000000000000000000000000...',
+  to: '0x2222222222222222222222222222222222222222',
+  data: '0x12345678',
 })
 ```
 
 #### ABI-Encoded Contract Call
 
 ```typescript
-sendTransaction<abi, functionName>(params: SendContractTransactionParams<abi, functionName>): Promise<SendTransactionResponse>
+sendTransaction(params: {
+  network: Network
+  to: Address
+  abi: Abi | readonly unknown[]
+  functionName: string
+  args?: unknown[]
+  value?: bigint
+  mode?: TransactionMode
+  selectFeeOption?: FeeOptionSelector
+  waitForStatus?: boolean
+  statusPolling?: TransactionStatusPollingOptions
+}): Promise<SendTransactionResponse>
 ```
 
-Sends a contract interaction with fully-typed ABI encoding via viem. The calldata is encoded automatically from `abi`, `functionName`, and `args`.
+Sends a contract interaction with ABI encoding via viem. The calldata is encoded automatically from `abi`, `functionName`, and `args`. When `abi` is passed as a const ABI, TypeScript narrows valid `functionName` values and infers `args`.
 
 ```typescript
 import { parseUnits } from 'viem'
@@ -593,14 +621,14 @@ const erc20Abi = [
 
 const tx = await oms.wallet.sendTransaction({
   network: Networks.polygon,
-  to: '0xTokenContract',
+  to: '0x3333333333333333333333333333333333333333',
   abi: erc20Abi,
   functionName: 'transfer',
-  args: ['0xRecipient', parseUnits('1', 18)],
+  args: ['0x1111111111111111111111111111111111111111', parseUnits('1', 18)],
 })
 ```
 
-All three variants share the following optional base fields:
+The transaction variants share these common fields. `value` is required for native token transfers and optional for raw-data and ABI-encoded contract calls.
 
 | Name | Type | Description |
 |---|---|---|
@@ -612,7 +640,7 @@ All three variants share the following optional base fields:
 
 **Returns** `Promise<SendTransactionResponse>` — the prepared transaction ID, latest status, and transaction hash when available.
 
-**Throws** if no session is active, the transaction reverts, or the request fails.
+**Throws** if no session is active, local validation or fee selection fails, or a prepare/execute/status request fails. On-chain failed transaction statuses are returned as transaction status responses.
 
 When fee options are returned, `selectFeeOption` receives `FeeOptionWithBalance[]`.
 Each entry includes the `FeeOption` plus the selected wallet's balance
@@ -629,7 +657,7 @@ callContract(params: {
   network: Network
   contractAddress: Address
   method: string
-  args?: AbiArg[]
+  args?: Array<{ type: string; value: unknown }>
   mode?: TransactionMode
   selectFeeOption?: FeeOptionSelector
   waitForStatus?: boolean
@@ -646,7 +674,7 @@ Calls a state-changing smart contract function using a method signature string a
 | `network` | `Network` | Yes | Network identifier. See [Network](#network). |
 | `contractAddress` | `Address` | Yes | Address of the target contract. |
 | `method` | `string` | Yes | ABI function signature, e.g. `"transfer(address,uint256)"`. |
-| `args` | `AbiArg[]` | No | Ordered list of typed arguments. See [AbiArg](#abiarg). |
+| `args` | `Array<{ type: string; value: unknown }>` | No | Ordered list of typed arguments. See [Contract Call Arguments](#contract-call-arguments). |
 | `mode` | `TransactionMode` | No | Transaction execution mode. Defaults to `TransactionMode.Relayer`. |
 | `selectFeeOption` | `FeeOptionSelector` | No | Optional callback for choosing a fee option. |
 | `waitForStatus` | `boolean` | No | Set to `false` to return immediately after execute without polling transaction status. |
@@ -661,10 +689,10 @@ import { parseUnits } from 'viem'
 
 const tx = await oms.wallet.callContract({
   network: Networks.polygon,
-  contractAddress: '0xTokenContract',
+  contractAddress: '0x3333333333333333333333333333333333333333',
   method: 'transfer(address,uint256)',
   args: [
-    { type: 'address', value: '0xRecipient' },
+    { type: 'address', value: '0x1111111111111111111111111111111111111111' },
     { type: 'uint256', value: parseUnits('1', 18).toString() },
   ],
 })
@@ -993,7 +1021,7 @@ type OidcProviderConfig = {
 
 Provider configs are the source of truth for authorization scopes. If `scopes` is omitted or empty, the SDK does not send a `scope` authorization parameter. `authMode` defaults to `AuthMode.AuthCodePKCE`.
 
-Google can be configured with the `googleOidcProvider` helper. The default Google provider uses the SDK default client ID, the SDK relay redirect URI, `openid email profile` scopes, and PKCE auth-code mode:
+Google can be configured with the `googleOidcProvider` helper. The default Google provider uses the SDK default client ID, the SDK relay redirect URI, `openid email profile` scopes, PKCE auth-code mode, and Google authorization parameters `access_type=offline` and `prompt=consent`:
 
 ```typescript
 // Uses the SDK default Google client id and relay redirect URI.
@@ -1024,7 +1052,8 @@ appleOidcProvider({
 ### OIDC Provider Helpers
 
 ```typescript
-type OidcProviderName<Env> = string
+type OidcProviderName<Env> =
+  keyof NonNullable<NonNullable<Env['auth']>['oidcProviders']> & string
 type OidcProviderInput<Env> = OidcProviderName<Env> | OidcProviderConfig
 
 interface GoogleOidcProviderParams {
@@ -1167,8 +1196,13 @@ Interface for request credential signing. The default implementation is `WebCryp
 ### Credential Signing Helpers
 
 ```typescript
-class WebCryptoP256CredentialSigner implements CredentialSigner
-class EthereumPrivateKeyCredentialSigner implements CredentialSigner
+class WebCryptoP256CredentialSigner implements CredentialSigner {
+  constructor(id?: string)
+}
+
+class EthereumPrivateKeyCredentialSigner implements CredentialSigner {
+  constructor(privateKey: Uint8Array)
+}
 ```
 
 `WebCryptoP256CredentialSigner` is the browser default. `EthereumPrivateKeyCredentialSigner` signs credential requests with an EVM private key and is useful for Node.js or server-side usage where the caller provides key material directly.
@@ -1351,13 +1385,13 @@ Returned when an existing wallet is selected or a new wallet is created and acti
 
 ---
 
-### SendNativeTransactionParams
+### Native Transaction Parameters
 
 ```typescript
-type SendNativeTransactionParams = {
+{
   network: Network
   to: Address
-  value: bigint        // required — amount in wei
+  value: bigint
   mode?: TransactionMode
   selectFeeOption?: FeeOptionSelector
   waitForStatus?: boolean
@@ -1369,13 +1403,13 @@ Used when sending a native token transfer. `value` is required and `data`/`abi` 
 
 ---
 
-### SendDataTransactionParams
+### Raw Data Transaction Parameters
 
 ```typescript
-type SendDataTransactionParams = {
+{
   network: Network
   to: Address
-  data: Hex            // required — pre-encoded calldata
+  data: Hex
   value?: bigint
   mode?: TransactionMode
   selectFeeOption?: FeeOptionSelector
@@ -1388,18 +1422,15 @@ Used when sending a transaction with raw calldata. `abi` must not be set.
 
 ---
 
-### SendContractTransactionParams
+### ABI-Encoded Transaction Parameters
 
 ```typescript
-type SendContractTransactionParams<
-  abi extends Abi | readonly unknown[],
-  functionName extends ContractFunctionName<abi> | undefined
-> = {
+{
   network: Network
   to: Address
-  abi: abi
-  functionName: functionName
-  args?: ...           // inferred from abi + functionName
+  abi: Abi | readonly unknown[]
+  functionName: string
+  args?: unknown[]
   value?: bigint
   mode?: TransactionMode
   selectFeeOption?: FeeOptionSelector
@@ -1408,7 +1439,7 @@ type SendContractTransactionParams<
 }
 ```
 
-Used for fully-typed ABI-encoded contract calls. `abi` and `functionName` are required; `args` types are inferred from the ABI. `data` must not be set. Calldata is encoded automatically using viem's `encodeFunctionData`.
+Used for ABI-encoded contract calls. `abi` and `functionName` are required; `args` types are inferred from const ABIs. `data` must not be set. Calldata is encoded automatically using viem's `encodeFunctionData`.
 
 ---
 
@@ -1881,21 +1912,21 @@ Media asset metadata associated with token metadata when returned.
 
 ---
 
-### AbiArg
+### Contract Call Arguments
 
 ```typescript
-interface AbiArg {
+{
   type: string
-  value: any
+  value: unknown
 }
 ```
 
-A loosely-typed ABI argument used by [`callContract`](#callcontract). For fully-typed encoding, use the ABI overload of [`sendTransaction`](#abi-encoded-contract-call) instead.
+A loosely-typed ABI argument object used by [`callContract`](#callcontract). For fully-typed encoding, use the ABI overload of [`sendTransaction`](#abi-encoded-contract-call) instead.
 
 | Field | Type | Description |
 |---|---|---|
 | `type` | `string` | Solidity type string, e.g. `"address"`, `"uint256"`, `"bytes32"`, `"bool"`. |
-| `value` | `any` | The argument value. Use a string for large integers to avoid precision loss. |
+| `value` | `unknown` | The argument value. Use a string for large integers to avoid precision loss. |
 
 ---
 
@@ -1922,4 +1953,4 @@ enum WalletType {
 }
 ```
 
-Identifies the wallet type to load or create. Passed as the optional `walletType` parameter to [`completeEmailAuth`](#completeemailauth). Defaults to `WalletType.Ethereum`.
+Identifies the wallet type to load or create. Accepted by wallet creation and auth completion flows, including [`completeEmailAuth`](#completeemailauth), [`startOidcRedirectAuth`](#startoidcredirectauth), [`signInWithOidcRedirect`](#signinwithoidcredirect), and [`createWallet`](#createwallet). Defaults to `WalletType.Ethereum`.

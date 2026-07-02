@@ -9,6 +9,7 @@ pnpm install
 pnpm build
 cp examples/wagmi/.env.example examples/wagmi/.env.local
 # Fill VITE_OMS_PUBLISHABLE_KEY
+# Replace VITE_TRAILS_API_KEY only if you need a different Trails project
 pnpm dev:wagmi-example
 ```
 

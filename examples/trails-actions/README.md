@@ -5,6 +5,7 @@ This Vite React app uses the TypeScript SDK wallet client with Trails actions on
 - Swap POL to USDC
 - Deposit USDC using Earn
 - Swap POL to USDC and deposit USDC in one prepared Trails transaction
+- View Earn positions and withdraw from withdrawable Earn positions
 
 Run it from the repository root:
 

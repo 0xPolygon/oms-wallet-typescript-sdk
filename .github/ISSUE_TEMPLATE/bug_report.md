@@ -14,7 +14,8 @@ labels: bug
 // Minimal code to reproduce
 ```
 
-**SDK version:**
+**Affected package/example:** <!-- SDK, wagmi connector, React example, Wagmi example, Trails Actions example, Node example, etc. -->
+**Package/example version or commit:**
 **Node version:**
 **Package manager:**
 

@@ -94,12 +94,13 @@ To run it locally from the repository root:
 ```bash
 cp examples/wagmi/.env.example examples/wagmi/.env.local
 # Fill VITE_OMS_PUBLISHABLE_KEY in examples/wagmi/.env.local
+# Replace VITE_TRAILS_API_KEY only if you need a different Trails project
 pnpm dev:wagmi-example
 ```
 
 ## Trails Actions React Example
 
-The Trails Actions example prepares and sends Polygon swap, deposit, and swap plus deposit flows with `0xtrails/actions`.
+The Trails Actions example prepares and sends Polygon swap, Earn deposit, swap plus Earn deposit, and Earn withdrawal flows with `0xtrails/actions`.
 
 The deployed Trails Actions example is available at [https://0xsequence.github.io/typescript-sdk/trails-actions-example/](https://0xsequence.github.io/typescript-sdk/trails-actions-example/).
 
@@ -156,7 +157,7 @@ console.log('Credential:', credential.credentialId)
 // 4. Send a transaction
 const tx = await oms.wallet.sendTransaction({
   network: Networks.polygon,
-  to: '0xRecipient',
+  to: '0x1111111111111111111111111111111111111111',
   value: parseUnits('1', 18), // 1 POL
   // If this Polygon mainnet transaction is not sponsored, choose the first fee token the wallet can pay.
   selectFeeOption: FeeOptionSelector.firstAvailable,
@@ -348,7 +349,7 @@ import { parseUnits } from 'viem'
 
 const tx = await oms.wallet.sendTransaction({
   network: Networks.polygon,
-  to: '0xRecipient',
+  to: '0x1111111111111111111111111111111111111111',
   value: parseUnits('1', 18), // 1 POL
 })
 ```
@@ -358,8 +359,8 @@ const tx = await oms.wallet.sendTransaction({
 ```typescript
 const tx = await oms.wallet.sendTransaction({
   network: Networks.polygon,
-  to: '0xContract',
-  data: '0xa9059cbb000000000000000000000000...',
+  to: '0x2222222222222222222222222222222222222222',
+  data: '0x12345678',
 })
 ```
 
@@ -383,10 +384,10 @@ const erc20Abi = [
 
 const tx = await oms.wallet.sendTransaction({
   network: Networks.polygon,
-  to: '0xTokenContract',
+  to: '0x3333333333333333333333333333333333333333',
   abi: erc20Abi,
   functionName: 'transfer',
-  args: ['0xRecipient', parseUnits('1', 18)],
+  args: ['0x1111111111111111111111111111111111111111', parseUnits('1', 18)],
 })
 ```
 
@@ -403,7 +404,7 @@ import { parseUnits } from 'viem'
 
 const tx = await oms.wallet.sendTransaction({
   network: Networks.polygon,
-  to: '0xRecipient',
+  to: '0x1111111111111111111111111111111111111111',
   value: parseUnits('0.001', 18),
   waitForStatus: false,
 })
@@ -418,7 +419,7 @@ import { parseUnits } from 'viem'
 
 await oms.wallet.sendTransaction({
   network: Networks.polygon,
-  to: '0xRecipient',
+  to: '0x1111111111111111111111111111111111111111',
   value: parseUnits('0.001', 18),
   statusPolling: {
     timeoutMs: 30_000,
@@ -435,8 +436,8 @@ wallet can pay, or return `option.selection` from a custom selector.
 ```typescript
 const tx = await oms.wallet.sendTransaction({
   network: Networks.polygon,
-  to: '0xTokenContract',
-  data: '0xa9059cbb000000000000000000000000...',
+  to: '0x3333333333333333333333333333333333333333',
+  data: '0x12345678',
   selectFeeOption: async (feeOptions) => {
     const selected = feeOptions.find(option => option.feeOption.token.symbol === 'USDC')
     return selected?.selection
@@ -535,10 +536,10 @@ import { parseUnits } from 'viem'
 
 const tx = await oms.wallet.callContract({
   network: Networks.polygon,
-  contractAddress: '0xTokenContract',
+  contractAddress: '0x3333333333333333333333333333333333333333',
   method: 'transfer(address,uint256)',
   args: [
-    { type: 'address', value: '0xRecipient' },
+    { type: 'address', value: '0x1111111111111111111111111111111111111111' },
     { type: 'uint256', value: parseUnits('1', 18).toString() },
   ],
 })

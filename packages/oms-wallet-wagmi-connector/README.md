@@ -14,20 +14,20 @@ const oms = new OMSClient({
   publishableKey: import.meta.env.VITE_OMS_PUBLISHABLE_KEY,
 })
 
+const omsConnector = omsWalletConnector({
+  client: oms,
+  initialChainId: polygon.id,
+  transactionOptions: {
+    selectFeeOption: FeeOptionSelector.firstAvailable,
+  },
+})
+
 export const wagmiConfig = createConfig({
   chains: [polygon],
   transports: {
     [polygon.id]: http(),
   },
-  connectors: [
-    omsWalletConnector({
-      client: oms,
-      initialChainId: polygon.id,
-      transactionOptions: {
-        selectFeeOption: FeeOptionSelector.firstAvailable,
-      },
-    }),
-  ],
+  connectors: [omsConnector],
 })
 ```
 
@@ -113,7 +113,7 @@ The connector ignores wallet-managed execution fields that OMS Wallet does not a
 
 Use this package through wagmi connector APIs. Do not treat `getProvider()` as a general RPC provider.
 
-Supported provider methods are limited to the wallet operations that map to the SDK today: account discovery, local chain switching across configured OMS networks, `personal_sign`, `eth_signTypedData_v4`, `eth_sendTransaction`, and `wallet_sendTransaction`.
+Supported provider methods are limited to the wallet operations and state queries that map to the SDK today: `eth_chainId`, `net_version`, `eth_accounts`, `eth_requestAccounts`, `wallet_switchEthereumChain`, `personal_sign`, `eth_signTypedData_v4`, `eth_sendTransaction`, `wallet_sendTransaction`, and `wallet_getCapabilities`.
 
 Unsupported methods include direct read/RPC methods such as `eth_call`, `eth_estimateGas`, `eth_getBalance`, `eth_getCode`, `eth_getTransactionCount`, `eth_getTransactionReceipt`, and `eth_blockNumber`. Use wagmi public transports for reads, or use `oms.wallet` directly for OMS SDK operations.
 

@@ -42,8 +42,10 @@ answers are `WalletKit Dollar`, `WKUSD`, and `6`.
 Optionally set a deterministic CREATE2 salt:
 
 ```bash
-DEPLOY_SALT=0x0000000000000000000000000000000000000000000000000000000000000001
+DEPLOY_SALT=0x0000000000000000000000000000000000000000000000000000000000000001 pnpm dev:node-contract-deploy-example
 ```
+
+You can also set `DEPLOY_SALT` or `DEPLOYER_ADDRESS` in `.env.local`.
 
 Each deploy writes a timestamped text record under `artifacts/` with the token
 metadata, computed contract address, transaction id, transaction hash, and

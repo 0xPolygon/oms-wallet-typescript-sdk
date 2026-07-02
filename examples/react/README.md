@@ -20,13 +20,6 @@ The dev server runs at `http://localhost:5173`.
 
 The deployed example is available at `https://0xsequence.github.io/typescript-sdk/react-example`.
 
-The example requires a publishable key. Configure it locally before running the dev server:
-
-```bash
-cp examples/react/.env.example examples/react/.env.local
-# Fill VITE_OMS_PUBLISHABLE_KEY
-```
-
 The Amoy-only "ERC20 example" panel includes a WalletKit Dollar example using
 the demo WKUSD contract deployed on Polygon Amoy.
 

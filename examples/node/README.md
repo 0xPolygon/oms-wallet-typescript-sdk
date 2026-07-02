@@ -14,7 +14,7 @@ pnpm build
 OMS_PUBLISHABLE_KEY=your-publishable-key pnpm dev:node-example
 ```
 
-The example prompts for an email address, sends an OTP code, then prompts for the code.
+The example prompts for an email address, sends an OTP code, prompts for the code, then signs a `test` message on Polygon Amoy.
 
 You can typecheck the example directly:
 

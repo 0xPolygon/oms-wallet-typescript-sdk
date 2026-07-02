@@ -36,7 +36,11 @@ How testing works in this repo. `AGENTS.md` points here so agents know how to ve
 | Changed SDK behavior | `pnpm exec vitest run` |
 | Changed wagmi connector behavior | `pnpm --filter @0xsequence/oms-wallet-wagmi-connector test` |
 | Changed wagmi connector types/build | `pnpm --filter @0xsequence/oms-wallet-wagmi-connector build` |
+| Changed React example | `pnpm build:example` |
+| Changed Trails Actions example | `pnpm build:trails-actions-example` |
 | Changed wagmi React example | `pnpm build:wagmi-example` |
+| Changed Node example | `pnpm build:node-example` |
+| Changed Node contract deploy example | `pnpm build:node-contract-deploy-example` |
 | Changed public types / `src/index.ts` | `pnpm test:types` |
 | Full pre-handoff check | `pnpm exec tsc --noEmit && pnpm test` |
 | Watch mode during development | `pnpm test:watch` |
@@ -44,7 +48,7 @@ How testing works in this repo. `AGENTS.md` points here so agents know how to ve
 
 ## Conventions
 
-- Test filenames match the module they cover: `walletClient.ts` → `walletClient.test.ts`
+- Test filenames should make their public behavior area clear. Broad clients may be split across focused files such as `walletSession.test.ts`, `walletTransactions.test.ts`, `walletSigning.test.ts`, and `walletAccess.test.ts`.
 - Bug fixes should include a regression test that would have caught the bug
 - Do not add tests that assert private implementation — test the externally visible promise
 - Network boundaries are stubbed; don't require live secrets for `pnpm test`
