@@ -4,6 +4,8 @@ import type {OidcAuthMode, OidcProviderConfig} from "./omsEnvironment.js";
 export interface GoogleOidcProviderParams {
     clientId?: string;
     relayRedirectUri?: string;
+    provider?: string;
+    providerLabel?: string;
     scopes?: string[];
     authorizeParams?: Record<string, string>;
     authMode?: OidcAuthMode;
@@ -12,6 +14,8 @@ export interface GoogleOidcProviderParams {
 export interface AppleOidcProviderParams {
     clientId?: string;
     relayRedirectUri?: string;
+    provider?: string;
+    providerLabel?: string;
     scopes?: string[];
     authorizeParams?: Record<string, string>;
     authMode?: OidcAuthMode;
@@ -26,6 +30,8 @@ export function googleOidcProvider(params: GoogleOidcProviderParams = {}): OidcP
         clientId: params.clientId || defaultGoogleClientId,
         issuer: 'https://accounts.google.com',
         authorizationUrl: 'https://accounts.google.com/o/oauth2/v2/auth',
+        provider: params.provider ?? 'google',
+        providerLabel: params.providerLabel ?? 'Google',
         scopes: params.scopes ?? ['openid', 'email', 'profile'],
         relayRedirectUri: params.relayRedirectUri || defaultRelayRedirectUri,
         authMode: params.authMode ?? AuthMode.AuthCodePKCE,
@@ -42,6 +48,8 @@ export function appleOidcProvider(params: AppleOidcProviderParams = {}): OidcPro
         clientId: params.clientId || defaultAppleClientId,
         issuer: 'https://appleid.apple.com',
         authorizationUrl: 'https://appleid.apple.com/auth/authorize',
+        provider: params.provider ?? 'apple',
+        providerLabel: params.providerLabel ?? 'Apple',
         scopes: params.scopes ?? ['openid', 'email'],
         relayRedirectUri: params.relayRedirectUri || defaultRelayRedirectUri,
         authMode: params.authMode ?? AuthMode.AuthCodePKCE,

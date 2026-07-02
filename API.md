@@ -154,13 +154,24 @@ The on-chain address of the active wallet (`Address` is the viem/abitype hex add
 ### session
 
 ```typescript
-type OMSClientSessionLoginType = 'email' | 'google-auth' | 'oidc'
+type OMSClientSessionAuth =
+  | {
+      type: 'email'
+      email: string | undefined
+    }
+  | {
+      type: 'oidc'
+      flow: 'redirect' | 'id-token'
+      issuer: string
+      provider: string | undefined
+      providerLabel: string | undefined
+      email: string | undefined
+    }
 
 interface OMSClientSessionState {
   walletAddress: Address | undefined
   expiresAt: string | undefined
-  loginType: OMSClientSessionLoginType | undefined
-  sessionEmail: string | undefined
+  auth: OMSClientSessionAuth | undefined
 }
 
 interface OMSClientSessionExpiredEvent {
@@ -171,9 +182,9 @@ interface OMSClientSessionExpiredEvent {
 wallet.session: OMSClientSessionState
 ```
 
-Completed wallet sessions persist `walletAddress`, credential expiry, login type, and returned email in the configured `storage`. Pending email OTP and OIDC redirect state are not exposed through `session`; use the auth method results to drive pending UI.
+Completed wallet sessions persist `walletAddress`, credential expiry, and structured auth metadata in the configured `storage`. Pending email OTP and OIDC redirect state are not exposed through `session`; use the auth method results to drive pending UI.
 
-Expired sessions are made inactive before protected wallet operations and throw `OmsSessionError` with code `OMS_SESSION_EXPIRED`. The SDK clears the active signer/session state, but keeps the expired session metadata in storage until the app explicitly starts a new auth flow or calls `signOut()`. Use `wallet.onSessionExpired` to update app state or route back to sign-in; the event includes the expired session snapshot so apps can reuse `sessionEmail` for email OTP reauth or provider-specific account hints, including Google `loginHint`, after a page refresh.
+Expired sessions are made inactive before protected wallet operations and throw `OmsSessionError` with code `OMS_SESSION_EXPIRED`. The SDK clears the active signer/session state, but keeps the expired session metadata in storage until the app explicitly starts a new auth flow or calls `signOut()`. Use `wallet.onSessionExpired` to update app state or route back to sign-in; the event includes the expired session snapshot so apps can reuse `session.auth.email` for email OTP reauth or provider-specific account hints, including Google `loginHint`, after a page refresh.
 
 ### onSessionExpired
 
@@ -1012,6 +1023,8 @@ type OidcProviderConfig = {
   clientId: string
   issuer: string
   authorizationUrl: string
+  provider?: string
+  providerLabel?: string
   scopes?: string[]
   relayRedirectUri?: string
   authorizeParams?: Record<string, string>
@@ -1019,7 +1032,7 @@ type OidcProviderConfig = {
 }
 ```
 
-Provider configs are the source of truth for authorization scopes. If `scopes` is omitted or empty, the SDK does not send a `scope` authorization parameter. `authMode` defaults to `AuthMode.AuthCodePKCE`.
+Provider configs are the source of truth for authorization scopes and optional provider display metadata. If `scopes` is omitted or empty, the SDK does not send a `scope` authorization parameter. `authMode` defaults to `AuthMode.AuthCodePKCE`. `provider` is a stable app-facing provider key, and `providerLabel` is display text stored in `session.auth` after redirect auth completes.
 
 Google can be configured with the `googleOidcProvider` helper. The default Google provider uses the SDK default client ID, the SDK relay redirect URI, `openid email profile` scopes, PKCE auth-code mode, and Google authorization parameters `access_type=offline` and `prompt=consent`:
 
@@ -1059,6 +1072,8 @@ type OidcProviderInput<Env> = OidcProviderName<Env> | OidcProviderConfig
 interface GoogleOidcProviderParams {
   clientId?: string
   relayRedirectUri?: string
+  provider?: string
+  providerLabel?: string
   scopes?: string[]
   authorizeParams?: Record<string, string>
   authMode?: AuthMode.AuthCode | AuthMode.AuthCodePKCE
@@ -1067,6 +1082,8 @@ interface GoogleOidcProviderParams {
 interface AppleOidcProviderParams {
   clientId?: string
   relayRedirectUri?: string
+  provider?: string
+  providerLabel?: string
   scopes?: string[]
   authorizeParams?: Record<string, string>
   authMode?: AuthMode.AuthCode | AuthMode.AuthCodePKCE
@@ -1212,13 +1229,24 @@ class EthereumPrivateKeyCredentialSigner implements CredentialSigner {
 ### Session Listener Types
 
 ```typescript
-type OMSClientSessionLoginType = 'email' | 'google-auth' | 'oidc'
+type OMSClientSessionAuth =
+  | {
+      type: 'email'
+      email: string | undefined
+    }
+  | {
+      type: 'oidc'
+      flow: 'redirect' | 'id-token'
+      issuer: string
+      provider: string | undefined
+      providerLabel: string | undefined
+      email: string | undefined
+    }
 
 interface OMSClientSessionState {
   walletAddress: Address | undefined
   expiresAt: string | undefined
-  loginType: OMSClientSessionLoginType | undefined
-  sessionEmail: string | undefined
+  auth: OMSClientSessionAuth | undefined
 }
 
 interface OMSClientSessionExpiredEvent {

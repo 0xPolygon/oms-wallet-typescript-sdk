@@ -8,6 +8,8 @@ export interface OidcProviderConfig {
     clientId: string;
     issuer: string;
     authorizationUrl: string;
+    provider?: string;
+    providerLabel?: string;
     scopes?: string[];
     relayRedirectUri?: string;
     authorizeParams?: Record<string, string>;

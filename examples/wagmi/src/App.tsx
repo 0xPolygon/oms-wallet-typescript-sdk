@@ -22,8 +22,8 @@ import {
   OidcButtons,
 } from '../../shared/example-components'
 import {
-  formatLoginType,
   formatOidcProvider,
+  formatSessionAuth,
   hasOidcCallbackParams,
   shortAddress,
   shortHash,
@@ -90,10 +90,10 @@ export function App() {
   const feeOptions = feeOptionSelection.feeOptions
   const omsSession = oms.wallet.session
   const activeOmsSessionAddress = omsSession.walletAddress
-  const showGoogleAuth = !activeOmsSessionAddress || omsSession.loginType !== 'google-auth'
-  const showAppleAuth = !activeOmsSessionAddress || omsSession.loginType !== 'oidc'
+  const showGoogleAuth = !activeOmsSessionAddress || !(omsSession.auth?.type === 'oidc' && omsSession.auth.provider === 'google')
+  const showAppleAuth = !activeOmsSessionAddress || !(omsSession.auth?.type === 'oidc' && omsSession.auth.provider === 'apple')
   const showOidcAuth = showGoogleAuth || showAppleAuth
-  const showEmailAuth = !activeOmsSessionAddress || omsSession.loginType !== 'email'
+  const showEmailAuth = !activeOmsSessionAddress || omsSession.auth?.type !== 'email'
   const showEmailCodeInput = authStep === 'code' && !activeOmsSessionAddress
   const oidcProviders = useMemo<OidcRedirectProvider[]>(() => {
     const providers: OidcRedirectProvider[] = []
@@ -419,8 +419,8 @@ export function App() {
             <div className="auth-stack">
               {activeOmsSessionAddress && (
                 <button type="button" className="secondary auth-method-button session-auth-button" onClick={() => void connectActiveOmsSession()} disabled={isBusy}>
-                  <span>{formatLoginType(omsSession.loginType, 'OMS Wallet')}</span>
-                  <small>{formatSessionContinuation(activeOmsSessionAddress, omsSession.sessionEmail)}</small>
+                  <span>{formatSessionAuth(omsSession.auth, 'OMS Wallet')}</span>
+                  <small>{formatSessionContinuation(activeOmsSessionAddress, omsSession.auth?.email)}</small>
                 </button>
               )}
               {activeOmsSessionAddress && (showOidcAuth || showEmailAuth) && (

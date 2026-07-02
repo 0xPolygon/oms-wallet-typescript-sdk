@@ -46,6 +46,25 @@ function seedEmailAuthAttempt(
     (wallet as any).activeEmailAuthAttempt = {verifier, challenge};
 }
 
+function emailAuth(email = "user@example.com") {
+    return {type: "email" as const, email};
+}
+
+function googleAuth(email = "user@example.com") {
+    return {
+        type: "oidc" as const,
+        flow: "redirect" as const,
+        issuer: "https://accounts.google.com",
+        provider: "google",
+        providerLabel: "Google",
+        email,
+    };
+}
+
+function serializedAuth(auth = emailAuth()) {
+    return JSON.stringify(auth);
+}
+
 describe("WalletClient session storage", () => {
     it("falls back to memory storage when localStorage is unavailable", () => {
         vi.stubGlobal("localStorage", undefined);
@@ -63,8 +82,7 @@ describe("WalletClient session storage", () => {
         storage.set(Constants.walletIdStorageKey, "wallet-id");
         storage.set(Constants.walletAddressStorageKey, "0x1111111111111111111111111111111111111111");
         storage.set(Constants.sessionExpiresAtStorageKey, "2099-01-01T00:00:00Z");
-        storage.set(Constants.sessionLoginTypeStorageKey, "email");
-        storage.set(Constants.sessionEmailStorageKey, "user@example.com");
+        storage.set(Constants.sessionAuthStorageKey, serializedAuth());
 
         const wallet = new WalletClient({
             publishableKey: "publishable-key",
@@ -82,8 +100,7 @@ describe("WalletClient session storage", () => {
         expect(storage.get(Constants.walletIdStorageKey)).toBeNull();
         expect(storage.get(Constants.walletAddressStorageKey)).toBeNull();
         expect(storage.get(Constants.sessionExpiresAtStorageKey)).toBeNull();
-        expect(storage.get(Constants.sessionLoginTypeStorageKey)).toBeNull();
-        expect(storage.get(Constants.sessionEmailStorageKey)).toBeNull();
+        expect(storage.get(Constants.sessionAuthStorageKey)).toBeNull();
     });
 
     it("retains expired wallet metadata, notifies session expiry listeners, and throws a session expiry error", async () => {
@@ -100,8 +117,7 @@ describe("WalletClient session storage", () => {
         wallet.onSessionExpired(onSessionExpired);
         (wallet as any).persistSession("wallet-id", "0x1111111111111111111111111111111111111111", {
             expiresAt: "2000-01-01T00:00:00Z",
-            loginType: "email",
-            sessionEmail: "user@example.com",
+            auth: emailAuth(),
         });
 
         await expect(wallet.signMessage({network: Networks.polygon, message: "hello"})).rejects.toMatchObject({
@@ -112,21 +128,18 @@ describe("WalletClient session storage", () => {
         expect(wallet.session).toEqual({
             walletAddress: undefined,
             expiresAt: undefined,
-            loginType: undefined,
-            sessionEmail: undefined,
+            auth: undefined,
         });
         expect(storage.get(Constants.walletIdStorageKey)).toBe("wallet-id");
         expect(storage.get(Constants.walletAddressStorageKey)).toBe("0x1111111111111111111111111111111111111111");
         expect(storage.get(Constants.sessionExpiresAtStorageKey)).toBe("2000-01-01T00:00:00Z");
-        expect(storage.get(Constants.sessionLoginTypeStorageKey)).toBe("email");
-        expect(storage.get(Constants.sessionEmailStorageKey)).toBe("user@example.com");
+        expect(storage.get(Constants.sessionAuthStorageKey)).toBe(serializedAuth());
         expect(signer.clear).toHaveBeenCalledOnce();
         expect(onSessionExpired).toHaveBeenCalledWith({
             session: {
                 walletAddress: "0x1111111111111111111111111111111111111111",
                 expiresAt: "2000-01-01T00:00:00Z",
-                loginType: "email",
-                sessionEmail: "user@example.com",
+                auth: emailAuth(),
             },
             expiredAt: "2000-01-01T00:00:00Z",
         });
@@ -137,8 +150,7 @@ describe("WalletClient session storage", () => {
             session: {
                 walletAddress: "0x1111111111111111111111111111111111111111",
                 expiresAt: "2000-01-01T00:00:00Z",
-                loginType: "email",
-                sessionEmail: "user@example.com",
+                auth: emailAuth(),
             },
             expiredAt: "2000-01-01T00:00:00Z",
         });
@@ -159,8 +171,7 @@ describe("WalletClient session storage", () => {
         wallet.onSessionExpired(onSessionExpired);
         (wallet as any).persistSession("wallet-id", "0x1111111111111111111111111111111111111111", {
             expiresAt: "2000-01-01T00:00:00Z",
-            loginType: "email",
-            sessionEmail: "user@example.com",
+            auth: emailAuth(),
         });
 
         await expect(wallet.signMessage({network: Networks.polygon, message: "hello"})).rejects.toMatchObject({
@@ -170,16 +181,14 @@ describe("WalletClient session storage", () => {
         expect(wallet.session).toEqual({
             walletAddress: undefined,
             expiresAt: undefined,
-            loginType: undefined,
-            sessionEmail: undefined,
+            auth: undefined,
         });
         expect(signer.clear).toHaveBeenCalledOnce();
         expect(onSessionExpired).toHaveBeenCalledWith({
             session: {
                 walletAddress: "0x1111111111111111111111111111111111111111",
                 expiresAt: "2000-01-01T00:00:00Z",
-                loginType: "email",
-                sessionEmail: "user@example.com",
+                auth: emailAuth(),
             },
             expiredAt: "2000-01-01T00:00:00Z",
         });
@@ -192,8 +201,7 @@ describe("WalletClient session storage", () => {
         storage.set(Constants.walletIdStorageKey, "wallet-id");
         storage.set(Constants.walletAddressStorageKey, "0x1111111111111111111111111111111111111111");
         storage.set(Constants.sessionExpiresAtStorageKey, "2000-01-01T00:00:00Z");
-        storage.set(Constants.sessionLoginTypeStorageKey, "email");
-        storage.set(Constants.sessionEmailStorageKey, "user@example.com");
+        storage.set(Constants.sessionAuthStorageKey, serializedAuth());
 
         const client = new OMSClient({
             publishableKey: "pk_dev_sdbx_project_key",
@@ -205,14 +213,12 @@ describe("WalletClient session storage", () => {
         expect(client.wallet.session).toEqual({
             walletAddress: undefined,
             expiresAt: undefined,
-            loginType: undefined,
-            sessionEmail: undefined,
+            auth: undefined,
         });
         expect(storage.get(Constants.walletIdStorageKey)).toBe("wallet-id");
         expect(storage.get(Constants.walletAddressStorageKey)).toBe("0x1111111111111111111111111111111111111111");
         expect(storage.get(Constants.sessionExpiresAtStorageKey)).toBe("2000-01-01T00:00:00Z");
-        expect(storage.get(Constants.sessionLoginTypeStorageKey)).toBe("email");
-        expect(storage.get(Constants.sessionEmailStorageKey)).toBe("user@example.com");
+        expect(storage.get(Constants.sessionAuthStorageKey)).toBe(serializedAuth());
 
         await Promise.resolve();
         await Promise.resolve();
@@ -222,8 +228,7 @@ describe("WalletClient session storage", () => {
             session: {
                 walletAddress: "0x1111111111111111111111111111111111111111",
                 expiresAt: "2000-01-01T00:00:00Z",
-                loginType: "email",
-                sessionEmail: "user@example.com",
+                auth: emailAuth(),
             },
             expiredAt: "2000-01-01T00:00:00Z",
         });
@@ -244,8 +249,7 @@ describe("WalletClient session storage", () => {
             session: {
                 walletAddress: "0x1111111111111111111111111111111111111111",
                 expiresAt: "2000-01-01T00:00:00Z",
-                loginType: "email",
-                sessionEmail: "user@example.com",
+                auth: emailAuth(),
             },
             expiredAt: "2000-01-01T00:00:00Z",
         });
@@ -258,8 +262,7 @@ describe("WalletClient session storage", () => {
         storage.set(Constants.walletIdStorageKey, "wallet-id");
         storage.set(Constants.walletAddressStorageKey, "0x1111111111111111111111111111111111111111");
         storage.set(Constants.sessionExpiresAtStorageKey, "2000-01-01T00:00:00Z");
-        storage.set(Constants.sessionLoginTypeStorageKey, "email");
-        storage.set(Constants.sessionEmailStorageKey, "user@example.com");
+        storage.set(Constants.sessionAuthStorageKey, serializedAuth());
 
         const client = new OMSClient({
             publishableKey: "pk_dev_sdbx_project_key",
@@ -284,8 +287,7 @@ describe("WalletClient session storage", () => {
         storage.set(Constants.walletIdStorageKey, "wallet-id");
         storage.set(Constants.walletAddressStorageKey, "0x1111111111111111111111111111111111111111");
         storage.set(Constants.sessionExpiresAtStorageKey, "2000-01-01T00:00:00Z");
-        storage.set(Constants.sessionLoginTypeStorageKey, "email");
-        storage.set(Constants.sessionEmailStorageKey, "user@example.com");
+        storage.set(Constants.sessionAuthStorageKey, serializedAuth());
 
         const client = new OMSClient({
             publishableKey: "pk_dev_sdbx_project_key",
@@ -302,8 +304,7 @@ describe("WalletClient session storage", () => {
             session: {
                 walletAddress: "0x1111111111111111111111111111111111111111",
                 expiresAt: "2000-01-01T00:00:00Z",
-                loginType: "email",
-                sessionEmail: "user@example.com",
+                auth: emailAuth(),
             },
             expiredAt: "2000-01-01T00:00:00Z",
         });
@@ -326,8 +327,7 @@ describe("WalletClient session storage", () => {
         wallet.onSessionExpired(onSessionExpired);
         (wallet as any).persistSession("wallet-id", "0x1111111111111111111111111111111111111111", {
             expiresAt: "2026-01-01T00:02:00Z",
-            loginType: "email",
-            sessionEmail: "user@example.com",
+            auth: emailAuth(),
         });
 
         await vi.advanceTimersByTimeAsync(119_999);
@@ -339,21 +339,18 @@ describe("WalletClient session storage", () => {
         expect(wallet.session).toEqual({
             walletAddress: undefined,
             expiresAt: undefined,
-            loginType: undefined,
-            sessionEmail: undefined,
+            auth: undefined,
         });
         expect(storage.get(Constants.walletIdStorageKey)).toBe("wallet-id");
         expect(storage.get(Constants.walletAddressStorageKey)).toBe("0x1111111111111111111111111111111111111111");
         expect(storage.get(Constants.sessionExpiresAtStorageKey)).toBe("2026-01-01T00:02:00Z");
-        expect(storage.get(Constants.sessionLoginTypeStorageKey)).toBe("email");
-        expect(storage.get(Constants.sessionEmailStorageKey)).toBe("user@example.com");
+        expect(storage.get(Constants.sessionAuthStorageKey)).toBe(serializedAuth());
         expect(signer.clear).toHaveBeenCalledOnce();
         expect(onSessionExpired).toHaveBeenCalledWith({
             session: {
                 walletAddress: "0x1111111111111111111111111111111111111111",
                 expiresAt: "2026-01-01T00:02:00Z",
-                loginType: "email",
-                sessionEmail: "user@example.com",
+                auth: emailAuth(),
             },
             expiredAt: "2026-01-01T00:02:00Z",
         });
@@ -375,8 +372,7 @@ describe("WalletClient session storage", () => {
         wallet.onSessionExpired(onSessionExpired);
         (wallet as any).persistSession("wallet-id", "0x1111111111111111111111111111111111111111", {
             expiresAt: "2026-01-01T00:02:00Z",
-            loginType: "email",
-            sessionEmail: "user@example.com",
+            auth: emailAuth(),
         });
 
         await wallet.signOut();
@@ -404,21 +400,18 @@ describe("WalletClient session storage", () => {
         wallet.onSessionExpired(onSessionExpired);
         (wallet as any).persistSession("wallet-old", "0x1111111111111111111111111111111111111111", {
             expiresAt: "2026-01-01T00:02:00Z",
-            loginType: "email",
-            sessionEmail: "old@example.com",
+            auth: emailAuth("old@example.com"),
         });
         (wallet as any).persistSession("wallet-new", "0x2222222222222222222222222222222222222222", {
             expiresAt: "2026-01-01T00:04:00Z",
-            loginType: "google-auth",
-            sessionEmail: "new@example.com",
+            auth: googleAuth("new@example.com"),
         });
 
         await vi.advanceTimersByTimeAsync(120_000);
         expect(wallet.session).toEqual({
             walletAddress: "0x2222222222222222222222222222222222222222",
             expiresAt: "2026-01-01T00:04:00Z",
-            loginType: "google-auth",
-            sessionEmail: "new@example.com",
+            auth: googleAuth("new@example.com"),
         });
         expect(onSessionExpired).not.toHaveBeenCalled();
 
@@ -430,8 +423,7 @@ describe("WalletClient session storage", () => {
             session: {
                 walletAddress: "0x2222222222222222222222222222222222222222",
                 expiresAt: "2026-01-01T00:04:00Z",
-                loginType: "google-auth",
-                sessionEmail: "new@example.com",
+                auth: googleAuth("new@example.com"),
             },
             expiredAt: "2026-01-01T00:04:00Z",
         });
@@ -487,16 +479,14 @@ describe("WalletClient session storage", () => {
         expect(wallet.session).toEqual({
             walletAddress: undefined,
             expiresAt: undefined,
-            loginType: undefined,
-            sessionEmail: undefined,
+            auth: undefined,
         });
         expect(signer.clear).toHaveBeenCalledOnce();
         expect(onSessionExpired).toHaveBeenCalledWith({
             session: {
                 walletAddress: undefined,
                 expiresAt: "2026-01-01T00:02:00Z",
-                loginType: "email",
-                sessionEmail: "user@example.com",
+                auth: emailAuth(),
             },
             expiredAt: "2026-01-01T00:02:00Z",
         });
@@ -521,8 +511,7 @@ describe("WalletClient session storage", () => {
 
         (wallet as any).persistSession("wallet-id", "0x1111111111111111111111111111111111111111", {
             expiresAt: "2099-01-01T00:00:00Z",
-            loginType: "email",
-            sessionEmail: "user@example.com",
+            auth: emailAuth(),
         });
         seedEmailAuthAttempt(wallet, "old-verifier", "old-challenge");
         await wallet.signOut();
@@ -536,13 +525,11 @@ describe("WalletClient session storage", () => {
         expect(wallet.session).toEqual({
             walletAddress: undefined,
             expiresAt: undefined,
-            loginType: undefined,
-            sessionEmail: undefined,
+            auth: undefined,
         });
         expect(storage.get(Constants.walletIdStorageKey)).toBeNull();
         expect(storage.get(Constants.sessionExpiresAtStorageKey)).toBeNull();
-        expect(storage.get(Constants.sessionLoginTypeStorageKey)).toBeNull();
-        expect(storage.get(Constants.sessionEmailStorageKey)).toBeNull();
+        expect(storage.get(Constants.sessionAuthStorageKey)).toBeNull();
         expect(redirectAuthStorage.get(Constants.redirectAuthStorageKey)).toBeNull();
         expect(signer.clear).toHaveBeenCalledOnce();
     });
@@ -554,8 +541,7 @@ describe("WalletClient session storage", () => {
         storage.set(Constants.walletIdStorageKey, "wallet-id");
         storage.set(Constants.walletAddressStorageKey, "0x1111111111111111111111111111111111111111");
         storage.set(Constants.sessionExpiresAtStorageKey, "2099-01-01T00:00:00Z");
-        storage.set(Constants.sessionLoginTypeStorageKey, "email");
-        storage.set(Constants.sessionEmailStorageKey, "old@example.com");
+        storage.set(Constants.sessionAuthStorageKey, serializedAuth(emailAuth("old@example.com")));
         redirectAuthStorage.set(Constants.redirectAuthStorageKey, JSON.stringify({verifier: "old-verifier"}));
 
         const fetchMock = vi.fn(async (input: RequestInfo | URL) => {
@@ -585,8 +571,7 @@ describe("WalletClient session storage", () => {
         expect(storage.get(Constants.walletIdStorageKey)).toBeNull();
         expect(storage.get(Constants.walletAddressStorageKey)).toBeNull();
         expect(storage.get(Constants.sessionExpiresAtStorageKey)).toBeNull();
-        expect(storage.get(Constants.sessionLoginTypeStorageKey)).toBeNull();
-        expect(storage.get(Constants.sessionEmailStorageKey)).toBeNull();
+        expect(storage.get(Constants.sessionAuthStorageKey)).toBeNull();
         expect(redirectAuthStorage.get(Constants.redirectAuthStorageKey)).toBeNull();
         expect(signer.clear).toHaveBeenCalledOnce();
     });
@@ -596,8 +581,7 @@ describe("WalletClient session storage", () => {
         storage.set(Constants.walletIdStorageKey, "wallet-id");
         storage.set(Constants.walletAddressStorageKey, "0x1111111111111111111111111111111111111111");
         storage.set(Constants.sessionExpiresAtStorageKey, "2099-01-01T00:00:00Z");
-        storage.set(Constants.sessionLoginTypeStorageKey, "google-auth");
-        storage.set(Constants.sessionEmailStorageKey, "user@example.com");
+        storage.set(Constants.sessionAuthStorageKey, serializedAuth(googleAuth()));
 
         const client = new OMSClient({
             publishableKey: "pk_dev_sdbx_project_key",
@@ -608,9 +592,31 @@ describe("WalletClient session storage", () => {
         expect(client.wallet.session).toEqual({
             walletAddress: "0x1111111111111111111111111111111111111111",
             expiresAt: "2099-01-01T00:00:00Z",
-            loginType: "google-auth",
-            sessionEmail: "user@example.com",
+            auth: googleAuth(),
         });
+    });
+
+    it("does not restore wallet metadata without completed session auth", () => {
+        const storage = new MemoryStorageManager();
+        storage.set(Constants.walletIdStorageKey, "wallet-id");
+        storage.set(Constants.walletAddressStorageKey, "0x1111111111111111111111111111111111111111");
+        storage.set(Constants.sessionExpiresAtStorageKey, "2099-01-01T00:00:00Z");
+
+        const client = new OMSClient({
+            publishableKey: "pk_dev_sdbx_project_key",
+            storage,
+            credentialSigner: new MockSigner(),
+        });
+
+        expect(client.wallet.session).toEqual({
+            walletAddress: undefined,
+            expiresAt: undefined,
+            auth: undefined,
+        });
+        expect(storage.get(Constants.walletIdStorageKey)).toBeNull();
+        expect(storage.get(Constants.walletAddressStorageKey)).toBeNull();
+        expect(storage.get(Constants.sessionExpiresAtStorageKey)).toBeNull();
+        expect(storage.get(Constants.sessionAuthStorageKey)).toBeNull();
     });
 
     it("requests a one-week auth lifetime and stores completed email session metadata", async () => {
@@ -681,12 +687,10 @@ describe("WalletClient session storage", () => {
         expect(wallet.session).toEqual({
             walletAddress: "0x1111111111111111111111111111111111111111",
             expiresAt: "2099-01-01T00:00:00Z",
-            loginType: "email",
-            sessionEmail: "user@example.com",
+            auth: emailAuth(),
         });
         expect(storage.get(Constants.sessionExpiresAtStorageKey)).toBe("2099-01-01T00:00:00Z");
-        expect(storage.get(Constants.sessionLoginTypeStorageKey)).toBe("email");
-        expect(storage.get(Constants.sessionEmailStorageKey)).toBe("user@example.com");
+        expect(storage.get(Constants.sessionAuthStorageKey)).toBe(serializedAuth());
     });
 
     it("uses a requested email auth session lifetime", async () => {
@@ -1023,10 +1027,9 @@ describe("WalletClient session storage", () => {
         expect(wallet.session).toEqual({
             walletAddress: "0x2222222222222222222222222222222222222222",
             expiresAt: "2099-01-01T00:00:00Z",
-            loginType: "email",
-            sessionEmail: "user@example.com",
+            auth: emailAuth(),
         });
-        expect(storage.get(Constants.sessionEmailStorageKey)).toBe("user@example.com");
+        expect(storage.get(Constants.sessionAuthStorageKey)).toBe(serializedAuth());
     });
 
     it("pending create uses the requested wallet type", async () => {
@@ -1484,8 +1487,7 @@ describe("WalletClient session storage", () => {
         });
         (wallet as any).persistSession("wallet-1", "0x1111111111111111111111111111111111111111", {
             expiresAt: "2099-01-01T00:00:00Z",
-            loginType: "email",
-            sessionEmail: "user@example.com",
+            auth: emailAuth(),
         });
 
         const staleUse = wallet.useWallet({walletId: "wallet-2"});
@@ -1536,8 +1538,7 @@ describe("WalletClient session storage", () => {
         });
         (wallet as any).persistSession("wallet-1", "0x1111111111111111111111111111111111111111", {
             expiresAt: "2099-01-01T00:00:00Z",
-            loginType: "email",
-            sessionEmail: "user@example.com",
+            auth: emailAuth(),
         });
 
         const result = await wallet.useWallet({walletId: "wallet-2"});
@@ -1581,8 +1582,7 @@ describe("WalletClient session storage", () => {
         });
         (wallet as any).persistSession("wallet-id", "0x1111111111111111111111111111111111111111", {
             expiresAt: "2099-01-01T00:00:00Z",
-            loginType: "email",
-            sessionEmail: "user@example.com",
+            auth: emailAuth(),
         });
 
         const result = await wallet.createWallet({type: WalletType.Ethereum, reference: "fresh"});

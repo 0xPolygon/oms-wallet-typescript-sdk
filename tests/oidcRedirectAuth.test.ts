@@ -17,6 +17,17 @@ const expectedDefaultGoogleClientId = "913882656162-7l4ofa0ou2hqo90umlkenhdop1f5
 const expectedDefaultAppleClientId = "service.oms.polygon.technology";
 const expectedDefaultRelayRedirectUri = "https://waas-cf-relay-staging.0xsequence.workers.dev/callback";
 
+function googleAuth(email: string | undefined) {
+    return {
+        type: "oidc" as const,
+        flow: "redirect" as const,
+        issuer: "https://accounts.google.com",
+        provider: "google",
+        providerLabel: "Google",
+        email,
+    };
+}
+
 class MockSigner implements CredentialSigner {
     readonly signingAlgorithm = "ecdsa-p256-sha256";
     readonly preimages: string[] = [];
@@ -173,8 +184,7 @@ describe("WalletClient OIDC redirect auth", () => {
         });
         (wallet as any).persistSession("wallet-id", "0x1111111111111111111111111111111111111111", {
             expiresAt: "2099-01-01T00:00:00Z",
-            loginType: "google-auth",
-            sessionEmail: "last@example.com",
+            auth: googleAuth("last@example.com"),
         });
 
         const result = await wallet.startOidcRedirectAuth({
@@ -199,8 +209,7 @@ describe("WalletClient OIDC redirect auth", () => {
         });
         (wallet as any).persistSession("wallet-id", "0x1111111111111111111111111111111111111111", {
             expiresAt: "2099-01-01T00:00:00Z",
-            loginType: "google-auth",
-            sessionEmail: "last@example.com",
+            auth: googleAuth("last@example.com"),
         });
 
         const result = await wallet.startOidcRedirectAuth({
@@ -365,6 +374,8 @@ describe("WalletClient OIDC redirect auth", () => {
             relayRedirectUri: expectedDefaultRelayRedirectUri,
             issuer: "https://accounts.google.com",
             authorizationUrl: "https://accounts.google.com/o/oauth2/v2/auth",
+            provider: "google",
+            providerLabel: "Google",
             scopes: ["openid", "email", "profile"],
             authMode: AuthMode.AuthCodePKCE,
         });
@@ -376,6 +387,8 @@ describe("WalletClient OIDC redirect auth", () => {
             relayRedirectUri: expectedDefaultRelayRedirectUri,
             issuer: "https://appleid.apple.com",
             authorizationUrl: "https://appleid.apple.com/auth/authorize",
+            provider: "apple",
+            providerLabel: "Apple",
             scopes: ["openid", "email"],
             authMode: AuthMode.AuthCodePKCE,
             authorizeParams: {
@@ -531,6 +544,8 @@ describe("WalletClient OIDC redirect auth", () => {
             clientId: "custom-client",
             issuer: "https://issuer.example",
             authorizationUrl: "https://issuer.example/oauth/authorize",
+            provider: "custom",
+            providerLabel: "Custom SSO",
             scopes: [],
             authMode: AuthMode.AuthCode,
             authorizeParams: {
@@ -558,6 +573,14 @@ describe("WalletClient OIDC redirect auth", () => {
         expect(completed).toMatchObject({
             walletAddress: "0x1111111111111111111111111111111111111111",
             credential: testCredential(),
+        });
+        expect(wallet.session.auth).toEqual({
+            type: "oidc",
+            flow: "redirect",
+            issuer: "https://issuer.example",
+            provider: "custom",
+            providerLabel: "Custom SSO",
+            email: undefined,
         });
         expect(requestCount(fetchMock, "/CommitVerifier")).toBe(1);
         expect(requestCount(fetchMock, "/CompleteAuth")).toBe(1);
@@ -629,8 +652,7 @@ describe("WalletClient OIDC redirect auth", () => {
         expect(wallet.session).toEqual({
             walletAddress: "0x1111111111111111111111111111111111111111",
             expiresAt: "2099-01-01T00:00:00Z",
-            loginType: "google-auth",
-            sessionEmail: undefined,
+            auth: googleAuth(undefined),
         });
         expect(redirectAuthStorage.get(Constants.redirectAuthStorageKey)).toBeNull();
         expect(replaceUrl).toHaveBeenCalledWith("https://app.example/auth/callback");
@@ -1143,8 +1165,7 @@ describe("WalletClient OIDC redirect auth", () => {
         });
         (wallet as any).persistSession("wallet-id", "0x1111111111111111111111111111111111111111", {
             expiresAt: "2099-01-01T00:00:00Z",
-            loginType: "google-auth",
-            sessionEmail: "last@example.com",
+            auth: googleAuth("last@example.com"),
         });
 
         await expect(wallet.startOidcRedirectAuth({

@@ -99,7 +99,10 @@ function createWalletWithSession(): WalletClient {
         storage: new MemoryStorageManager(),
         credentialSigner: new MockSigner(),
     });
-    (wallet as any).persistSession("wallet-id", "0x1111111111111111111111111111111111111111");
+    (wallet as any).persistSession("wallet-id", "0x1111111111111111111111111111111111111111", {
+        expiresAt: "2099-01-01T00:00:00Z",
+        auth: {type: "email", email: "user@example.com"},
+    });
     return wallet;
 }
 

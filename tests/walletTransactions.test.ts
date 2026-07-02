@@ -667,7 +667,10 @@ function createWalletWithSession(storage: MemoryStorageManager, walletAddress: s
         storage,
         credentialSigner: new MockSigner(),
     });
-    (wallet as any).persistSession("wallet-id", walletAddress);
+    (wallet as any).persistSession("wallet-id", walletAddress, {
+        expiresAt: "2099-01-01T00:00:00Z",
+        auth: {type: "email", email: "user@example.com"},
+    });
     return wallet;
 }
 

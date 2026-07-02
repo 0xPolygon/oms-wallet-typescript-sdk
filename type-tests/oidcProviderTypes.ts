@@ -9,7 +9,7 @@ import {
     supportedNetworks,
     type Network,
     type GetIdTokenParams,
-    type OMSClientSessionLoginType,
+    type OMSClientSessionAuth,
     type OMSClientSessionExpiredListener,
     type OMSClientSessionState,
     type OmsSdkError,
@@ -100,7 +100,7 @@ new OMSClient({
 });
 const session: OMSClientSessionState = defaultClient.wallet.session;
 const unsubscribeSessionExpired: () => void = defaultClient.wallet.onSessionExpired(({session}) => {
-    void session.sessionEmail;
+    void session.auth?.email;
 });
 const sessionExpiredListener: OMSClientSessionExpiredListener = ({expiredAt}) => {
     void expiredAt;
@@ -108,7 +108,7 @@ const sessionExpiredListener: OMSClientSessionExpiredListener = ({expiredAt}) =>
 void defaultClient.wallet.onSessionExpired(sessionExpiredListener);
 const idTokenParams: GetIdTokenParams = {ttlSeconds: 300, customClaims: {role: "admin"}};
 const idToken: Promise<string> = defaultClient.wallet.getIdToken(idTokenParams);
-const loginType: OMSClientSessionLoginType | undefined = defaultClient.wallet.session.loginType;
+const sessionAuth: OMSClientSessionAuth | undefined = defaultClient.wallet.session.auth;
 const polygonNetwork: Network = Networks.polygon;
 const polygonDisplayName: string = Networks.polygon.displayName;
 const amoyNetwork: Network | undefined = findNetworkById(80002);
@@ -144,7 +144,7 @@ const maybeUpstreamError: OmsUpstreamError | undefined = sdkError.upstreamError;
 const transactionExecutionCode: OmsSdkErrorCode = "OMS_TRANSACTION_EXECUTION_UNCONFIRMED";
 void session;
 void unsubscribeSessionExpired;
-void loginType;
+void sessionAuth;
 void polygonNetwork;
 void amoyNetwork;
 void baseNetwork;

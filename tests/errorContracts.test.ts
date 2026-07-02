@@ -1589,6 +1589,10 @@ function createOmsClientWithSession(): OMSClient {
     (oms.wallet as any).persistSession(
         "wallet-id",
         "0x9999999999999999999999999999999999999999",
+        {
+            expiresAt: "2099-01-01T00:00:00Z",
+            auth: {type: "email", email: "user@example.com"},
+        },
     );
     return oms;
 }

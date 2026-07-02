@@ -24,8 +24,8 @@ import {
 } from '../../shared/example-components'
 import {
   formatCount,
-  formatLoginType,
   formatOidcProvider,
+  formatSessionAuth,
   formatSessionExpiry,
   formatWalletType,
   hasOidcCallbackParams,
@@ -223,14 +223,14 @@ function App() {
     setCode('')
     setStep('email')
     setEmailAuthStatus(
-      event.session.sessionEmail
-        ? `Session expired for ${event.session.sessionEmail}.`
+      event.session.auth?.email
+        ? `Session expired for ${event.session.auth.email}.`
         : 'Session expired. Enter an email to continue.',
     )
     setRedirectStatus('')
     setWalletStatus('')
-    if (event.session.sessionEmail) {
-      setEmail(event.session.sessionEmail)
+    if (event.session.auth?.email) {
+      setEmail(event.session.auth.email)
     }
     setSessionExpiredPrompt(event)
   }
@@ -239,7 +239,8 @@ function App() {
     if (!sessionExpiredPrompt) return
 
     const expiredSession = sessionExpiredPrompt.session
-    if (expiredSession.loginType === 'google-auth') {
+    const auth = expiredSession.auth
+    if (auth?.type === 'oidc' && auth.provider === 'google') {
       await run('Redirecting to Google...', setRedirectStatus, async () => {
         setSessionExpiredPrompt(null)
         saveSessionPreferences()
@@ -253,7 +254,7 @@ function App() {
       return
     }
 
-    if (expiredSession.loginType === 'oidc') {
+    if (auth?.type === 'oidc' && auth.provider === 'apple') {
       await run('Redirecting to Apple...', setRedirectStatus, async () => {
         setSessionExpiredPrompt(null)
         saveSessionPreferences()
@@ -267,12 +268,13 @@ function App() {
       return
     }
 
-    if (expiredSession.loginType === 'email' && expiredSession.sessionEmail) {
+    if (auth?.type === 'email' && auth.email) {
+      const email = auth.email
       await run('Sending code...', setEmailAuthStatus, async () => {
         setSessionExpiredPrompt(null)
         setPendingWalletSelection(null)
-        setEmail(expiredSession.sessionEmail ?? '')
-        await oms.wallet.startEmailAuth({ email: expiredSession.sessionEmail ?? '' })
+        setEmail(email)
+        await oms.wallet.startEmailAuth({ email })
         setStep('code')
         setEmailAuthStatus('Code sent. Check your email.')
       })
@@ -544,12 +546,12 @@ function App() {
 
             <div className="session-info">
               <div>
-                <span>Login</span>
-                <strong>{formatLoginType(session.loginType)}</strong>
+                <span>Auth</span>
+                <strong>{formatSessionAuth(session.auth)}</strong>
               </div>
               <div>
-                <span>Email</span>
-                <strong>{session.sessionEmail ?? 'Unknown'}</strong>
+                <span>Account</span>
+                <strong>{session.auth?.email ?? 'Unknown'}</strong>
               </div>
               <div>
                 <span>Expires</span>

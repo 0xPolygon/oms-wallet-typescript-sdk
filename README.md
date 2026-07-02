@@ -257,11 +257,17 @@ Email and OIDC auth both persist the active wallet session in the configured SDK
 
 Pass `sessionLifetimeSeconds` to `completeEmailAuth`, `startOidcRedirectAuth`, `completeOidcRedirectAuth`, or `signInWithOidcRedirect` to request a different session lifetime. For OIDC redirects, values passed at start are stored with the pending redirect state and used on callback completion unless completion overrides them.
 
-Use `oms.wallet.walletAddress` when you only need the active wallet address. Use `oms.wallet.session` when you also need credential expiry, login type, or the email returned by the wallet API.
+Use `oms.wallet.walletAddress` when you only need the active wallet address. Use `oms.wallet.session` when you also need credential expiry or structured auth metadata.
 
 ```typescript
 const walletAddress = oms.wallet.walletAddress
-const { expiresAt, loginType, sessionEmail } = oms.wallet.session
+const { expiresAt, auth } = oms.wallet.session
+const accountEmail = auth?.email
+const authLabel = auth?.type === 'oidc'
+  ? auth.providerLabel ?? auth.provider ?? auth.issuer
+  : auth?.type === 'email'
+    ? 'Email'
+    : 'Unknown'
 ```
 
 Use `oms.wallet.getIdToken({ ttlSeconds, customClaims })` to request an ID token for the active wallet session.
