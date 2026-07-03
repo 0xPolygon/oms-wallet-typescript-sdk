@@ -90,7 +90,8 @@ This repository is a pnpm workspace for the OMS Wallet TypeScript SDK. The root 
 ## Commands
 
 - `pnpm install --frozen-lockfile`: Install dependencies in CI-compatible mode.
-- `pnpm check:package-versions`: Verify publishable workspace package versions match and connector SDK references use `workspace:*`.
+- `pnpm check:package-versions`: Verify publishable workspace package versions match, allow exact stable or prerelease semver, and require connector SDK references to use `workspace:*`.
+- `pnpm check:stable-package-versions`: Verify publishable workspace package versions match and are exact stable semver for stable releases.
 - `pnpm exec tsc --noEmit`: Typecheck SDK source.
 - `pnpm test`: Run Vitest and type tests.
 - `pnpm test:types`: Compile `type-tests/oidcProviderTypes.ts`; useful for public type/API changes.

@@ -11,7 +11,7 @@ the package reaches npm.
 
 ## Before Merging The Release PR
 
-Before publishing a new alpha version, update these values to the same exact version:
+Before publishing a new stable version, update these values to the same exact version:
 
 - `package.json` `version`
 - `packages/oms-wallet-wagmi-connector/package.json` `version`
@@ -35,7 +35,7 @@ pnpm install --frozen-lockfile
 
 ```bash
 VERSION=$(node -p "require('./package.json').version")
-pnpm check:package-versions
+pnpm check:stable-package-versions
 ```
 
 3. Run release checks:
@@ -57,7 +57,7 @@ pnpm build:wagmi-example
 ```bash
 pnpm --filter @polygonlabs/oms-wallet \
   --filter @polygonlabs/oms-wallet-wagmi-connector \
-  publish --dry-run --no-git-checks --tag alpha --access public
+  publish --dry-run --no-git-checks --access public
 ```
 
 If the dry run reports no new packages, the version is already published. Stop and verify the
@@ -75,17 +75,72 @@ pnpm npm whoami
 ```bash
 pnpm --filter @polygonlabs/oms-wallet \
   --filter @polygonlabs/oms-wallet-wagmi-connector \
-  publish --tag alpha --access public
+  publish --access public
 ```
 
 If the filtered publish is interrupted after the SDK is published, rerun the connector publish with
 pnpm:
 
 ```bash
-pnpm --filter @polygonlabs/oms-wallet-wagmi-connector publish --tag alpha --access public
+pnpm --filter @polygonlabs/oms-wallet-wagmi-connector publish --access public
 ```
 
-7. Verify published versions and alpha dist tags:
+7. Verify published versions and latest dist tags:
+
+```bash
+pnpm view @polygonlabs/oms-wallet@$VERSION version
+pnpm view @polygonlabs/oms-wallet-wagmi-connector@$VERSION version
+pnpm view @polygonlabs/oms-wallet@latest version
+pnpm view @polygonlabs/oms-wallet-wagmi-connector@latest version
+```
+
+8. Create a git tag and GitHub release for `v$VERSION`.
+
+## Alpha, Beta, And Snapshot Releases
+
+Use the stable flow above for normal releases. Use this section only when you intentionally want a
+non-`latest` npm dist tag.
+
+1. Set both publishable package versions to the same prerelease version:
+
+```bash
+# Examples:
+# 0.2.1-alpha.0
+# 0.2.1-beta.0
+# 0.2.1-snapshot.20260703.0
+```
+
+Update:
+
+- `package.json` `version`
+- `packages/oms-wallet-wagmi-connector/package.json` `version`
+
+Then capture and verify the prerelease version:
+
+```bash
+VERSION=$(node -p "require('./package.json').version")
+pnpm check:package-versions
+```
+
+2. Dry-run with the matching npm tag:
+
+```bash
+pnpm --filter @polygonlabs/oms-wallet \
+  --filter @polygonlabs/oms-wallet-wagmi-connector \
+  publish --dry-run --no-git-checks --tag alpha --access public
+```
+
+Use `--tag beta` for beta builds and `--tag snapshot` for snapshot builds.
+
+3. Publish with the same tag used in the dry run:
+
+```bash
+pnpm --filter @polygonlabs/oms-wallet \
+  --filter @polygonlabs/oms-wallet-wagmi-connector \
+  publish --tag alpha --access public
+```
+
+4. Verify the exact version and dist tag:
 
 ```bash
 pnpm view @polygonlabs/oms-wallet@$VERSION version
@@ -94,4 +149,6 @@ pnpm view @polygonlabs/oms-wallet@alpha version
 pnpm view @polygonlabs/oms-wallet-wagmi-connector@alpha version
 ```
 
-Optional: create a git tag and GitHub release for `v$VERSION`.
+Replace `alpha` with `beta` or `snapshot` for those release types.
+
+Do not leave prerelease versions or prerelease npm tags in source when preparing a stable release.

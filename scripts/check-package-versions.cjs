@@ -12,12 +12,16 @@ const browserExamplePackagePaths = [
   'examples/wagmi/package.json',
 ]
 const exactWorkspaceProtocol = 'workspace:*'
-const exactSemverPattern = /^\d+\.\d+\.\d+$/
+const exactPackageVersionPattern = /^\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?$/
+const exactStableSemverPattern = /^\d+\.\d+\.\d+$/
+const requireStablePackageVersions = process.argv.includes('--stable')
 
 let hasMismatch = false
 
 for (const packagePath of packagePaths) {
   const packageJson = readPackage(packagePath)
+
+  checkPackageVersion(packageJson.name, packageJson.version)
 
   if (packageJson.version !== rootPackage.version) {
     report(`${packageJson.name} version ${packageJson.version} does not match ${rootPackage.name} version ${rootPackage.version}.`)
@@ -31,10 +35,13 @@ for (const packagePath of browserExamplePackagePaths) {
   checkReactRuntimeVersions(packagePath, readPackage(packagePath))
 }
 
+checkPackageVersion(rootPackage.name, rootPackage.version)
+
 if (hasMismatch) {
   process.exitCode = 1
 } else {
-  console.log(`Publishable package versions match ${rootPackage.version}; SDK workspace references use ${exactWorkspaceProtocol}; browser examples pin matching React runtimes.`)
+  const packageVersionKind = requireStablePackageVersions ? 'stable package versions' : 'package versions'
+  console.log(`Publishable ${packageVersionKind} match ${rootPackage.version}; SDK workspace references use ${exactWorkspaceProtocol}; browser examples pin matching React runtimes.`)
 }
 
 function readPackage(packagePath) {
@@ -52,6 +59,15 @@ function checkWorkspaceReference(packageName, dependencyType, version) {
   }
 }
 
+function checkPackageVersion(packageName, version) {
+  const pattern = requireStablePackageVersions ? exactStableSemverPattern : exactPackageVersionPattern
+  const versionKind = requireStablePackageVersions ? 'exact stable semver version' : 'exact semver or prerelease semver version'
+
+  if (!pattern.test(version)) {
+    report(`${packageName} version ${version} must be an ${versionKind}.`)
+  }
+}
+
 function checkRequiredWorkspaceReference(packageName, dependencyType, version) {
   if (version === undefined) {
     report(`${packageName} must declare ${rootPackage.name} as a ${dependencyType}.`)
@@ -65,7 +81,7 @@ function checkReactRuntimeVersions(packagePath, packageJson) {
   const reactVersion = packageJson.dependencies?.react
   const reactDomVersion = packageJson.dependencies?.['react-dom']
 
-  if (!exactSemverPattern.test(reactVersion)) {
+  if (!exactStableSemverPattern.test(reactVersion)) {
     report(`${packagePath} must pin react to an exact semver version; found ${reactVersion}.`)
   }
 

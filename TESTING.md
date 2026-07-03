@@ -33,6 +33,7 @@ How testing works in this repo. `AGENTS.md` points here so agents know how to ve
 | Scenario | Command |
 |---|---|
 | Changed publishable package versions | `pnpm check:package-versions` |
+| Preparing a stable release | `pnpm check:stable-package-versions` |
 | Changed SDK behavior | `pnpm exec vitest run` |
 | Changed wagmi connector behavior | `pnpm --filter @polygonlabs/oms-wallet-wagmi-connector test` |
 | Changed wagmi connector types/build | `pnpm --filter @polygonlabs/oms-wallet-wagmi-connector build` |
