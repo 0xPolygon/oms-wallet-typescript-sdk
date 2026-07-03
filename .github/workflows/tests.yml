@@ -47,6 +47,12 @@ jobs:
       - name: Test OMS Wallet wagmi connector
         run: pnpm --filter @polygonlabs/oms-wallet-wagmi-connector test
 
+      - name: Build Node example
+        run: pnpm build:node-example
+
+      - name: Build Node contract deploy example
+        run: pnpm build:node-contract-deploy-example
+
       - name: Build React example
         run: pnpm build:example
         env:

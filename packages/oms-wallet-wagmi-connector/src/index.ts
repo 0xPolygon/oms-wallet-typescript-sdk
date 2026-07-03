@@ -1,4 +1,4 @@
-export { OMSWalletProvider, OMSWalletProviderRpcError, stringToPersonalSignHex } from "./provider.js";
+export { OMSWalletProviderRpcError, stringToPersonalSignHex } from "./provider.js";
 export { omsWalletConnector } from "./omsWalletConnector.js";
 export type { OMSWalletConnector } from "./omsWalletConnector.js";
 export type {

@@ -1,11 +1,12 @@
-import {WalletClient, type OidcProviderName} from "../src/clients/walletClient";
 import {
     AuthMode,
     Networks,
     OMSWallet,
+    appleOidcProvider,
     defineOmsAuthConfig,
     findNetworkById,
     findNetworkByName,
+    googleOidcProvider,
     supportedNetworks,
     type CompleteOidcIdTokenAuthResult,
     type Network,
@@ -27,9 +28,8 @@ import {
     type TokenMetadata,
     type TransactionHistoryResult,
     type SignInWithOidcIdTokenParams,
+    type OidcProviderName,
 } from "../src/index";
-import {omsEnvironmentFromPublishableKey} from "../src/omsEnvironment";
-import {appleOidcProvider, googleOidcProvider} from "../src/oidc";
 
 const auth = defineOmsAuthConfig({
     oidcProviders: {
@@ -37,9 +37,13 @@ const auth = defineOmsAuthConfig({
         apple: appleOidcProvider({authMode: AuthMode.AuthCode}),
     },
 });
-const environment = omsEnvironmentFromPublishableKey("pk_dev_sdbx_project_key", auth);
+const configuredOmsWallet = new OMSWallet({
+    publishableKey: "pk_dev_sdbx_project_key",
+    auth,
+});
 
-type ProviderName = OidcProviderName<typeof environment>;
+type ConfiguredEnvironment = typeof configuredOmsWallet extends OMSWallet<infer Env> ? Env : never;
+type ProviderName = OidcProviderName<ConfiguredEnvironment>;
 
 const configuredProvider: ProviderName = "google";
 void configuredProvider;
@@ -51,7 +55,7 @@ const unknownProvider: ProviderName = "github";
 void unknownProvider;
 
 if (false) {
-    const wallet = undefined as unknown as WalletClient<typeof environment>;
+    const wallet = configuredOmsWallet.wallet;
     void wallet.startOidcRedirectAuth({
         provider: "google",
         redirectUri: "https://app.example/auth/callback",

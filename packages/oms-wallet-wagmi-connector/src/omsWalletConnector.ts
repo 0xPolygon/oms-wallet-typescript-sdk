@@ -116,12 +116,12 @@ export function omsWalletConnector(parameters: OMSWalletConnectorParameters) {
             const omsWallet = await resolveOmsWallet();
             subscribeSessionExpired(omsWallet);
             if (!omsWallet.wallet.walletAddress) {
-                throw new OMSWalletProviderRpcError(4100, "No active OMS wallet session. Authenticate with the OMS Wallet SDK before connecting through wagmi.");
+                throw new OMSWalletProviderRpcError(4100, "No active OMS Wallet session. Authenticate with the OMS Wallet SDK before connecting through wagmi.");
             }
 
             const nextAccounts = await accounts();
             if (!nextAccounts.length) {
-                throw new OMSWalletProviderRpcError(4100, "No active OMS wallet session. Authenticate with the OMS Wallet SDK before connecting through wagmi.");
+                throw new OMSWalletProviderRpcError(4100, "No active OMS Wallet session. Authenticate with the OMS Wallet SDK before connecting through wagmi.");
             }
             provider?.emit("accountsChanged", nextAccounts);
             return nextAccounts;

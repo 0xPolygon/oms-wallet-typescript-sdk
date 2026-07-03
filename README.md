@@ -124,7 +124,7 @@ OMS_PUBLISHABLE_KEY=your-publishable-key pnpm dev:node-example
 
 ## Node Contract Deploy Example
 
-The Node contract deploy example compiles a small ERC-20 contract and submits a Polygon Amoy deployment transaction through the OMS wallet API.
+The Node contract deploy example compiles a small ERC-20 contract and submits a Polygon Amoy deployment transaction through the OMS Wallet API.
 
 To run it locally from the repository root:
 

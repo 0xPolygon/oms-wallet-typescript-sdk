@@ -44,7 +44,7 @@ const networks = [
 ] as const;
 
 describe("omsWalletConnector", () => {
-    it("rejects connect when there is no active OMS wallet session", async () => {
+    it("rejects connect when there is no active OMS Wallet session", async () => {
         const omsWallet = createOmsWallet();
         const config = createWagmiConfig(omsWallet);
 
@@ -80,7 +80,7 @@ describe("omsWalletConnector", () => {
         await expect(connect(config, {connector: config.connectors[0]})).rejects.toThrow("No wagmi chain is supported by OMS.");
     });
 
-    it("signs messages and typed data through the OMS wallet", async () => {
+    it("signs messages and typed data through the OMS Wallet", async () => {
         const omsWallet = createOmsWallet({walletAddress: "0x9999999999999999999999999999999999999999"});
         const config = createWagmiConfig(omsWallet);
 
@@ -147,13 +147,13 @@ describe("omsWalletConnector", () => {
         })).rejects.toMatchObject({
             name: "OMSWalletProviderRpcError",
             code: 4100,
-            message: "eth_signTypedData_v4 requested 0x1111111111111111111111111111111111111111, but the active OMS wallet is 0x9999999999999999999999999999999999999999.",
+            message: "eth_signTypedData_v4 requested 0x1111111111111111111111111111111111111111, but the active OMS Wallet is 0x9999999999999999999999999999999999999999.",
         });
         expect(omsWallet.wallet.signMessage).not.toHaveBeenCalled();
         expect(omsWallet.wallet.signTypedData).not.toHaveBeenCalled();
     });
 
-    it("sends transactions through the OMS wallet and returns the EVM transaction hash", async () => {
+    it("sends transactions through the OMS Wallet and returns the EVM transaction hash", async () => {
         const omsWallet = createOmsWallet({walletAddress: "0x9999999999999999999999999999999999999999"});
         const config = createWagmiConfig(omsWallet);
 
@@ -198,7 +198,7 @@ describe("omsWalletConnector", () => {
         })).rejects.toMatchObject({
             name: "OMSWalletProviderRpcError",
             code: 4200,
-            message: "Unsupported OMS provider method: eth_sendTransaction without a recipient address; contract deployment is not supported by the current OMS wallet SDK.",
+            message: "Unsupported OMS provider method: eth_sendTransaction without a recipient address; contract deployment is not supported by the current OMS Wallet SDK.",
         });
         await expect(provider.request({
             method: "eth_sendTransaction",
@@ -210,7 +210,7 @@ describe("omsWalletConnector", () => {
         })).rejects.toMatchObject({
             name: "OMSWalletProviderRpcError",
             code: 4200,
-            message: "Unsupported OMS provider method: eth_sendTransaction without a recipient address; contract deployment is not supported by the current OMS wallet SDK.",
+            message: "Unsupported OMS provider method: eth_sendTransaction without a recipient address; contract deployment is not supported by the current OMS Wallet SDK.",
         });
         await expect(provider.request({
             method: "eth_sendTransaction",
@@ -526,7 +526,7 @@ describe("omsWalletConnector", () => {
         });
     });
 
-    it("rejects eth_requestAccounts without an active OMS wallet session", async () => {
+    it("rejects eth_requestAccounts without an active OMS Wallet session", async () => {
         const omsWallet = createOmsWallet();
         const config = createWagmiConfig(omsWallet);
         const provider = await config.connectors[0].getProvider();
@@ -536,7 +536,7 @@ describe("omsWalletConnector", () => {
         })).rejects.toMatchObject({
             name: "OMSWalletProviderRpcError",
             code: 4100,
-            message: "No active OMS wallet session. Authenticate with the OMS Wallet SDK before connecting through wagmi.",
+            message: "No active OMS Wallet session. Authenticate with the OMS Wallet SDK before connecting through wagmi.",
         });
     });
 
@@ -670,7 +670,7 @@ describe("omsWalletConnector", () => {
         await expect(connect(config, {connector: config.connectors[0]})).rejects.toThrow("OMS does not support chain 10.");
     });
 
-    it("disconnects wagmi without signing out the OMS wallet", async () => {
+    it("disconnects wagmi without signing out the OMS Wallet", async () => {
         const omsWallet = createOmsWallet({walletAddress: "0x9999999999999999999999999999999999999999"});
         const config = createWagmiConfig(omsWallet);
         const connector = config.connectors[0];

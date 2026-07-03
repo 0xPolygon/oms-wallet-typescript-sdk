@@ -35,7 +35,7 @@ const defaultTokenConfig: TokenConfig = {
 
 async function main() {
     console.log("------------------------------------------------------------");
-    console.log(" OMS wallet ERC-20 deploy example");
+    console.log(" OMS Wallet ERC-20 deploy example");
     console.log("------------------------------------------------------------");
     console.log("network          :", `${Networks.amoy.displayName} (${Networks.amoy.id})`);
     console.log("publishable key   :", mask(publishableKey));

@@ -108,7 +108,7 @@ export class OMSWalletProvider {
     private async requireAccount(): Promise<Address> {
         const [account] = await this.accounts();
         if (!account) {
-            throw new OMSWalletProviderRpcError(4100, "No active OMS wallet session.");
+            throw new OMSWalletProviderRpcError(4100, "No active OMS Wallet session.");
         }
         return account;
     }
@@ -141,7 +141,7 @@ export class OMSWalletProvider {
         assertKnownTransactionFields(request);
         await this.requireMatchingAccount(request.from, "eth_sendTransaction");
         if (!request.to || !isAddress(request.to)) {
-            throw unsupportedMethod("eth_sendTransaction without a recipient address; contract deployment is not supported by the current OMS wallet SDK");
+            throw unsupportedMethod("eth_sendTransaction without a recipient address; contract deployment is not supported by the current OMS Wallet SDK");
         }
 
         const omsWallet = await this.getOmsWallet();
@@ -244,7 +244,7 @@ export class OMSWalletProvider {
         if (requestedAccount !== activeAccount) {
             throw new OMSWalletProviderRpcError(
                 4100,
-                `${method} requested ${requestedAccount}, but the active OMS wallet is ${activeAccount}.`,
+                `${method} requested ${requestedAccount}, but the active OMS Wallet is ${activeAccount}.`,
             );
         }
 
@@ -332,7 +332,7 @@ function errorMessage(error: unknown): string {
     if (error instanceof Error && error.message) {
         return error.message;
     }
-    return "OMS wallet transaction failed.";
+    return "OMS Wallet transaction failed.";
 }
 
 function isQuantity(value: unknown): value is Hex {
