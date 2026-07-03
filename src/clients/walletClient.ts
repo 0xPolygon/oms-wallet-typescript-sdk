@@ -141,22 +141,22 @@ type ManualWalletSelectionParams<T extends {walletSelection?: WalletSelectionBeh
     Omit<T, "walletSelection"> & {walletSelection: "manual"}
 
 export interface OmsWallet {
-    id: string;
-    type: WalletType;
-    address: Address;
-    reference?: string;
+    readonly id: string;
+    readonly type: WalletType;
+    readonly address: Address;
+    readonly reference?: string;
 }
 
 export interface WalletActivationResult {
-    walletAddress: Address;
-    wallet: OmsWallet;
+    readonly walletAddress: Address;
+    readonly wallet: OmsWallet;
 }
 
 interface CompleteWalletAuthResult {
-    walletAddress: Address;
-    wallet: OmsWallet;
-    wallets: Array<OmsWallet>;
-    credential: WalletCredential;
+    readonly walletAddress: Address;
+    readonly wallet: OmsWallet;
+    readonly wallets: ReadonlyArray<OmsWallet>;
+    readonly credential: Readonly<WalletCredential>;
 }
 
 export interface CompleteEmailAuthResult extends CompleteWalletAuthResult {}
@@ -166,41 +166,41 @@ export interface CompleteOidcIdTokenAuthResult extends CompleteWalletAuthResult 
 export interface CompleteOidcRedirectAuthResult extends CompleteWalletAuthResult {}
 
 export interface PendingWalletSelection {
-    walletType: WalletType;
-    wallets: Array<OmsWallet>;
-    credential: WalletCredential;
+    readonly walletType: WalletType;
+    readonly wallets: ReadonlyArray<OmsWallet>;
+    readonly credential: Readonly<WalletCredential>;
 
     selectWallet(params: {walletId: string}): Promise<WalletActivationResult>;
     createAndSelectWallet(params?: {reference?: string}): Promise<WalletActivationResult>;
 }
 
 export interface OMSClientEmailSessionAuth {
-    type: 'email';
-    email: string | undefined;
+    readonly type: 'email';
+    readonly email: string | undefined;
 }
 
 export type OMSClientOidcSessionAuthFlow = 'redirect' | 'id-token';
 
 export interface OMSClientOidcSessionAuth {
-    type: 'oidc';
-    flow: OMSClientOidcSessionAuthFlow;
-    issuer: string;
-    provider: string | undefined;
-    providerLabel: string | undefined;
-    email: string | undefined;
+    readonly type: 'oidc';
+    readonly flow: OMSClientOidcSessionAuthFlow;
+    readonly issuer: string;
+    readonly provider: string | undefined;
+    readonly providerLabel: string | undefined;
+    readonly email: string | undefined;
 }
 
 export type OMSClientSessionAuth = OMSClientEmailSessionAuth | OMSClientOidcSessionAuth;
 
 export interface OMSClientSessionState {
-    walletAddress: Address | undefined;
-    expiresAt: string | undefined;
-    auth: OMSClientSessionAuth | undefined;
+    readonly walletAddress: Address | undefined;
+    readonly expiresAt: string | undefined;
+    readonly auth: OMSClientSessionAuth | undefined;
 }
 
 export interface OMSClientSessionExpiredEvent {
-    session: OMSClientSessionState;
-    expiredAt: string;
+    readonly session: OMSClientSessionState;
+    readonly expiredAt: string;
 }
 
 export type OMSClientSessionExpiredListener = (event: OMSClientSessionExpiredEvent) => void | Promise<void>;
@@ -315,8 +315,8 @@ class PendingWalletSelectionImpl implements PendingWalletSelection {
 
     constructor(
         public readonly walletType: WalletType,
-        public readonly wallets: Array<OmsWallet>,
-        public readonly credential: WalletCredential,
+        public readonly wallets: ReadonlyArray<OmsWallet>,
+        public readonly credential: Readonly<WalletCredential>,
         private readonly selectWalletAction: (walletId: string) => Promise<WalletActivationResult>,
         private readonly createAndSelectWalletAction: (reference?: string) => Promise<WalletActivationResult>,
     ) {
@@ -464,7 +464,7 @@ export class WalletClient<Env extends OmsEnvironment = OmsEnvironment> {
         return {
             walletAddress: this.walletAddress,
             expiresAt: this.sessionExpiresAt,
-            auth: this.sessionAuth,
+            auth: cloneSessionAuth(this.sessionAuth),
         }
     }
 
@@ -472,7 +472,7 @@ export class WalletClient<Env extends OmsEnvironment = OmsEnvironment> {
         this.sessionExpiredListeners.add(listener)
 
         if (this.latestSessionExpiredEvent) {
-            this.callSessionExpiredListener(listener, this.latestSessionExpiredEvent)
+            this.callSessionExpiredListener(listener, cloneSessionExpiredEvent(this.latestSessionExpiredEvent))
         }
 
         return () => {
@@ -1208,7 +1208,7 @@ export class WalletClient<Env extends OmsEnvironment = OmsEnvironment> {
         this.storage.set(Constants.walletAddressStorageKey, walletAddress)
 
         this.sessionExpiresAt = metadata.expiresAt
-        this.sessionAuth = metadata.auth
+        this.sessionAuth = cloneSessionAuth(metadata.auth)
 
         this.setOptionalStorageValue(Constants.sessionExpiresAtStorageKey, this.sessionExpiresAt)
         this.setOptionalStorageValue(Constants.sessionAuthStorageKey, serializeSessionAuth(this.sessionAuth))
@@ -1219,7 +1219,7 @@ export class WalletClient<Env extends OmsEnvironment = OmsEnvironment> {
         if (!this.sessionExpiresAt || !this.sessionAuth) return undefined
         return {
             expiresAt: this.sessionExpiresAt,
-            auth: this.sessionAuth,
+            auth: cloneSessionAuth(this.sessionAuth),
         }
     }
 
@@ -1868,7 +1868,7 @@ export class WalletClient<Env extends OmsEnvironment = OmsEnvironment> {
         return {
             walletAddress,
             expiresAt: metadata.expiresAt,
-            auth: metadata.auth,
+            auth: cloneSessionAuth(metadata.auth),
         }
     }
 
@@ -1958,10 +1958,11 @@ export class WalletClient<Env extends OmsEnvironment = OmsEnvironment> {
     }
 
     private notifySessionExpired(event: OMSClientSessionExpiredEvent): void {
-        this.latestSessionExpiredEvent = event
+        const eventSnapshot = cloneSessionExpiredEvent(event)
+        this.latestSessionExpiredEvent = eventSnapshot
 
         for (const listener of this.sessionExpiredListeners) {
-            this.callSessionExpiredListener(listener, event)
+            this.callSessionExpiredListener(listener, cloneSessionExpiredEvent(eventSnapshot))
         }
     }
 
@@ -2048,6 +2049,28 @@ function isPromiseLike(value: unknown): value is Promise<void> {
 
 function serializeSessionAuth(auth: OMSClientSessionAuth | undefined): string | undefined {
     return auth ? JSON.stringify(auth) : undefined
+}
+
+function cloneSessionAuth(auth: OMSClientSessionAuth): OMSClientSessionAuth
+function cloneSessionAuth(auth: undefined): undefined
+function cloneSessionAuth(auth: OMSClientSessionAuth | undefined): OMSClientSessionAuth | undefined
+function cloneSessionAuth(auth: OMSClientSessionAuth | undefined): OMSClientSessionAuth | undefined {
+    return auth ? {...auth} : undefined
+}
+
+function cloneSessionState(session: OMSClientSessionState): OMSClientSessionState {
+    return {
+        walletAddress: session.walletAddress,
+        expiresAt: session.expiresAt,
+        auth: cloneSessionAuth(session.auth),
+    }
+}
+
+function cloneSessionExpiredEvent(event: OMSClientSessionExpiredEvent): OMSClientSessionExpiredEvent {
+    return {
+        session: cloneSessionState(event.session),
+        expiredAt: event.expiredAt,
+    }
 }
 
 function parseSessionAuth(value: string | null): OMSClientSessionAuth | undefined {

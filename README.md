@@ -284,6 +284,8 @@ const authLabel = auth?.type === 'oidc'
     : 'Unknown'
 ```
 
+The `session` value is a readonly snapshot. Changing the returned object does not update SDK state or persisted session metadata.
+
 Use `oms.wallet.getIdToken({ ttlSeconds, customClaims })` to request an ID token for the active wallet session.
 
 Pending email OTP and OIDC redirect state are not exposed through `session`; use the auth method results to drive pending UI.

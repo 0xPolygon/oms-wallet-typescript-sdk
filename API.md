@@ -157,27 +157,27 @@ The on-chain address of the active wallet (`Address` is the viem/abitype hex add
 ```typescript
 type OMSClientSessionAuth =
   | {
-      type: 'email'
-      email: string | undefined
+      readonly type: 'email'
+      readonly email: string | undefined
     }
   | {
-      type: 'oidc'
-      flow: 'redirect' | 'id-token'
-      issuer: string
-      provider: string | undefined
-      providerLabel: string | undefined
-      email: string | undefined
+      readonly type: 'oidc'
+      readonly flow: 'redirect' | 'id-token'
+      readonly issuer: string
+      readonly provider: string | undefined
+      readonly providerLabel: string | undefined
+      readonly email: string | undefined
     }
 
 interface OMSClientSessionState {
-  walletAddress: Address | undefined
-  expiresAt: string | undefined
-  auth: OMSClientSessionAuth | undefined
+  readonly walletAddress: Address | undefined
+  readonly expiresAt: string | undefined
+  readonly auth: OMSClientSessionAuth | undefined
 }
 
 interface OMSClientSessionExpiredEvent {
-  session: OMSClientSessionState
-  expiredAt: string
+  readonly session: OMSClientSessionState
+  readonly expiredAt: string
 }
 
 wallet.session: OMSClientSessionState
@@ -185,7 +185,7 @@ wallet.session: OMSClientSessionState
 
 Completed wallet sessions persist `walletAddress`, credential expiry, and structured auth metadata in the configured `storage`. Storage entries from earlier SDK versions that only contain legacy `loginType` and `sessionEmail` metadata are treated as incomplete and cleared, so those users must authenticate again. Pending email OTP and OIDC redirect state are not exposed through `session`; use the auth method results to drive pending UI.
 
-OIDC redirect auth stores `flow: 'redirect'`. OIDC ID-token auth stores `flow: 'id-token'`.
+OIDC redirect auth stores `flow: 'redirect'`. OIDC ID-token auth stores `flow: 'id-token'`. Session values returned by `wallet.session` and `wallet.onSessionExpired` are readonly snapshots; mutating them does not update SDK state or storage.
 
 Expired sessions are made inactive before protected wallet operations and throw `OmsSessionError` with code `OMS_SESSION_EXPIRED`. The SDK clears the active signer/session state, but keeps the expired session metadata in storage until the app explicitly starts a new auth flow or calls `signOut()`. Use `wallet.onSessionExpired` to update app state or route back to sign-in; the event includes the expired session snapshot so apps can reuse `session.auth.email` for email OTP reauth or provider-specific account hints, including Google `loginHint`, after a page refresh.
 
@@ -238,7 +238,7 @@ completeEmailAuth(params: {
   walletSelection?: 'automatic' | 'manual'
   sessionLifetimeSeconds?: number
 }): Promise<
-  | { walletAddress: Address; wallet: OmsWallet; wallets: OmsWallet[]; credential: WalletCredential }
+  | { readonly walletAddress: Address; readonly wallet: OmsWallet; readonly wallets: ReadonlyArray<OmsWallet>; readonly credential: Readonly<WalletCredential> }
   | PendingWalletSelection
 >
 ```
@@ -256,7 +256,7 @@ This method verifies the code with a one-week session lifetime by default, loads
 | `walletSelection` | `'automatic' \| 'manual'` | No | Defaults to `'automatic'`. Set to `'manual'` to let the app choose an existing wallet or create one through the returned pending selection. |
 | `sessionLifetimeSeconds` | `number` | No | Requested session lifetime in seconds. Defaults to one week. |
 
-**Returns** `Promise<{ walletAddress: Address; wallet: OmsWallet; wallets: OmsWallet[]; credential: WalletCredential }>` by default, or `Promise<PendingWalletSelection>` when `walletSelection` is `'manual'`.
+**Returns** `Promise<{ readonly walletAddress: Address; readonly wallet: OmsWallet; readonly wallets: ReadonlyArray<OmsWallet>; readonly credential: Readonly<WalletCredential> }>` by default, or `Promise<PendingWalletSelection>` when `walletSelection` is `'manual'`.
 
 **Throws** if the code is incorrect, expired, or the network request fails.
 
@@ -300,7 +300,7 @@ signInWithOidcIdToken(params: {
   provider?: string
   providerLabel?: string
 }): Promise<
-  | { walletAddress: Address; wallet: OmsWallet; wallets: OmsWallet[]; credential: WalletCredential }
+  | { readonly walletAddress: Address; readonly wallet: OmsWallet; readonly wallets: ReadonlyArray<OmsWallet>; readonly credential: Readonly<WalletCredential> }
   | PendingWalletSelection
 >
 ```
@@ -399,7 +399,7 @@ completeOidcRedirectAuth(params: {
   walletSelection?: 'automatic' | 'manual'
   sessionLifetimeSeconds?: number
 } = {}): Promise<
-  | { walletAddress: Address; wallet: OmsWallet; wallets: OmsWallet[]; credential: WalletCredential }
+  | { readonly walletAddress: Address; readonly wallet: OmsWallet; readonly wallets: ReadonlyArray<OmsWallet>; readonly credential: Readonly<WalletCredential> }
   | PendingWalletSelection
   | void
 >
@@ -1174,10 +1174,10 @@ interface CompleteEmailAuthParams {
 }
 
 interface CompleteEmailAuthResult {
-  walletAddress: Address
-  wallet: OmsWallet
-  wallets: OmsWallet[]
-  credential: WalletCredential
+  readonly walletAddress: Address
+  readonly wallet: OmsWallet
+  readonly wallets: ReadonlyArray<OmsWallet>
+  readonly credential: Readonly<WalletCredential>
 }
 
 interface SignInWithOidcIdTokenParams {
@@ -1192,10 +1192,10 @@ interface SignInWithOidcIdTokenParams {
 }
 
 interface CompleteOidcIdTokenAuthResult {
-  walletAddress: Address
-  wallet: OmsWallet
-  wallets: OmsWallet[]
-  credential: WalletCredential
+  readonly walletAddress: Address
+  readonly wallet: OmsWallet
+  readonly wallets: ReadonlyArray<OmsWallet>
+  readonly credential: Readonly<WalletCredential>
 }
 
 interface StartOidcRedirectAuthParams<Env> {
@@ -1224,10 +1224,10 @@ interface CompleteOidcRedirectAuthParams {
 }
 
 interface CompleteOidcRedirectAuthResult {
-  walletAddress: Address
-  wallet: OmsWallet
-  wallets: OmsWallet[]
-  credential: WalletCredential
+  readonly walletAddress: Address
+  readonly wallet: OmsWallet
+  readonly wallets: ReadonlyArray<OmsWallet>
+  readonly credential: Readonly<WalletCredential>
 }
 
 interface SignInWithOidcRedirectParams<Env> {
@@ -1316,27 +1316,27 @@ class EthereumPrivateKeyCredentialSigner implements CredentialSigner {
 ```typescript
 type OMSClientSessionAuth =
   | {
-      type: 'email'
-      email: string | undefined
+      readonly type: 'email'
+      readonly email: string | undefined
     }
   | {
-      type: 'oidc'
-      flow: 'redirect' | 'id-token'
-      issuer: string
-      provider: string | undefined
-      providerLabel: string | undefined
-      email: string | undefined
+      readonly type: 'oidc'
+      readonly flow: 'redirect' | 'id-token'
+      readonly issuer: string
+      readonly provider: string | undefined
+      readonly providerLabel: string | undefined
+      readonly email: string | undefined
     }
 
 interface OMSClientSessionState {
-  walletAddress: Address | undefined
-  expiresAt: string | undefined
-  auth: OMSClientSessionAuth | undefined
+  readonly walletAddress: Address | undefined
+  readonly expiresAt: string | undefined
+  readonly auth: OMSClientSessionAuth | undefined
 }
 
 interface OMSClientSessionExpiredEvent {
-  session: OMSClientSessionState
-  expiredAt: string
+  readonly session: OMSClientSessionState
+  readonly expiredAt: string
 }
 
 type OMSClientSessionExpiredListener = (
@@ -1391,10 +1391,10 @@ Exported parameter interfaces for signing, ID token, and signature validation me
 
 ```typescript
 interface OmsWallet {
-  id: string
-  type: WalletType
-  address: Address
-  reference?: string
+  readonly id: string
+  readonly type: WalletType
+  readonly address: Address
+  readonly reference?: string
 }
 ```
 
@@ -1406,9 +1406,9 @@ Wallet metadata returned by auth and wallet listing APIs.
 
 ```typescript
 interface PendingWalletSelection {
-  walletType: WalletType
-  wallets: OmsWallet[]
-  credential: WalletCredential
+  readonly walletType: WalletType
+  readonly wallets: ReadonlyArray<OmsWallet>
+  readonly credential: Readonly<WalletCredential>
 
   selectWallet(params: { walletId: string }): Promise<WalletActivationResult>
   createAndSelectWallet(params?: { reference?: string }): Promise<WalletActivationResult>
@@ -1489,8 +1489,8 @@ interface AccessGrantPage {
 
 ```typescript
 interface WalletActivationResult {
-  walletAddress: Address
-  wallet: OmsWallet
+  readonly walletAddress: Address
+  readonly wallet: OmsWallet
 }
 ```
 

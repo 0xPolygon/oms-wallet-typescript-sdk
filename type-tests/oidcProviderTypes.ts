@@ -73,12 +73,24 @@ if (false) {
         void manualAuth.wallets;
         void manualAuth.selectWallet({walletId: manualAuth.wallets[0].id});
         void manualAuth.createAndSelectWallet({reference: "main"});
+        // @ts-expect-error manual auth wallet lists are readonly snapshots.
+        manualAuth.wallets.push(manualAuth.wallets[0]);
+        // @ts-expect-error manual auth wallet metadata is readonly.
+        manualAuth.wallets[0].id = "wallet-id";
+        // @ts-expect-error manual auth credential metadata is readonly.
+        manualAuth.credential.expiresAt = "2099-01-01T00:00:00Z";
         // @ts-expect-error manual auth does not activate a wallet.
         void manualAuth.walletAddress;
 
         const activatedAuth = await wallet.completeEmailAuth({code: "123456"});
         void activatedAuth.walletAddress;
         void activatedAuth.wallets;
+        // @ts-expect-error completed auth wallet lists are readonly snapshots.
+        activatedAuth.wallets.push(activatedAuth.wallet);
+        // @ts-expect-error completed auth wallet metadata is readonly.
+        activatedAuth.wallet.id = "wallet-id";
+        // @ts-expect-error completed auth credential metadata is readonly.
+        activatedAuth.credential.expiresAt = "2099-01-01T00:00:00Z";
 
         const manualOidcIdTokenAuth = await wallet.signInWithOidcIdToken({
             idToken: "jwt",
@@ -120,6 +132,8 @@ new OMSClient({
 const session: OMSClientSessionState = defaultClient.wallet.session;
 const unsubscribeSessionExpired: () => void = defaultClient.wallet.onSessionExpired(({session}) => {
     void session.auth?.email;
+    // @ts-expect-error expired session snapshots are readonly.
+    session.auth = undefined;
 });
 const sessionExpiredListener: OMSClientSessionExpiredListener = ({expiredAt}) => {
     void expiredAt;
@@ -142,6 +156,12 @@ const oidcIdTokenResult: Promise<CompleteOidcIdTokenAuthResult> =
     });
 void defaultClient.wallet.signInWithOidcIdToken(oidcIdTokenParams);
 const sessionAuth: OMSClientSessionAuth | undefined = defaultClient.wallet.session.auth;
+// @ts-expect-error session snapshots are readonly.
+session.auth = undefined;
+if (session.auth) {
+    // @ts-expect-error session auth metadata is readonly.
+    session.auth.email = "mutated@example.com";
+}
 const polygonNetwork: Network = Networks.polygon;
 const polygonDisplayName: string = Networks.polygon.displayName;
 const amoyNetwork: Network | undefined = findNetworkById(80002);

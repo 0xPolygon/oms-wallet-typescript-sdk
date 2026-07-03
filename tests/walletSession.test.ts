@@ -156,6 +156,54 @@ describe("WalletClient session storage", () => {
         });
     });
 
+    it("delivers isolated session expired snapshots to each listener and replay", async () => {
+        const storage = new MemoryStorageManager();
+        const signer = new MockSigner();
+        const expectedEvent = {
+            session: {
+                walletAddress: "0x1111111111111111111111111111111111111111",
+                expiresAt: "2000-01-01T00:00:00Z",
+                auth: emailAuth(),
+            },
+            expiredAt: "2000-01-01T00:00:00Z",
+        };
+        const mutatingListener = vi.fn(event => {
+            (event.session.auth as any).email = "mutated@example.com";
+        });
+        const secondListener = vi.fn();
+        const wallet = new WalletClient({
+            publishableKey: "publishable-key",
+            projectId: "project-id",
+            environment: testEnvironment(),
+            storage,
+            credentialSigner: signer,
+        });
+        wallet.onSessionExpired(mutatingListener);
+        wallet.onSessionExpired(secondListener);
+        (wallet as any).persistSession("wallet-id", "0x1111111111111111111111111111111111111111", {
+            expiresAt: "2000-01-01T00:00:00Z",
+            auth: emailAuth(),
+        });
+
+        await expect(wallet.signMessage({network: Networks.polygon, message: "hello"})).rejects.toMatchObject({
+            code: "OMS_SESSION_EXPIRED",
+            operation: "wallet.signMessage",
+        });
+
+        expect(mutatingListener).toHaveBeenCalledOnce();
+        expect(secondListener).toHaveBeenCalledWith(expectedEvent);
+
+        const lateMutatingListener = vi.fn(event => {
+            (event.session.auth as any).email = "late-mutated@example.com";
+        });
+        wallet.onSessionExpired(lateMutatingListener);
+        expect(lateMutatingListener).toHaveBeenCalledOnce();
+
+        const replayListener = vi.fn();
+        wallet.onSessionExpired(replayListener);
+        expect(replayListener).toHaveBeenCalledWith(expectedEvent);
+    });
+
     it("notifies session expiry listeners when signer cleanup fails", async () => {
         const storage = new MemoryStorageManager();
         const signer = new MockSigner();
@@ -596,6 +644,39 @@ describe("WalletClient session storage", () => {
         });
     });
 
+    it("returns isolated auth snapshots for restored sessions", async () => {
+        const storage = new MemoryStorageManager();
+        storage.set(Constants.walletIdStorageKey, "wallet-id");
+        storage.set(Constants.walletAddressStorageKey, "0x1111111111111111111111111111111111111111");
+        storage.set(Constants.sessionExpiresAtStorageKey, "2099-01-01T00:00:00Z");
+        storage.set(Constants.sessionAuthStorageKey, serializedAuth(googleAuth()));
+        const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+            const url = input.toString();
+            const body = JSON.parse(init?.body as string);
+
+            if (url.endsWith("/UseWallet")) {
+                expect(body).toEqual({walletId: "wallet-id"});
+                return jsonResponse({wallet: testWallet("wallet-id", WalletType.Ethereum, "11")});
+            }
+
+            throw new Error(`Unexpected request: ${url}`);
+        });
+        vi.stubGlobal("fetch", fetchMock);
+
+        const client = new OMSClient({
+            publishableKey: "pk_dev_sdbx_project_key",
+            storage,
+            credentialSigner: new MockSigner(),
+        });
+        const restoredSession = client.wallet.session;
+
+        (restoredSession.auth as any).email = "mutated@example.com";
+        await client.wallet.useWallet({walletId: "wallet-id"});
+
+        expect(client.wallet.session.auth).toEqual(googleAuth());
+        expect(storage.get(Constants.sessionAuthStorageKey)).toBe(serializedAuth(googleAuth()));
+    });
+
     it("does not restore wallet metadata without completed session auth", () => {
         const storage = new MemoryStorageManager();
         storage.set(Constants.walletIdStorageKey, "wallet-id");
@@ -717,6 +798,40 @@ describe("WalletClient session storage", () => {
             auth: emailAuth(),
         });
         expect(storage.get(Constants.sessionExpiresAtStorageKey)).toBe("2099-01-01T00:00:00Z");
+        expect(storage.get(Constants.sessionAuthStorageKey)).toBe(serializedAuth());
+    });
+
+    it("returns isolated session auth snapshots from wallet.session", async () => {
+        const storage = new MemoryStorageManager();
+        const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+            const url = input.toString();
+            const body = JSON.parse(init?.body as string);
+
+            if (url.endsWith("/UseWallet")) {
+                expect(body).toEqual({walletId: "wallet-id"});
+                return jsonResponse({wallet: testWallet("wallet-id", WalletType.Ethereum, "11")});
+            }
+
+            throw new Error(`Unexpected request: ${url}`);
+        });
+        vi.stubGlobal("fetch", fetchMock);
+        const wallet = new WalletClient({
+            publishableKey: "publishable-key",
+            projectId: "project-id",
+            environment: testEnvironment(),
+            storage,
+            credentialSigner: new MockSigner(),
+        });
+        (wallet as any).persistSession("wallet-id", "0x1111111111111111111111111111111111111111", {
+            expiresAt: "2099-01-01T00:00:00Z",
+            auth: emailAuth(),
+        });
+
+        const session = wallet.session;
+        (session.auth as any).email = "mutated@example.com";
+        await wallet.useWallet({walletId: "wallet-id"});
+
+        expect(wallet.session.auth).toEqual(emailAuth());
         expect(storage.get(Constants.sessionAuthStorageKey)).toBe(serializedAuth());
     });
 
@@ -1041,6 +1156,15 @@ describe("WalletClient session storage", () => {
         expect(result.selectWallet).toEqual(expect.any(Function));
         expect(result.createAndSelectWallet).toEqual(expect.any(Function));
         expect(wallet.walletAddress).toBeUndefined();
+
+        (result.wallets as Array<any>).push(testWallet("wallet-forged", WalletType.Ethereum, "44"));
+        (result.wallets[0] as any).id = "wallet-forged";
+        (result.credential as any).credentialId = "0x" + "ff".repeat(32);
+
+        await expect(result.selectWallet({walletId: "wallet-forged"})).rejects.toMatchObject({
+            code: "OMS_WALLET_SELECTION_UNAVAILABLE",
+            operation: "wallet.pendingWalletSelection.selectWallet",
+        });
 
         await expect(result.selectWallet({walletId: "wallet-other"})).rejects.toMatchObject({
             code: "OMS_WALLET_SELECTION_UNAVAILABLE",
