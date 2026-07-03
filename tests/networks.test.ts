@@ -1,7 +1,7 @@
 import {describe, expect, it} from "vitest";
 
 import {
-    OMSClient,
+    OMSWallet,
     findNetworkById,
     findNetworkByName,
     supportedNetworks,
@@ -48,8 +48,8 @@ describe("Networks", () => {
         expect(findNetworkByName("Ethereum")).toBeUndefined();
     });
 
-    it("is available from OMSClient", () => {
-        const oms = new OMSClient({
+    it("is available from OMSWallet", () => {
+        const oms = new OMSWallet({
             publishableKey: "pk_dev_sdbx_project_key",
         });
 

@@ -1,9 +1,9 @@
 import type {
   FeeOptionWithBalance,
-  OMSClientSessionExpiredEvent,
-  OmsWallet,
+  OMSWalletSessionExpiredEvent,
+  WalletAccount,
   PendingWalletSelection,
-} from '@0xsequence/typescript-sdk'
+} from '@polygonlabs/oms-wallet'
 import {
   canAffordFeeOption,
   formatSessionAuth,
@@ -196,7 +196,7 @@ export function WalletSelectionPanel({
   pendingWalletSelection: PendingWalletSelection
   authStatus?: string
   disabled: boolean
-  onSelectWallet: (wallet: OmsWallet) => void
+  onSelectWallet: (wallet: WalletAccount) => void
   onCreateWallet: () => void
   onCancel: () => void
 }) {
@@ -295,7 +295,7 @@ export function SessionExpiredDialog({
   onReauthenticate,
   onDismiss,
 }: {
-  event: OMSClientSessionExpiredEvent
+  event: OMSWalletSessionExpiredEvent
   disabled: boolean
   onReauthenticate: () => void
   onDismiss: () => void

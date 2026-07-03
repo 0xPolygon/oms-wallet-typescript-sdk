@@ -1,6 +1,6 @@
 ---
 name: Bug report
-about: Something in the OMS TypeScript SDK isn't working as expected
+about: Something in the OMS Wallet TypeScript SDK isn't working as expected
 labels: bug
 ---
 

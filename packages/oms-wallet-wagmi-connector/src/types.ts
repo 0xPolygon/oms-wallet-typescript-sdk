@@ -6,66 +6,66 @@ import type {
     SendTransactionResponse,
     TransactionMode,
     TransactionStatusPollingOptions,
-} from "@0xsequence/typescript-sdk";
+} from "@polygonlabs/oms-wallet";
 
-export type OmsWalletNetwork = Network;
+export type OMSWalletNetwork = Network;
 
-export type OmsWalletTransactionStatusPollingOptions = TransactionStatusPollingOptions;
+export type OMSWalletTransactionStatusPollingOptions = TransactionStatusPollingOptions;
 
-export type OmsWalletFeeOptionSelector = (
+export type OMSWalletFeeOptionSelector = (
     feeOptions: FeeOptionWithBalance[]
 ) => FeeOptionSelection | undefined | Promise<FeeOptionSelection | undefined>;
 
-export interface OmsWalletTransactionOptions {
+export interface OMSWalletTransactionOptions {
     mode?: TransactionMode
-    selectFeeOption?: OmsWalletFeeOptionSelector
+    selectFeeOption?: OMSWalletFeeOptionSelector
     waitForStatus?: true
-    statusPolling?: OmsWalletTransactionStatusPollingOptions
+    statusPolling?: OMSWalletTransactionStatusPollingOptions
 }
 
-export interface OmsWalletSendNativeTransactionParams extends OmsWalletTransactionOptions {
-    network: OmsWalletNetwork
+export interface OMSWalletSendNativeTransactionParams extends OMSWalletTransactionOptions {
+    network: OMSWalletNetwork
     to: Address
     value: bigint
     data?: never
 }
 
-export interface OmsWalletSendDataTransactionParams extends OmsWalletTransactionOptions {
-    network: OmsWalletNetwork
+export interface OMSWalletSendDataTransactionParams extends OMSWalletTransactionOptions {
+    network: OMSWalletNetwork
     to: Address
     value?: bigint
     data: Hex
 }
 
-export type OmsWalletSendTransactionParams =
-    | OmsWalletSendNativeTransactionParams
-    | OmsWalletSendDataTransactionParams;
+export type OMSWalletSendTransactionParams =
+    | OMSWalletSendNativeTransactionParams
+    | OMSWalletSendDataTransactionParams;
 
-export type OmsWalletSendTransactionResponse = SendTransactionResponse;
+export type OMSWalletSendTransactionResponse = SendTransactionResponse;
 
-export interface OmsWalletLike {
+export interface WalletLike {
     walletAddress: Address | undefined
 
-    signMessage(params: {network: OmsWalletNetwork; message: string}): Promise<string>
-    signTypedData(params: {network: OmsWalletNetwork; typedData: unknown}): Promise<string>
-    sendTransaction(params: OmsWalletSendNativeTransactionParams): Promise<OmsWalletSendTransactionResponse>
-    sendTransaction(params: OmsWalletSendDataTransactionParams): Promise<OmsWalletSendTransactionResponse>
+    signMessage(params: {network: OMSWalletNetwork; message: string}): Promise<string>
+    signTypedData(params: {network: OMSWalletNetwork; typedData: unknown}): Promise<string>
+    sendTransaction(params: OMSWalletSendNativeTransactionParams): Promise<OMSWalletSendTransactionResponse>
+    sendTransaction(params: OMSWalletSendDataTransactionParams): Promise<OMSWalletSendTransactionResponse>
     onSessionExpired?(listener: (event: unknown) => void | Promise<void>): () => void
 }
 
-export interface OmsWalletClientLike {
-    wallet: OmsWalletLike
-    supportedNetworks?: readonly OmsWalletNetwork[]
+export interface OMSWalletLike {
+    wallet: WalletLike
+    supportedNetworks?: readonly OMSWalletNetwork[]
 }
 
 export type MaybePromise<T> = T | Promise<T>;
 
-export interface OmsWalletTransactionContext {
+export interface OMSWalletTransactionContext {
     chainId: number
-    request: OmsWalletProviderTransactionRequest
+    request: OMSWalletProviderTransactionRequest
 }
 
-export interface OmsWalletProviderTransactionRequest {
+export interface OMSWalletProviderTransactionRequest {
     from?: Address
     to?: Address
     value?: Quantity
@@ -74,14 +74,14 @@ export interface OmsWalletProviderTransactionRequest {
     [key: string]: unknown
 }
 
-export interface OmsWalletConnectorParameters {
-    client: OmsWalletClientLike | (() => MaybePromise<OmsWalletClientLike>)
+export interface OMSWalletConnectorParameters {
+    omsWallet: OMSWalletLike | (() => MaybePromise<OMSWalletLike>)
     id?: string
     name?: string
     icon?: string
     initialChainId?: number
-    networks?: readonly OmsWalletNetwork[]
+    networks?: readonly OMSWalletNetwork[]
     transactionOptions?:
-        | OmsWalletTransactionOptions
-        | ((context: OmsWalletTransactionContext) => MaybePromise<OmsWalletTransactionOptions | undefined>)
+        | OMSWalletTransactionOptions
+        | ((context: OMSWalletTransactionContext) => MaybePromise<OMSWalletTransactionOptions | undefined>)
 }

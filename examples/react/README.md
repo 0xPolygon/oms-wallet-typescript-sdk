@@ -3,7 +3,7 @@
 This example consumes the SDK as a workspace package:
 
 ```ts
-import { OMSClient } from '@0xsequence/typescript-sdk'
+import { OMSWallet } from '@polygonlabs/oms-wallet'
 ```
 
 Run it from the repository root:

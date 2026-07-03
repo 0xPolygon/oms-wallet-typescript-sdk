@@ -1,28 +1,28 @@
-# OMS Client TypeScript SDK
+# OMS Wallet TypeScript SDK
 
-A TypeScript SDK for the OMS (Open Money Stack) platform. Provides email, OIDC ID-token, and OIDC redirect wallet authentication, on-chain transaction submission, message signing, and token balance queries — with automatic session persistence.
+A TypeScript SDK for OMS Wallet. Provides email, OIDC ID-token, and OIDC redirect wallet authentication, on-chain transaction submission, message signing, and token balance queries — with automatic session persistence.
 
 ## Usage
 
 Install the published SDK package in your application:
 
 ```bash
-pnpm add @0xsequence/typescript-sdk
+pnpm add @polygonlabs/oms-wallet
 ```
 
 For npm or yarn projects:
 
 ```bash
-npm install @0xsequence/typescript-sdk
-yarn add @0xsequence/typescript-sdk
+npm install @polygonlabs/oms-wallet
+yarn add @polygonlabs/oms-wallet
 ```
 
-Then initialize the client with your OMS publishable key:
+Then initialize OMS Wallet with your OMS publishable key:
 
 ```typescript
-import { OMSClient } from '@0xsequence/typescript-sdk'
+import { OMSWallet } from '@polygonlabs/oms-wallet'
 
-const oms = new OMSClient({
+const omsWallet = new OMSWallet({
   publishableKey: 'your-publishable-key',
 })
 ```
@@ -39,7 +39,7 @@ function requiredEnv(name: string, value: string | undefined): string {
   return value
 }
 
-const oms = new OMSClient({
+const omsWallet = new OMSWallet({
   publishableKey: requiredEnv('VITE_OMS_PUBLISHABLE_KEY', import.meta.env.VITE_OMS_PUBLISHABLE_KEY),
 })
 ```
@@ -73,19 +73,19 @@ pnpm dev:example
 
 ## Wagmi Connector
 
-This workspace also includes `@0xsequence/oms-wallet-wagmi-connector`, an ESM-only package that adapts an
-active OMS client to wagmi's connector API.
+This workspace also includes `@polygonlabs/oms-wallet-wagmi-connector`, an ESM-only package that adapts an
+active OMS Wallet SDK instance to wagmi's connector API.
 
 ```bash
-pnpm --filter @0xsequence/oms-wallet-wagmi-connector build
-pnpm --filter @0xsequence/oms-wallet-wagmi-connector test
+pnpm --filter @polygonlabs/oms-wallet-wagmi-connector build
+pnpm --filter @polygonlabs/oms-wallet-wagmi-connector test
 ```
 
 See [packages/oms-wallet-wagmi-connector/README.md](./packages/oms-wallet-wagmi-connector/README.md) for usage.
 
 ## Wagmi React Example
 
-The Wagmi example uses `@0xsequence/oms-wallet-wagmi-connector`, wagmi's MetaMask connector, and the Trails widget.
+The Wagmi example uses `@polygonlabs/oms-wallet-wagmi-connector`, wagmi's MetaMask connector, and the Trails widget.
 
 The deployed Wagmi example is available at [https://0xsequence.github.io/typescript-sdk/wagmi-example/](https://0xsequence.github.io/typescript-sdk/wagmi-example/).
 
@@ -137,25 +137,25 @@ pnpm dev:node-contract-deploy-example
 ## Quick Start
 
 ```typescript
-import { FeeOptionSelector, Networks, OMSClient, WalletType } from '@0xsequence/typescript-sdk'
+import { FeeOptionSelector, Networks, OMSWallet, WalletType } from '@polygonlabs/oms-wallet'
 import { parseUnits } from 'viem'
 
-const oms = new OMSClient({
+const omsWallet = new OMSWallet({
   publishableKey: 'your-publishable-key',
 })
 
 // 1. Send a one-time code to the user's email
-await oms.wallet.startEmailAuth({ email: 'user@example.com' })
+await omsWallet.wallet.startEmailAuth({ email: 'user@example.com' })
 
 // 2. User enters the code — verifies it and sets up the wallet automatically
-const { walletAddress, credential } = await oms.wallet.completeEmailAuth({ code: '123456' })
+const { walletAddress, credential } = await omsWallet.wallet.completeEmailAuth({ code: '123456' })
 
 // 3. The wallet is ready
 console.log('Wallet address:', walletAddress)
 console.log('Credential:', credential.credentialId)
 
 // 4. Send a transaction
-const tx = await oms.wallet.sendTransaction({
+const tx = await omsWallet.wallet.sendTransaction({
   network: Networks.polygon,
   to: '0x1111111111111111111111111111111111111111',
   value: parseUnits('1', 18), // 1 POL
@@ -167,12 +167,12 @@ console.log(tx.txnHash ?? tx.txnId)
 
 ## Overview
 
-`OMSClient` exposes two sub-clients:
+`OMSWallet` exposes two sub-clients:
 
 | Property | Type | Description |
 |---|---|---|
-| `oms.wallet` | `WalletClient` | Authentication, signing, and transaction submission. |
-| `oms.indexer` | `IndexerClient` | Read token balances and on-chain state. |
+| `omsWallet.wallet` | `WalletClient` | Authentication, signing, and transaction submission. |
+| `omsWallet.indexer` | `IndexerClient` | Read token balances and on-chain state. |
 
 ## Authentication Flow
 
@@ -188,7 +188,7 @@ Email OTP is a two-step flow:
 Use manual wallet selection when the app needs to present wallet choices:
 
 ```typescript
-const selection = await oms.wallet.completeEmailAuth({
+const selection = await omsWallet.wallet.completeEmailAuth({
   code: '123456',
   walletType: WalletType.Ethereum,
   walletSelection: 'manual',
@@ -206,7 +206,7 @@ The returned pending selection is bound to the verified auth flow and signer. Ho
 Google and Apple redirect auth are configured by default. The redirect auth APIs are provider-neutral, so `auth.oidcProviders` can replace the configured provider set when you need custom providers.
 
 ```typescript
-const oms = new OMSClient({
+const omsWallet = new OMSWallet({
   publishableKey: 'your-publishable-key',
 })
 ```
@@ -214,7 +214,7 @@ const oms = new OMSClient({
 For router-driven apps, use the explicit start/complete methods:
 
 ```typescript
-const { url } = await oms.wallet.startOidcRedirectAuth({
+const { url } = await omsWallet.wallet.startOidcRedirectAuth({
   provider: 'google',
   redirectUri: `${window.location.origin}/auth/callback`, // optional in browser apps
 })
@@ -222,7 +222,7 @@ const { url } = await oms.wallet.startOidcRedirectAuth({
 window.location.assign(url)
 
 // On the callback route:
-const result = await oms.wallet.completeOidcRedirectAuth()
+const result = await omsWallet.wallet.completeOidcRedirectAuth()
 if (result) {
   console.log('Wallet address:', result.walletAddress)
 }
@@ -233,7 +233,7 @@ OIDC redirect auth also supports manual wallet selection by passing `walletSelec
 For OIDC ID-token flows, obtain the provider token in your app or backend flow, then pass it to the SDK with the issuer and audience:
 
 ```typescript
-const result = await oms.wallet.signInWithOidcIdToken({
+const result = await omsWallet.wallet.signInWithOidcIdToken({
   idToken: googleIdToken,
   issuer: 'https://accounts.google.com',
   audience: 'YOUR_WEB_CLIENT_ID',
@@ -247,11 +247,11 @@ Use `walletSelection: 'manual'` with `signInWithOidcIdToken` when your app needs
 For simple browser apps, use `signInWithOidcRedirect` from a sign-in action. It calls `startOidcRedirectAuth`, derives the current page as `redirectUri`, and navigates with `window.location.assign`:
 
 ```typescript
-void oms.wallet.signInWithOidcRedirect({ provider: 'google' })
-void oms.wallet.signInWithOidcRedirect({ provider: 'apple' })
+void omsWallet.wallet.signInWithOidcRedirect({ provider: 'google' })
+void omsWallet.wallet.signInWithOidcRedirect({ provider: 'apple' })
 
 // On the callback page:
-const result = await oms.wallet.completeOidcRedirectAuth()
+const result = await omsWallet.wallet.completeOidcRedirectAuth()
 if (result) {
   console.log('Wallet address:', result.walletAddress)
 }
@@ -271,11 +271,11 @@ Email and OIDC auth both persist the active wallet session in the configured SDK
 
 Pass `sessionLifetimeSeconds` to `completeEmailAuth`, `signInWithOidcIdToken`, `startOidcRedirectAuth`, `completeOidcRedirectAuth`, or `signInWithOidcRedirect` to request a different session lifetime. For OIDC redirects, values passed at start are stored with the pending redirect state and used on callback completion unless completion overrides them.
 
-Use `oms.wallet.walletAddress` when you only need the active wallet address. Use `oms.wallet.session` when you also need credential expiry or structured auth metadata.
+Use `omsWallet.wallet.walletAddress` when you only need the active wallet address. Use `omsWallet.wallet.session` when you also need credential expiry or structured auth metadata.
 
 ```typescript
-const walletAddress = oms.wallet.walletAddress
-const { expiresAt, auth } = oms.wallet.session
+const walletAddress = omsWallet.wallet.walletAddress
+const { expiresAt, auth } = omsWallet.wallet.session
 const accountEmail = auth?.email
 const authLabel = auth?.type === 'oidc'
   ? auth.providerLabel ?? auth.provider ?? auth.issuer
@@ -286,18 +286,18 @@ const authLabel = auth?.type === 'oidc'
 
 The `session` value is a readonly snapshot. Changing the returned object does not update SDK state or persisted session metadata.
 
-Use `oms.wallet.getIdToken({ ttlSeconds, customClaims })` to request an ID token for the active wallet session.
+Use `omsWallet.wallet.getIdToken({ ttlSeconds, customClaims })` to request an ID token for the active wallet session.
 
 Pending email OTP and OIDC redirect state are not exposed through `session`; use the auth method results to drive pending UI.
 
-The SDK makes expired sessions inactive before protected wallet operations and throws `OmsSessionError` with code `OMS_SESSION_EXPIRED`. It clears the active signer/session state, but keeps the expired session metadata in storage until the app explicitly starts a new auth flow or calls `signOut()`. Subscribe with `oms.wallet.onSessionExpired` to route the user back to sign-in while preserving the expired session snapshot for email OTP reauth or Google account hints, including after a page refresh:
+The SDK makes expired sessions inactive before protected wallet operations and throws `OmsSessionError` with code `OMS_SESSION_EXPIRED`. It clears the active signer/session state, but keeps the expired session metadata in storage until the app explicitly starts a new auth flow or calls `signOut()`. Subscribe with `omsWallet.wallet.onSessionExpired` to route the user back to sign-in while preserving the expired session snapshot for email OTP reauth or Google account hints, including after a page refresh:
 
 ```typescript
-const oms = new OMSClient({
+const omsWallet = new OMSWallet({
   publishableKey: 'your-publishable-key',
 })
 
-const unsubscribe = oms.wallet.onSessionExpired(({ session }) => {
+const unsubscribe = omsWallet.wallet.onSessionExpired(({ session }) => {
   showReauth(session)
 })
 ```
@@ -305,7 +305,7 @@ const unsubscribe = oms.wallet.onSessionExpired(({ session }) => {
 To end the session, call:
 
 ```typescript
-await oms.wallet.signOut()
+await omsWallet.wallet.signOut()
 ```
 
 ## Errors
@@ -315,10 +315,10 @@ Public methods throw `OmsSdkError` subclasses with stable SDK fields such as `co
 For transaction writes, `OMS_TRANSACTION_EXECUTION_UNCONFIRMED` means the SDK has a `txnId` from preparation, but the execute request failed before the SDK could confirm whether the transaction was submitted; do not blindly resend the same write. `OMS_TRANSACTION_STATUS_LOOKUP_FAILED` means the transaction was submitted but status polling failed, so retry status lookup with the returned `txnId`. `retryable` describes the failed SDK operation, not the whole user intent.
 
 ```typescript
-import { OmsSdkError } from '@0xsequence/typescript-sdk'
+import { OmsSdkError } from '@polygonlabs/oms-wallet'
 
 try {
-  await oms.wallet.startEmailAuth({ email: 'user@example.com' })
+  await omsWallet.wallet.startEmailAuth({ email: 'user@example.com' })
 } catch (err) {
   if (err instanceof OmsSdkError) {
     console.log(err.code, err.operation, err.upstreamError)
@@ -333,9 +333,9 @@ The SDK exports `Networks`, `supportedNetworks`, `findNetworkById(id)`, and `fin
 The `network` parameter on all transaction and signing methods accepts a `Network` from the SDK registry:
 
 ```typescript
-import { Networks, findNetworkById, supportedNetworks } from '@0xsequence/typescript-sdk'
+import { Networks, findNetworkById, supportedNetworks } from '@polygonlabs/oms-wallet'
 
-await oms.wallet.signMessage({ network: Networks.polygon, message: 'some message to sign' })
+await omsWallet.wallet.signMessage({ network: Networks.polygon, message: 'some message to sign' })
 
 console.log(supportedNetworks)
 console.log(findNetworkById(80002)) // Networks.amoy
@@ -369,7 +369,7 @@ console.log(findNetworkById(80002)) // Networks.amoy
 ```typescript
 import { parseUnits } from 'viem'
 
-const tx = await oms.wallet.sendTransaction({
+const tx = await omsWallet.wallet.sendTransaction({
   network: Networks.polygon,
   to: '0x1111111111111111111111111111111111111111',
   value: parseUnits('1', 18), // 1 POL
@@ -379,7 +379,7 @@ const tx = await oms.wallet.sendTransaction({
 ### Raw Data Transaction
 
 ```typescript
-const tx = await oms.wallet.sendTransaction({
+const tx = await omsWallet.wallet.sendTransaction({
   network: Networks.polygon,
   to: '0x2222222222222222222222222222222222222222',
   data: '0x12345678',
@@ -404,7 +404,7 @@ const erc20Abi = [
   },
 ] as const
 
-const tx = await oms.wallet.sendTransaction({
+const tx = await omsWallet.wallet.sendTransaction({
   network: Networks.polygon,
   to: '0x3333333333333333333333333333333333333333',
   abi: erc20Abi,
@@ -424,14 +424,14 @@ returned `txnId`.
 ```typescript
 import { parseUnits } from 'viem'
 
-const tx = await oms.wallet.sendTransaction({
+const tx = await omsWallet.wallet.sendTransaction({
   network: Networks.polygon,
   to: '0x1111111111111111111111111111111111111111',
   value: parseUnits('0.001', 18),
   waitForStatus: false,
 })
 
-const status = await oms.wallet.getTransactionStatus({ txnId: tx.txnId })
+const status = await omsWallet.wallet.getTransactionStatus({ txnId: tx.txnId })
 ```
 
 To tune polling, pass `statusPolling`:
@@ -439,7 +439,7 @@ To tune polling, pass `statusPolling`:
 ```typescript
 import { parseUnits } from 'viem'
 
-await oms.wallet.sendTransaction({
+await omsWallet.wallet.sendTransaction({
   network: Networks.polygon,
   to: '0x1111111111111111111111111111111111111111',
   value: parseUnits('0.001', 18),
@@ -456,7 +456,7 @@ available. Use `FeeOptionSelector.firstAvailable` to choose the first option the
 wallet can pay, or return `option.selection` from a custom selector.
 
 ```typescript
-const tx = await oms.wallet.sendTransaction({
+const tx = await omsWallet.wallet.sendTransaction({
   network: Networks.polygon,
   to: '0x3333333333333333333333333333333333333333',
   data: '0x12345678',
@@ -471,7 +471,7 @@ const tx = await oms.wallet.sendTransaction({
 
 ### Publishable-Key Routing
 
-`OMSClient` derives service endpoints from the publishable key. WaaS requests use the API base URL directly; indexer requests use the same base URL with `/v1/IndexerGateway/`.
+`OMSWallet` derives service endpoints from the publishable key. WaaS requests use the API base URL directly; indexer requests use the same base URL with `/v1/IndexerGateway/`.
 
 | Publishable key prefix | API base URL |
 |---|---|
@@ -485,7 +485,7 @@ const tx = await oms.wallet.sendTransaction({
 ### Custom OIDC Providers
 
 ```typescript
-const oms = new OMSClient({
+const omsWallet = new OMSWallet({
   publishableKey: 'your-publishable-key',
   auth: {
     oidcProviders: {
@@ -507,9 +507,9 @@ Provider configs are the source of truth for OIDC scopes. If `scopes` is omitted
 The default storage backend is browser `localStorage` when available, otherwise in-memory storage for wallet metadata only. The default browser signer stores its non-extractable key reference separately through WebCrypto-compatible browser storage. Provide a custom `StorageManager` for persistent Node.js, React Native, or testing sessions:
 
 ```typescript
-import { MemoryStorageManager, OMSClient } from '@0xsequence/typescript-sdk'
+import { MemoryStorageManager, OMSWallet } from '@polygonlabs/oms-wallet'
 
-const oms = new OMSClient({
+const omsWallet = new OMSWallet({
   publishableKey: 'your-publishable-key',
   storage: new MemoryStorageManager(),
 })
@@ -522,14 +522,14 @@ OIDC redirect auth uses separate transient storage for verifier/state data. In b
 ### Sign and Validate Message
 
 ```typescript
-const signature = await oms.wallet.signMessage({
+const signature = await omsWallet.wallet.signMessage({
   network: Networks.polygon,
   message: 'some message to sign',
 })
 
-const isValid = await oms.wallet.isValidMessageSignature({
+const isValid = await omsWallet.wallet.isValidMessageSignature({
   network: Networks.polygon,
-  walletAddress: oms.wallet.walletAddress,
+  walletAddress: omsWallet.wallet.walletAddress,
   message: 'some message to sign',
   signature,
 })
@@ -538,14 +538,14 @@ const isValid = await oms.wallet.isValidMessageSignature({
 ### Sign and Validate Typed Data
 
 ```typescript
-const signature = await oms.wallet.signTypedData({
+const signature = await omsWallet.wallet.signTypedData({
   network: Networks.polygon,
   typedData,
 })
 
-const isValid = await oms.wallet.isValidTypedDataSignature({
+const isValid = await omsWallet.wallet.isValidTypedDataSignature({
   network: Networks.polygon,
-  walletAddress: oms.wallet.walletAddress,
+  walletAddress: omsWallet.wallet.walletAddress,
   typedData,
   signature,
 })
@@ -556,7 +556,7 @@ const isValid = await oms.wallet.isValidTypedDataSignature({
 ```typescript
 import { parseUnits } from 'viem'
 
-const tx = await oms.wallet.callContract({
+const tx = await omsWallet.wallet.callContract({
   network: Networks.polygon,
   contractAddress: '0x3333333333333333333333333333333333333333',
   method: 'transfer(address,uint256)',
@@ -570,10 +570,10 @@ const tx = await oms.wallet.callContract({
 ### Query Balances
 
 ```typescript
-const { walletAddress } = oms.wallet
+const { walletAddress } = omsWallet.wallet
 if (!walletAddress) throw new Error('No active wallet session')
 
-const result = await oms.indexer.getBalances({
+const result = await omsWallet.indexer.getBalances({
   networks: [Networks.polygon],
   walletAddress,
   includeMetadata: true,
@@ -593,17 +593,17 @@ Pass `contractAddresses` to filter balances to specific token contracts. Omit `n
 ### Manage Access
 
 ```typescript
-const grants = await oms.wallet.listAccess()
+const grants = await omsWallet.wallet.listAccess()
 
 for (const grant of grants) {
   console.log(grant.credentialId, grant.expiresAt, grant.isCaller)
 }
 
-for await (const page of oms.wallet.listAccessPages({ pageSize: 25 })) {
+for await (const page of omsWallet.wallet.listAccessPages({ pageSize: 25 })) {
   console.log('Page:', page.grants)
 }
 
-await oms.wallet.revokeAccess({ targetCredentialId: grants[0].credentialId })
+await omsWallet.wallet.revokeAccess({ targetCredentialId: grants[0].credentialId })
 ```
 
 ## API Reference

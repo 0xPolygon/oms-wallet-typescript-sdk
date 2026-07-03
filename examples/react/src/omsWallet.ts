@@ -1,8 +1,8 @@
-import { OMSClient } from '@0xsequence/typescript-sdk'
+import { OMSWallet } from '@polygonlabs/oms-wallet'
 import { PUBLISHABLE_KEY } from './config'
 
 export const TEST_SESSION_LIFETIME_SECONDS = 604_800
 
-export const oms = new OMSClient({
+export const omsWallet = new OMSWallet({
   publishableKey: PUBLISHABLE_KEY,
 })

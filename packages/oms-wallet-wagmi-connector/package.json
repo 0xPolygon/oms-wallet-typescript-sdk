@@ -1,5 +1,5 @@
 {
-  "name": "@0xsequence/oms-wallet-wagmi-connector",
+  "name": "@polygonlabs/oms-wallet-wagmi-connector",
   "version": "0.1.0-alpha.4",
   "description": "Wagmi connector for OMS Wallet.",
   "type": "module",
@@ -36,12 +36,12 @@
     "test:watch": "vitest"
   },
   "peerDependencies": {
-    "@0xsequence/typescript-sdk": "workspace:*",
+    "@polygonlabs/oms-wallet": "workspace:*",
     "@wagmi/core": ">=3.5.0 <4",
     "viem": ">=2.48.4 <3"
   },
   "devDependencies": {
-    "@0xsequence/typescript-sdk": "workspace:*",
+    "@polygonlabs/oms-wallet": "workspace:*",
     "@wagmi/core": "^3.5.0",
     "typescript": "^5.9.3",
     "viem": "^2.48.4",

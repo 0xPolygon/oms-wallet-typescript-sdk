@@ -14,7 +14,7 @@ import {
 } from 'wagmi'
 import { TrailsWidget } from '0xtrails'
 import { formatEther, isAddress, parseEther, type Address, type Hash } from 'viem'
-import type { FeeOptionWithBalance } from '@0xsequence/typescript-sdk'
+import type { FeeOptionWithBalance } from '@polygonlabs/oms-wallet'
 import {
   EmailCodeForm,
   EmailLoginForm,
@@ -29,7 +29,7 @@ import {
   shortHash,
   type OidcRedirectProvider,
 } from '../../shared/example-utils'
-import { oms } from './omsClient'
+import { omsWallet } from './omsWallet'
 import { useFeeOptionSelection } from './useFeeOptionSelection'
 import { TRAILS_API_KEY } from './config'
 import { defaultChain, omsWalletChains, omsWalletNetworks, trailsAdapters } from './wagmiConfig'
@@ -37,7 +37,7 @@ import { defaultChain, omsWalletChains, omsWalletNetworks, trailsAdapters } from
 type Connector = ReturnType<typeof useConnectors>[number]
 type DemoStep = 'auth' | 'operations'
 type AuthStep = 'email' | 'code'
-type OmsWalletChainId = (typeof omsWalletChains)[number]['id']
+type OMSWalletChainId = (typeof omsWalletChains)[number]['id']
 const DEFAULT_MESSAGE = 'hello from wagmi'
 const DEFAULT_TX_TO = '0x000000000000000000000000000000000000dEaD'
 const DEFAULT_TX_VALUE = '0'
@@ -71,7 +71,7 @@ export function App() {
   const [authStep, setAuthStep] = useState<AuthStep>('email')
   const [email, setEmail] = useState('')
   const [code, setCode] = useState('')
-  const [selectedChainId, setSelectedChainId] = useState<OmsWalletChainId>(defaultChain.id)
+  const [selectedChainId, setSelectedChainId] = useState<OMSWalletChainId>(defaultChain.id)
   const [message, setMessage] = useState(DEFAULT_MESSAGE)
   const [typedDataRecipient, setTypedDataRecipient] = useState(DEFAULT_TX_TO)
   const [typedDataAmount, setTypedDataAmount] = useState(DEFAULT_TYPED_DATA_AMOUNT)
@@ -83,12 +83,12 @@ export function App() {
   const [lastSignature, setLastSignature] = useState('')
   const [lastTypedSignature, setLastTypedSignature] = useState('')
   const [lastTransactionHash, setLastTransactionHash] = useState<Hash | undefined>()
-  const [lastTransactionChainId, setLastTransactionChainId] = useState<OmsWalletChainId | undefined>()
+  const [lastTransactionChainId, setLastTransactionChainId] = useState<OMSWalletChainId | undefined>()
   const feeOptionSelection = useFeeOptionSelection(() => {
     setWalletStatus('Choose a fee token to continue.')
   })
   const feeOptions = feeOptionSelection.feeOptions
-  const omsSession = oms.wallet.session
+  const omsSession = omsWallet.wallet.session
   const activeOmsSessionAddress = omsSession.walletAddress
   const showGoogleAuth = !activeOmsSessionAddress || !(omsSession.auth?.type === 'oidc' && omsSession.auth.provider === 'google')
   const showAppleAuth = !activeOmsSessionAddress || !(omsSession.auth?.type === 'oidc' && omsSession.auth.provider === 'apple')
@@ -168,12 +168,12 @@ export function App() {
 
   useEffect(() => {
     if (selectableNetworkOptions.some((option) => option.network.id === chainId)) {
-      setSelectedChainId(chainId as OmsWalletChainId)
+      setSelectedChainId(chainId as OMSWalletChainId)
     }
   }, [chainId])
 
   useEffect(() => {
-    return oms.wallet.onSessionExpired(() => {
+    return omsWallet.wallet.onSessionExpired(() => {
       setAuthStatus('OMS Wallet session expired.')
       setWalletStatus('Disconnected.')
       setAuthStep('email')
@@ -191,7 +191,7 @@ export function App() {
   async function startEmailAuth() {
     if (!email.trim()) return
     await runAuth('Sending code...', async () => {
-      await oms.wallet.startEmailAuth({ email: email.trim() })
+      await omsWallet.wallet.startEmailAuth({ email: email.trim() })
       setAuthStep('code')
       setAuthStatus('Code sent. Check your email.')
     })
@@ -200,7 +200,7 @@ export function App() {
   async function completeEmailAuth() {
     if (!code.trim()) return
     await runAuth('Completing email sign-in...', async () => {
-      await oms.wallet.completeEmailAuth({
+      await omsWallet.wallet.completeEmailAuth({
         code: code.trim(),
       })
       setAuthStep('email')
@@ -217,7 +217,7 @@ export function App() {
   async function startOidcRedirect(provider: OidcRedirectProvider) {
     const providerLabel = formatOidcProvider(provider)
     await runAuth(`Redirecting to ${providerLabel}...`, async () => {
-      await oms.wallet.signInWithOidcRedirect({
+      await omsWallet.wallet.signInWithOidcRedirect({
         provider,
       })
     })
@@ -225,7 +225,7 @@ export function App() {
 
   async function completeOidcRedirect() {
     await runAuth('Completing redirect sign-in...', async () => {
-      await oms.wallet.completeOidcRedirectAuth()
+      await omsWallet.wallet.completeOidcRedirectAuth()
       await connectOmsWallet('OMS Wallet connected.')
     })
   }
@@ -234,7 +234,7 @@ export function App() {
     if (!omsConnector) {
       throw new Error('OMS Wallet connector is not configured.')
     }
-    const walletAddress = oms.wallet.walletAddress
+    const walletAddress = omsWallet.wallet.walletAddress
     if (!walletAddress) {
       throw new Error('OMS sign-in completed without an active wallet.')
     }
@@ -286,7 +286,7 @@ export function App() {
     }
   }
 
-  async function selectNetwork(nextChainId: OmsWalletChainId) {
+  async function selectNetwork(nextChainId: OMSWalletChainId) {
     if (nextChainId === selectedChain.id) return
     const nextNetwork = networkForChainId(nextChainId)
     setLastTransactionHash(undefined)
@@ -407,7 +407,7 @@ export function App() {
     <main className="shell">
       <section className="panel">
         <header>
-          <p className="eyebrow">OMS Client Typescript SDK</p>
+          <p className="eyebrow">OMS Wallet TypeScript SDK</p>
           <h1>Wagmi Connector Example</h1>
         </header>
 
@@ -503,7 +503,7 @@ export function App() {
                 <select
                   aria-label="Network"
                   value={selectedChainId}
-                  onChange={(event) => void selectNetwork(Number(event.target.value) as OmsWalletChainId)}
+                  onChange={(event) => void selectNetwork(Number(event.target.value) as OMSWalletChainId)}
                   disabled={isBusy}
                 >
                   {selectableNetworkOptions.map(({ chain, network }) => (

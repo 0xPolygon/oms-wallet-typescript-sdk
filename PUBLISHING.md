@@ -1,7 +1,7 @@
 # Publishing
 
 The SDK and wagmi connector release in lockstep. The connector source manifest keeps
-`@0xsequence/typescript-sdk` as `workspace:*` in both `peerDependencies` and `devDependencies`.
+`@polygonlabs/oms-wallet` as `workspace:*` in both `peerDependencies` and `devDependencies`.
 This gives local development a workspace link, and `pnpm pack` / `pnpm publish` rewrites the
 published peer dependency to the exact release version.
 
@@ -18,8 +18,8 @@ Before publishing a new alpha version, update these values to the same exact ver
 
 Leave these values as `workspace:*`:
 
-- `packages/oms-wallet-wagmi-connector/package.json` `peerDependencies["@0xsequence/typescript-sdk"]`
-- `packages/oms-wallet-wagmi-connector/package.json` `devDependencies["@0xsequence/typescript-sdk"]`
+- `packages/oms-wallet-wagmi-connector/package.json` `peerDependencies["@polygonlabs/oms-wallet"]`
+- `packages/oms-wallet-wagmi-connector/package.json` `devDependencies["@polygonlabs/oms-wallet"]`
 
 ## After The Release PR Is Merged
 
@@ -42,8 +42,8 @@ pnpm check:package-versions
 
 ```bash
 pnpm test
-pnpm --filter @0xsequence/oms-wallet-wagmi-connector test
-pnpm --filter @0xsequence/oms-wallet-wagmi-connector build
+pnpm --filter @polygonlabs/oms-wallet-wagmi-connector test
+pnpm --filter @polygonlabs/oms-wallet-wagmi-connector build
 pnpm build
 pnpm build:node-example
 pnpm build:node-contract-deploy-example
@@ -55,8 +55,8 @@ pnpm build:wagmi-example
 4. Dry-run the filtered workspace publish:
 
 ```bash
-pnpm --filter @0xsequence/typescript-sdk \
-  --filter @0xsequence/oms-wallet-wagmi-connector \
+pnpm --filter @polygonlabs/oms-wallet \
+  --filter @polygonlabs/oms-wallet-wagmi-connector \
   publish --dry-run --no-git-checks --tag alpha --access public
 ```
 
@@ -73,8 +73,8 @@ pnpm npm whoami
 6. Publish both workspace packages from the root:
 
 ```bash
-pnpm --filter @0xsequence/typescript-sdk \
-  --filter @0xsequence/oms-wallet-wagmi-connector \
+pnpm --filter @polygonlabs/oms-wallet \
+  --filter @polygonlabs/oms-wallet-wagmi-connector \
   publish --tag alpha --access public
 ```
 
@@ -82,16 +82,16 @@ If the filtered publish is interrupted after the SDK is published, rerun the con
 pnpm:
 
 ```bash
-pnpm --filter @0xsequence/oms-wallet-wagmi-connector publish --tag alpha --access public
+pnpm --filter @polygonlabs/oms-wallet-wagmi-connector publish --tag alpha --access public
 ```
 
 7. Verify published versions and alpha dist tags:
 
 ```bash
-pnpm view @0xsequence/typescript-sdk@$VERSION version
-pnpm view @0xsequence/oms-wallet-wagmi-connector@$VERSION version
-pnpm view @0xsequence/typescript-sdk@alpha version
-pnpm view @0xsequence/oms-wallet-wagmi-connector@alpha version
+pnpm view @polygonlabs/oms-wallet@$VERSION version
+pnpm view @polygonlabs/oms-wallet-wagmi-connector@$VERSION version
+pnpm view @polygonlabs/oms-wallet@alpha version
+pnpm view @polygonlabs/oms-wallet-wagmi-connector@alpha version
 ```
 
 Optional: create a git tag and GitHub release for `v$VERSION`.

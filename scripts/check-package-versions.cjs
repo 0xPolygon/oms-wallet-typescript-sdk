@@ -23,8 +23,8 @@ for (const packagePath of packagePaths) {
     report(`${packageJson.name} version ${packageJson.version} does not match ${rootPackage.name} version ${rootPackage.version}.`)
   }
 
-  checkWorkspaceReference(packageJson.name, 'peer dependency', packageJson.peerDependencies?.[rootPackage.name])
-  checkWorkspaceReference(packageJson.name, 'dev dependency', packageJson.devDependencies?.[rootPackage.name])
+  checkRequiredWorkspaceReference(packageJson.name, 'peer dependency', packageJson.peerDependencies?.[rootPackage.name])
+  checkRequiredWorkspaceReference(packageJson.name, 'dev dependency', packageJson.devDependencies?.[rootPackage.name])
 }
 
 for (const packagePath of browserExamplePackagePaths) {
@@ -50,6 +50,15 @@ function checkWorkspaceReference(packageName, dependencyType, version) {
   if (version !== undefined && version !== exactWorkspaceProtocol) {
     report(`${packageName} ${dependencyType} ${rootPackage.name}@${version} must use ${exactWorkspaceProtocol}; pnpm publish rewrites it to ${rootPackage.version}.`)
   }
+}
+
+function checkRequiredWorkspaceReference(packageName, dependencyType, version) {
+  if (version === undefined) {
+    report(`${packageName} must declare ${rootPackage.name} as a ${dependencyType}.`)
+    return
+  }
+
+  checkWorkspaceReference(packageName, dependencyType, version)
 }
 
 function checkReactRuntimeVersions(packagePath, packageJson) {

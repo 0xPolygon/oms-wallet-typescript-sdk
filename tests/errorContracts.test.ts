@@ -4,7 +4,7 @@ import {
     LocalStorageManager,
     MemoryStorageManager,
     Networks,
-    OMSClient,
+    OMSWallet,
     OmsRequestError,
     OmsSdkError,
     SessionStorageManager,
@@ -294,7 +294,7 @@ describe("public API error contracts", () => {
               "error": {
                 "code": "OMS_WALLET_SELECTION_UNAVAILABLE",
                 "message": "Selected wallet is not one of the available options",
-                "name": "OmsWalletSelectionError",
+                "name": "OMSWalletSelectionError",
                 "operation": "wallet.pendingWalletSelection.selectWallet",
                 "retryable": null,
                 "status": null,
@@ -307,7 +307,7 @@ describe("public API error contracts", () => {
               "error": {
                 "code": "OMS_WALLET_SELECTION_STALE",
                 "message": "Pending wallet selection is no longer active",
-                "name": "OmsWalletSelectionError",
+                "name": "OMSWalletSelectionError",
                 "operation": "wallet.pendingWalletSelection.selectWallet",
                 "retryable": null,
                 "status": null,
@@ -320,7 +320,7 @@ describe("public API error contracts", () => {
               "error": {
                 "code": "OMS_WALLET_SELECTION_STALE",
                 "message": "Pending wallet selection is no longer active",
-                "name": "OmsWalletSelectionError",
+                "name": "OMSWalletSelectionError",
                 "operation": "wallet.pendingWalletSelection.createAndSelectWallet",
                 "retryable": null,
                 "status": null,
@@ -333,7 +333,7 @@ describe("public API error contracts", () => {
               "error": {
                 "code": "OMS_WALLET_SELECTION_IN_FLIGHT",
                 "message": "Pending wallet selection already has an action in flight",
-                "name": "OmsWalletSelectionError",
+                "name": "OMSWalletSelectionError",
                 "operation": "wallet.pendingWalletSelection.selectWallet",
                 "retryable": null,
                 "status": null,
@@ -346,7 +346,7 @@ describe("public API error contracts", () => {
               "error": {
                 "code": "OMS_WALLET_SELECTION_IN_FLIGHT",
                 "message": "Pending wallet selection already has an action in flight",
-                "name": "OmsWalletSelectionError",
+                "name": "OMSWalletSelectionError",
                 "operation": "wallet.pendingWalletSelection.createAndSelectWallet",
                 "retryable": null,
                 "status": null,
@@ -1593,8 +1593,8 @@ function serializeUpstreamError(error: unknown): SerializedUpstreamError | null 
 function createOmsClient(params: {
     credentialSigner?: CredentialSigner
     redirectAuthStorage?: MemoryStorageManager | null
-} = {}): OMSClient {
-    const clientParams: ConstructorParameters<typeof OMSClient>[0] = {
+} = {}): OMSWallet {
+    const clientParams: ConstructorParameters<typeof OMSWallet>[0] = {
         publishableKey: "pk_dev_sdbx_project_key",
         storage: new MemoryStorageManager(),
         credentialSigner: params.credentialSigner ?? new MockSigner(),
@@ -1604,10 +1604,10 @@ function createOmsClient(params: {
         clientParams.redirectAuthStorage = params.redirectAuthStorage ?? new MemoryStorageManager();
     }
 
-    return new OMSClient(clientParams);
+    return new OMSWallet(clientParams);
 }
 
-function createOmsClientWithSession(): OMSClient {
+function createOmsClientWithSession(): OMSWallet {
     const oms = createOmsClient();
     (oms.wallet as any).persistSession(
         "wallet-id",

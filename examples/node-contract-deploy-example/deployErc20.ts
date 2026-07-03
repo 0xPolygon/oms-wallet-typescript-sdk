@@ -3,7 +3,7 @@ import {mkdirSync, readFileSync, writeFileSync} from "node:fs";
 import {dirname, join} from "node:path";
 import readline from "node:readline/promises";
 import {fileURLToPath} from "node:url";
-import {MemoryStorageManager, Networks, OMSClient} from "@0xsequence/typescript-sdk";
+import {MemoryStorageManager, Networks, OMSWallet} from "@polygonlabs/oms-wallet";
 import {config as loadDotenv} from "dotenv";
 import solc from "solc";
 import {encodeDeployData, getContractAddress, isAddress, parseAbi} from "viem";
@@ -42,7 +42,7 @@ async function main() {
     console.log("deployer address :", deployerAddress);
     console.log();
 
-    const client = new OMSClient({
+    const omsWallet = new OMSWallet({
         publishableKey,
         storage: new MemoryStorageManager(),
     });
@@ -51,12 +51,12 @@ async function main() {
 
     console.log();
     console.log(`[auth] startEmailAuth("${email}")`);
-    await client.wallet.startEmailAuth({email});
+    await omsWallet.wallet.startEmailAuth({email});
 
     const code = await prompt("Enter the code from your email: ");
 
     console.log(`[auth] completeEmailAuth("${mask(code)}")`);
-    const authResult = await client.wallet.completeEmailAuth({code});
+    const authResult = await omsWallet.wallet.completeEmailAuth({code});
     console.log(`[auth] logged in as ${authResult.walletAddress}`);
     console.log();
 
@@ -85,7 +85,7 @@ async function main() {
     console.log("[deploy] init code    :", `${(initCode.length - 2) / 2} bytes`);
     console.log();
 
-    const tx = await client.wallet.sendTransaction({
+    const tx = await omsWallet.wallet.sendTransaction({
         network: Networks.amoy,
         to: deployerAddress,
         abi: deployerAbi,

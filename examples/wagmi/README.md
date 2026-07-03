@@ -39,7 +39,7 @@ unmounts, the bridge does not restore an earlier listener; that component must r
 again to become active.
 
 Disconnecting in the example disconnects wagmi state only. To fully sign out an OMS Wallet session,
-call `oms.wallet.signOut()` from the SDK.
+call `omsWallet.wallet.signOut()` from the SDK.
 
 Build it from the repository root:
 

@@ -85,7 +85,7 @@ export class OmsTransactionError extends OmsSdkError {
     }
 }
 
-export class OmsWalletSelectionError extends OmsSdkError {
+export class OMSWalletSelectionError extends OmsSdkError {
     constructor(params: Omit<OmsSdkErrorParams, "code"> & {
         code:
             | "OMS_WALLET_SELECTION_STALE"
@@ -93,7 +93,7 @@ export class OmsWalletSelectionError extends OmsSdkError {
             | "OMS_WALLET_SELECTION_IN_FLIGHT"
     }) {
         super(params)
-        this.name = "OmsWalletSelectionError"
+        this.name = "OMSWalletSelectionError"
     }
 }
 

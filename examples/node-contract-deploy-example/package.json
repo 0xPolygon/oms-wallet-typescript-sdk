@@ -8,7 +8,7 @@
     "build": "tsc --noEmit"
   },
   "dependencies": {
-    "@0xsequence/typescript-sdk": "workspace:*",
+    "@polygonlabs/oms-wallet": "workspace:*",
     "dotenv": "^17.4.2",
     "solc": "^0.8.35",
     "viem": "^2.48.4"

@@ -42,10 +42,10 @@ jobs:
         run: pnpm build
 
       - name: Build OMS Wallet wagmi connector
-        run: pnpm --filter @0xsequence/oms-wallet-wagmi-connector build
+        run: pnpm --filter @polygonlabs/oms-wallet-wagmi-connector build
 
       - name: Test OMS Wallet wagmi connector
-        run: pnpm --filter @0xsequence/oms-wallet-wagmi-connector test
+        run: pnpm --filter @polygonlabs/oms-wallet-wagmi-connector test
 
       - name: Build React example
         run: pnpm build:example

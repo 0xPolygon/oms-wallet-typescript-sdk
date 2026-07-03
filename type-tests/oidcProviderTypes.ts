@@ -2,7 +2,7 @@ import {WalletClient, type OidcProviderName} from "../src/clients/walletClient";
 import {
     AuthMode,
     Networks,
-    OMSClient,
+    OMSWallet,
     defineOmsAuthConfig,
     findNetworkById,
     findNetworkByName,
@@ -10,9 +10,9 @@ import {
     type CompleteOidcIdTokenAuthResult,
     type Network,
     type GetIdTokenParams,
-    type OMSClientSessionAuth,
-    type OMSClientSessionExpiredListener,
-    type OMSClientSessionState,
+    type OMSWalletSessionAuth,
+    type OMSWalletSessionExpiredListener,
+    type OMSWalletSessionState,
     type OmsSdkError,
     type OmsSdkErrorCode,
     type OmsUpstreamError,
@@ -111,31 +111,31 @@ if (false) {
     });
 }
 
-const defaultClient = new OMSClient({
+const defaultClient = new OMSWallet({
     publishableKey: "pk_dev_sdbx_project_key",
 });
 // @ts-expect-error publishableKey is required.
-new OMSClient({});
+new OMSWallet({});
 // @ts-expect-error projectId is not a constructor parameter.
-new OMSClient({publishableKey: "pk_dev_sdbx_project_key", projectId: "project-id"});
+new OMSWallet({publishableKey: "pk_dev_sdbx_project_key", projectId: "project-id"});
 // @ts-expect-error projectAccessKey initializer name is not supported.
-new OMSClient({projectAccessKey: "pk_dev_sdbx_project_key"});
+new OMSWallet({projectAccessKey: "pk_dev_sdbx_project_key"});
 // @ts-expect-error publicApiKey initializer name is not supported.
-new OMSClient({publicApiKey: "pk_dev_sdbx_project_key"});
+new OMSWallet({publicApiKey: "pk_dev_sdbx_project_key"});
 // @ts-expect-error authorizationScope initializer name is not supported.
-new OMSClient({publishableKey: "pk_dev_sdbx_project_key", authorizationScope: "project-id"});
-new OMSClient({
+new OMSWallet({publishableKey: "pk_dev_sdbx_project_key", authorizationScope: "project-id"});
+new OMSWallet({
     publishableKey: "pk_dev_sdbx_project_key",
     // @ts-expect-error session expiry is subscribed through wallet.onSessionExpired, not constructor params.
     onSessionExpired: () => {},
 });
-const session: OMSClientSessionState = defaultClient.wallet.session;
+const session: OMSWalletSessionState = defaultClient.wallet.session;
 const unsubscribeSessionExpired: () => void = defaultClient.wallet.onSessionExpired(({session}) => {
     void session.auth?.email;
     // @ts-expect-error expired session snapshots are readonly.
     session.auth = undefined;
 });
-const sessionExpiredListener: OMSClientSessionExpiredListener = ({expiredAt}) => {
+const sessionExpiredListener: OMSWalletSessionExpiredListener = ({expiredAt}) => {
     void expiredAt;
 };
 void defaultClient.wallet.onSessionExpired(sessionExpiredListener);
@@ -155,7 +155,7 @@ const oidcIdTokenResult: Promise<CompleteOidcIdTokenAuthResult> =
         audience: "google-client-id",
     });
 void defaultClient.wallet.signInWithOidcIdToken(oidcIdTokenParams);
-const sessionAuth: OMSClientSessionAuth | undefined = defaultClient.wallet.session.auth;
+const sessionAuth: OMSWalletSessionAuth | undefined = defaultClient.wallet.session.auth;
 // @ts-expect-error session snapshots are readonly.
 session.auth = undefined;
 if (session.auth) {
@@ -323,11 +323,11 @@ void defaultClient.wallet.signInWithOidcRedirect({
     assignUrl: (url: string) => { void url; },
 });
 
-const customClient = new OMSClient({
+const customClient = new OMSWallet({
     publishableKey: "pk_dev_sdbx_project_key",
     auth,
 });
-let broadlyTypedClient: OMSClient;
+let broadlyTypedClient: OMSWallet;
 broadlyTypedClient = customClient;
 void broadlyTypedClient;
 void customClient.wallet.startOidcRedirectAuth({
@@ -339,7 +339,7 @@ void customClient.wallet.startOidcRedirectAuth({
     redirectUri: "https://app.example/auth/callback",
 });
 
-const noProviderClient = new OMSClient({
+const noProviderClient = new OMSWallet({
     publishableKey: "pk_dev_sdbx_project_key",
     auth: {},
 });
@@ -348,7 +348,7 @@ void noProviderClient.wallet.startOidcRedirectAuth({
     provider: "google",
     redirectUri: "https://app.example/auth/callback",
 });
-new OMSClient({
+new OMSWallet({
     publishableKey: "pk_dev_sdbx_project_key",
     // @ts-expect-error environment URL overrides are not constructor parameters.
     environment,
@@ -358,7 +358,7 @@ function createClient(params: {
     publishableKey: string;
     auth?: OmsAuthConfig;
 }) {
-    return new OMSClient(params);
+    return new OMSWallet(params);
 }
 
 void createClient({

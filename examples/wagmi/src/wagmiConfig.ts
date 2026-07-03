@@ -1,5 +1,5 @@
-import { supportedNetworks } from '@0xsequence/typescript-sdk'
-import { omsWalletConnector } from '@0xsequence/oms-wallet-wagmi-connector'
+import { supportedNetworks } from '@polygonlabs/oms-wallet'
+import { omsWalletConnector } from '@polygonlabs/oms-wallet-wagmi-connector'
 import { wagmiAdapter } from '@0xtrails/adapter-wagmi'
 import { createConfig, http } from 'wagmi'
 import {
@@ -22,7 +22,7 @@ import {
 } from 'wagmi/chains'
 import { metaMask } from 'wagmi/connectors'
 import { selectFeeOptionWithAppUi } from './feeOptionSelectionBridge'
-import { oms } from './omsClient'
+import { omsWallet } from './omsWallet'
 
 export const omsWalletChains = [
   mainnet,
@@ -50,7 +50,7 @@ export const wagmiConfig = createConfig({
   chains: omsWalletChains,
   connectors: [
     omsWalletConnector({
-      client: oms,
+      omsWallet,
       initialChainId: defaultChain.id,
       transactionOptions: {
         selectFeeOption: selectFeeOptionWithAppUi,

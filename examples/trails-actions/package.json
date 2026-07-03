@@ -10,7 +10,7 @@
   },
   "dependencies": {
     "0xtrails": "0.16.0",
-    "@0xsequence/typescript-sdk": "workspace:*",
+    "@polygonlabs/oms-wallet": "workspace:*",
     "@0xtrails/api": "0.16.0",
     "react": "19.2.7",
     "react-dom": "19.2.7",

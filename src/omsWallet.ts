@@ -11,7 +11,7 @@ import type {CredentialSigner} from "./credentialSigner.js";
 import {supportedNetworks} from "./networks.js";
 import {parsePublishableKey} from "./publishableKey.js";
 
-interface OMSClientBaseParams {
+interface OMSWalletBaseParams {
     publishableKey: string;
     auth?: OmsAuthConfig;
     environment?: never;
@@ -20,8 +20,8 @@ interface OMSClientBaseParams {
     credentialSigner?: CredentialSigner;
 }
 
-export type OMSClientParams<Auth extends OmsAuthConfig | undefined = undefined> =
-    OMSClientBaseParams & (Auth extends OmsAuthConfig ? {auth: Auth} : {auth?: undefined});
+export type OMSWalletParams<Auth extends OmsAuthConfig | undefined = undefined> =
+    OMSWalletBaseParams & (Auth extends OmsAuthConfig ? {auth: Auth} : {auth?: undefined});
 
 type ProvidersFromAuth<Auth extends OmsAuthConfig> =
     Auth extends {oidcProviders?: infer OidcProviders}
@@ -30,12 +30,12 @@ type ProvidersFromAuth<Auth extends OmsAuthConfig> =
             : never
         : never;
 
-class OMSClientImpl<Env extends OmsEnvironment = DefaultOmsEnvironment> {
+class OMSWalletImpl<Env extends OmsEnvironment = DefaultOmsEnvironment> {
     public readonly wallet: WalletClient<Env>;
     public readonly indexer: IndexerClient;
     public readonly supportedNetworks = supportedNetworks;
 
-    constructor(params: OMSClientBaseParams) {
+    constructor(params: OMSWalletBaseParams) {
         const parsedKey = parsePublishableKey(params.publishableKey);
         const environment = omsEnvironmentFromPublishableKey(params.publishableKey, params.auth) as Env;
         const storage = params.storage ?? createDefaultStorage()
@@ -56,12 +56,12 @@ class OMSClientImpl<Env extends OmsEnvironment = DefaultOmsEnvironment> {
     }
 }
 
-export type OMSClient<Env extends OmsEnvironment = DefaultOmsEnvironment> = OMSClientImpl<Env>;
+export type OMSWallet<Env extends OmsEnvironment = DefaultOmsEnvironment> = OMSWalletImpl<Env>;
 
-interface OMSClientConstructor {
-    new(params: OMSClientParams): OMSClient<DefaultOmsEnvironment>;
-    new<const Auth extends OmsAuthConfig>(params: OMSClientParams<Auth>): OMSClient<OmsEnvironment<ProvidersFromAuth<Auth>>>;
-    new(params: OMSClientBaseParams): OMSClient;
+interface OMSWalletConstructor {
+    new(params: OMSWalletParams): OMSWallet<DefaultOmsEnvironment>;
+    new<const Auth extends OmsAuthConfig>(params: OMSWalletParams<Auth>): OMSWallet<OmsEnvironment<ProvidersFromAuth<Auth>>>;
+    new(params: OMSWalletBaseParams): OMSWallet;
 }
 
-export const OMSClient: OMSClientConstructor = OMSClientImpl as unknown as OMSClientConstructor;
+export const OMSWallet: OMSWalletConstructor = OMSWalletImpl as unknown as OMSWalletConstructor;

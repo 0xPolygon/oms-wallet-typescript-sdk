@@ -57,7 +57,7 @@ the context7 MCP server is not available, set it up: https://context7.com/instal
 
 ## Project Overview
 
-This repository is a pnpm workspace for the OMS TypeScript SDK. The root package exports the `@0xsequence/typescript-sdk` library used by the React and Node examples. The SDK covers wallet authentication, OIDC redirect auth, signed WaaS requests, wallet/session storage, transaction submission, signing, access management, and indexer balance queries.
+This repository is a pnpm workspace for the OMS Wallet TypeScript SDK. The root package exports the `@polygonlabs/oms-wallet` library used by the React and Node examples. The SDK covers wallet authentication, OIDC redirect auth, signed WaaS requests, wallet/session storage, transaction submission, signing, access management, and indexer balance queries.
 
 ## Setup and Tooling
 
@@ -69,14 +69,14 @@ This repository is a pnpm workspace for the OMS TypeScript SDK. The root package
 ## Repository Layout
 
 - `src/index.ts`: Public SDK export surface. Keep public API changes intentional and reflected in docs and type tests when applicable.
-- `src/omsClient.ts`: Top-level `OMSClient` composition for wallet and indexer clients.
+- `src/omsWallet.ts`: Top-level `OMSWallet` composition for wallet and indexer clients.
 - `src/clients/walletClient.ts`: Main wallet/auth/signing/transaction/access implementation.
 - `src/clients/indexerClient.ts`: Indexer balance client and HTTP error wrapping.
 - `src/generated/waas.gen.ts`: Generated WaaS client and types.
 - `src/credentialSigner.ts`, `src/signedFetch.ts`, `src/storageManager.ts`: Credential, request-signing, and persistence boundaries.
 - `src/utils/` and `src/types/`: Shared SDK helpers and exported type definitions.
-- `packages/oms-wallet-wagmi-connector/`: ESM-only `@0xsequence/oms-wallet-wagmi-connector` package for using an
-  active OMS client as a wagmi connector.
+- `packages/oms-wallet-wagmi-connector/`: ESM-only `@polygonlabs/oms-wallet-wagmi-connector` package for using an
+  active OMS Wallet SDK instance as a wagmi connector.
 - `tests/`: Vitest coverage for wallet, OIDC, transactions, signing, access, indexer, and errors.
 - `type-tests/`: Compile-time API tests.
 - `examples/react/`: Vite React demo that consumes the SDK through the workspace.
@@ -95,8 +95,8 @@ This repository is a pnpm workspace for the OMS TypeScript SDK. The root package
 - `pnpm test`: Run Vitest and type tests.
 - `pnpm test:types`: Compile `type-tests/oidcProviderTypes.ts`; useful for public type/API changes.
 - `pnpm build`: Build CJS and ESM SDK output under `dist/`.
-- `pnpm --filter @0xsequence/oms-wallet-wagmi-connector build`: Build the wagmi connector package.
-- `pnpm --filter @0xsequence/oms-wallet-wagmi-connector test`: Run the wagmi connector package tests.
+- `pnpm --filter @polygonlabs/oms-wallet-wagmi-connector build`: Build the wagmi connector package.
+- `pnpm --filter @polygonlabs/oms-wallet-wagmi-connector test`: Run the wagmi connector package tests.
 - `pnpm build:example`: Build the React example for Vite/GitHub Pages output after `pnpm build` has produced SDK output.
 - `pnpm build:trails-actions-example`: Build the Trails Actions React example.
 - `pnpm build:wagmi-example`: Build the wagmi React example.
@@ -115,7 +115,7 @@ This repository is a pnpm workspace for the OMS TypeScript SDK. The root package
 2. Run `pnpm test` for SDK behavior changes.
 3. Run `pnpm exec tsc --noEmit` before handing off source or public type changes.
 4. Run `pnpm test:types` directly when changing public generics, overloads, exported types, OIDC provider typing, or `src/index.ts`.
-5. Run `pnpm --filter @0xsequence/oms-wallet-wagmi-connector test` and `pnpm --filter @0xsequence/oms-wallet-wagmi-connector build` when changing the wagmi connector package.
+5. Run `pnpm --filter @polygonlabs/oms-wallet-wagmi-connector test` and `pnpm --filter @polygonlabs/oms-wallet-wagmi-connector build` when changing the wagmi connector package.
 6. Run `pnpm build:node-example` when SDK exports, module resolution, or Node example usage changes.
 7. Run `pnpm build` before release/build-output work, package entrypoint changes, or React example builds from a clean tree.
 8. Run `pnpm build:example` after `pnpm build` when changing the React example, Vite config, public browser API shape, or Pages deployment assumptions.

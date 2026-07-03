@@ -7,11 +7,11 @@ import {
   type FeeOptionWithBalance,
   type AccessGrant,
   type Network,
-  type OMSClientSessionExpiredEvent,
-  type OmsWallet,
+  type OMSWalletSessionExpiredEvent,
+  type WalletAccount,
   type PendingWalletSelection,
   type WalletActivationResult,
-} from '@0xsequence/typescript-sdk'
+} from '@polygonlabs/oms-wallet'
 import './styles.css'
 import {
   EmailCodeForm,
@@ -34,7 +34,7 @@ import {
   type OidcRedirectProvider,
 } from '../../shared/example-utils'
 import { useSessionPreferences } from '../../shared/use-session-preferences'
-import { TEST_SESSION_LIFETIME_SECONDS, oms } from './omsClient'
+import { TEST_SESSION_LIFETIME_SECONDS, omsWallet } from './omsWallet'
 import { WalletKitDollarExample } from './WalletKitDollarExample'
 
 type Step = 'email' | 'code' | 'wallet-selection' | 'wallet'
@@ -62,7 +62,7 @@ function App() {
   const [lastTransactionHash, setLastTransactionHash] = useState('')
   const [lastTransactionExplorerUrl, setLastTransactionExplorerUrl] = useState('')
   const [feeOptions, setFeeOptions] = useState<FeeOptionWithBalance[]>([])
-  const [managedWallets, setManagedWallets] = useState<OmsWallet[]>([])
+  const [managedWallets, setManagedWallets] = useState<WalletAccount[]>([])
   const [newWalletReference, setNewWalletReference] = useState('')
   const [accessGrants, setAccessGrants] = useState<AccessGrant[]>([])
   const [pendingWalletSelection, setPendingWalletSelection] = useState<PendingWalletSelection | null>(null)
@@ -71,13 +71,13 @@ function App() {
   const [walletStatus, setWalletStatus] = useState('')
   const [activeWalletStatus, setActiveWalletStatus] = useState('')
   const [accessStatus, setAccessStatus] = useState('')
-  const [sessionExpiredPrompt, setSessionExpiredPrompt] = useState<OMSClientSessionExpiredEvent | null>(null)
+  const [sessionExpiredPrompt, setSessionExpiredPrompt] = useState<OMSWalletSessionExpiredEvent | null>(null)
   const [isBusy, setIsBusy] = useState(false)
   const oidcCallbackStarted = useRef(false)
   const feeSelection = useRef<FeeSelectionController | null>(null)
 
   const selectedNetwork = supportedNetworks.find(network => network.id === selectedNetworkId) ?? Networks.amoy
-  const session = oms.wallet.session
+  const session = omsWallet.wallet.session
   const {
     useManualWalletSelection,
     setUseManualWalletSelection,
@@ -92,12 +92,12 @@ function App() {
   })
 
   useEffect(() => {
-    return oms.wallet.onSessionExpired(showSessionExpired)
+    return omsWallet.wallet.onSessionExpired(showSessionExpired)
   }, [])
 
   useEffect(() => {
-    if (oms.wallet.walletAddress) {
-      setWalletAddress(oms.wallet.walletAddress)
+    if (omsWallet.wallet.walletAddress) {
+      setWalletAddress(omsWallet.wallet.walletAddress)
       setStep('wallet')
       setWalletStatus('Wallet session restored.')
       return
@@ -108,7 +108,7 @@ function App() {
       oidcCallbackStarted.current = true
       void completeOidcRedirect()
     }
-  }, [oms])
+  }, [omsWallet])
 
   useEffect(() => {
     feeSelection.current?.reject(new Error('Network changed'))
@@ -143,7 +143,7 @@ function App() {
     if (!email.trim()) return
     await run('Sending code...', setEmailAuthStatus, async () => {
       setPendingWalletSelection(null)
-      await oms.wallet.startEmailAuth({ email: email.trim() })
+      await omsWallet.wallet.startEmailAuth({ email: email.trim() })
       setStep('code')
       setEmailAuthStatus('Code sent. Check your email.')
     })
@@ -152,7 +152,7 @@ function App() {
   async function completeEmailAuth() {
     if (!code.trim()) return
     await run('Completing sign-in...', setEmailAuthStatus, async () => {
-      const result = await oms.wallet.completeEmailAuth({
+      const result = await omsWallet.wallet.completeEmailAuth({
         code: code.trim(),
         walletSelection,
         sessionLifetimeSeconds,
@@ -166,7 +166,7 @@ function App() {
     await run(`Redirecting to ${label}...`, setRedirectStatus, async () => {
       saveSessionPreferences()
       setPendingWalletSelection(null)
-      await oms.wallet.signInWithOidcRedirect({
+      await omsWallet.wallet.signInWithOidcRedirect({
         provider,
         walletSelection,
         sessionLifetimeSeconds,
@@ -176,13 +176,13 @@ function App() {
 
   async function completeOidcRedirect() {
     await run('Completing redirect sign-in...', setRedirectStatus, async () => {
-      const result = await oms.wallet.completeOidcRedirectAuth()
+      const result = await omsWallet.wallet.completeOidcRedirectAuth()
       if (result) {
         handleAuthCompletion(result, 'Redirect login complete.')
         return
       }
 
-      const restoredAddress = oms.wallet.walletAddress ?? ''
+      const restoredAddress = omsWallet.wallet.walletAddress ?? ''
       setWalletAddress(restoredAddress)
       setStep(restoredAddress ? 'wallet' : 'email')
       setWalletStatus(restoredAddress ? 'Wallet ready.' : '')
@@ -209,7 +209,7 @@ function App() {
     setWalletStatus(status)
   }
 
-  function showSessionExpired(event: OMSClientSessionExpiredEvent) {
+  function showSessionExpired(event: OMSWalletSessionExpiredEvent) {
     feeSelection.current?.reject(new Error('Session expired'))
     feeSelection.current = null
     setFeeOptions([])
@@ -245,7 +245,7 @@ function App() {
         setSessionExpiredPrompt(null)
         saveSessionPreferences()
         setPendingWalletSelection(null)
-        await oms.wallet.signInWithOidcRedirect({
+        await omsWallet.wallet.signInWithOidcRedirect({
           provider: 'google',
           walletSelection,
           sessionLifetimeSeconds,
@@ -259,7 +259,7 @@ function App() {
         setSessionExpiredPrompt(null)
         saveSessionPreferences()
         setPendingWalletSelection(null)
-        await oms.wallet.signInWithOidcRedirect({
+        await omsWallet.wallet.signInWithOidcRedirect({
           provider: 'apple',
           walletSelection,
           sessionLifetimeSeconds,
@@ -274,7 +274,7 @@ function App() {
         setSessionExpiredPrompt(null)
         setPendingWalletSelection(null)
         setEmail(email)
-        await oms.wallet.startEmailAuth({ email })
+        await omsWallet.wallet.startEmailAuth({ email })
         setStep('code')
         setEmailAuthStatus('Code sent. Check your email.')
       })
@@ -291,7 +291,7 @@ function App() {
     setStep('email')
   }
 
-  async function selectPendingWallet(wallet: OmsWallet) {
+  async function selectPendingWallet(wallet: WalletAccount) {
     if (!pendingWalletSelection) return
     await run('Selecting wallet...', setEmailAuthStatus, async () => {
       const result = await pendingWalletSelection.selectWallet({ walletId: wallet.id })
@@ -309,7 +309,7 @@ function App() {
 
   async function cancelPendingWalletSelection() {
     await run('Cancelling wallet selection...', setEmailAuthStatus, async () => {
-      await oms.wallet.signOut()
+      await omsWallet.wallet.signOut()
       setPendingWalletSelection(null)
       setWalletAddress('')
       setCode('')
@@ -320,7 +320,7 @@ function App() {
 
   async function signMessage() {
     await run('Signing message...', setWalletStatus, async () => {
-      const signature = await oms.wallet.signMessage({
+      const signature = await omsWallet.wallet.signMessage({
         network: selectedNetwork,
         message,
       })
@@ -334,7 +334,7 @@ function App() {
       setFeeOptions([])
       setLastTransactionExplorerUrl('')
       try {
-        const tx = await oms.wallet.sendTransaction({
+        const tx = await omsWallet.wallet.sendTransaction({
           network: selectedNetwork,
           to: transactionTo as `0x${string}`,
           value: BigInt(transactionValue || '0'),
@@ -352,15 +352,15 @@ function App() {
 
   async function loadManagedWallets() {
     await run('Loading wallets...', setActiveWalletStatus, async () => {
-      const wallets = await oms.wallet.listWallets()
+      const wallets = await omsWallet.wallet.listWallets()
       setManagedWallets(wallets)
       setActiveWalletStatus(`Loaded ${formatCount(wallets.length, 'wallet')}.`)
     })
   }
 
-  async function useManagedWallet(wallet: OmsWallet) {
+  async function useManagedWallet(wallet: WalletAccount) {
     await run('Switching wallet...', setActiveWalletStatus, async () => {
-      const result = await oms.wallet.useWallet({ walletId: wallet.id })
+      const result = await omsWallet.wallet.useWallet({ walletId: wallet.id })
       setWalletAddress(result.walletAddress)
       clearWalletOperationResults()
       setAccessGrants([])
@@ -375,7 +375,7 @@ function App() {
   async function createManagedWallet() {
     await run('Creating wallet...', setActiveWalletStatus, async () => {
       const reference = newWalletReference.trim()
-      const result = await oms.wallet.createWallet({
+      const result = await omsWallet.wallet.createWallet({
         reference: reference || undefined,
       })
       setWalletAddress(result.walletAddress)
@@ -393,7 +393,7 @@ function App() {
 
   async function loadAccess() {
     await run('Loading access...', setAccessStatus, async () => {
-      const grants = await oms.wallet.listAccess()
+      const grants = await omsWallet.wallet.listAccess()
       setAccessGrants(grants)
       setAccessStatus(`Loaded ${formatCount(grants.length, 'access grant')}.`)
     })
@@ -406,7 +406,7 @@ function App() {
     }
 
     await run('Revoking access...', setAccessStatus, async () => {
-      await oms.wallet.revokeAccess({ targetCredentialId: grant.credentialId })
+      await omsWallet.wallet.revokeAccess({ targetCredentialId: grant.credentialId })
       setAccessGrants(current => current.filter(item => item.credentialId !== grant.credentialId))
       setAccessStatus('Access grant revoked.')
     })
@@ -414,7 +414,7 @@ function App() {
 
   async function getIdToken() {
     await run('Getting ID token...', setWalletStatus, async () => {
-      const idToken = await oms.wallet.getIdToken()
+      const idToken = await omsWallet.wallet.getIdToken()
       setLastIdToken(idToken)
       setWalletStatus('ID token issued.')
     })
@@ -443,7 +443,7 @@ function App() {
 
   async function signOut() {
     await run('Signing out...', setWalletStatus, async () => {
-      await oms.wallet.signOut()
+      await omsWallet.wallet.signOut()
       setCode('')
       setPendingWalletSelection(null)
       setWalletAddress('')
@@ -482,7 +482,7 @@ function App() {
     <main className="shell">
       <section className="panel">
         <header>
-          <p className="eyebrow">OMS Client Typescript SDK</p>
+          <p className="eyebrow">OMS Wallet TypeScript SDK</p>
           <h1>Wallet Demo</h1>
           {step === 'email' && (
             <SessionOptions

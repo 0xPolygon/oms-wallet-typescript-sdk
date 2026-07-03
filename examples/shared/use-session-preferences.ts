@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useState } from 'react'
-import type { WalletSelectionBehavior } from '@0xsequence/typescript-sdk'
+import type { WalletSelectionBehavior } from '@polygonlabs/oms-wallet'
 import { readStoredBoolean, readStoredPositiveInteger } from './example-utils'
 
 export function useSessionPreferences({

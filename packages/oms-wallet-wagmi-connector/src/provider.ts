@@ -12,12 +12,12 @@ import {
 
 import type {
     MaybePromise,
-    OmsWalletClientLike,
-    OmsWalletConnectorParameters,
-    OmsWalletNetwork,
-    OmsWalletSendTransactionResponse,
-    OmsWalletProviderTransactionRequest,
-    OmsWalletTransactionOptions,
+    OMSWalletConnectorParameters,
+    OMSWalletNetwork,
+    OMSWalletSendTransactionResponse,
+    OMSWalletProviderTransactionRequest,
+    OMSWalletTransactionOptions,
+    OMSWalletLike,
 } from "./types.js";
 
 const providerEvents = ["accountsChanged", "chainChanged", "connect", "disconnect", "message"] as const;
@@ -25,27 +25,27 @@ const providerEvents = ["accountsChanged", "chainChanged", "connect", "disconnec
 type ProviderEvent = typeof providerEvents[number];
 type ProviderListener = (...args: unknown[]) => void;
 
-export class OmsWalletProviderRpcError extends Error {
+export class OMSWalletProviderRpcError extends Error {
     constructor(
         public readonly code: number,
         message: string,
         public readonly data?: unknown,
     ) {
         super(message);
-        this.name = "OmsWalletProviderRpcError";
+        this.name = "OMSWalletProviderRpcError";
     }
 }
 
-export class OmsWalletProvider {
+export class OMSWalletProvider {
     private readonly listeners = new Map<ProviderEvent, Set<ProviderListener>>();
 
     constructor(
-        private readonly params: OmsWalletConnectorParameters,
-        private readonly getClient: () => MaybePromise<OmsWalletClientLike>,
+        private readonly params: OMSWalletConnectorParameters,
+        private readonly getOmsWallet: () => MaybePromise<OMSWalletLike>,
         private readonly getChainId: () => number,
         private readonly setChainId: (chainId: number) => void,
         private readonly syncChainId: (chainId: number) => void,
-        private readonly getNetworks: () => MaybePromise<readonly OmsWalletNetwork[]>,
+        private readonly getNetworks: () => MaybePromise<readonly OMSWalletNetwork[]>,
         private readonly isChainConfigured: (chainId: number) => boolean,
         private readonly connectWallet: (parameters?: {isReconnecting?: boolean}) => Promise<readonly Address[]>,
         private readonly isDisconnected: () => MaybePromise<boolean>,
@@ -101,14 +101,14 @@ export class OmsWalletProvider {
         if (await this.isDisconnected()) {
             return [];
         }
-        const address = (await this.getClient()).wallet.walletAddress;
+        const address = (await this.getOmsWallet()).wallet.walletAddress;
         return address ? [getAddress(address)] : [];
     }
 
     private async requireAccount(): Promise<Address> {
         const [account] = await this.accounts();
         if (!account) {
-            throw new OmsWalletProviderRpcError(4100, "No active OMS wallet session.");
+            throw new OMSWalletProviderRpcError(4100, "No active OMS wallet session.");
         }
         return account;
     }
@@ -116,8 +116,8 @@ export class OmsWalletProvider {
     private async signMessage(params: unknown): Promise<string> {
         const [message, account] = paramsAsTuple(params, "personal_sign");
         await this.requireMatchingAccount(account, "personal_sign");
-        const client = await this.getClient();
-        return client.wallet.signMessage({
+        const omsWallet = await this.getOmsWallet();
+        return omsWallet.wallet.signMessage({
             network: await this.currentNetwork(),
             message: normalizeMessage(message),
         });
@@ -126,15 +126,15 @@ export class OmsWalletProvider {
     private async signTypedData(params: unknown): Promise<string> {
         const [account, typedData] = paramsAsTuple(params, "eth_signTypedData_v4");
         await this.requireMatchingAccount(account, "eth_signTypedData_v4");
-        const client = await this.getClient();
-        return client.wallet.signTypedData({
+        const omsWallet = await this.getOmsWallet();
+        return omsWallet.wallet.signTypedData({
             network: await this.currentNetwork(),
             typedData: normalizeTypedData(typedData),
         });
     }
 
     private async sendTransaction(params: unknown): Promise<Hex> {
-        const [request] = paramsAsTuple(params, "eth_sendTransaction") as [OmsWalletProviderTransactionRequest];
+        const [request] = paramsAsTuple(params, "eth_sendTransaction") as [OMSWalletProviderTransactionRequest];
         if (!request || typeof request !== "object") {
             throw invalidParams("eth_sendTransaction requires a transaction object.");
         }
@@ -144,7 +144,7 @@ export class OmsWalletProvider {
             throw unsupportedMethod("eth_sendTransaction without a recipient address; contract deployment is not supported by the current OMS wallet SDK");
         }
 
-        const client = await this.getClient();
+        const omsWallet = await this.getOmsWallet();
         const transactionChainId = request.chainId === undefined
             ? this.getChainId()
             : normalizeChainId(request.chainId);
@@ -160,14 +160,14 @@ export class OmsWalletProvider {
             waitForStatus: true,
         } as const;
         const value = request.value === undefined ? 0n : normalizeValue(request.value);
-        let response: OmsWalletSendTransactionResponse;
+        let response: OMSWalletSendTransactionResponse;
         try {
             response = request.data === undefined
-                ? await client.wallet.sendTransaction({
+                ? await omsWallet.wallet.sendTransaction({
                     ...transactionBase,
                     value,
                 })
-                : await client.wallet.sendTransaction({
+                : await omsWallet.wallet.sendTransaction({
                     ...transactionBase,
                     value,
                     data: request.data,
@@ -177,7 +177,7 @@ export class OmsWalletProvider {
         }
 
         if (!response.txnHash || !isHex(response.txnHash)) {
-            throw new OmsWalletProviderRpcError(
+            throw new OMSWalletProviderRpcError(
                 -32603,
                 missingTransactionHashMessage(response),
                 response,
@@ -191,7 +191,7 @@ export class OmsWalletProvider {
         const [request] = paramsAsTuple(params, "wallet_switchEthereumChain") as [{chainId?: Hex | number | string}];
         const chainId = normalizeChainId(request?.chainId);
         if (!this.isChainConfigured(chainId)) {
-            throw new OmsWalletProviderRpcError(4901, `Chain ${chainId} is not configured in wagmi.`);
+            throw new OMSWalletProviderRpcError(4901, `Chain ${chainId} is not configured in wagmi.`);
         }
         await this.requireNetwork(chainId);
         this.syncChainId(chainId);
@@ -199,22 +199,22 @@ export class OmsWalletProvider {
         return null;
     }
 
-    private async currentNetwork(): Promise<OmsWalletNetwork> {
+    private async currentNetwork(): Promise<OMSWalletNetwork> {
         return this.requireNetwork(this.getChainId());
     }
 
-    private async requireNetwork(chainId: number): Promise<OmsWalletNetwork> {
+    private async requireNetwork(chainId: number): Promise<OMSWalletNetwork> {
         const network = (await this.getNetworks()).find(candidate => candidate.id === chainId);
         if (!network) {
-            throw new OmsWalletProviderRpcError(4901, `OMS does not support chain ${chainId}.`);
+            throw new OMSWalletProviderRpcError(4901, `OMS does not support chain ${chainId}.`);
         }
         return network;
     }
 
     private async resolveTransactionOptions(
-        request: OmsWalletProviderTransactionRequest,
+        request: OMSWalletProviderTransactionRequest,
         chainId: number,
-    ): Promise<OmsWalletTransactionOptions | undefined> {
+    ): Promise<OMSWalletTransactionOptions | undefined> {
         const options = this.params.transactionOptions;
         if (typeof options === "function") {
             return options({chainId, request});
@@ -242,7 +242,7 @@ export class OmsWalletProvider {
 
         const requestedAccount = getAddress(account);
         if (requestedAccount !== activeAccount) {
-            throw new OmsWalletProviderRpcError(
+            throw new OMSWalletProviderRpcError(
                 4100,
                 `${method} requested ${requestedAccount}, but the active OMS wallet is ${activeAccount}.`,
             );
@@ -270,7 +270,7 @@ function paramsAsTuple(params: unknown, method: string): unknown[] {
     return params;
 }
 
-function assertKnownTransactionFields(request: OmsWalletProviderTransactionRequest): void {
+function assertKnownTransactionFields(request: OMSWalletProviderTransactionRequest): void {
     const unsupportedFields = Object.keys(request).filter(field =>
         !supportedTransactionFields.has(field) &&
         !ignoredTransactionFields.has(field) &&
@@ -321,11 +321,11 @@ function missingTransactionHashMessage(response: {txnId?: unknown}): string {
     return `OMS transaction did not produce the EVM transaction hash required by wagmi sendTransaction.${suffix}`;
 }
 
-function transactionFailed(error: unknown): OmsWalletProviderRpcError {
-    if (error instanceof OmsWalletProviderRpcError) {
+function transactionFailed(error: unknown): OMSWalletProviderRpcError {
+    if (error instanceof OMSWalletProviderRpcError) {
         return error;
     }
-    return new OmsWalletProviderRpcError(-32603, errorMessage(error), error);
+    return new OMSWalletProviderRpcError(-32603, errorMessage(error), error);
 }
 
 function errorMessage(error: unknown): string {
@@ -359,12 +359,12 @@ function normalizeChainId(chainId: Hex | bigint | number | string | undefined): 
     return normalized;
 }
 
-function invalidParams(message: string): OmsWalletProviderRpcError {
-    return new OmsWalletProviderRpcError(-32602, message);
+function invalidParams(message: string): OMSWalletProviderRpcError {
+    return new OMSWalletProviderRpcError(-32602, message);
 }
 
-function unsupportedMethod(method: string): OmsWalletProviderRpcError {
-    return new OmsWalletProviderRpcError(4200, `Unsupported OMS provider method: ${method}.`);
+function unsupportedMethod(method: string): OMSWalletProviderRpcError {
+    return new OMSWalletProviderRpcError(4200, `Unsupported OMS provider method: ${method}.`);
 }
 
 export function stringToPersonalSignHex(message: string): Hex {

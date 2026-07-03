@@ -17,7 +17,7 @@ How testing works in this repo. `AGENTS.md` points here so agents know how to ve
 - **Location:** `tests/**/*.ts`
 - **Run:** `pnpm exec vitest run` (or `pnpm test` which runs this then type tests)
 - **Package tests:** `packages/oms-wallet-wagmi-connector/tests/**/*.ts` run from that package with
-  `pnpm --filter @0xsequence/oms-wallet-wagmi-connector test`
+  `pnpm --filter @polygonlabs/oms-wallet-wagmi-connector test`
 
 ## Integration / type tests
 
@@ -34,8 +34,8 @@ How testing works in this repo. `AGENTS.md` points here so agents know how to ve
 |---|---|
 | Changed publishable package versions | `pnpm check:package-versions` |
 | Changed SDK behavior | `pnpm exec vitest run` |
-| Changed wagmi connector behavior | `pnpm --filter @0xsequence/oms-wallet-wagmi-connector test` |
-| Changed wagmi connector types/build | `pnpm --filter @0xsequence/oms-wallet-wagmi-connector build` |
+| Changed wagmi connector behavior | `pnpm --filter @polygonlabs/oms-wallet-wagmi-connector test` |
+| Changed wagmi connector types/build | `pnpm --filter @polygonlabs/oms-wallet-wagmi-connector build` |
 | Changed React example | `pnpm build:example` |
 | Changed Trails Actions example | `pnpm build:trails-actions-example` |
 | Changed wagmi React example | `pnpm build:wagmi-example` |
@@ -57,7 +57,7 @@ How testing works in this repo. `AGENTS.md` points here so agents know how to ve
 
 - Use `docs/error-contracts.md` as the audit matrix for public SDK/connector error surfaces,
   recovery semantics, `upstreamError` expectations, and owning tests.
-- Exercise real public runtime APIs such as `oms.wallet.*`, `oms.indexer.*`, exported storage
+- Exercise real public runtime APIs such as `omsWallet.wallet.*`, `omsWallet.indexer.*`, exported storage
   managers, signers, or wagmi connector/provider methods.
 - Do not snapshot manually constructed `OmsSdkError` subclasses unless the error class or helper
   is the unit under test.

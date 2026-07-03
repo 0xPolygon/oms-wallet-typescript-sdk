@@ -3,7 +3,7 @@ import {afterEach, describe, expect, it, vi} from "vitest";
 import {WalletClient} from "../src/clients/walletClient";
 import type {CredentialSigner} from "../src/credentialSigner";
 import {Networks} from "../src/networks";
-import {OMSClient} from "../src/omsClient";
+import {OMSWallet} from "../src/omsWallet";
 import {MemoryStorageManager} from "../src/storageManager";
 import {Constants} from "../src/utils/constants";
 import {RequestUtils} from "../src/utils/requestUtils";
@@ -69,7 +69,7 @@ describe("WalletClient session storage", () => {
     it("falls back to memory storage when localStorage is unavailable", () => {
         vi.stubGlobal("localStorage", undefined);
 
-        const client = new OMSClient({
+        const client = new OMSWallet({
             publishableKey: "pk_dev_sdbx_project_key",
             credentialSigner: new MockSigner(),
         });
@@ -251,7 +251,7 @@ describe("WalletClient session storage", () => {
         storage.set(Constants.sessionExpiresAtStorageKey, "2000-01-01T00:00:00Z");
         storage.set(Constants.sessionAuthStorageKey, serializedAuth());
 
-        const client = new OMSClient({
+        const client = new OMSWallet({
             publishableKey: "pk_dev_sdbx_project_key",
             storage,
             credentialSigner: signer,
@@ -282,7 +282,7 @@ describe("WalletClient session storage", () => {
         });
 
         const nextOnSessionExpired = vi.fn();
-        const nextClient = new OMSClient({
+        const nextClient = new OMSWallet({
             publishableKey: "pk_dev_sdbx_project_key",
             storage,
             credentialSigner: signer,
@@ -312,7 +312,7 @@ describe("WalletClient session storage", () => {
         storage.set(Constants.sessionExpiresAtStorageKey, "2000-01-01T00:00:00Z");
         storage.set(Constants.sessionAuthStorageKey, serializedAuth());
 
-        const client = new OMSClient({
+        const client = new OMSWallet({
             publishableKey: "pk_dev_sdbx_project_key",
             storage,
             credentialSigner: signer,
@@ -337,7 +337,7 @@ describe("WalletClient session storage", () => {
         storage.set(Constants.sessionExpiresAtStorageKey, "2000-01-01T00:00:00Z");
         storage.set(Constants.sessionAuthStorageKey, serializedAuth());
 
-        const client = new OMSClient({
+        const client = new OMSWallet({
             publishableKey: "pk_dev_sdbx_project_key",
             storage,
             credentialSigner: signer,
@@ -631,7 +631,7 @@ describe("WalletClient session storage", () => {
         storage.set(Constants.sessionExpiresAtStorageKey, "2099-01-01T00:00:00Z");
         storage.set(Constants.sessionAuthStorageKey, serializedAuth(googleAuth()));
 
-        const client = new OMSClient({
+        const client = new OMSWallet({
             publishableKey: "pk_dev_sdbx_project_key",
             storage,
             credentialSigner: new MockSigner(),
@@ -663,7 +663,7 @@ describe("WalletClient session storage", () => {
         });
         vi.stubGlobal("fetch", fetchMock);
 
-        const client = new OMSClient({
+        const client = new OMSWallet({
             publishableKey: "pk_dev_sdbx_project_key",
             storage,
             credentialSigner: new MockSigner(),
@@ -683,7 +683,7 @@ describe("WalletClient session storage", () => {
         storage.set(Constants.walletAddressStorageKey, "0x1111111111111111111111111111111111111111");
         storage.set(Constants.sessionExpiresAtStorageKey, "2099-01-01T00:00:00Z");
 
-        const client = new OMSClient({
+        const client = new OMSWallet({
             publishableKey: "pk_dev_sdbx_project_key",
             storage,
             credentialSigner: new MockSigner(),
@@ -708,7 +708,7 @@ describe("WalletClient session storage", () => {
         storage.set("omsWallet_session_login_type", "google-auth");
         storage.set("omsWallet_session_email", "user@example.com");
 
-        const client = new OMSClient({
+        const client = new OMSWallet({
             publishableKey: "pk_dev_sdbx_project_key",
             storage,
             credentialSigner: new MockSigner(),

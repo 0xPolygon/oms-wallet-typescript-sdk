@@ -3,7 +3,7 @@ import { describe, expect, it, vi } from "vitest";
 import { http, type Address, type Chain, type Hex } from "viem";
 
 import { OmsTransactionError } from "../../../src/index.js";
-import { OmsWalletProviderRpcError, omsWalletConnector, stringToPersonalSignHex, type OmsWalletClientLike } from "../src/index.js";
+import { OMSWalletProviderRpcError, omsWalletConnector, stringToPersonalSignHex, type OMSWalletLike } from "../src/index.js";
 
 const polygon = {
     id: 137,
@@ -45,20 +45,20 @@ const networks = [
 
 describe("omsWalletConnector", () => {
     it("rejects connect when there is no active OMS wallet session", async () => {
-        const client = createClient();
-        const config = createWagmiConfig(client);
+        const omsWallet = createOmsWallet();
+        const config = createWagmiConfig(omsWallet);
 
         await expect(connect(config, {
             connector: config.connectors[0],
             chainId: polygon.id,
-        })).rejects.toThrow("Authenticate with the OMS SDK before connecting through wagmi.");
+        })).rejects.toThrow("Authenticate with the OMS Wallet SDK before connecting through wagmi.");
     });
 
     it("rejects connect when initialChainId is not configured in wagmi", async () => {
-        const client = createClient({walletAddress: "0x9999999999999999999999999999999999999999"});
+        const omsWallet = createOmsWallet({walletAddress: "0x9999999999999999999999999999999999999999"});
         const config = createConfig({
             chains: [polygon],
-            connectors: [omsWalletConnector({client, networks, initialChainId: mainnet.id})],
+            connectors: [omsWalletConnector({omsWallet, networks, initialChainId: mainnet.id})],
             transports: {
                 [polygon.id]: http(),
             },
@@ -68,10 +68,10 @@ describe("omsWalletConnector", () => {
     });
 
     it("rejects connect when no configured wagmi chain is supported by OMS", async () => {
-        const client = createClient({walletAddress: "0x9999999999999999999999999999999999999999"});
+        const omsWallet = createOmsWallet({walletAddress: "0x9999999999999999999999999999999999999999"});
         const config = createConfig({
             chains: [optimism],
-            connectors: [omsWalletConnector({client, networks})],
+            connectors: [omsWalletConnector({omsWallet, networks})],
             transports: {
                 [optimism.id]: http(),
             },
@@ -81,13 +81,13 @@ describe("omsWalletConnector", () => {
     });
 
     it("signs messages and typed data through the OMS wallet", async () => {
-        const client = createClient({walletAddress: "0x9999999999999999999999999999999999999999"});
-        const config = createWagmiConfig(client);
+        const omsWallet = createOmsWallet({walletAddress: "0x9999999999999999999999999999999999999999"});
+        const config = createWagmiConfig(omsWallet);
 
         await connect(config, {connector: config.connectors[0]});
 
         await expect(signMessage(config, {message: "hello"})).resolves.toBe("0xsigned-message");
-        expect(client.wallet.signMessage).toHaveBeenCalledWith({
+        expect(omsWallet.wallet.signMessage).toHaveBeenCalledWith({
             network: networks[0],
             message: "hello",
         });
@@ -101,7 +101,7 @@ describe("omsWalletConnector", () => {
             message: {contents: "hello"},
         })).resolves.toBe("0xsigned-typed-data");
 
-        expect(client.wallet.signTypedData).toHaveBeenCalledWith({
+        expect(omsWallet.wallet.signTypedData).toHaveBeenCalledWith({
             network: networks[0],
             typedData: expect.objectContaining({
                 domain: {name: "OMS", chainId: 137},
@@ -111,8 +111,8 @@ describe("omsWalletConnector", () => {
     });
 
     it("rejects provider signing validation errors before calling OMS", async () => {
-        const client = createClient({walletAddress: "0x9999999999999999999999999999999999999999"});
-        const config = createWagmiConfig(client);
+        const omsWallet = createOmsWallet({walletAddress: "0x9999999999999999999999999999999999999999"});
+        const config = createWagmiConfig(omsWallet);
 
         await connect(config, {connector: config.connectors[0]});
         const provider = await config.connectors[0].getProvider();
@@ -121,23 +121,23 @@ describe("omsWalletConnector", () => {
             method: "personal_sign",
             params: {message: "hello"},
         })).rejects.toMatchObject({
-            name: "OmsWalletProviderRpcError",
+            name: "OMSWalletProviderRpcError",
             code: -32602,
             message: "personal_sign requires positional parameters.",
         });
         await expect(provider.request({
             method: "personal_sign",
-            params: [123, client.wallet.walletAddress],
+            params: [123, omsWallet.wallet.walletAddress],
         })).rejects.toMatchObject({
-            name: "OmsWalletProviderRpcError",
+            name: "OMSWalletProviderRpcError",
             code: -32602,
             message: "Signing message must be a string.",
         });
         await expect(provider.request({
             method: "eth_signTypedData_v4",
-            params: [client.wallet.walletAddress, "{"],
+            params: [omsWallet.wallet.walletAddress, "{"],
         })).rejects.toMatchObject({
-            name: "OmsWalletProviderRpcError",
+            name: "OMSWalletProviderRpcError",
             code: -32602,
             message: "Typed data must be JSON when passed as a string.",
         });
@@ -145,17 +145,17 @@ describe("omsWalletConnector", () => {
             method: "eth_signTypedData_v4",
             params: ["0x1111111111111111111111111111111111111111", {message: "hello"}],
         })).rejects.toMatchObject({
-            name: "OmsWalletProviderRpcError",
+            name: "OMSWalletProviderRpcError",
             code: 4100,
             message: "eth_signTypedData_v4 requested 0x1111111111111111111111111111111111111111, but the active OMS wallet is 0x9999999999999999999999999999999999999999.",
         });
-        expect(client.wallet.signMessage).not.toHaveBeenCalled();
-        expect(client.wallet.signTypedData).not.toHaveBeenCalled();
+        expect(omsWallet.wallet.signMessage).not.toHaveBeenCalled();
+        expect(omsWallet.wallet.signTypedData).not.toHaveBeenCalled();
     });
 
     it("sends transactions through the OMS wallet and returns the EVM transaction hash", async () => {
-        const client = createClient({walletAddress: "0x9999999999999999999999999999999999999999"});
-        const config = createWagmiConfig(client);
+        const omsWallet = createOmsWallet({walletAddress: "0x9999999999999999999999999999999999999999"});
+        const config = createWagmiConfig(omsWallet);
 
         await connect(config, {connector: config.connectors[0]});
 
@@ -164,7 +164,7 @@ describe("omsWalletConnector", () => {
             value: 1n,
         })).resolves.toBe("0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa");
 
-        expect(client.wallet.sendTransaction).toHaveBeenCalledWith({
+        expect(omsWallet.wallet.sendTransaction).toHaveBeenCalledWith({
             network: networks[0],
             to: "0x1111111111111111111111111111111111111111",
             value: 1n,
@@ -174,8 +174,8 @@ describe("omsWalletConnector", () => {
     });
 
     it("rejects provider transaction validation errors before calling OMS", async () => {
-        const client = createClient({walletAddress: "0x9999999999999999999999999999999999999999"});
-        const config = createWagmiConfig(client);
+        const omsWallet = createOmsWallet({walletAddress: "0x9999999999999999999999999999999999999999"});
+        const config = createWagmiConfig(omsWallet);
         const connector = config.connectors[0];
 
         await connect(config, {connector});
@@ -185,52 +185,52 @@ describe("omsWalletConnector", () => {
             method: "eth_sendTransaction",
             params: {to: "0x1111111111111111111111111111111111111111"},
         })).rejects.toMatchObject({
-            name: "OmsWalletProviderRpcError",
+            name: "OMSWalletProviderRpcError",
             code: -32602,
             message: "eth_sendTransaction requires positional parameters.",
         });
         await expect(provider.request({
             method: "eth_sendTransaction",
             params: [{
-                from: client.wallet.walletAddress,
+                from: omsWallet.wallet.walletAddress,
                 value: "0x1",
             }],
         })).rejects.toMatchObject({
-            name: "OmsWalletProviderRpcError",
+            name: "OMSWalletProviderRpcError",
             code: 4200,
             message: "Unsupported OMS provider method: eth_sendTransaction without a recipient address; contract deployment is not supported by the current OMS wallet SDK.",
         });
         await expect(provider.request({
             method: "eth_sendTransaction",
             params: [{
-                from: client.wallet.walletAddress,
+                from: omsWallet.wallet.walletAddress,
                 to: "not-an-address",
                 value: "0x1",
             }],
         })).rejects.toMatchObject({
-            name: "OmsWalletProviderRpcError",
+            name: "OMSWalletProviderRpcError",
             code: 4200,
             message: "Unsupported OMS provider method: eth_sendTransaction without a recipient address; contract deployment is not supported by the current OMS wallet SDK.",
         });
         await expect(provider.request({
             method: "eth_sendTransaction",
             params: [{
-                from: client.wallet.walletAddress,
+                from: omsWallet.wallet.walletAddress,
                 to: "0x1111111111111111111111111111111111111111",
                 value: "0x1",
                 chainId: "not-a-chain",
             }],
         })).rejects.toMatchObject({
-            name: "OmsWalletProviderRpcError",
+            name: "OMSWalletProviderRpcError",
             code: -32602,
             message: "Chain ID must be a positive safe integer.",
         });
-        expect(client.wallet.sendTransaction).not.toHaveBeenCalled();
+        expect(omsWallet.wallet.sendTransaction).not.toHaveBeenCalled();
     });
 
     it("rejects non-quantity transaction values at the provider boundary", async () => {
-        const client = createClient({walletAddress: "0x9999999999999999999999999999999999999999"});
-        const config = createWagmiConfig(client);
+        const omsWallet = createOmsWallet({walletAddress: "0x9999999999999999999999999999999999999999"});
+        const config = createWagmiConfig(omsWallet);
         const connector = config.connectors[0];
 
         await connect(config, {connector});
@@ -239,17 +239,17 @@ describe("omsWalletConnector", () => {
         await expect(provider.request({
             method: "eth_sendTransaction",
             params: [{
-                from: client.wallet.walletAddress,
+                from: omsWallet.wallet.walletAddress,
                 to: "0x1111111111111111111111111111111111111111",
                 value: 1,
             }],
         })).rejects.toThrow("Transaction value must be a JSON-RPC quantity hex string.");
-        expect(client.wallet.sendTransaction).not.toHaveBeenCalled();
+        expect(omsWallet.wallet.sendTransaction).not.toHaveBeenCalled();
     });
 
     it("uses a transaction request chainId without switching the connector chain", async () => {
-        const client = createClient({walletAddress: "0x9999999999999999999999999999999999999999"});
-        const config = createWagmiConfig(client);
+        const omsWallet = createOmsWallet({walletAddress: "0x9999999999999999999999999999999999999999"});
+        const config = createWagmiConfig(omsWallet);
         const connector = config.connectors[0];
 
         await connect(config, {connector});
@@ -259,7 +259,7 @@ describe("omsWalletConnector", () => {
             value: 1n,
         })).resolves.toBe("0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa");
 
-        expect(client.wallet.sendTransaction).toHaveBeenCalledWith({
+        expect(omsWallet.wallet.sendTransaction).toHaveBeenCalledWith({
             network: networks[1],
             to: "0x1111111111111111111111111111111111111111",
             value: 1n,
@@ -270,13 +270,13 @@ describe("omsWalletConnector", () => {
     });
 
     it("resolves transaction options per wagmi transaction request", async () => {
-        const client = createClient({walletAddress: "0x9999999999999999999999999999999999999999"});
+        const omsWallet = createOmsWallet({walletAddress: "0x9999999999999999999999999999999999999999"});
         const selectFeeOption = vi.fn(async () => ({token: "USDC"}));
         const transactionOptions = vi.fn(() => ({
             selectFeeOption,
             statusPolling: {timeoutMs: 10_000},
         }));
-        const config = createWagmiConfig(client, {transactionOptions});
+        const config = createWagmiConfig(omsWallet, {transactionOptions});
 
         await connect(config, {connector: config.connectors[0]});
         await sendTransaction(config, {
@@ -293,7 +293,7 @@ describe("omsWalletConnector", () => {
                 value: "0x1",
             }),
         });
-        expect(client.wallet.sendTransaction).toHaveBeenCalledWith({
+        expect(omsWallet.wallet.sendTransaction).toHaveBeenCalledWith({
             network: networks[1],
             to: "0x1111111111111111111111111111111111111111",
             value: 1n,
@@ -305,8 +305,8 @@ describe("omsWalletConnector", () => {
     });
 
     it("rejects waitForStatus false because wagmi sendTransaction requires a hash", async () => {
-        const client = createClient({walletAddress: "0x9999999999999999999999999999999999999999"});
-        const config = createWagmiConfig(client, {
+        const omsWallet = createOmsWallet({walletAddress: "0x9999999999999999999999999999999999999999"});
+        const config = createWagmiConfig(omsWallet, {
             transactionOptions: {
                 waitForStatus: false,
             } as never,
@@ -318,16 +318,16 @@ describe("omsWalletConnector", () => {
             to: "0x1111111111111111111111111111111111111111",
             value: 1n,
         })).rejects.toThrow("waitForStatus: false is not supported");
-        expect(client.wallet.sendTransaction).not.toHaveBeenCalled();
+        expect(omsWallet.wallet.sendTransaction).not.toHaveBeenCalled();
     });
 
     it("rejects with the OMS response when a sent transaction has no EVM hash", async () => {
-        const client = createClient({walletAddress: "0x9999999999999999999999999999999999999999"});
-        client.wallet.sendTransaction = vi.fn(async () => ({
+        const omsWallet = createOmsWallet({walletAddress: "0x9999999999999999999999999999999999999999"});
+        omsWallet.wallet.sendTransaction = vi.fn(async () => ({
             txnId: "txn-without-hash",
             status: "pending",
         }));
-        const config = createWagmiConfig(client);
+        const config = createWagmiConfig(omsWallet);
 
         await connect(config, {connector: config.connectors[0]});
 
@@ -349,10 +349,10 @@ describe("omsWalletConnector", () => {
     });
 
     it("rejects transactions for wagmi-configured chains that OMS does not support", async () => {
-        const client = createClient({walletAddress: "0x9999999999999999999999999999999999999999"});
+        const omsWallet = createOmsWallet({walletAddress: "0x9999999999999999999999999999999999999999"});
         const config = createConfig({
             chains: [polygon, optimism],
-            connectors: [omsWalletConnector({client, networks})],
+            connectors: [omsWalletConnector({omsWallet, networks})],
             transports: {
                 [polygon.id]: http(),
                 [optimism.id]: http(),
@@ -366,26 +366,26 @@ describe("omsWalletConnector", () => {
         await expect(provider.request({
             method: "eth_sendTransaction",
             params: [{
-                from: client.wallet.walletAddress,
+                from: omsWallet.wallet.walletAddress,
                 to: "0x1111111111111111111111111111111111111111",
                 value: "0x1",
                 chainId: "0xa",
             }],
         })).rejects.toMatchObject({
-            name: "OmsWalletProviderRpcError",
+            name: "OMSWalletProviderRpcError",
             code: 4901,
             message: "OMS does not support chain 10.",
         });
-        expect(client.wallet.sendTransaction).not.toHaveBeenCalled();
+        expect(omsWallet.wallet.sendTransaction).not.toHaveBeenCalled();
     });
 
     it("wraps SDK transaction failures as provider RPC errors", async () => {
-        const client = createClient({walletAddress: "0x9999999999999999999999999999999999999999"});
+        const omsWallet = createOmsWallet({walletAddress: "0x9999999999999999999999999999999999999999"});
         const sdkError = createTransactionExecutionError();
-        client.wallet.sendTransaction = vi.fn(async () => {
+        omsWallet.wallet.sendTransaction = vi.fn(async () => {
             throw sdkError;
         });
-        const config = createWagmiConfig(client);
+        const config = createWagmiConfig(omsWallet);
         const connector = config.connectors[0];
 
         await connect(config, {connector});
@@ -394,12 +394,12 @@ describe("omsWalletConnector", () => {
         await expect(provider.request({
             method: "eth_sendTransaction",
             params: [{
-                from: client.wallet.walletAddress,
+                from: omsWallet.wallet.walletAddress,
                 to: "0x1111111111111111111111111111111111111111",
                 value: "0x1",
             }],
         })).rejects.toMatchObject({
-            name: "OmsWalletProviderRpcError",
+            name: "OMSWalletProviderRpcError",
             code: -32603,
             message: "Transaction execution failed before status could be confirmed",
             data: expect.objectContaining({
@@ -418,11 +418,11 @@ describe("omsWalletConnector", () => {
     });
 
     it("preserves SDK transaction error details through wagmi sendTransaction wrapping", async () => {
-        const client = createClient({walletAddress: "0x9999999999999999999999999999999999999999"});
-        client.wallet.sendTransaction = vi.fn(async () => {
+        const omsWallet = createOmsWallet({walletAddress: "0x9999999999999999999999999999999999999999"});
+        omsWallet.wallet.sendTransaction = vi.fn(async () => {
             throw createTransactionExecutionError();
         });
-        const config = createWagmiConfig(client);
+        const config = createWagmiConfig(omsWallet);
 
         await connect(config, {connector: config.connectors[0]});
 
@@ -452,8 +452,8 @@ describe("omsWalletConnector", () => {
     });
 
     it("ignores wallet-managed transaction fields when sending transactions", async () => {
-        const client = createClient({walletAddress: "0x9999999999999999999999999999999999999999"});
-        const config = createWagmiConfig(client);
+        const omsWallet = createOmsWallet({walletAddress: "0x9999999999999999999999999999999999999999"});
+        const config = createWagmiConfig(omsWallet);
         const connector = config.connectors[0];
 
         await connect(config, {connector});
@@ -462,7 +462,7 @@ describe("omsWalletConnector", () => {
         await expect(provider.request({
             method: "eth_sendTransaction",
             params: [{
-                from: client.wallet.walletAddress,
+                from: omsWallet.wallet.walletAddress,
                 to: "0x1111111111111111111111111111111111111111",
                 value: "0x1",
                 gas: "0x5208",
@@ -474,7 +474,7 @@ describe("omsWalletConnector", () => {
                 accessList: [],
             }],
         })).resolves.toBe("0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa");
-        expect(client.wallet.sendTransaction).toHaveBeenCalledWith({
+        expect(omsWallet.wallet.sendTransaction).toHaveBeenCalledWith({
             network: networks[0],
             to: "0x1111111111111111111111111111111111111111",
             value: 1n,
@@ -483,8 +483,8 @@ describe("omsWalletConnector", () => {
     });
 
     it("rejects unknown transaction fields", async () => {
-        const client = createClient({walletAddress: "0x9999999999999999999999999999999999999999"});
-        const config = createWagmiConfig(client);
+        const omsWallet = createOmsWallet({walletAddress: "0x9999999999999999999999999999999999999999"});
+        const config = createWagmiConfig(omsWallet);
         const connector = config.connectors[0];
 
         await connect(config, {connector});
@@ -493,17 +493,17 @@ describe("omsWalletConnector", () => {
         await expect(provider.request({
             method: "eth_sendTransaction",
             params: [{
-                from: client.wallet.walletAddress,
+                from: omsWallet.wallet.walletAddress,
                 to: "0x1111111111111111111111111111111111111111",
                 customField: "0x1",
             }],
         })).rejects.toThrow("unsupported fields: customField");
-        expect(client.wallet.sendTransaction).not.toHaveBeenCalled();
+        expect(omsWallet.wallet.sendTransaction).not.toHaveBeenCalled();
     });
 
     it("rejects provider requests for a different account", async () => {
-        const client = createClient({walletAddress: "0x9999999999999999999999999999999999999999"});
-        const config = createWagmiConfig(client);
+        const omsWallet = createOmsWallet({walletAddress: "0x9999999999999999999999999999999999999999"});
+        const config = createWagmiConfig(omsWallet);
         const connector = config.connectors[0];
 
         await connect(config, {connector});
@@ -527,36 +527,36 @@ describe("omsWalletConnector", () => {
     });
 
     it("rejects eth_requestAccounts without an active OMS wallet session", async () => {
-        const client = createClient();
-        const config = createWagmiConfig(client);
+        const omsWallet = createOmsWallet();
+        const config = createWagmiConfig(omsWallet);
         const provider = await config.connectors[0].getProvider();
 
         await expect(provider.request({
             method: "eth_requestAccounts",
         })).rejects.toMatchObject({
-            name: "OmsWalletProviderRpcError",
+            name: "OMSWalletProviderRpcError",
             code: 4100,
-            message: "No active OMS wallet session. Authenticate with the OMS SDK before connecting through wagmi.",
+            message: "No active OMS wallet session. Authenticate with the OMS Wallet SDK before connecting through wagmi.",
         });
     });
 
     it("switches the OMS network used for signing and transactions", async () => {
-        const client = createClient({walletAddress: "0x9999999999999999999999999999999999999999"});
-        const config = createWagmiConfig(client);
+        const omsWallet = createOmsWallet({walletAddress: "0x9999999999999999999999999999999999999999"});
+        const config = createWagmiConfig(omsWallet);
 
         await connect(config, {connector: config.connectors[0]});
         await switchChain(config, {chainId: mainnet.id});
         await signMessage(config, {message: "hello"});
 
-        expect(client.wallet.signMessage).toHaveBeenLastCalledWith({
+        expect(omsWallet.wallet.signMessage).toHaveBeenLastCalledWith({
             network: networks[1],
             message: "hello",
         });
     });
 
     it("syncs wagmi state when the provider switches chains directly", async () => {
-        const client = createClient({walletAddress: "0x9999999999999999999999999999999999999999"});
-        const config = createWagmiConfig(client);
+        const omsWallet = createOmsWallet({walletAddress: "0x9999999999999999999999999999999999999999"});
+        const config = createWagmiConfig(omsWallet);
         const connector = config.connectors[0];
 
         await connect(config, {connector});
@@ -571,10 +571,10 @@ describe("omsWalletConnector", () => {
     });
 
     it("rejects provider chain switches to OMS-supported chains that are not configured in wagmi", async () => {
-        const client = createClient({walletAddress: "0x9999999999999999999999999999999999999999"});
+        const omsWallet = createOmsWallet({walletAddress: "0x9999999999999999999999999999999999999999"});
         const config = createConfig({
             chains: [polygon],
-            connectors: [omsWalletConnector({client, networks})],
+            connectors: [omsWalletConnector({omsWallet, networks})],
             transports: {
                 [polygon.id]: http(),
             },
@@ -595,10 +595,10 @@ describe("omsWalletConnector", () => {
     });
 
     it("rejects provider chain switches to wagmi-configured chains that OMS does not support", async () => {
-        const client = createClient({walletAddress: "0x9999999999999999999999999999999999999999"});
+        const omsWallet = createOmsWallet({walletAddress: "0x9999999999999999999999999999999999999999"});
         const config = createConfig({
             chains: [polygon, optimism],
-            connectors: [omsWalletConnector({client, networks})],
+            connectors: [omsWalletConnector({omsWallet, networks})],
             transports: {
                 [polygon.id]: http(),
                 [optimism.id]: http(),
@@ -612,7 +612,7 @@ describe("omsWalletConnector", () => {
             method: "wallet_switchEthereumChain",
             params: [{chainId: "0xa"}],
         })).rejects.toMatchObject({
-            name: "OmsWalletProviderRpcError",
+            name: "OMSWalletProviderRpcError",
             code: 4901,
             message: "OMS does not support chain 10.",
         });
@@ -622,10 +622,10 @@ describe("omsWalletConnector", () => {
     });
 
     it("rejects wagmi switchChain calls to wagmi-configured chains that OMS does not support", async () => {
-        const client = createClient({walletAddress: "0x9999999999999999999999999999999999999999"});
+        const omsWallet = createOmsWallet({walletAddress: "0x9999999999999999999999999999999999999999"});
         const config = createConfig({
             chains: [polygon, optimism],
-            connectors: [omsWalletConnector({client, networks})],
+            connectors: [omsWalletConnector({omsWallet, networks})],
             transports: {
                 [polygon.id]: http(),
                 [optimism.id]: http(),
@@ -641,23 +641,23 @@ describe("omsWalletConnector", () => {
     });
 
     it("uses and validates initialChainId", async () => {
-        const client = createClient({walletAddress: "0x9999999999999999999999999999999999999999"});
-        const config = createWagmiConfig(client, {initialChainId: mainnet.id});
+        const omsWallet = createOmsWallet({walletAddress: "0x9999999999999999999999999999999999999999"});
+        const config = createWagmiConfig(omsWallet, {initialChainId: mainnet.id});
 
         await connect(config, {connector: config.connectors[0]});
         await signMessage(config, {message: "hello"});
 
-        expect(client.wallet.signMessage).toHaveBeenCalledWith({
+        expect(omsWallet.wallet.signMessage).toHaveBeenCalledWith({
             network: networks[1],
             message: "hello",
         });
     });
 
     it("rejects initialChainId when OMS does not support it", async () => {
-        const client = createClient({walletAddress: "0x9999999999999999999999999999999999999999"});
+        const omsWallet = createOmsWallet({walletAddress: "0x9999999999999999999999999999999999999999"});
         const config = createConfig({
             chains: [polygon, optimism],
-            connectors: [omsWalletConnector({client, networks, initialChainId: optimism.id})],
+            connectors: [omsWalletConnector({omsWallet, networks, initialChainId: optimism.id})],
             transports: {
                 [polygon.id]: http(),
                 [optimism.id]: http(),
@@ -671,15 +671,15 @@ describe("omsWalletConnector", () => {
     });
 
     it("disconnects wagmi without signing out the OMS wallet", async () => {
-        const client = createClient({walletAddress: "0x9999999999999999999999999999999999999999"});
-        const config = createWagmiConfig(client);
+        const omsWallet = createOmsWallet({walletAddress: "0x9999999999999999999999999999999999999999"});
+        const config = createWagmiConfig(omsWallet);
         const connector = config.connectors[0];
 
         await connect(config, {connector});
         await disconnect(config);
 
-        expect(client.wallet.signOut).not.toHaveBeenCalled();
-        expect(client.wallet.walletAddress).toBe("0x9999999999999999999999999999999999999999");
+        expect(omsWallet.wallet.signOut).not.toHaveBeenCalled();
+        expect(omsWallet.wallet.walletAddress).toBe("0x9999999999999999999999999999999999999999");
         await expect(connector.isAuthorized()).resolves.toBe(false);
         await expect(connector.getAccounts()).rejects.toThrow("Connector not connected.");
 
@@ -689,15 +689,15 @@ describe("omsWalletConnector", () => {
     });
 
     it("does not reconnect automatically after disconnecting and refreshing", async () => {
-        const client = createClient({walletAddress: "0x9999999999999999999999999999999999999999"});
+        const omsWallet = createOmsWallet({walletAddress: "0x9999999999999999999999999999999999999999"});
         const storage = createMemoryStorage();
-        const config = createWagmiConfig(client, {}, storage);
+        const config = createWagmiConfig(omsWallet, {}, storage);
         const connector = config.connectors[0];
 
         await connect(config, {connector});
         await disconnect(config);
 
-        const refreshedConfig = createWagmiConfig(client, {}, storage);
+        const refreshedConfig = createWagmiConfig(omsWallet, {}, storage);
         const refreshedConnector = refreshedConfig.connectors[0];
         await expect(refreshedConnector.isAuthorized()).resolves.toBe(false);
         await expect(reconnect(refreshedConfig)).resolves.toEqual([]);
@@ -711,27 +711,27 @@ describe("omsWalletConnector", () => {
 
     it("keeps session expiry disconnect handling after reconnect", async () => {
         const walletAddress = "0x9999999999999999999999999999999999999999";
-        const client = createClient({walletAddress});
-        const config = createWagmiConfig(client);
+        const omsWallet = createOmsWallet({walletAddress});
+        const config = createWagmiConfig(omsWallet);
         const connector = config.connectors[0];
 
         await connect(config, {connector});
-        expect(client.sessionExpiredListenerCount()).toBe(1);
+        expect(omsWallet.sessionExpiredListenerCount()).toBe(1);
 
         await disconnect(config);
-        expect(client.sessionExpiredListenerCount()).toBe(0);
+        expect(omsWallet.sessionExpiredListenerCount()).toBe(0);
 
-        client.wallet.walletAddress = walletAddress;
+        omsWallet.wallet.walletAddress = walletAddress;
         await connect(config, {connector});
-        expect(client.sessionExpiredListenerCount()).toBe(1);
+        expect(omsWallet.sessionExpiredListenerCount()).toBe(1);
 
-        client.expireSession();
+        omsWallet.expireSession();
         expect(config.state.status).toBe("disconnected");
     });
 
     it("decodes personal_sign hex payloads before passing them to OMS", async () => {
-        const client = createClient({walletAddress: "0x9999999999999999999999999999999999999999"});
-        const connector = omsWalletConnector({client, networks});
+        const omsWallet = createOmsWallet({walletAddress: "0x9999999999999999999999999999999999999999"});
+        const connector = omsWalletConnector({omsWallet, networks});
         const config = createConfig({
             chains: [polygon],
             connectors: [connector],
@@ -743,63 +743,63 @@ describe("omsWalletConnector", () => {
         const provider = await configuredConnector.getProvider();
         await provider.request({
             method: "personal_sign",
-            params: [stringToPersonalSignHex("hello"), client.wallet.walletAddress],
+            params: [stringToPersonalSignHex("hello"), omsWallet.wallet.walletAddress],
         });
 
-        expect(client.wallet.signMessage).toHaveBeenCalledWith({
+        expect(omsWallet.wallet.signMessage).toHaveBeenCalledWith({
             network: networks[0],
             message: "hello",
         });
     });
 
     it("rejects raw byte personal_sign payloads that OMS cannot sign as text", async () => {
-        const client = createClient({walletAddress: "0x9999999999999999999999999999999999999999"});
-        const config = createWagmiConfig(client);
+        const omsWallet = createOmsWallet({walletAddress: "0x9999999999999999999999999999999999999999"});
+        const config = createWagmiConfig(omsWallet);
         const connector = config.connectors[0];
 
         await connect(config, {connector});
         const provider = await connector.getProvider();
         await expect(provider.request({
             method: "personal_sign",
-            params: ["0xff", client.wallet.walletAddress],
+            params: ["0xff", omsWallet.wallet.walletAddress],
         })).rejects.toThrow("Signing raw byte messages is not supported");
-        expect(client.wallet.signMessage).not.toHaveBeenCalled();
+        expect(omsWallet.wallet.signMessage).not.toHaveBeenCalled();
     });
 
     it("rejects eth_sign because OMS Wallet does not raw-sign messages", async () => {
-        const client = createClient({walletAddress: "0x9999999999999999999999999999999999999999"});
-        const config = createWagmiConfig(client);
+        const omsWallet = createOmsWallet({walletAddress: "0x9999999999999999999999999999999999999999"});
+        const config = createWagmiConfig(omsWallet);
         const connector = config.connectors[0];
 
         await connect(config, {connector});
         const provider = await connector.getProvider();
         await expect(provider.request({
             method: "eth_sign",
-            params: [client.wallet.walletAddress, "0x68656c6c6f"],
+            params: [omsWallet.wallet.walletAddress, "0x68656c6c6f"],
         })).rejects.toMatchObject({code: 4200});
-        expect(client.wallet.signMessage).not.toHaveBeenCalled();
+        expect(omsWallet.wallet.signMessage).not.toHaveBeenCalled();
     });
 
     it("rejects legacy typed data signing instead of treating it as v4", async () => {
-        const client = createClient({walletAddress: "0x9999999999999999999999999999999999999999"});
-        const config = createWagmiConfig(client);
+        const omsWallet = createOmsWallet({walletAddress: "0x9999999999999999999999999999999999999999"});
+        const config = createWagmiConfig(omsWallet);
         const connector = config.connectors[0];
 
         await connect(config, {connector});
         const provider = await connector.getProvider();
         await expect(provider.request({
             method: "eth_signTypedData",
-            params: [client.wallet.walletAddress, "{}"],
+            params: [omsWallet.wallet.walletAddress, "{}"],
         })).rejects.toMatchObject({code: 4200});
-        expect(client.wallet.signTypedData).not.toHaveBeenCalled();
+        expect(omsWallet.wallet.signTypedData).not.toHaveBeenCalled();
     });
 
     it("preserves the exported provider RPC error field contract", () => {
         const data = {txnId: "txn-1"};
-        const error = new OmsWalletProviderRpcError(-32603, "Provider failed.", data);
+        const error = new OMSWalletProviderRpcError(-32603, "Provider failed.", data);
 
         expect(error).toMatchObject({
-            name: "OmsWalletProviderRpcError",
+            name: "OMSWalletProviderRpcError",
             code: -32603,
             message: "Provider failed.",
             data,
@@ -808,13 +808,13 @@ describe("omsWalletConnector", () => {
 });
 
 function createWagmiConfig(
-    client: OmsWalletClientLike,
+    omsWallet: OMSWalletLike,
     options: Partial<Parameters<typeof omsWalletConnector>[0]> = {},
     storage?: Storage | null,
 ) {
     return createConfig({
         chains: [polygon, mainnet],
-        connectors: [omsWalletConnector({client, networks, ...options})],
+        connectors: [omsWalletConnector({omsWallet, networks, ...options})],
         storage,
         transports: {
             [polygon.id]: http(),
@@ -854,8 +854,8 @@ function createTransactionExecutionError(): OmsTransactionError {
     });
 }
 
-interface TestOmsWalletClient extends OmsWalletClientLike {
-    wallet: OmsWalletClientLike["wallet"] & {
+interface TestOMSWallet extends OMSWalletLike {
+    wallet: OMSWalletLike["wallet"] & {
         signOut: ReturnType<typeof vi.fn>
         signMessage: ReturnType<typeof vi.fn>
         signTypedData: ReturnType<typeof vi.fn>
@@ -866,8 +866,8 @@ interface TestOmsWalletClient extends OmsWalletClientLike {
     sessionExpiredListenerCount(): number
 }
 
-function createClient(params: {walletAddress?: Address} = {}): TestOmsWalletClient {
-    const sessionExpiredListeners = new Set<Parameters<NonNullable<OmsWalletClientLike["wallet"]["onSessionExpired"]>>[0]>();
+function createOmsWallet(params: {walletAddress?: Address} = {}): TestOMSWallet {
+    const sessionExpiredListeners = new Set<Parameters<NonNullable<OMSWalletLike["wallet"]["onSessionExpired"]>>[0]>();
     const wallet = {
         walletAddress: params.walletAddress,
         signOut: vi.fn(async () => {
@@ -880,7 +880,7 @@ function createClient(params: {walletAddress?: Address} = {}): TestOmsWalletClie
             status: "executed",
             txnHash: "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa" as Hex,
         })),
-        onSessionExpired: vi.fn((listener: Parameters<NonNullable<OmsWalletClientLike["wallet"]["onSessionExpired"]>>[0]) => {
+        onSessionExpired: vi.fn((listener: Parameters<NonNullable<OMSWalletLike["wallet"]["onSessionExpired"]>>[0]) => {
             sessionExpiredListeners.add(listener);
             return () => {
                 sessionExpiredListeners.delete(listener);
