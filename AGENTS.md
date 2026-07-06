@@ -130,7 +130,7 @@ This repository is a pnpm workspace for the OMS Wallet TypeScript SDK. The root 
 - Treat `src/index.ts` as the public API gate. Export new public types or clients there intentionally, and update `API.md`, `README.md`, and type tests when public behavior changes.
 - Route wallet API calls through `WalletClient`, generated WaaS types, `createSignedFetch`, and `CredentialSigner` instead of duplicating signing or header logic.
 - Use `StorageManager` abstractions for persistence-sensitive code. Browser storage and memory fallback behavior are part of the SDK contract.
-- Preserve typed SDK error classes and `toOmsSdkError` behavior when wrapping network, generated-client, validation, session, and transaction-status failures.
+- Preserve typed SDK error classes and `toOMSWalletError` behavior when wrapping network, generated-client, validation, session, and transaction-status failures.
 - Keep supported network metadata and chain ID lookup going through `src/networks.ts`, `Networks`, `supportedNetworks`, `findNetworkById`, and `findNetworkByName` instead of ad hoc conversion.
 - The TypeScript compiler is the enforced style gate. There is no separate lint or formatter command in the root scripts, so avoid broad formatting churn and match the local file style.
 

@@ -60,7 +60,7 @@ How testing works in this repo. `AGENTS.md` points here so agents know how to ve
   recovery semantics, `upstreamError` expectations, and owning tests.
 - Exercise real public runtime APIs such as `omsWallet.wallet.*`, `omsWallet.indexer.*`, exported storage
   managers, signers, or wagmi connector/provider methods.
-- Do not snapshot manually constructed `OmsSdkError` subclasses unless the error class or helper
+- Do not snapshot manually constructed `OMSWalletError` subclasses unless the error class or helper
   is the unit under test.
 - Mock only external boundaries: `fetch`, browser globals, storage availability, signer behavior,
   timers, or backend responses.
