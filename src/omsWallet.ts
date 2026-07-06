@@ -1,9 +1,9 @@
 import { WalletClient } from "./clients/walletClient.js";
 import {
-    DefaultOmsEnvironment,
-    omsEnvironmentFromPublishableKey,
-    OmsAuthConfig,
-    OmsEnvironment,
+    DefaultOMSWalletEnvironment,
+    environmentFromPublishableKey,
+    OMSWalletAuthConfig,
+    OMSWalletEnvironment,
 } from "./omsEnvironment.js";
 import {createDefaultStorage, StorageManager} from "./storageManager.js";
 import {IndexerClient} from "./clients/indexerClient.js";
@@ -13,31 +13,31 @@ import {parsePublishableKey} from "./publishableKey.js";
 
 interface OMSWalletBaseParams {
     publishableKey: string;
-    auth?: OmsAuthConfig;
+    auth?: OMSWalletAuthConfig;
     environment?: never;
     storage?: StorageManager;
     redirectAuthStorage?: StorageManager;
     credentialSigner?: CredentialSigner;
 }
 
-export type OMSWalletParams<Auth extends OmsAuthConfig | undefined = undefined> =
-    OMSWalletBaseParams & (Auth extends OmsAuthConfig ? {auth: Auth} : {auth?: undefined});
+export type OMSWalletParams<Auth extends OMSWalletAuthConfig | undefined = undefined> =
+    OMSWalletBaseParams & (Auth extends OMSWalletAuthConfig ? {auth: Auth} : {auth?: undefined});
 
-type ProvidersFromAuth<Auth extends OmsAuthConfig> =
+type ProvidersFromAuth<Auth extends OMSWalletAuthConfig> =
     Auth extends {oidcProviders?: infer OidcProviders}
         ? NonNullable<OidcProviders> extends Record<string, unknown>
             ? NonNullable<OidcProviders>
             : never
         : never;
 
-class OMSWalletImpl<Env extends OmsEnvironment = DefaultOmsEnvironment> {
+class OMSWalletImpl<Env extends OMSWalletEnvironment = DefaultOMSWalletEnvironment> {
     public readonly wallet: WalletClient<Env>;
     public readonly indexer: IndexerClient;
     public readonly supportedNetworks = supportedNetworks;
 
     constructor(params: OMSWalletBaseParams) {
         const parsedKey = parsePublishableKey(params.publishableKey);
-        const environment = omsEnvironmentFromPublishableKey(params.publishableKey, params.auth) as Env;
+        const environment = environmentFromPublishableKey(params.publishableKey, params.auth) as Env;
         const storage = params.storage ?? createDefaultStorage()
 
         this.wallet = new WalletClient({
@@ -56,11 +56,11 @@ class OMSWalletImpl<Env extends OmsEnvironment = DefaultOmsEnvironment> {
     }
 }
 
-export type OMSWallet<Env extends OmsEnvironment = DefaultOmsEnvironment> = OMSWalletImpl<Env>;
+export type OMSWallet<Env extends OMSWalletEnvironment = DefaultOMSWalletEnvironment> = OMSWalletImpl<Env>;
 
 interface OMSWalletConstructor {
-    new(params: OMSWalletParams): OMSWallet<DefaultOmsEnvironment>;
-    new<const Auth extends OmsAuthConfig>(params: OMSWalletParams<Auth>): OMSWallet<OmsEnvironment<ProvidersFromAuth<Auth>>>;
+    new(params: OMSWalletParams): OMSWallet<DefaultOMSWalletEnvironment>;
+    new<const Auth extends OMSWalletAuthConfig>(params: OMSWalletParams<Auth>): OMSWallet<OMSWalletEnvironment<ProvidersFromAuth<Auth>>>;
     new(params: OMSWalletBaseParams): OMSWallet;
 }
 

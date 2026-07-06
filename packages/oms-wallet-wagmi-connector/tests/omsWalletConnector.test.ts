@@ -2,7 +2,7 @@ import { createConfig, createStorage, connect, disconnect, reconnect, sendTransa
 import { describe, expect, it, vi } from "vitest";
 import { http, type Address, type Chain, type Hex } from "viem";
 
-import { OmsTransactionError } from "../../../src/index.js";
+import { OMSWalletTransactionError } from "../../../src/index.js";
 import { OMSWalletProviderRpcError, omsWalletConnector, stringToPersonalSignHex, type OMSWalletLike } from "../src/index.js";
 
 const polygon = {
@@ -403,7 +403,7 @@ describe("omsWalletConnector", () => {
             code: -32603,
             message: "Transaction execution failed before status could be confirmed",
             data: expect.objectContaining({
-                name: "OmsTransactionError",
+                name: "OMSWalletTransactionError",
                 code: "OMS_TRANSACTION_EXECUTION_UNCONFIRMED",
                 operation: "wallet.execute",
                 retryable: false,
@@ -435,7 +435,7 @@ describe("omsWalletConnector", () => {
                 cause: expect.objectContaining({
                     code: -32603,
                     data: expect.objectContaining({
-                        name: "OmsTransactionError",
+                        name: "OMSWalletTransactionError",
                         code: "OMS_TRANSACTION_EXECUTION_UNCONFIRMED",
                         operation: "wallet.execute",
                         retryable: false,
@@ -838,8 +838,8 @@ function createMemoryStorage(): Storage {
     });
 }
 
-function createTransactionExecutionError(): OmsTransactionError {
-    return new OmsTransactionError({
+function createTransactionExecutionError(): OMSWalletTransactionError {
+    return new OMSWalletTransactionError({
         code: "OMS_TRANSACTION_EXECUTION_UNCONFIRMED",
         operation: "wallet.execute",
         txnId: "txn-execute",

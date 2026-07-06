@@ -35,4 +35,4 @@ export const IndexerOperation = {
 
 export type IndexerOperation = typeof IndexerOperation[keyof typeof IndexerOperation]
 
-export type OmsSdkOperation = WalletOperation | IndexerOperation
+export type OMSWalletOperation = WalletOperation | IndexerOperation

@@ -16,18 +16,18 @@ export interface OidcProviderConfig {
     authMode?: OidcAuthMode;
 }
 
-export interface OmsAuthConfig<
+export interface OMSWalletAuthConfig<
     OidcProviders extends Record<string, OidcProviderConfig> = Record<string, OidcProviderConfig>,
 > {
     oidcProviders?: OidcProviders;
 }
 
-export interface OmsEnvironment<
+export interface OMSWalletEnvironment<
     OidcProviders extends Record<string, OidcProviderConfig> = Record<string, OidcProviderConfig>,
 > {
     walletApiUrl: string;
     indexerGatewayUrl: string;
-    auth?: OmsAuthConfig<OidcProviders>;
+    auth?: OMSWalletAuthConfig<OidcProviders>;
 }
 
 const defaultOidcProviders = {
@@ -35,37 +35,37 @@ const defaultOidcProviders = {
     apple: appleOidcProvider(),
 };
 
-export const defaultOmsAuthConfig = {
+export const defaultOMSWalletAuthConfig = {
     oidcProviders: defaultOidcProviders,
-} satisfies OmsAuthConfig<typeof defaultOidcProviders>;
+} satisfies OMSWalletAuthConfig<typeof defaultOidcProviders>;
 
-export type DefaultOmsEnvironment = OmsEnvironment<typeof defaultOidcProviders>;
+export type DefaultOMSWalletEnvironment = OMSWalletEnvironment<typeof defaultOidcProviders>;
 
-type OidcProvidersFromAuth<Auth extends OmsAuthConfig> =
+type OidcProvidersFromAuth<Auth extends OMSWalletAuthConfig> =
     Auth extends {oidcProviders?: infer OidcProviders}
         ? NonNullable<OidcProviders> extends Record<string, OidcProviderConfig>
             ? NonNullable<OidcProviders>
             : never
         : never;
 
-type ProvidersFromAuth<Auth extends OmsAuthConfig | undefined> =
-    Auth extends OmsAuthConfig
+type ProvidersFromAuth<Auth extends OMSWalletAuthConfig | undefined> =
+    Auth extends OMSWalletAuthConfig
         ? OidcProvidersFromAuth<Auth>
         : typeof defaultOidcProviders;
 
-export function defineOmsAuthConfig<const Auth extends OmsAuthConfig>(auth: Auth): Auth {
+export function defineOMSWalletAuthConfig<const Auth extends OMSWalletAuthConfig>(auth: Auth): Auth {
     return auth;
 }
 
-export function omsEnvironmentFromPublishableKey<const Auth extends OmsAuthConfig | undefined>(
+export function environmentFromPublishableKey<const Auth extends OMSWalletAuthConfig | undefined>(
     publishableKey: string,
     auth?: Auth,
-): OmsEnvironment<ProvidersFromAuth<Auth>> {
+): OMSWalletEnvironment<ProvidersFromAuth<Auth>> {
     const parsedKey = parsePublishableKey(publishableKey);
 
     return {
         walletApiUrl: parsedKey.walletApiUrl,
         indexerGatewayUrl: parsedKey.indexerGatewayUrl,
-        auth: auth ?? defaultOmsAuthConfig,
-    } as OmsEnvironment<ProvidersFromAuth<Auth>>;
+        auth: auth ?? defaultOMSWalletAuthConfig,
+    } as OMSWalletEnvironment<ProvidersFromAuth<Auth>>;
 }

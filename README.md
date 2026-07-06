@@ -214,12 +214,12 @@ const omsWallet = new OMSWallet({
 For router-driven apps, use the explicit start/complete methods:
 
 ```typescript
-const { url } = await omsWallet.wallet.startOidcRedirectAuth({
+const { authorizationUrl } = await omsWallet.wallet.startOidcRedirectAuth({
   provider: 'google',
   redirectUri: `${window.location.origin}/auth/callback`, // optional in browser apps
 })
 
-window.location.assign(url)
+window.location.assign(authorizationUrl)
 
 // On the callback route:
 const result = await omsWallet.wallet.completeOidcRedirectAuth()
@@ -261,15 +261,15 @@ Pass `loginHint` only when you want to prefill or select a specific Google accou
 
 Pending redirect state is stored in `sessionStorage` by default. Final wallet session metadata continues to use the configured SDK storage.
 
-`googleOidcProvider()` uses the SDK default Google client ID, the SDK relay redirect URI, `openid email profile` scopes, and PKCE auth-code mode by default.
+`googleOidcProvider()` uses the SDK default Google client ID, `openid email profile` scopes, and PKCE auth-code mode by default. Unless `relayRedirectUri` is supplied, the SDK derives the relay URL from the publishable key environment as `{apiBase}/auth/waas/callback/google`.
 
-`appleOidcProvider()` uses the SDK default Apple Services ID, the SDK relay redirect URI, `openid email` scopes, `response_mode=form_post`, and PKCE auth-code mode by default.
+`appleOidcProvider()` uses the SDK default Apple Services ID, `openid email` scopes, `response_mode=form_post`, and PKCE auth-code mode by default. Unless `relayRedirectUri` is supplied, the SDK derives the relay URL from the publishable key environment as `{apiBase}/auth/waas/callback/apple`.
 
 ### Session State
 
 Email and OIDC auth both persist the active wallet session in the configured SDK storage. Browser storage defaults to `localStorage` when available; non-browser runtimes fall back to in-memory storage unless you provide a custom `StorageManager`. Browser signing defaults to a non-extractable WebCrypto P-256 credential using `ecdsa-p256-sha256`, so the private session key is not written to `localStorage`. Completed auth requests ask WaaS for a one-week session lifetime.
 
-Pass `sessionLifetimeSeconds` to `completeEmailAuth`, `signInWithOidcIdToken`, `startOidcRedirectAuth`, `completeOidcRedirectAuth`, or `signInWithOidcRedirect` to request a different session lifetime. For OIDC redirects, values passed at start are stored with the pending redirect state and used on callback completion unless completion overrides them.
+Pass `sessionLifetimeSeconds` to `completeEmailAuth`, `signInWithOidcIdToken`, `startOidcRedirectAuth`, `completeOidcRedirectAuth`, or `signInWithOidcRedirect` to request a different session lifetime. Values must be integer seconds from `1` through `4294967295`. For OIDC redirects, values passed at start are stored with the pending redirect state and used on callback completion unless completion overrides them.
 
 Use `omsWallet.wallet.walletAddress` when you only need the active wallet address. Use `omsWallet.wallet.session` when you also need credential expiry or structured auth metadata.
 
@@ -290,7 +290,7 @@ Use `omsWallet.wallet.getIdToken({ ttlSeconds, customClaims })` to request an ID
 
 Pending email OTP and OIDC redirect state are not exposed through `session`; use the auth method results to drive pending UI.
 
-The SDK makes expired sessions inactive before protected wallet operations and throws `OmsSessionError` with code `OMS_SESSION_EXPIRED`. It clears the active signer/session state, but keeps the expired session metadata in storage until the app explicitly starts a new auth flow or calls `signOut()`. Subscribe with `omsWallet.wallet.onSessionExpired` to route the user back to sign-in while preserving the expired session snapshot for email OTP reauth or Google account hints, including after a page refresh:
+The SDK makes expired sessions inactive before protected wallet operations and throws `OMSWalletSessionError` with code `OMS_SESSION_EXPIRED`. It clears the active signer/session state, but keeps the expired session metadata in storage until the app explicitly starts a new auth flow or calls `signOut()`. Subscribe with `omsWallet.wallet.onSessionExpired` to route the user back to sign-in while preserving the expired session snapshot for email OTP reauth or Google account hints, including after a page refresh:
 
 ```typescript
 const omsWallet = new OMSWallet({
@@ -310,17 +310,17 @@ await omsWallet.wallet.signOut()
 
 ## Errors
 
-Public methods throw `OmsSdkError` subclasses with stable SDK fields such as `code`, `operation`, `status`, and `retryable`. When a failure comes from a remote OMS service response or transport failure, the error also includes `upstreamError` with normalized WaaS or indexer details for logging and service-specific troubleshooting. Application logic should usually branch on the SDK-level `code`.
+Public methods throw `OMSWalletError` subclasses with stable SDK fields such as `code`, `operation`, `status`, and `retryable`. When a failure comes from a remote OMS service response or transport failure, the error also includes `upstreamError` with normalized WaaS or indexer details for logging and service-specific troubleshooting. Application logic should usually branch on the SDK-level `code`.
 
 For transaction writes, `OMS_TRANSACTION_EXECUTION_UNCONFIRMED` means the SDK has a `txnId` from preparation, but the execute request failed before the SDK could confirm whether the transaction was submitted; do not blindly resend the same write. `OMS_TRANSACTION_STATUS_LOOKUP_FAILED` means the transaction was submitted but status polling failed, so retry status lookup with the returned `txnId`. `retryable` describes the failed SDK operation, not the whole user intent.
 
 ```typescript
-import { OmsSdkError } from '@polygonlabs/oms-wallet'
+import { OMSWalletError } from '@polygonlabs/oms-wallet'
 
 try {
   await omsWallet.wallet.startEmailAuth({ email: 'user@example.com' })
 } catch (err) {
-  if (err instanceof OmsSdkError) {
+  if (err instanceof OMSWalletError) {
     console.log(err.code, err.operation, err.upstreamError)
   }
 }

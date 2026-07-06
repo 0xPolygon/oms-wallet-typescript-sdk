@@ -204,6 +204,38 @@ describe("WalletClient session storage", () => {
         expect(replayListener).toHaveBeenCalledWith(expectedEvent);
     });
 
+    it("does not call listeners registered during the same expiry dispatch", async () => {
+        const storage = new MemoryStorageManager();
+        const signer = new MockSigner();
+        const reentrantListener = vi.fn();
+        const registeringListener = vi.fn(() => {
+            wallet.onSessionExpired(reentrantListener);
+        });
+        const wallet = new WalletClient({
+            publishableKey: "publishable-key",
+            projectId: "project-id",
+            environment: testEnvironment(),
+            storage,
+            credentialSigner: signer,
+        });
+        wallet.onSessionExpired(registeringListener);
+        (wallet as any).persistSession("wallet-id", "0x1111111111111111111111111111111111111111", {
+            expiresAt: "2000-01-01T00:00:00Z",
+            auth: emailAuth(),
+        });
+
+        await expect(wallet.signMessage({network: Networks.polygon, message: "hello"})).rejects.toMatchObject({
+            code: "OMS_SESSION_EXPIRED",
+        });
+
+        expect(registeringListener).toHaveBeenCalledOnce();
+        expect(reentrantListener).not.toHaveBeenCalled();
+
+        const replayListener = vi.fn();
+        wallet.onSessionExpired(replayListener);
+        expect(replayListener).toHaveBeenCalledOnce();
+    });
+
     it("notifies session expiry listeners when signer cleanup fails", async () => {
         const storage = new MemoryStorageManager();
         const signer = new MockSigner();

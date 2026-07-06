@@ -1,9 +1,13 @@
 export { OMSWallet } from './omsWallet.js'
+export type { OMSWalletParams } from './omsWallet.js'
 export {
-    defaultOmsAuthConfig,
-    defineOmsAuthConfig,
+    defaultOMSWalletAuthConfig,
+    defineOMSWalletAuthConfig,
+    type DefaultOMSWalletEnvironment,
     type OidcProviderConfig,
-    type OmsAuthConfig,
+    type OidcAuthMode,
+    type OMSWalletAuthConfig,
+    type OMSWalletEnvironment,
 } from './omsEnvironment.js'
 export {
     appleOidcProvider,
@@ -36,19 +40,20 @@ export {
     TransactionMode,
     TransactionStatus,
     WalletType,
+    type AbiArg,
     type TransactionStatusResponse,
 } from './generated/waas.gen.js'
 export {
-    OmsRequestError,
-    OmsResponseError,
-    OmsSdkError,
-    OmsSessionError,
-    OmsTransactionError,
+    OMSWalletRequestError,
+    OMSWalletResponseError,
+    OMSWalletError,
+    OMSWalletSessionError,
+    OMSWalletTransactionError,
     OMSWalletSelectionError,
-    OmsValidationError,
-    isOmsSdkError,
-    type OmsSdkErrorCode,
-    type OmsUpstreamError,
+    OMSWalletValidationError,
+    isOMSWalletError,
+    type OMSWalletErrorCode,
+    type OMSWalletUpstreamError,
 } from './errors.js'
 export type {
     CompleteEmailAuthParams,
@@ -106,6 +111,11 @@ export type {
     FeeOption,
     FeeOptionSelection,
     FeeOptionWithBalance,
+    SendContractTransactionParams,
+    SendDataTransactionParams,
+    SendNativeTransactionParams,
+    SendTransactionBase,
+    SendTransactionParams,
     SendTransactionResponse,
     TransactionStatusPollingOptions,
 } from './types/transactionTypes.js'

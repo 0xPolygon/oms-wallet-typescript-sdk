@@ -1,7 +1,7 @@
 // Minimal hand-written IndexerGateway adapter for the SDK surface we expose.
 
 import {HttpClient} from "../httpClient.js";
-import {errorMessage, OmsRequestError, OmsResponseError, type OmsUpstreamError} from "../errors.js";
+import {errorMessage, OMSWalletRequestError, OMSWalletResponseError, type OMSWalletUpstreamError} from "../errors.js";
 import type {Network} from "../networks.js";
 import {IndexerOperation} from "../operations.js";
 
@@ -298,19 +298,19 @@ interface GetTransactionHistoryResponse {
     transactions?: GatewayTransaction[];
 }
 
-// Matches the Swift `OmsEnvironment` shape used by IndexerClient.
-export interface OmsEnvironment {
+// Matches the Swift `OMSWalletEnvironment` shape used by IndexerClient.
+export interface OMSWalletEnvironment {
     indexerGatewayUrl: string;
 }
 
 export class IndexerClient {
     private readonly publishableKey: string;
-    private readonly environment: OmsEnvironment;
+    private readonly environment: OMSWalletEnvironment;
     private readonly client: HttpClient;
 
     constructor(params: {
         publishableKey: string,
-        environment: OmsEnvironment
+        environment: OMSWalletEnvironment
     }) {
         this.publishableKey = params.publishableKey;
         this.environment = params.environment;
@@ -387,7 +387,7 @@ export class IndexerClient {
         try {
             response = await this.client.postJson(args);
         } catch (error) {
-            throw new OmsRequestError({
+            throw new OMSWalletRequestError({
                 operation,
                 retryable: true,
                 upstreamError: indexerRequestFailure(error),
@@ -400,7 +400,7 @@ export class IndexerClient {
         if (response.statusCode < 200 || response.statusCode >= 300) {
             const errorPayload = parseJsonOrText(response.body);
             const message = responseErrorMessage(errorPayload, operation, response.statusCode);
-            throw new OmsRequestError({
+            throw new OMSWalletRequestError({
                 code: "OMS_HTTP_ERROR",
                 operation,
                 status: response.statusCode,
@@ -415,7 +415,7 @@ export class IndexerClient {
             payload = JSON.parse(response.body) as T;
         } catch (error) {
             const message = `Invalid JSON response from ${operation}`;
-            throw new OmsResponseError({
+            throw new OMSWalletResponseError({
                 operation,
                 status: response.statusCode,
                 upstreamError: {
@@ -460,22 +460,7 @@ export class IndexerClient {
             Webrpc: WebrpcHeaderValue,
         };
 
-        const origin = this.originHeader();
-        if (origin) {
-            headers.Origin = origin;
-        }
-
         return headers;
-    }
-
-    private originHeader(): string | undefined {
-        if (typeof globalThis.location?.origin === "string") {
-            return undefined;
-        }
-
-        // The dev IndexerGateway currently rejects originless publishable-key requests.
-        // Send the local dev origin from originless runtimes until the gateway accepts them.
-        return "http://localhost:5173";
     }
 }
 
@@ -584,7 +569,7 @@ function parseJsonOrText(body: string): unknown {
     }
 }
 
-function indexerRequestFailure(error: unknown): OmsUpstreamError {
+function indexerRequestFailure(error: unknown): OMSWalletUpstreamError {
     const status = numberField(error, "status");
     return {
         service: "indexer",
@@ -595,7 +580,7 @@ function indexerRequestFailure(error: unknown): OmsUpstreamError {
     };
 }
 
-function indexerResponseError(payload: unknown, status: number, fallbackMessage: string): OmsUpstreamError {
+function indexerResponseError(payload: unknown, status: number, fallbackMessage: string): OMSWalletUpstreamError {
     return {
         service: "indexer",
         name: stringField(payload, "name") ?? stringField(payload, "error"),

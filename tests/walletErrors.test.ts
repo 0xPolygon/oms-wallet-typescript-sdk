@@ -106,6 +106,48 @@ describe("WalletClient errors", () => {
         });
         expect(fetchMock).toHaveBeenCalledOnce();
     });
+
+    it("validates requested session lifetimes before auth requests", async () => {
+        const fetchMock = vi.fn();
+        vi.stubGlobal("fetch", fetchMock);
+        const wallet = new WalletClient({
+            publishableKey: "publishable-key",
+            projectId: "project-id",
+            environment: {
+                ...testEnvironment(),
+                auth: {
+                    oidcProviders: {
+                        google: {
+                            clientId: "google-client",
+                            issuer: "https://accounts.google.com",
+                            authorizationUrl: "https://accounts.google.com/o/oauth2/v2/auth",
+                        },
+                    },
+                },
+            },
+            storage: new MemoryStorageManager(),
+            redirectAuthStorage: new MemoryStorageManager(),
+            credentialSigner: new MockSigner(),
+        });
+
+        seedEmailAuthAttempt(wallet);
+        await expect(wallet.completeEmailAuth({
+            code: "123456",
+            sessionLifetimeSeconds: 0,
+        })).rejects.toMatchObject({
+            code: "OMS_VALIDATION_ERROR",
+            operation: "wallet.completeEmailAuth",
+        });
+        await expect(wallet.startOidcRedirectAuth({
+            provider: "google",
+            redirectUri: "https://app.example/callback",
+            sessionLifetimeSeconds: 1.5,
+        })).rejects.toMatchObject({
+            code: "OMS_VALIDATION_ERROR",
+            operation: "wallet.startOidcRedirectAuth",
+        });
+        expect(fetchMock).not.toHaveBeenCalled();
+    });
 });
 
 function seedEmailAuthAttempt(wallet: WalletClient): void {

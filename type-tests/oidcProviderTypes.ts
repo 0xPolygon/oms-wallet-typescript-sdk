@@ -3,7 +3,7 @@ import {
     Networks,
     OMSWallet,
     appleOidcProvider,
-    defineOmsAuthConfig,
+    defineOMSWalletAuthConfig,
     findNetworkById,
     findNetworkByName,
     googleOidcProvider,
@@ -14,14 +14,24 @@ import {
     type OMSWalletSessionAuth,
     type OMSWalletSessionExpiredListener,
     type OMSWalletSessionState,
-    type OmsSdkError,
-    type OmsSdkErrorCode,
-    type OmsUpstreamError,
+    type OMSWalletError,
+    type OMSWalletErrorCode,
+    type OMSWalletUpstreamError,
     type BalancesResult,
+    type AbiArg,
+    type DefaultOMSWalletEnvironment,
     type GetBalancesParams,
     type GetTransactionHistoryParams,
     type IndexerNetworkType,
-    type OmsAuthConfig,
+    type OMSWalletAuthConfig,
+    type OMSWalletEnvironment,
+    type OMSWalletParams,
+    type OidcAuthMode,
+    type SendDataTransactionParams,
+    type SendNativeTransactionParams,
+    type SendTransactionBase,
+    type SendTransactionParams,
+    type SendContractTransactionParams,
     type TokenBalance,
     type TokenBalancesPage,
     type TokenContractInfo,
@@ -31,7 +41,13 @@ import {
     type OidcProviderName,
 } from "../src/index";
 
-const auth = defineOmsAuthConfig({
+// @ts-expect-error Legacy Oms* value exports were removed before stable.
+import { OmsSdkError, defineOmsAuthConfig, isOmsSdkError } from "../src/index";
+
+// @ts-expect-error Legacy Oms* type exports were removed before stable.
+import type { DefaultOmsEnvironment, OmsAuthConfig, OmsEnvironment, OmsSdkErrorCode, OmsUpstreamError } from "../src/index";
+
+const auth = defineOMSWalletAuthConfig({
     oidcProviders: {
         google: googleOidcProvider(),
         apple: appleOidcProvider({authMode: AuthMode.AuthCode}),
@@ -134,6 +150,17 @@ new OMSWallet({
     onSessionExpired: () => {},
 });
 const session: OMSWalletSessionState = defaultClient.wallet.session;
+const defaultEnvironmentTypedClient: OMSWallet<DefaultOMSWalletEnvironment> = defaultClient;
+void defaultEnvironmentTypedClient;
+const omsWalletParams: OMSWalletParams = {publishableKey: "pk_dev_sdbx_project_key"};
+void omsWalletParams;
+const envConfig: OMSWalletEnvironment = {
+    walletApiUrl: "https://wallet.example",
+    indexerGatewayUrl: "https://indexer.example",
+};
+void envConfig;
+const oidcAuthMode: OidcAuthMode = AuthMode.AuthCodePKCE;
+void oidcAuthMode;
 const unsubscribeSessionExpired: () => void = defaultClient.wallet.onSessionExpired(({session}) => {
     void session.auth?.email;
     // @ts-expect-error expired session snapshots are readonly.
@@ -143,6 +170,8 @@ const sessionExpiredListener: OMSWalletSessionExpiredListener = ({expiredAt}) =>
     void expiredAt;
 };
 void defaultClient.wallet.onSessionExpired(sessionExpiredListener);
+// @ts-expect-error walletAddress is readonly SDK state.
+defaultClient.wallet.walletAddress = "0x9999999999999999999999999999999999999999";
 const idTokenParams: GetIdTokenParams = {ttlSeconds: 300, customClaims: {role: "admin"}};
 const idToken: Promise<string> = defaultClient.wallet.getIdToken(idTokenParams);
 const oidcIdTokenParams: SignInWithOidcIdTokenParams = {
@@ -189,16 +218,16 @@ const tokenBalancesResult: BalancesResult = {
 };
 const indexerNetworkType: IndexerNetworkType = "MAINNETS";
 const transactionHistoryResult: TransactionHistoryResult = {status: 200, page: tokenBalancesPage, transactions: []};
-const upstreamError: OmsUpstreamError = {
+const upstreamError: OMSWalletUpstreamError = {
     service: "waas",
     name: "CommitmentConsumed",
     code: 7008,
     message: "The authentication commitment has already been used",
     status: 400,
 };
-const sdkError = undefined as unknown as OmsSdkError;
-const maybeUpstreamError: OmsUpstreamError | undefined = sdkError.upstreamError;
-const transactionExecutionCode: OmsSdkErrorCode = "OMS_TRANSACTION_EXECUTION_UNCONFIRMED";
+const sdkError = undefined as unknown as OMSWalletError;
+const maybeUpstreamError: OMSWalletUpstreamError | undefined = sdkError.upstreamError;
+const transactionExecutionCode: OMSWalletErrorCode = "OMS_TRANSACTION_EXECUTION_UNCONFIRMED";
 void session;
 void unsubscribeSessionExpired;
 void sessionAuth;
@@ -257,6 +286,16 @@ void defaultClient.indexer.getTransactionHistory(transactionHistoryParams);
 void defaultClient.wallet.startOidcRedirectAuth({
     provider: "google",
     redirectUri: "https://app.example/auth/callback",
+});
+void (async () => {
+    const redirectStart = await defaultClient.wallet.startOidcRedirectAuth({
+        provider: "google",
+        redirectUri: "https://app.example/auth/callback",
+    });
+    const authorizationUrl: string = redirectStart.authorizationUrl;
+    void authorizationUrl;
+    // @ts-expect-error redirect start result uses authorizationUrl, not url.
+    void redirectStart.url;
 });
 void defaultClient.wallet.startOidcRedirectAuth({
     provider: "google",
@@ -352,6 +391,35 @@ void noProviderClient.wallet.startOidcRedirectAuth({
     provider: "google",
     redirectUri: "https://app.example/auth/callback",
 });
+
+const abiArg: AbiArg = {type: "uint256", value: "1"};
+void abiArg;
+const sendBase: SendTransactionBase = {
+    network: Networks.polygon,
+    to: "0x1111111111111111111111111111111111111111",
+};
+void sendBase;
+const nativeSend: SendNativeTransactionParams = {
+    network: Networks.polygon,
+    to: "0x1111111111111111111111111111111111111111",
+    value: 1n,
+};
+const dataSend: SendDataTransactionParams = {
+    network: Networks.polygon,
+    to: "0x1111111111111111111111111111111111111111",
+    data: "0x",
+};
+const contractSend: SendContractTransactionParams = {
+    network: Networks.polygon,
+    to: "0x1111111111111111111111111111111111111111",
+    abi: [],
+    functionName: undefined,
+};
+const generalSend: SendTransactionParams = nativeSend;
+void nativeSend;
+void dataSend;
+void contractSend;
+void generalSend;
 new OMSWallet({
     publishableKey: "pk_dev_sdbx_project_key",
     // @ts-expect-error environment URL overrides are not constructor parameters.
@@ -360,7 +428,7 @@ new OMSWallet({
 
 function createClient(params: {
     publishableKey: string;
-    auth?: OmsAuthConfig;
+    auth?: OMSWalletAuthConfig;
 }) {
     return new OMSWallet(params);
 }

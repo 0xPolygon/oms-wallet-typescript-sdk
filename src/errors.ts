@@ -1,6 +1,6 @@
-import type {OmsSdkOperation} from "./operations.js";
+import type {OMSWalletOperation} from "./operations.js";
 
-export type OmsSdkErrorCode =
+export type OMSWalletErrorCode =
     | "OMS_HTTP_ERROR"
     | "OMS_INVALID_RESPONSE"
     | "OMS_REQUEST_FAILED"
@@ -14,7 +14,7 @@ export type OmsSdkErrorCode =
     | "OMS_TRANSACTION_STATUS_LOOKUP_FAILED"
     | "OMS_VALIDATION_ERROR"
 
-export interface OmsUpstreamError {
+export interface OMSWalletUpstreamError {
     service: "waas" | "indexer"
     name?: string
     code?: number | string
@@ -22,28 +22,28 @@ export interface OmsUpstreamError {
     status?: number
 }
 
-export interface OmsSdkErrorParams {
-    code: OmsSdkErrorCode
+export interface OMSWalletErrorParams {
+    code: OMSWalletErrorCode
     message: string
     operation?: string
     status?: number
     txnId?: string
     retryable?: boolean
-    upstreamError?: OmsUpstreamError
+    upstreamError?: OMSWalletUpstreamError
     cause?: unknown
 }
 
-export class OmsSdkError extends Error {
-    readonly code: OmsSdkErrorCode
+export class OMSWalletError extends Error {
+    readonly code: OMSWalletErrorCode
     readonly operation?: string
     readonly status?: number
     readonly txnId?: string
     readonly retryable?: boolean
-    readonly upstreamError?: OmsUpstreamError
+    readonly upstreamError?: OMSWalletUpstreamError
 
-    constructor(params: OmsSdkErrorParams) {
+    constructor(params: OMSWalletErrorParams) {
         super(params.message)
-        this.name = "OmsSdkError"
+        this.name = "OMSWalletError"
         this.code = params.code
         this.operation = params.operation
         this.status = params.status
@@ -57,36 +57,36 @@ export class OmsSdkError extends Error {
     }
 }
 
-export class OmsSessionError extends OmsSdkError {
-    constructor(params: Omit<OmsSdkErrorParams, "code"> & { code?: OmsSdkErrorCode }) {
-        super({code: params.code ?? "OMS_SESSION_MISSING", ...params})
-        this.name = "OmsSessionError"
+export class OMSWalletSessionError extends OMSWalletError {
+    constructor(params: Omit<OMSWalletErrorParams, "code"> & { code?: OMSWalletErrorCode }) {
+        super({...params, code: params.code ?? "OMS_SESSION_MISSING"})
+        this.name = "OMSWalletSessionError"
     }
 }
 
-export class OmsRequestError extends OmsSdkError {
-    constructor(params: Omit<OmsSdkErrorParams, "code"> & { code?: OmsSdkErrorCode }) {
-        super({code: params.code ?? "OMS_REQUEST_FAILED", ...params})
-        this.name = "OmsRequestError"
+export class OMSWalletRequestError extends OMSWalletError {
+    constructor(params: Omit<OMSWalletErrorParams, "code"> & { code?: OMSWalletErrorCode }) {
+        super({...params, code: params.code ?? "OMS_REQUEST_FAILED"})
+        this.name = "OMSWalletRequestError"
     }
 }
 
-export class OmsResponseError extends OmsSdkError {
-    constructor(params: Omit<OmsSdkErrorParams, "code"> & { code?: OmsSdkErrorCode }) {
-        super({code: params.code ?? "OMS_INVALID_RESPONSE", ...params})
-        this.name = "OmsResponseError"
+export class OMSWalletResponseError extends OMSWalletError {
+    constructor(params: Omit<OMSWalletErrorParams, "code"> & { code?: OMSWalletErrorCode }) {
+        super({...params, code: params.code ?? "OMS_INVALID_RESPONSE"})
+        this.name = "OMSWalletResponseError"
     }
 }
 
-export class OmsTransactionError extends OmsSdkError {
-    constructor(params: Omit<OmsSdkErrorParams, "code"> & { code?: OmsSdkErrorCode }) {
-        super({code: params.code ?? "OMS_TRANSACTION_STATUS_LOOKUP_FAILED", ...params})
-        this.name = "OmsTransactionError"
+export class OMSWalletTransactionError extends OMSWalletError {
+    constructor(params: Omit<OMSWalletErrorParams, "code"> & { code?: OMSWalletErrorCode }) {
+        super({...params, code: params.code ?? "OMS_TRANSACTION_STATUS_LOOKUP_FAILED"})
+        this.name = "OMSWalletTransactionError"
     }
 }
 
-export class OMSWalletSelectionError extends OmsSdkError {
-    constructor(params: Omit<OmsSdkErrorParams, "code"> & {
+export class OMSWalletSelectionError extends OMSWalletError {
+    constructor(params: Omit<OMSWalletErrorParams, "code"> & {
         code:
             | "OMS_WALLET_SELECTION_STALE"
             | "OMS_WALLET_SELECTION_UNAVAILABLE"
@@ -97,23 +97,23 @@ export class OMSWalletSelectionError extends OmsSdkError {
     }
 }
 
-export class OmsValidationError extends OmsSdkError {
-    constructor(params: Omit<OmsSdkErrorParams, "code"> & { code?: OmsSdkErrorCode }) {
-        super({code: params.code ?? "OMS_VALIDATION_ERROR", ...params})
-        this.name = "OmsValidationError"
+export class OMSWalletValidationError extends OMSWalletError {
+    constructor(params: Omit<OMSWalletErrorParams, "code"> & { code?: OMSWalletErrorCode }) {
+        super({...params, code: params.code ?? "OMS_VALIDATION_ERROR"})
+        this.name = "OMSWalletValidationError"
     }
 }
 
-export function isOmsSdkError(error: unknown): error is OmsSdkError {
-    return error instanceof OmsSdkError
+export function isOMSWalletError(error: unknown): error is OMSWalletError {
+    return error instanceof OMSWalletError
 }
 
-export function toOmsSdkError(
+export function toOMSWalletError(
     error: unknown,
-    operation: OmsSdkOperation,
-    upstreamService: OmsUpstreamError["service"] = "waas",
-): OmsSdkError {
-    if (isOmsSdkError(error)) {
+    operation: OMSWalletOperation,
+    upstreamService: OMSWalletUpstreamError["service"] = "waas",
+): OMSWalletError {
+    if (isOMSWalletError(error)) {
         return error
     }
 
@@ -123,7 +123,7 @@ export function toOmsSdkError(
     const upstreamError = upstreamErrorFromError(error, upstreamService)
 
     if (name === "CommitmentConsumed" || generatedCode === 7008) {
-        return new OmsRequestError({
+        return new OMSWalletRequestError({
             code: "OMS_AUTH_COMMITMENT_CONSUMED",
             operation,
             status,
@@ -136,7 +136,7 @@ export function toOmsSdkError(
 
     if (name === "WebrpcBadResponse") {
         if (isHttpStatus(status)) {
-            return new OmsRequestError({
+            return new OMSWalletRequestError({
                 code: "OMS_HTTP_ERROR",
                 operation,
                 status,
@@ -147,7 +147,7 @@ export function toOmsSdkError(
             })
         }
 
-        return new OmsResponseError({
+        return new OMSWalletResponseError({
             operation,
             status,
             upstreamError,
@@ -157,7 +157,7 @@ export function toOmsSdkError(
     }
 
     if (isHttpStatus(status) && name?.startsWith("Webrpc") && name !== "WebrpcRequestFailed") {
-        return new OmsRequestError({
+        return new OMSWalletRequestError({
             code: "OMS_HTTP_ERROR",
             operation,
             status,
@@ -169,14 +169,14 @@ export function toOmsSdkError(
     }
 
     if (!name?.startsWith("Webrpc") && status === undefined) {
-        return new OmsValidationError({
+        return new OMSWalletValidationError({
             operation,
             cause: error,
             message: errorMessage(error),
         })
     }
 
-    return new OmsRequestError({
+    return new OMSWalletRequestError({
         operation,
         status,
         retryable: name === "WebrpcRequestFailed" || status === undefined || status >= 500,
@@ -211,8 +211,8 @@ function isHttpStatus(status: number | undefined): status is number {
 
 function upstreamErrorFromError(
     error: unknown,
-    service: OmsUpstreamError["service"],
-): OmsUpstreamError | undefined {
+    service: OMSWalletUpstreamError["service"],
+): OMSWalletUpstreamError | undefined {
     const name = error instanceof Error ? error.name : undefined
     const code = generatedCodeFromError(error)
     const status = statusFromError(error)

@@ -23,7 +23,6 @@ export interface AppleOidcProviderParams {
 
 export const defaultGoogleClientId = "913882656162-7l4ofa0ou2hqo90umlkenhdop1f5inba.apps.googleusercontent.com";
 export const defaultAppleClientId = "service.oms.polygon.technology";
-export const defaultRelayRedirectUri = "https://waas-cf-relay-staging.0xsequence.workers.dev/callback";
 
 export function googleOidcProvider(params: GoogleOidcProviderParams = {}): OidcProviderConfig {
     return {
@@ -33,7 +32,7 @@ export function googleOidcProvider(params: GoogleOidcProviderParams = {}): OidcP
         provider: params.provider ?? 'google',
         providerLabel: params.providerLabel ?? 'Google',
         scopes: params.scopes ?? ['openid', 'email', 'profile'],
-        relayRedirectUri: params.relayRedirectUri || defaultRelayRedirectUri,
+        relayRedirectUri: params.relayRedirectUri,
         authMode: params.authMode ?? AuthMode.AuthCodePKCE,
         authorizeParams: {
             access_type: 'offline',
@@ -51,7 +50,7 @@ export function appleOidcProvider(params: AppleOidcProviderParams = {}): OidcPro
         provider: params.provider ?? 'apple',
         providerLabel: params.providerLabel ?? 'Apple',
         scopes: params.scopes ?? ['openid', 'email'],
-        relayRedirectUri: params.relayRedirectUri || defaultRelayRedirectUri,
+        relayRedirectUri: params.relayRedirectUri,
         authMode: params.authMode ?? AuthMode.AuthCodePKCE,
         authorizeParams: {
             response_mode: 'form_post',

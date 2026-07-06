@@ -248,6 +248,68 @@ describe("WalletClient OIDC ID-token auth", () => {
         });
         expect(redirectAuthStorage.get(Constants.redirectAuthStorageKey)).toBeNull();
     });
+
+    it("does not persist an ID-token auth result that resolves after sign-out", async () => {
+        const storage = new MemoryStorageManager();
+        let resolveUseWallet!: (response: Response) => void;
+        const fetchMock = vi.fn(async (input: RequestInfo | URL) => {
+            const url = input.toString();
+
+            if (url.endsWith("/CommitVerifier")) {
+                return jsonResponse({
+                    verifier: "oidc-verifier-1",
+                    challenge: "challenge-1",
+                });
+            }
+
+            if (url.endsWith("/CompleteAuth")) {
+                return jsonResponse({
+                    identity: {type: "oidc", iss: "https://accounts.google.com", sub: "google-sub-1"},
+                    wallets: [{
+                        id: "wallet-id",
+                        type: WalletType.Ethereum,
+                        address: "0x1111111111111111111111111111111111111111",
+                    }],
+                    credential: testCredential(),
+                });
+            }
+
+            if (url.endsWith("/UseWallet")) {
+                return new Promise<Response>(resolve => {
+                    resolveUseWallet = resolve;
+                });
+            }
+
+            throw new Error(`Unexpected request: ${url}`);
+        });
+        vi.stubGlobal("fetch", fetchMock);
+
+        const wallet = createWalletClient({storage});
+        const signIn = wallet.signInWithOidcIdToken({
+            idToken: fakeJwt({exp: 1_910_000_100}),
+            issuer: "https://accounts.google.com",
+            audience: "google-client-id",
+        });
+        await waitForRequest(fetchMock, "/UseWallet");
+        await wallet.signOut();
+
+        resolveUseWallet(jsonResponse({
+            wallet: {
+                id: "wallet-id",
+                type: WalletType.Ethereum,
+                address: "0x1111111111111111111111111111111111111111",
+            },
+        }));
+
+        await expect(signIn).rejects.toMatchObject({
+            code: "OMS_SESSION_MISSING",
+            operation: "wallet.signInWithOidcIdToken",
+            message: "Wallet session changed while auth was in flight",
+        });
+        expect(wallet.walletAddress).toBeUndefined();
+        expect(storage.get(Constants.walletIdStorageKey)).toBeNull();
+        expect(storage.get(Constants.walletAddressStorageKey)).toBeNull();
+    });
 });
 
 function createWalletClient(params: {
@@ -280,6 +342,14 @@ function jsonResponse(body: unknown): Response {
 
 function requestCount(fetchMock: ReturnType<typeof vi.fn>, endpoint: string): number {
     return fetchMock.mock.calls.filter(([input]) => input.toString().endsWith(endpoint)).length;
+}
+
+async function waitForRequest(fetchMock: ReturnType<typeof vi.fn>, endpoint: string): Promise<void> {
+    for (let attempt = 0; attempt < 20; attempt += 1) {
+        if (requestCount(fetchMock, endpoint) > 0) return;
+        await new Promise(resolve => setTimeout(resolve, 0));
+    }
+    throw new Error(`Timed out waiting for ${endpoint}`);
 }
 
 function testCredential() {

@@ -89,6 +89,50 @@ describe("WalletClient access management", () => {
 
         expect(pages).toEqual([{grants: [testCredential()]}]);
     });
+
+    it("rejects access page iteration when the active session changes mid-page", async () => {
+        let resolveSecondPage!: (response: Response) => void;
+        const fetchMock = vi.fn(async (input: RequestInfo | URL) => {
+            const url = input.toString();
+
+            if (url.endsWith("/ListAccess")) {
+                if (requestCount(fetchMock, "/ListAccess") === 1) {
+                    return jsonResponse({
+                        credentials: [testCredential("11")],
+                        page: {cursor: "cursor-2"},
+                    });
+                }
+
+                return new Promise<Response>(resolve => {
+                    resolveSecondPage = resolve;
+                });
+            }
+
+            throw new Error(`Unexpected request: ${url}`);
+        });
+        vi.stubGlobal("fetch", fetchMock);
+
+        const wallet = createWalletWithSession();
+        const iterator = wallet.listAccessPages({pageSize: 25})[Symbol.asyncIterator]();
+
+        await expect(iterator.next()).resolves.toEqual({
+            done: false,
+            value: {grants: [testCredential("11")]},
+        });
+
+        const secondPage = iterator.next();
+        await waitForRequest(fetchMock, "/ListAccess", 2);
+        await wallet.signOut();
+        resolveSecondPage(jsonResponse({
+            credentials: [testCredential("22")],
+            page: {},
+        }));
+
+        await expect(secondPage).rejects.toMatchObject({
+            code: "OMS_SESSION_MISSING",
+            operation: "wallet.listAccessPages",
+        });
+    });
 });
 
 function createWalletWithSession(): WalletClient {
@@ -126,4 +170,20 @@ function testEnvironment() {
         walletApiUrl: "https://wallet.example",
         indexerGatewayUrl: "https://indexer.example",
     };
+}
+
+function requestCount(fetchMock: ReturnType<typeof vi.fn>, endpoint: string): number {
+    return fetchMock.mock.calls.filter(([input]) => input.toString().endsWith(endpoint)).length;
+}
+
+async function waitForRequest(
+    fetchMock: ReturnType<typeof vi.fn>,
+    endpoint: string,
+    count = 1,
+): Promise<void> {
+    for (let attempt = 0; attempt < 20; attempt += 1) {
+        if (requestCount(fetchMock, endpoint) >= count) return;
+        await new Promise(resolve => setTimeout(resolve, 0));
+    }
+    throw new Error(`Timed out waiting for ${endpoint}`);
 }

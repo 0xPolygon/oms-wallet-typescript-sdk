@@ -81,7 +81,6 @@ describe("IndexerClient", () => {
         expect(fetchMock.mock.calls[0][0].toString()).toBe("https://indexer.example/GetTokenBalancesDetails");
         expect(fetchMock.mock.calls[0][1]?.headers).toMatchObject({
             "Api-Key": "publishable-key",
-            Origin: "http://localhost:5173",
             Webrpc: "webrpc@v0.31.2;gen-typescript@v0.23.1;sequence-indexer@v0.4.0",
         });
         expect(JSON.parse(fetchMock.mock.calls[0][1]?.body as string)).toEqual({

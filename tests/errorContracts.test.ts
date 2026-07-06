@@ -5,12 +5,12 @@ import {
     MemoryStorageManager,
     Networks,
     OMSWallet,
-    OmsRequestError,
-    OmsSdkError,
+    OMSWalletRequestError,
+    OMSWalletError,
     SessionStorageManager,
     WalletType,
     WebCryptoP256CredentialSigner,
-    isOmsSdkError,
+    isOMSWalletError,
     type CredentialSigner,
 } from "../src";
 
@@ -59,7 +59,7 @@ describe("public API error contracts", () => {
           {
             "code": "OMS_REQUEST_FAILED",
             "message": "request failed",
-            "name": "OmsRequestError",
+            "name": "OMSWalletRequestError",
             "operation": "wallet.startEmailAuth",
             "retryable": true,
             "status": null,
@@ -102,7 +102,7 @@ describe("public API error contracts", () => {
           {
             "code": "OMS_AUTH_COMMITMENT_CONSUMED",
             "message": "The authentication commitment has already been used",
-            "name": "OmsRequestError",
+            "name": "OMSWalletRequestError",
             "operation": "wallet.completeEmailAuth",
             "retryable": false,
             "status": 400,
@@ -134,7 +134,7 @@ describe("public API error contracts", () => {
           {
             "code": "OMS_HTTP_ERROR",
             "message": "bad response",
-            "name": "OmsRequestError",
+            "name": "OMSWalletRequestError",
             "operation": "wallet.startEmailAuth",
             "retryable": true,
             "status": 502,
@@ -190,7 +190,7 @@ describe("public API error contracts", () => {
               "error": {
                 "code": "OMS_SESSION_MISSING",
                 "message": "No pending email auth attempt",
-                "name": "OmsSessionError",
+                "name": "OMSWalletSessionError",
                 "operation": "wallet.completeEmailAuth",
                 "retryable": null,
                 "status": null,
@@ -203,7 +203,7 @@ describe("public API error contracts", () => {
               "error": {
                 "code": "OMS_SESSION_MISSING",
                 "message": "Email auth completion is already in flight",
-                "name": "OmsSessionError",
+                "name": "OMSWalletSessionError",
                 "operation": "wallet.completeEmailAuth",
                 "retryable": null,
                 "status": null,
@@ -368,7 +368,7 @@ describe("public API error contracts", () => {
           {
             "code": "OMS_SESSION_MISSING",
             "message": "No active wallet session",
-            "name": "OmsSessionError",
+            "name": "OMSWalletSessionError",
             "operation": "wallet.signMessage",
             "retryable": null,
             "status": null,
@@ -413,7 +413,7 @@ describe("public API error contracts", () => {
               "error": {
                 "code": "OMS_SESSION_MISSING",
                 "message": "No authenticated wallet session",
-                "name": "OmsSessionError",
+                "name": "OMSWalletSessionError",
                 "operation": "wallet.listWallets",
                 "retryable": null,
                 "status": null,
@@ -426,7 +426,7 @@ describe("public API error contracts", () => {
               "error": {
                 "code": "OMS_SESSION_MISSING",
                 "message": "No active wallet session",
-                "name": "OmsSessionError",
+                "name": "OMSWalletSessionError",
                 "operation": "wallet.useWallet",
                 "retryable": null,
                 "status": null,
@@ -439,7 +439,7 @@ describe("public API error contracts", () => {
               "error": {
                 "code": "OMS_SESSION_MISSING",
                 "message": "No active wallet session",
-                "name": "OmsSessionError",
+                "name": "OMSWalletSessionError",
                 "operation": "wallet.createWallet",
                 "retryable": null,
                 "status": null,
@@ -452,7 +452,7 @@ describe("public API error contracts", () => {
               "error": {
                 "code": "OMS_SESSION_MISSING",
                 "message": "No active wallet session",
-                "name": "OmsSessionError",
+                "name": "OMSWalletSessionError",
                 "operation": "wallet.getIdToken",
                 "retryable": null,
                 "status": null,
@@ -465,7 +465,7 @@ describe("public API error contracts", () => {
               "error": {
                 "code": "OMS_SESSION_MISSING",
                 "message": "No active wallet session",
-                "name": "OmsSessionError",
+                "name": "OMSWalletSessionError",
                 "operation": "wallet.signTypedData",
                 "retryable": null,
                 "status": null,
@@ -478,7 +478,7 @@ describe("public API error contracts", () => {
               "error": {
                 "code": "OMS_SESSION_MISSING",
                 "message": "No active wallet session",
-                "name": "OmsSessionError",
+                "name": "OMSWalletSessionError",
                 "operation": "wallet.sendTransaction",
                 "retryable": null,
                 "status": null,
@@ -491,7 +491,7 @@ describe("public API error contracts", () => {
               "error": {
                 "code": "OMS_SESSION_MISSING",
                 "message": "No active wallet session",
-                "name": "OmsSessionError",
+                "name": "OMSWalletSessionError",
                 "operation": "wallet.callContract",
                 "retryable": null,
                 "status": null,
@@ -504,7 +504,7 @@ describe("public API error contracts", () => {
               "error": {
                 "code": "OMS_SESSION_MISSING",
                 "message": "No active wallet session",
-                "name": "OmsSessionError",
+                "name": "OMSWalletSessionError",
                 "operation": "wallet.listAccess",
                 "retryable": null,
                 "status": null,
@@ -517,7 +517,7 @@ describe("public API error contracts", () => {
               "error": {
                 "code": "OMS_SESSION_MISSING",
                 "message": "No active wallet session",
-                "name": "OmsSessionError",
+                "name": "OMSWalletSessionError",
                 "operation": "wallet.listAccessPages",
                 "retryable": null,
                 "status": null,
@@ -530,7 +530,7 @@ describe("public API error contracts", () => {
               "error": {
                 "code": "OMS_SESSION_MISSING",
                 "message": "No active wallet session",
-                "name": "OmsSessionError",
+                "name": "OMSWalletSessionError",
                 "operation": "wallet.revokeAccess",
                 "retryable": null,
                 "status": null,
@@ -544,6 +544,15 @@ describe("public API error contracts", () => {
     });
 
     it("snapshots OIDC local error contracts without upstream details", async () => {
+        vi.stubGlobal("fetch", vi.fn(async (input: RequestInfo | URL) => {
+            const url = input.toString();
+            if (url.endsWith("/CommitVerifier")) {
+                return jsonResponse({verifier: "verifier-1", challenge: "challenge-1"});
+            }
+
+            throw new Error(`Unexpected request: ${url}`);
+        }));
+
         const oms = createOmsClient();
         const omsWithoutRedirectStorage = createOmsClient({redirectAuthStorage: null});
 
@@ -559,16 +568,30 @@ describe("public API error contracts", () => {
             ["wallet.completeOidcRedirectAuth.missingCallbackParams", () => oms.wallet.completeOidcRedirectAuth({
                 callbackUrl: "https://app.example/auth/callback",
             })],
-            ["wallet.completeOidcRedirectAuth.providerError", () => oms.wallet.completeOidcRedirectAuth({
-                callbackUrl: "https://app.example/auth/callback?error=access_denied&error_description=User%20cancelled",
-            })],
+            ["wallet.completeOidcRedirectAuth.providerError", async () => {
+                const providerErrorOms = createOmsClient();
+                const started = await providerErrorOms.wallet.startOidcRedirectAuth({
+                    provider: testOidcProvider(),
+                    redirectUri: "https://app.example/auth/callback",
+                });
+                return providerErrorOms.wallet.completeOidcRedirectAuth({
+                    callbackUrl: `https://app.example/auth/callback?error=access_denied&error_description=User%20cancelled&state=${started.state}`,
+                });
+            }],
             ["wallet.completeOidcRedirectAuth.noPendingAuth", () => oms.wallet.completeOidcRedirectAuth({
                 callbackUrl: "https://app.example/auth/callback?code=code-1&state=state-1",
             })],
-            ["wallet.completeOidcRedirectAuth.cleanUrlWithoutBrowser", () => oms.wallet.completeOidcRedirectAuth({
-                callbackUrl: "https://app.example/auth/callback?code=code-1&state=state-1",
-                cleanUrl: true,
-            })],
+            ["wallet.completeOidcRedirectAuth.cleanUrlWithoutBrowser", async () => {
+                const cleanUrlOms = createOmsClient();
+                const started = await cleanUrlOms.wallet.startOidcRedirectAuth({
+                    provider: testOidcProvider(),
+                    redirectUri: "https://app.example/auth/callback",
+                });
+                return cleanUrlOms.wallet.completeOidcRedirectAuth({
+                    callbackUrl: `https://app.example/auth/callback?code=code-1&state=${started.state}`,
+                    cleanUrl: true,
+                });
+            }],
             ["wallet.signInWithOidcRedirect.missingCurrentUrl", () => oms.wallet.signInWithOidcRedirect({
                 provider: testOidcProvider(),
             })],
@@ -578,7 +601,7 @@ describe("public API error contracts", () => {
               "error": {
                 "code": "OMS_VALIDATION_ERROR",
                 "message": "OIDC provider "github" is not configured",
-                "name": "OmsValidationError",
+                "name": "OMSWalletValidationError",
                 "operation": "wallet.startOidcRedirectAuth",
                 "retryable": null,
                 "status": null,
@@ -591,7 +614,7 @@ describe("public API error contracts", () => {
               "error": {
                 "code": "OMS_VALIDATION_ERROR",
                 "message": "OIDC redirect auth requires redirectAuthStorage or browser sessionStorage",
-                "name": "OmsValidationError",
+                "name": "OMSWalletValidationError",
                 "operation": "wallet.startOidcRedirectAuth",
                 "retryable": null,
                 "status": null,
@@ -604,7 +627,7 @@ describe("public API error contracts", () => {
               "error": {
                 "code": "OMS_VALIDATION_ERROR",
                 "message": "OIDC callback URL is missing code or state",
-                "name": "OmsValidationError",
+                "name": "OMSWalletValidationError",
                 "operation": "wallet.completeOidcRedirectAuth",
                 "retryable": null,
                 "status": null,
@@ -617,7 +640,7 @@ describe("public API error contracts", () => {
               "error": {
                 "code": "OMS_VALIDATION_ERROR",
                 "message": "User cancelled",
-                "name": "OmsValidationError",
+                "name": "OMSWalletValidationError",
                 "operation": "wallet.completeOidcRedirectAuth",
                 "retryable": null,
                 "status": null,
@@ -630,7 +653,7 @@ describe("public API error contracts", () => {
               "error": {
                 "code": "OMS_VALIDATION_ERROR",
                 "message": "No pending OIDC redirect auth found",
-                "name": "OmsValidationError",
+                "name": "OMSWalletValidationError",
                 "operation": "wallet.completeOidcRedirectAuth",
                 "retryable": null,
                 "status": null,
@@ -643,7 +666,7 @@ describe("public API error contracts", () => {
               "error": {
                 "code": "OMS_VALIDATION_ERROR",
                 "message": "cleanUrl requires replaceUrl or browser history support",
-                "name": "OmsValidationError",
+                "name": "OMSWalletValidationError",
                 "operation": "wallet.completeOidcRedirectAuth",
                 "retryable": null,
                 "status": null,
@@ -656,7 +679,7 @@ describe("public API error contracts", () => {
               "error": {
                 "code": "OMS_VALIDATION_ERROR",
                 "message": "signInWithOidcRedirect requires currentUrl outside a browser",
-                "name": "OmsValidationError",
+                "name": "OMSWalletValidationError",
                 "operation": "wallet.signInWithOidcRedirect",
                 "retryable": null,
                 "status": null,
@@ -719,7 +742,7 @@ describe("public API error contracts", () => {
               "error": {
                 "code": "OMS_VALIDATION_ERROR",
                 "message": "OIDC state nonce mismatch",
-                "name": "OmsValidationError",
+                "name": "OMSWalletValidationError",
                 "operation": "wallet.completeOidcRedirectAuth",
                 "retryable": null,
                 "status": null,
@@ -732,7 +755,7 @@ describe("public API error contracts", () => {
               "error": {
                 "code": "OMS_SESSION_MISSING",
                 "message": "OIDC redirect auth signer mismatch",
-                "name": "OmsSessionError",
+                "name": "OMSWalletSessionError",
                 "operation": "wallet.completeOidcRedirectAuth",
                 "retryable": null,
                 "status": null,
@@ -766,7 +789,7 @@ describe("public API error contracts", () => {
           {
             "code": "OMS_VALIDATION_ERROR",
             "message": "signInWithOidcRedirect requires assignUrl outside a browser",
-            "name": "OmsValidationError",
+            "name": "OMSWalletValidationError",
             "operation": "wallet.signInWithOidcRedirect",
             "retryable": null,
             "status": null,
@@ -789,7 +812,7 @@ describe("public API error contracts", () => {
           {
             "code": "OMS_VALIDATION_ERROR",
             "message": "OIDC ID token must contain header and payload sections",
-            "name": "OmsValidationError",
+            "name": "OMSWalletValidationError",
             "operation": "wallet.signInWithOidcIdToken",
             "retryable": null,
             "status": null,
@@ -829,7 +852,7 @@ describe("public API error contracts", () => {
               "error": {
                 "code": "OMS_REQUEST_FAILED",
                 "message": "request failed",
-                "name": "OmsRequestError",
+                "name": "OMSWalletRequestError",
                 "operation": "wallet.isValidMessageSignature",
                 "retryable": true,
                 "status": null,
@@ -848,7 +871,7 @@ describe("public API error contracts", () => {
               "error": {
                 "code": "OMS_REQUEST_FAILED",
                 "message": "request failed",
-                "name": "OmsRequestError",
+                "name": "OMSWalletRequestError",
                 "operation": "wallet.isValidTypedDataSignature",
                 "retryable": true,
                 "status": null,
@@ -890,7 +913,7 @@ describe("public API error contracts", () => {
           {
             "code": "OMS_REQUEST_FAILED",
             "message": "Transaction not found",
-            "name": "OmsRequestError",
+            "name": "OMSWalletRequestError",
             "operation": "wallet.getTransactionStatus",
             "retryable": false,
             "status": 404,
@@ -935,7 +958,7 @@ describe("public API error contracts", () => {
           {
             "code": "OMS_VALIDATION_ERROR",
             "message": "No fee options available for unsponsored transaction",
-            "name": "OmsValidationError",
+            "name": "OMSWalletValidationError",
             "operation": "wallet.sendTransaction",
             "retryable": null,
             "status": null,
@@ -976,7 +999,7 @@ describe("public API error contracts", () => {
           {
             "code": "OMS_TRANSACTION_EXECUTION_UNCONFIRMED",
             "message": "Transaction execution failed before status could be confirmed",
-            "name": "OmsTransactionError",
+            "name": "OMSWalletTransactionError",
             "operation": "wallet.execute",
             "retryable": false,
             "status": null,
@@ -1026,7 +1049,7 @@ describe("public API error contracts", () => {
           {
             "code": "OMS_TRANSACTION_STATUS_LOOKUP_FAILED",
             "message": "Transaction was submitted, but status polling failed",
-            "name": "OmsTransactionError",
+            "name": "OMSWalletTransactionError",
             "operation": "wallet.transactionStatus",
             "retryable": true,
             "status": null,
@@ -1081,7 +1104,7 @@ describe("public API error contracts", () => {
           {
             "code": "OMS_TRANSACTION_STATUS_LOOKUP_FAILED",
             "message": "Transaction was submitted, but status polling failed",
-            "name": "OmsTransactionError",
+            "name": "OMSWalletTransactionError",
             "operation": "wallet.transactionStatus",
             "retryable": true,
             "status": 404,
@@ -1124,7 +1147,7 @@ describe("public API error contracts", () => {
               "error": {
                 "code": "OMS_REQUEST_FAILED",
                 "message": "Unauthorized",
-                "name": "OmsRequestError",
+                "name": "OMSWalletRequestError",
                 "operation": "wallet.listAccess",
                 "retryable": false,
                 "status": 401,
@@ -1143,7 +1166,7 @@ describe("public API error contracts", () => {
               "error": {
                 "code": "OMS_REQUEST_FAILED",
                 "message": "Unauthorized",
-                "name": "OmsRequestError",
+                "name": "OMSWalletRequestError",
                 "operation": "wallet.listAccessPages",
                 "retryable": false,
                 "status": 401,
@@ -1162,7 +1185,7 @@ describe("public API error contracts", () => {
               "error": {
                 "code": "OMS_REQUEST_FAILED",
                 "message": "Unauthorized",
-                "name": "OmsRequestError",
+                "name": "OMSWalletRequestError",
                 "operation": "wallet.revokeAccess",
                 "retryable": false,
                 "status": 401,
@@ -1200,7 +1223,7 @@ describe("public API error contracts", () => {
           {
             "code": "OMS_HTTP_ERROR",
             "message": "Indexer is unavailable",
-            "name": "OmsRequestError",
+            "name": "OMSWalletRequestError",
             "operation": "indexer.getBalances",
             "retryable": true,
             "status": 503,
@@ -1236,7 +1259,7 @@ describe("public API error contracts", () => {
           {
             "code": "OMS_HTTP_ERROR",
             "message": "indexer.getBalances failed with HTTP 502",
-            "name": "OmsRequestError",
+            "name": "OMSWalletRequestError",
             "operation": "indexer.getBalances",
             "retryable": true,
             "status": 502,
@@ -1290,7 +1313,7 @@ describe("public API error contracts", () => {
               "error": {
                 "code": "OMS_HTTP_ERROR",
                 "message": "Indexer is unavailable",
-                "name": "OmsRequestError",
+                "name": "OMSWalletRequestError",
                 "operation": "indexer.getTransactionHistory",
                 "retryable": true,
                 "status": 503,
@@ -1309,7 +1332,7 @@ describe("public API error contracts", () => {
               "error": {
                 "code": "OMS_REQUEST_FAILED",
                 "message": "fetch failed",
-                "name": "OmsRequestError",
+                "name": "OMSWalletRequestError",
                 "operation": "indexer.getTransactionHistory",
                 "retryable": true,
                 "status": null,
@@ -1328,7 +1351,7 @@ describe("public API error contracts", () => {
               "error": {
                 "code": "OMS_INVALID_RESPONSE",
                 "message": "Invalid JSON response from indexer.getTransactionHistory",
-                "name": "OmsResponseError",
+                "name": "OMSWalletResponseError",
                 "operation": "indexer.getTransactionHistory",
                 "retryable": null,
                 "status": 200,
@@ -1364,7 +1387,7 @@ describe("public API error contracts", () => {
           {
             "code": "OMS_REQUEST_FAILED",
             "message": "fetch failed",
-            "name": "OmsRequestError",
+            "name": "OMSWalletRequestError",
             "operation": "indexer.getBalances",
             "retryable": true,
             "status": null,
@@ -1395,7 +1418,7 @@ describe("public API error contracts", () => {
           {
             "code": "OMS_INVALID_RESPONSE",
             "message": "Invalid JSON response from indexer.getBalances",
-            "name": "OmsResponseError",
+            "name": "OMSWalletResponseError",
             "operation": "indexer.getBalances",
             "retryable": null,
             "status": 200,
@@ -1467,7 +1490,7 @@ describe("public API error contracts", () => {
     });
 
     it("snapshots exported error helper and subclass fields", () => {
-        const error = new OmsRequestError({
+        const error = new OMSWalletRequestError({
             code: "OMS_HTTP_ERROR",
             operation: "wallet.startEmailAuth",
             message: "bad gateway",
@@ -1482,14 +1505,14 @@ describe("public API error contracts", () => {
             },
         });
 
-        expect(isOmsSdkError(error)).toBe(true);
-        expect(isOmsSdkError(new Error("plain"))).toBe(false);
-        expect(error).toBeInstanceOf(OmsSdkError);
+        expect(isOMSWalletError(error)).toBe(true);
+        expect(isOMSWalletError(new Error("plain"))).toBe(false);
+        expect(error).toBeInstanceOf(OMSWalletError);
         expect(serializeError(error)).toMatchInlineSnapshot(`
           {
             "code": "OMS_HTTP_ERROR",
             "message": "bad gateway",
-            "name": "OmsRequestError",
+            "name": "OMSWalletRequestError",
             "operation": "wallet.startEmailAuth",
             "retryable": true,
             "status": 502,
