@@ -2,6 +2,7 @@
   "name": "@polygonlabs/oms-wallet-wagmi-connector",
   "version": "0.2.0",
   "description": "Wagmi connector for OMS Wallet.",
+  "license": "Apache-2.0",
   "type": "module",
   "main": "dist/index.js",
   "types": "dist/index.d.ts",
@@ -16,6 +17,9 @@
     }
   },
   "sideEffects": false,
+  "engines": {
+    "node": ">=22"
+  },
   "repository": {
     "type": "git",
     "url": "git+https://github.com/0xsequence/typescript-sdk.git"
@@ -29,13 +33,14 @@
   },
   "scripts": {
     "clean": "rm -rf dist",
-    "build": "pnpm clean && tsc -p tsconfig.json",
+    "build": "pnpm --dir ../.. build && pnpm clean && tsc -p tsconfig.json",
     "prepack": "pnpm build",
+    "prepublishOnly": "pnpm --dir ../.. check:package-versions && pnpm build && pnpm test",
     "test": "vitest run",
     "test:watch": "vitest"
   },
   "peerDependencies": {
-    "@polygonlabs/oms-wallet": "workspace:*",
+    "@polygonlabs/oms-wallet": "workspace:^",
     "@wagmi/core": ">=3.5.0 <4",
     "viem": ">=2.48.4 <3"
   },

@@ -1,12 +1,12 @@
 # Publishing
 
 The SDK and wagmi connector release in lockstep. The connector source manifest keeps
-`@polygonlabs/oms-wallet` as `workspace:*` in both `peerDependencies` and `devDependencies`.
-This gives local development a workspace link, and `pnpm pack` / `pnpm publish` rewrites the
-published peer dependency to the exact release version.
+`@polygonlabs/oms-wallet` as `workspace:^` in `peerDependencies` and `workspace:*` in
+`devDependencies`. This gives local development a workspace link, and `pnpm pack` / `pnpm publish`
+rewrites the published peer dependency to a semver range for the release version.
 
 Do not replace the connector's SDK peer with a literal version in source, and do not publish with
-`npm publish`. Use pnpm from the workspace root so the `workspace:*` protocol is rewritten before
+`npm publish`. Use pnpm from the workspace root so the `workspace:` protocol is rewritten before
 the package reaches npm.
 
 ## Before Merging The Release PR
@@ -16,10 +16,10 @@ Before publishing a new stable version, update these values to the same exact ve
 - `package.json` `version`
 - `packages/oms-wallet-wagmi-connector/package.json` `version`
 
-Leave these values as `workspace:*`:
+Leave these values as workspace protocols:
 
-- `packages/oms-wallet-wagmi-connector/package.json` `peerDependencies["@polygonlabs/oms-wallet"]`
-- `packages/oms-wallet-wagmi-connector/package.json` `devDependencies["@polygonlabs/oms-wallet"]`
+- `packages/oms-wallet-wagmi-connector/package.json` `peerDependencies["@polygonlabs/oms-wallet"]`: `workspace:^`
+- `packages/oms-wallet-wagmi-connector/package.json` `devDependencies["@polygonlabs/oms-wallet"]`: `workspace:*`
 
 ## After The Release PR Is Merged
 
@@ -43,8 +43,8 @@ pnpm check:stable-package-versions
 ```bash
 pnpm test
 pnpm --filter @polygonlabs/oms-wallet-wagmi-connector test
-pnpm --filter @polygonlabs/oms-wallet-wagmi-connector build
 pnpm build
+pnpm --filter @polygonlabs/oms-wallet-wagmi-connector build
 pnpm build:node-example
 pnpm build:node-contract-deploy-example
 pnpm build:example

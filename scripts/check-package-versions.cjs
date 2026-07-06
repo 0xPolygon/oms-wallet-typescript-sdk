@@ -11,7 +11,8 @@ const browserExamplePackagePaths = [
   'examples/trails-actions/package.json',
   'examples/wagmi/package.json',
 ]
-const exactWorkspaceProtocol = 'workspace:*'
+const peerWorkspaceProtocol = 'workspace:^'
+const devWorkspaceProtocol = 'workspace:*'
 const exactPackageVersionPattern = /^\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?$/
 const exactStableSemverPattern = /^\d+\.\d+\.\d+$/
 const requireStablePackageVersions = process.argv.includes('--stable')
@@ -27,8 +28,8 @@ for (const packagePath of packagePaths) {
     report(`${packageJson.name} version ${packageJson.version} does not match ${rootPackage.name} version ${rootPackage.version}.`)
   }
 
-  checkRequiredWorkspaceReference(packageJson.name, 'peer dependency', packageJson.peerDependencies?.[rootPackage.name])
-  checkRequiredWorkspaceReference(packageJson.name, 'dev dependency', packageJson.devDependencies?.[rootPackage.name])
+  checkRequiredWorkspaceReference(packageJson.name, 'peer dependency', packageJson.peerDependencies?.[rootPackage.name], peerWorkspaceProtocol)
+  checkRequiredWorkspaceReference(packageJson.name, 'dev dependency', packageJson.devDependencies?.[rootPackage.name], devWorkspaceProtocol)
 }
 
 for (const packagePath of browserExamplePackagePaths) {
@@ -41,7 +42,7 @@ if (hasMismatch) {
   process.exitCode = 1
 } else {
   const packageVersionKind = requireStablePackageVersions ? 'stable package versions' : 'package versions'
-  console.log(`Publishable ${packageVersionKind} match ${rootPackage.version}; SDK workspace references use ${exactWorkspaceProtocol}; browser examples pin matching React runtimes.`)
+  console.log(`Publishable ${packageVersionKind} match ${rootPackage.version}; connector SDK peer uses ${peerWorkspaceProtocol}, connector SDK dev dependency uses ${devWorkspaceProtocol}; browser examples pin matching React runtimes.`)
 }
 
 function readPackage(packagePath) {
@@ -53,9 +54,9 @@ function report(message) {
   console.error(message)
 }
 
-function checkWorkspaceReference(packageName, dependencyType, version) {
-  if (version !== undefined && version !== exactWorkspaceProtocol) {
-    report(`${packageName} ${dependencyType} ${rootPackage.name}@${version} must use ${exactWorkspaceProtocol}; pnpm publish rewrites it to ${rootPackage.version}.`)
+function checkWorkspaceReference(packageName, dependencyType, version, expectedProtocol) {
+  if (version !== undefined && version !== expectedProtocol) {
+    report(`${packageName} ${dependencyType} ${rootPackage.name}@${version} must use ${expectedProtocol}; pnpm publish rewrites it to a publishable semver range.`)
   }
 }
 
@@ -68,13 +69,13 @@ function checkPackageVersion(packageName, version) {
   }
 }
 
-function checkRequiredWorkspaceReference(packageName, dependencyType, version) {
+function checkRequiredWorkspaceReference(packageName, dependencyType, version, expectedProtocol) {
   if (version === undefined) {
     report(`${packageName} must declare ${rootPackage.name} as a ${dependencyType}.`)
     return
   }
 
-  checkWorkspaceReference(packageName, dependencyType, version)
+  checkWorkspaceReference(packageName, dependencyType, version, expectedProtocol)
 }
 
 function checkReactRuntimeVersions(packagePath, packageJson) {

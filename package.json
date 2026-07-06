@@ -2,9 +2,10 @@
   "name": "@polygonlabs/oms-wallet",
   "version": "0.2.0",
   "description": "TypeScript SDK for OMS Wallet.",
+  "license": "Apache-2.0",
   "main": "dist/index.js",
   "module": "dist/esm/index.js",
-  "types": "dist/index.d.ts",
+  "types": "dist/esm/index.d.ts",
   "files": [
     "dist",
     "README.md",
@@ -12,10 +13,13 @@
   ],
   "exports": {
     ".": {
-      "types": "./dist/index.d.ts",
+      "types": "./dist/esm/index.d.ts",
       "import": "./dist/esm/index.js",
       "require": "./dist/index.js"
     }
+  },
+  "engines": {
+    "node": ">=22"
   },
   "sideEffects": false,
   "repository": {

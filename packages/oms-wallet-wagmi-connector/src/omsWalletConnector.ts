@@ -18,6 +18,7 @@ export function omsWalletConnector(parameters: OMSWalletConnectorParameters) {
     let provider: OMSWalletProvider | undefined;
     let unsubscribeSessionExpired: (() => void) | undefined;
     let manuallyDisconnected = false;
+    let manuallyDisconnectedVersion = 0;
     const connectorId = parameters.id ?? "omsWallet";
     const manuallyDisconnectedStorageKey = `${connectorId}.manuallyDisconnected` as keyof OMSWalletConnectorStorageItemMap;
 
@@ -31,13 +32,15 @@ export function omsWalletConnector(parameters: OMSWalletConnectorParameters) {
 
     return createConnector<OMSWalletProvider, Record<string, unknown>, OMSWalletConnectorStorageItemMap>((config) => {
         const isManuallyDisconnected = async (): Promise<boolean> => {
+            const readVersion = manuallyDisconnectedVersion;
             const storedValue = await config.storage?.getItem(manuallyDisconnectedStorageKey, null);
-            if (storedValue !== null && storedValue !== undefined) {
+            if (readVersion === manuallyDisconnectedVersion && storedValue !== null && storedValue !== undefined) {
                 manuallyDisconnected = storedValue;
             }
             return manuallyDisconnected;
         };
         const setManuallyDisconnected = async (nextValue: boolean): Promise<void> => {
+            manuallyDisconnectedVersion += 1;
             manuallyDisconnected = nextValue;
             if (nextValue) {
                 await config.storage?.setItem(manuallyDisconnectedStorageKey, true);
