@@ -13,6 +13,7 @@ export type OMSWalletErrorCode =
     | "OMS_TRANSACTION_EXECUTION_UNCONFIRMED"
     | "OMS_TRANSACTION_STATUS_LOOKUP_FAILED"
     | "OMS_VALIDATION_ERROR"
+    | "OMS_STORAGE_ERROR"
 
 export interface OMSWalletUpstreamError {
     service: "waas" | "indexer"
@@ -101,6 +102,13 @@ export class OMSWalletValidationError extends OMSWalletError {
     constructor(params: Omit<OMSWalletErrorParams, "code"> & { code?: OMSWalletErrorCode }) {
         super({...params, code: params.code ?? "OMS_VALIDATION_ERROR"})
         this.name = "OMSWalletValidationError"
+    }
+}
+
+export class OMSWalletStorageError extends OMSWalletError {
+    constructor(params: Omit<OMSWalletErrorParams, "code"> & { code?: OMSWalletErrorCode }) {
+        super({...params, code: params.code ?? "OMS_STORAGE_ERROR"})
+        this.name = "OMSWalletStorageError"
     }
 }
 

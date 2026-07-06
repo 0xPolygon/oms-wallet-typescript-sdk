@@ -28,7 +28,13 @@ import {
     oidcIdTokenExpiresAtEpochSeconds,
     oidcIdTokenHandleHash,
 } from "../utils/oidcIdToken.js";
-import {OMSWalletSessionError, OMSWalletTransactionError, OMSWalletSelectionError, toOMSWalletError} from "../errors.js";
+import {
+    OMSWalletSessionError,
+    OMSWalletStorageError,
+    OMSWalletTransactionError,
+    OMSWalletSelectionError,
+    toOMSWalletError,
+} from "../errors.js";
 
 import {
     Waas as WaasClient,
@@ -810,7 +816,6 @@ export class WalletClient<Env extends OMSWalletEnvironment = OMSWalletEnvironmen
     /**
      * Browser convenience wrapper that starts an OIDC redirect and navigates to the provider.
      */
-    async signInWithOidcRedirect(params: SignInWithOidcRedirectParams<Env>): Promise<void>
     async signInWithOidcRedirect(params: SignInWithOidcRedirectParams<Env>): Promise<void> {
         return this.runOperation(WalletOperation.signInWithOidcRedirect, async () => {
             if (!hasOidcRedirectStartProvider(params)) {
@@ -1545,7 +1550,15 @@ export class WalletClient<Env extends OMSWalletEnvironment = OMSWalletEnvironmen
         storage: StorageManager,
         pending: PendingOidcRedirectAuth,
     ): void {
-        storage.set(Constants.redirectAuthStorageKey, JSON.stringify(pending))
+        try {
+            storage.set(Constants.redirectAuthStorageKey, JSON.stringify(pending))
+        } catch (error) {
+            throw new OMSWalletStorageError({
+                operation: WalletOperation.startOidcRedirectAuth,
+                message: "OIDC redirect auth state persistence failed",
+                cause: error,
+            })
+        }
     }
 
     private loadPendingOidcRedirectAuth(storage: StorageManager): PendingOidcRedirectAuth {

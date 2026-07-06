@@ -12,6 +12,7 @@ import {
     WebCryptoP256CredentialSigner,
     isOMSWalletError,
     type CredentialSigner,
+    type StorageManager,
 } from "../src";
 
 class MockSigner implements CredentialSigner {
@@ -565,6 +566,12 @@ describe("public API error contracts", () => {
                 provider: testOidcProvider(),
                 redirectUri: "https://app.example/auth/callback",
             })],
+            ["wallet.startOidcRedirectAuth.redirectStorageWriteFailure", () => createOmsClient({
+                redirectAuthStorage: new ThrowingSetStorage(),
+            }).wallet.startOidcRedirectAuth({
+                provider: testOidcProvider(),
+                redirectUri: "https://app.example/auth/callback",
+            })],
             ["wallet.completeOidcRedirectAuth.missingCallbackParams", () => oms.wallet.completeOidcRedirectAuth({
                 callbackUrl: "https://app.example/auth/callback",
             })],
@@ -622,6 +629,19 @@ describe("public API error contracts", () => {
                 "upstreamError": null,
               },
               "label": "wallet.startOidcRedirectAuth.missingRedirectStorage",
+            },
+            {
+              "error": {
+                "code": "OMS_STORAGE_ERROR",
+                "message": "OIDC redirect auth state persistence failed",
+                "name": "OMSWalletStorageError",
+                "operation": "wallet.startOidcRedirectAuth",
+                "retryable": null,
+                "status": null,
+                "txnId": null,
+                "upstreamError": null,
+              },
+              "label": "wallet.startOidcRedirectAuth.redirectStorageWriteFailure",
             },
             {
               "error": {
@@ -1615,7 +1635,7 @@ function serializeUpstreamError(error: unknown): SerializedUpstreamError | null 
 
 function createOmsClient(params: {
     credentialSigner?: CredentialSigner
-    redirectAuthStorage?: MemoryStorageManager | null
+    redirectAuthStorage?: StorageManager | null
 } = {}): OMSWallet {
     const clientParams: ConstructorParameters<typeof OMSWallet>[0] = {
         publishableKey: "pk_dev_sdbx_project_key",
@@ -1628,6 +1648,18 @@ function createOmsClient(params: {
     }
 
     return new OMSWallet(clientParams);
+}
+
+class ThrowingSetStorage implements StorageManager {
+    get(): string | null {
+        return null;
+    }
+
+    set(): void {
+        throw new Error("OIDC redirect state save failed");
+    }
+
+    delete(): void {}
 }
 
 function createOmsClientWithSession(): OMSWallet {

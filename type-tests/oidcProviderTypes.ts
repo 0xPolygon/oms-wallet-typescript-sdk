@@ -222,6 +222,7 @@ const upstreamError: OMSWalletUpstreamError = {
 const sdkError = undefined as unknown as OMSWalletError;
 const maybeUpstreamError: OMSWalletUpstreamError | undefined = sdkError.upstreamError;
 const transactionExecutionCode: OMSWalletErrorCode = "OMS_TRANSACTION_EXECUTION_UNCONFIRMED";
+const storageCode: OMSWalletErrorCode = "OMS_STORAGE_ERROR";
 void session;
 void unsubscribeSessionExpired;
 void sessionAuth;
@@ -237,6 +238,7 @@ void transactionHistoryResult;
 void upstreamError;
 void maybeUpstreamError;
 void transactionExecutionCode;
+void storageCode;
 void defaultClient.supportedNetworks;
 // @ts-expect-error findNetworkById accepts numeric chain IDs only.
 findNetworkById("80002");

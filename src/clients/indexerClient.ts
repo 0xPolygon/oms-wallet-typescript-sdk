@@ -298,19 +298,18 @@ interface GetTransactionHistoryResponse {
     transactions?: GatewayTransaction[];
 }
 
-// Matches the Swift `OMSWalletEnvironment` shape used by IndexerClient.
-export interface OMSWalletEnvironment {
+interface IndexerClientEnvironment {
     indexerGatewayUrl: string;
 }
 
 export class IndexerClient {
     private readonly publishableKey: string;
-    private readonly environment: OMSWalletEnvironment;
+    private readonly environment: IndexerClientEnvironment;
     private readonly client: HttpClient;
 
     constructor(params: {
         publishableKey: string,
-        environment: OMSWalletEnvironment
+        environment: IndexerClientEnvironment
     }) {
         this.publishableKey = params.publishableKey;
         this.environment = params.environment;

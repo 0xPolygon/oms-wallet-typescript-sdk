@@ -51,6 +51,7 @@ export {
     OMSWalletTransactionError,
     OMSWalletSelectionError,
     OMSWalletValidationError,
+    OMSWalletStorageError,
     isOMSWalletError,
     type OMSWalletErrorCode,
     type OMSWalletUpstreamError,

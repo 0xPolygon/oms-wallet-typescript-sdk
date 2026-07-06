@@ -155,19 +155,25 @@ The on-chain address of the active wallet (`Address` is the viem/abitype hex add
 ### session
 
 ```typescript
+interface OMSWalletEmailSessionAuth {
+  readonly type: 'email'
+  readonly email: string | undefined
+}
+
+type OMSWalletOidcSessionAuthFlow = 'redirect' | 'id-token'
+
+interface OMSWalletOidcSessionAuth {
+  readonly type: 'oidc'
+  readonly flow: OMSWalletOidcSessionAuthFlow
+  readonly issuer: string
+  readonly provider: string | undefined
+  readonly providerLabel: string | undefined
+  readonly email: string | undefined
+}
+
 type OMSWalletSessionAuth =
-  | {
-      readonly type: 'email'
-      readonly email: string | undefined
-    }
-  | {
-      readonly type: 'oidc'
-      readonly flow: 'redirect' | 'id-token'
-      readonly issuer: string
-      readonly provider: string | undefined
-      readonly providerLabel: string | undefined
-      readonly email: string | undefined
-    }
+  | OMSWalletEmailSessionAuth
+  | OMSWalletOidcSessionAuth
 
 interface OMSWalletSessionState {
   readonly walletAddress: Address | undefined
@@ -986,6 +992,7 @@ type OMSWalletErrorCode =
   | 'OMS_TRANSACTION_EXECUTION_UNCONFIRMED'
   | 'OMS_TRANSACTION_STATUS_LOOKUP_FAILED'
   | 'OMS_VALIDATION_ERROR'
+  | 'OMS_STORAGE_ERROR'
 ```
 
 `OMS_AUTH_COMMITMENT_CONSUMED` means the OTP/OIDC auth commitment has already been used. Restart the auth flow before retrying.
@@ -1006,6 +1013,7 @@ type OMSWalletErrorCode =
 | `OMSWalletTransactionError` | Transaction execution could not be confirmed or submitted transaction status polling failed; includes `txnId` when available. |
 | `OMSWalletSelectionError` | Manual wallet selection is stale, invalid, or already processing an action. |
 | `OMSWalletValidationError` | SDK-side validation failures before a request is sent. |
+| `OMSWalletStorageError` | Local SDK storage failures, such as OIDC redirect-state persistence failures. |
 
 Use `isOMSWalletError(err)` or `err instanceof OMSWalletError` to branch on structured error fields.
 
@@ -1314,19 +1322,25 @@ class EthereumPrivateKeyCredentialSigner implements CredentialSigner {
 ### Session Listener Types
 
 ```typescript
+interface OMSWalletEmailSessionAuth {
+  readonly type: 'email'
+  readonly email: string | undefined
+}
+
+type OMSWalletOidcSessionAuthFlow = 'redirect' | 'id-token'
+
+interface OMSWalletOidcSessionAuth {
+  readonly type: 'oidc'
+  readonly flow: OMSWalletOidcSessionAuthFlow
+  readonly issuer: string
+  readonly provider: string | undefined
+  readonly providerLabel: string | undefined
+  readonly email: string | undefined
+}
+
 type OMSWalletSessionAuth =
-  | {
-      readonly type: 'email'
-      readonly email: string | undefined
-    }
-  | {
-      readonly type: 'oidc'
-      readonly flow: 'redirect' | 'id-token'
-      readonly issuer: string
-      readonly provider: string | undefined
-      readonly providerLabel: string | undefined
-      readonly email: string | undefined
-    }
+  | OMSWalletEmailSessionAuth
+  | OMSWalletOidcSessionAuth
 
 interface OMSWalletSessionState {
   readonly walletAddress: Address | undefined

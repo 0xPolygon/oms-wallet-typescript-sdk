@@ -35,7 +35,7 @@
     "clean": "rm -rf dist",
     "build": "pnpm --dir ../.. build && pnpm clean && tsc -p tsconfig.json",
     "prepack": "pnpm build",
-    "prepublishOnly": "pnpm --dir ../.. check:package-versions && pnpm build && pnpm test",
+    "prepublishOnly": "pnpm --dir ../.. check:stable-package-versions && pnpm build && pnpm test",
     "test": "vitest run",
     "test:watch": "vitest"
   },
