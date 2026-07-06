@@ -41,12 +41,6 @@ import {
     type OidcProviderName,
 } from "../src/index";
 
-// @ts-expect-error Legacy Oms* value exports were removed before stable.
-import { OmsSdkError, defineOmsAuthConfig, isOmsSdkError } from "../src/index";
-
-// @ts-expect-error Legacy Oms* type exports were removed before stable.
-import type { DefaultOmsEnvironment, OmsAuthConfig, OmsEnvironment, OmsSdkErrorCode, OmsUpstreamError } from "../src/index";
-
 const auth = defineOMSWalletAuthConfig({
     oidcProviders: {
         google: googleOidcProvider(),

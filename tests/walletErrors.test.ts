@@ -146,6 +146,16 @@ describe("WalletClient errors", () => {
             code: "OMS_VALIDATION_ERROR",
             operation: "wallet.startOidcRedirectAuth",
         });
+        await expect(wallet.signInWithOidcIdToken({
+            idToken: "invalid-token",
+            issuer: "https://accounts.google.com",
+            audience: "google-client",
+            sessionLifetimeSeconds: 2_592_001,
+        })).rejects.toMatchObject({
+            code: "OMS_VALIDATION_ERROR",
+            operation: "wallet.signInWithOidcIdToken",
+            message: "wallet.signInWithOidcIdToken requires sessionLifetimeSeconds to be an integer between 1 and 2592000",
+        });
         expect(fetchMock).not.toHaveBeenCalled();
     });
 });

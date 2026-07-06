@@ -183,7 +183,7 @@ interface OMSWalletSessionExpiredEvent {
 wallet.session: OMSWalletSessionState
 ```
 
-Completed wallet sessions persist `walletAddress`, credential expiry, and structured auth metadata in the configured `storage`. Storage entries from earlier SDK versions that only contain legacy `loginType` and `sessionEmail` metadata are treated as incomplete and cleared, so those users must authenticate again. Pending email OTP and OIDC redirect state are not exposed through `session`; use the auth method results to drive pending UI.
+Completed wallet sessions persist `walletAddress`, credential expiry, and structured auth metadata in the configured `storage`. Pending email OTP and OIDC redirect state are not exposed through `session`; use the auth method results to drive pending UI.
 
 OIDC redirect auth stores `flow: 'redirect'`. OIDC ID-token auth stores `flow: 'id-token'`. Session values returned by `wallet.session` and `wallet.onSessionExpired` are readonly snapshots; mutating them does not update SDK state or storage.
 
@@ -245,7 +245,7 @@ completeEmailAuth(params: {
 
 Verifies the OTP code and activates a wallet. Must be called after [`startEmailAuth`](#startemailauth).
 
-This method verifies the code with a one-week session lifetime by default, loads all wallet pages, then automatically selects an existing wallet matching `walletType`, or creates a new one if none exists. Wallet metadata is persisted to storage. Pass `sessionLifetimeSeconds` to request a shorter or longer session lifetime. Pass `walletSelection: 'manual'` to return a [`PendingWalletSelection`](#pendingwalletselection) bound to the verified auth flow; complete selection through that object.
+This method verifies the code with a one-week session lifetime by default, loads all wallet pages, then automatically selects an existing wallet matching `walletType`, or creates a new one if none exists. Wallet metadata is persisted to storage. Pass `sessionLifetimeSeconds` to request a shorter or longer session lifetime, from `1` through `2592000` seconds (30 days). Pass `walletSelection: 'manual'` to return a [`PendingWalletSelection`](#pendingwalletselection) bound to the verified auth flow; complete selection through that object.
 
 **Parameters**
 
@@ -254,7 +254,7 @@ This method verifies the code with a one-week session lifetime by default, loads
 | `code` | `string` | Yes | The one-time passcode entered by the user. |
 | `walletType` | `WalletType` | No | The wallet type to load or create. Defaults to `WalletType.Ethereum`. |
 | `walletSelection` | `'automatic' \| 'manual'` | No | Defaults to `'automatic'`. Set to `'manual'` to let the app choose an existing wallet or create one through the returned pending selection. |
-| `sessionLifetimeSeconds` | `number` | No | Requested session lifetime in seconds. Defaults to one week. |
+| `sessionLifetimeSeconds` | `number` | No | Requested session lifetime in seconds, from `1` through `2592000` (30 days). Defaults to one week. |
 
 **Returns** `Promise<{ readonly walletAddress: Address; readonly wallet: WalletAccount; readonly wallets: ReadonlyArray<WalletAccount>; readonly credential: Readonly<WalletCredential> }>` by default, or `Promise<PendingWalletSelection>` when `walletSelection` is `'manual'`.
 
@@ -318,7 +318,7 @@ The SDK reads the token `exp` claim, commits a WaaS `id-token` verifier, complet
 | `audience` | `string` | Yes | Expected token audience/client ID. |
 | `walletType` | `WalletType` | No | The wallet type to load or create. Defaults to `WalletType.Ethereum`. |
 | `walletSelection` | `'automatic' \| 'manual'` | No | Defaults to `'automatic'`. Set to `'manual'` to let the app choose an existing wallet or create one through the returned pending selection. |
-| `sessionLifetimeSeconds` | `number` | No | Requested session lifetime in seconds. Defaults to one week. |
+| `sessionLifetimeSeconds` | `number` | No | Requested session lifetime in seconds, from `1` through `2592000` (30 days). Defaults to one week. |
 | `provider` | `string` | No | Stable app-facing provider key stored in `session.auth.provider`. |
 | `providerLabel` | `string` | No | Display label stored in `session.auth.providerLabel`. |
 
@@ -374,7 +374,7 @@ In browser environments, `redirectUri` defaults to the current page URL without 
 
 When `relayRedirectUri` is set, the provider redirects through that relay before returning to the app `redirectUri`. If omitted for the built-in Google or Apple providers, the SDK derives the relay URL from the publishable key environment and provider: `{apiBase}/auth/waas/callback/{provider}`.
 
-Pass `walletSelection` or `sessionLifetimeSeconds` at start to store completion preferences in the pending redirect state. `completeOidcRedirectAuth` uses those stored values after the provider redirects back unless completion params override them.
+Pass `walletSelection` or `sessionLifetimeSeconds` at start to store completion preferences in the pending redirect state. `sessionLifetimeSeconds` must be from `1` through `2592000` seconds (30 days). `completeOidcRedirectAuth` uses those stored values after the provider redirects back unless completion params override them.
 
 Pass `loginHint` for Google redirect flows to set the Google `login_hint` authorization parameter, which can prefill or select the expected account. The SDK only sends `login_hint` for providers whose issuer is `https://accounts.google.com`. If omitted, the SDK falls back to the previous active session email when one exists before the redirect auth attempt starts. After `signOut()`, that previous session email is cleared. To force no `login_hint` for a call, pass `loginHint: ''`.
 
@@ -407,7 +407,7 @@ completeOidcRedirectAuth(params: {
 
 Completes an OIDC redirect flow by validating the callback, completing auth with a one-week session lifetime by default, and activating an existing wallet or creating one. Completion must run with the same credential signer, credential id, and signing algorithm that started the redirect. In browser environments, `callbackUrl` defaults to `window.location.href`; if the current URL has no OIDC callback params, the method returns `undefined` without requiring pending redirect storage.
 
-Pass `sessionLifetimeSeconds` to request a shorter or longer session lifetime. Pass `walletSelection: 'manual'` to return a [`PendingWalletSelection`](#pendingwalletselection) for app-driven wallet selection. If omitted, completion uses values stored by `startOidcRedirectAuth` or `signInWithOidcRedirect`, then falls back to automatic wallet selection and the default one-week lifetime.
+Pass `sessionLifetimeSeconds` to request a shorter or longer session lifetime, from `1` through `2592000` seconds (30 days). Pass `walletSelection: 'manual'` to return a [`PendingWalletSelection`](#pendingwalletselection) for app-driven wallet selection. If omitted, completion uses values stored by `startOidcRedirectAuth` or `signInWithOidcRedirect`, then falls back to automatic wallet selection and the default one-week lifetime.
 
 When `callbackUrl` is omitted, OAuth query parameters are cleaned by default. Explicit `callbackUrl` calls clean only when `cleanUrl: true`; outside a browser, pass `replaceUrl` when cleaning.
 
@@ -439,7 +439,7 @@ signInWithOidcRedirect(params: {
 
 Browser convenience method for regular web apps. It starts OIDC redirect auth, stores pending redirect state, redirects with `window.location.assign`, and returns `void`. Use [`completeOidcRedirectAuth`](#completeoidcredirectauth) on the callback page to finish auth.
 
-`redirectUri` defaults to the current page URL without query or hash. Pass `currentUrl` to derive that value from a specific URL, and pass `assignUrl` outside a browser or when testing. `walletSelection` and `sessionLifetimeSeconds` are stored with the pending redirect state and used by `completeOidcRedirectAuth` after the provider redirects back.
+`redirectUri` defaults to the current page URL without query or hash. Pass `currentUrl` to derive that value from a specific URL, and pass `assignUrl` outside a browser or when testing. `walletSelection` and `sessionLifetimeSeconds` are stored with the pending redirect state and used by `completeOidcRedirectAuth` after the provider redirects back. `sessionLifetimeSeconds` must be from `1` through `2592000` seconds (30 days).
 
 ```typescript
 void omsWallet.wallet.signInWithOidcRedirect({ provider: 'google' })
@@ -1244,7 +1244,7 @@ interface SignInWithOidcRedirectParams<Env> {
 }
 ```
 
-Exported parameter and result interfaces for the email OTP and OIDC methods documented above.
+Exported parameter and result interfaces for the email OTP and OIDC methods documented above. All `sessionLifetimeSeconds` values must be integer seconds from `1` through `2592000` (30 days), and default to one week when omitted.
 
 ---
 

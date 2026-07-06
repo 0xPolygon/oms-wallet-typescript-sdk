@@ -901,8 +901,6 @@ export class WalletClient<Env extends OMSWalletEnvironment = OMSWalletEnvironmen
         this.storage.delete(Constants.walletAddressStorageKey)
         this.storage.delete(Constants.sessionExpiresAtStorageKey)
         this.storage.delete(Constants.sessionAuthStorageKey)
-        this.storage.delete('omsWallet_session_login_type')
-        this.storage.delete('omsWallet_session_email')
         this.redirectAuthStorage?.delete(Constants.redirectAuthStorageKey)
     }
 
@@ -2236,7 +2234,7 @@ function normalizeJsonBigInts<T>(value: T): T {
 }
 
 const DEFAULT_SESSION_LIFETIME_SECONDS = 604_800
-const MAX_SESSION_LIFETIME_SECONDS = 0xffffffff
+const MAX_SESSION_LIFETIME_SECONDS = 30 * 24 * 60 * 60
 const MAX_SESSION_EXPIRY_TIMER_MS = 2_147_483_647
 const GOOGLE_ISSUER = 'https://accounts.google.com'
 const APPLE_ISSUER = 'https://appleid.apple.com'
