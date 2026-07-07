@@ -1,13 +1,13 @@
 # OMS Wallet TypeScript SDK
 
-Add OMS Wallet-powered EVM wallets to TypeScript apps with email or OIDC auth, automatic session persistence, message signing, transaction submission, and token balance queries. Browser sessions use a non-extractable WebCrypto signing credential so the private session key is not written to `localStorage`.
+Build non-custodial EVM wallet experiences in TypeScript with OMS Wallet: email and OIDC auth, session restore, message signing, transaction submission, and token balance queries.
 
 ## Usage
 
 Before you start:
 
 - Use an OMS publishable key for your project. Use sandbox/dev keys for local development and testnet flows.
-- Browser apps work out of the box with `localStorage`, `sessionStorage`, and WebCrypto. Node.js and React Native apps should provide custom storage when they need persistent sessions.
+- Browser apps work out of the box. Node.js and React Native apps should provide custom storage when they need persistent sessions.
 - Start with a sign-in, sign-message, or balance-read flow. Transaction examples below use Polygon Amoy; mainnet transactions can move real funds.
 
 Install the published SDK package in your application:
@@ -48,21 +48,6 @@ function requiredEnv(name: string, value: string | undefined): string {
 const omsWallet = new OMSWallet({
   publishableKey: requiredEnv('VITE_OMS_PUBLISHABLE_KEY', import.meta.env.VITE_OMS_PUBLISHABLE_KEY),
 })
-```
-
-If your app imports utilities from `viem`, such as the `parseUnits` helper used in the transaction examples below, install it as a direct dependency too:
-
-```bash
-pnpm add viem
-```
-
-For local development in this repository, install dependencies and build the workspace package:
-
-From the repository root:
-
-```bash
-pnpm install
-pnpm build
 ```
 
 ## Quick Start
@@ -112,7 +97,7 @@ console.log('Native balances:', balances.nativeBalances)
 
 The SDK stores completed wallet-session metadata in the configured storage so apps can restore an active session after refresh or restart. Pending email OTP and OIDC redirect state are transient and are not exposed through `session`.
 
-In browsers, wallet API requests are signed with a non-extractable WebCrypto P-256 credential. The private session key is not written to `localStorage`; persisted session metadata contains identifiers, wallet address, expiry, and auth metadata needed to restore the session. Non-browser runtimes fall back to in-memory storage unless you provide a custom `StorageManager`.
+In browsers, wallet API requests are signed with a non-extractable WebCrypto P-256 credential. Persisted session data contains wallet and auth metadata only; the browser credential remains managed by WebCrypto. Non-browser runtimes fall back to in-memory storage unless you provide a custom `StorageManager`.
 
 Completed auth requests ask for a one-week session lifetime by default. You can request a shorter or longer lifetime up to 30 days. Expired sessions become inactive before protected wallet operations; call `signOut()` to end the session and clear active wallet state.
 
@@ -231,7 +216,7 @@ To use Google or Apple without the SDK relay, configure that provider as a custo
 
 ### Session State
 
-Email and OIDC auth both persist the active wallet session in the configured SDK storage. Browser storage defaults to `localStorage` when available; non-browser runtimes fall back to in-memory storage unless you provide a custom `StorageManager`. Browser signing defaults to a non-extractable WebCrypto P-256 credential using `ecdsa-p256-sha256`, so the private session key is not written to `localStorage`. Completed auth requests ask WaaS for a one-week session lifetime.
+Email and OIDC auth both persist the active wallet session in the configured SDK storage. Browser storage defaults to `localStorage` when available; non-browser runtimes fall back to in-memory storage unless you provide a custom `StorageManager`. Browser signing defaults to a non-extractable WebCrypto P-256 credential using `ecdsa-p256-sha256`. Completed auth requests ask the wallet API for a one-week session lifetime.
 
 Pass `sessionLifetimeSeconds` to `completeEmailAuth`, `signInWithOidcIdToken`, `startOidcRedirectAuth`, `completeOidcRedirectAuth`, or `signInWithOidcRedirect` to request a different session lifetime. Values must be integer seconds from `1` through `2592000` (30 days). For OIDC redirects, values passed at start are stored with the pending redirect state and used on callback completion unless completion overrides them.
 
@@ -274,7 +259,7 @@ await omsWallet.wallet.signOut()
 
 ## Errors
 
-Public methods throw `OMSWalletError` subclasses with stable SDK fields such as `code`, `operation`, `status`, and `retryable`. When a failure comes from a remote OMS service response or transport failure, the error also includes `upstreamError` with normalized WaaS or indexer details for logging and service-specific troubleshooting. Application logic should usually branch on the SDK-level `code`.
+Public methods throw `OMSWalletError` subclasses with stable SDK fields such as `code`, `operation`, `status`, and `retryable`. When a failure comes from a remote OMS service response or transport failure, the error also includes `upstreamError` with normalized wallet API or indexer details for logging and service-specific troubleshooting. Application logic should usually branch on the SDK-level `code`.
 
 For transaction writes, `OMS_TRANSACTION_EXECUTION_UNCONFIRMED` means the SDK has a `txnId` from preparation, but the execute request failed before the SDK could confirm whether the transaction was submitted; do not blindly resend the same write. `OMS_TRANSACTION_STATUS_LOOKUP_FAILED` means the transaction was submitted but status polling failed, so retry status lookup with the returned `txnId`. `retryable` describes the failed SDK operation, not the whole user intent.
 
@@ -389,7 +374,7 @@ const tx = await omsWallet.wallet.sendTransaction({
 })
 ```
 
-`sendTransaction` prepares and executes the transaction, then polls WaaS for
+`sendTransaction` prepares and executes the transaction, then polls the wallet API for
 the latest transaction status. The response includes `txnId`, `status`, and `txnHash`
 when the transaction has been published.
 
@@ -426,7 +411,7 @@ await omsWallet.wallet.sendTransaction({
 })
 ```
 
-If WaaS returns fee options, pass a selector to choose one. The selector receives
+If the wallet API returns fee options, pass a selector to choose one. The selector receives
 fee options enriched with the current wallet balance for each token when
 available. Use `FeeOptionSelector.firstAvailable` to choose the first option the
 wallet can pay, or return `option.selection` from a custom selector.
@@ -477,7 +462,7 @@ const omsWallet = new OMSWallet({
 })
 ```
 
-Provider configs are the source of truth for OIDC scopes. If `scopes` is omitted or empty, the SDK does not send a `scope` authorization parameter. OIDC auth mode defaults to PKCE; pass `authMode` when a provider needs a different WaaS auth-code mode.
+Provider configs are the source of truth for OIDC scopes. If `scopes` is omitted or empty, the SDK does not send a `scope` authorization parameter. OIDC auth mode defaults to PKCE; pass `authMode` when a provider needs a different authorization-code mode.
 
 ### Custom Storage and Signing
 
