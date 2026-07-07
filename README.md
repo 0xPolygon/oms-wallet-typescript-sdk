@@ -7,7 +7,7 @@ Build non-custodial EVM wallet experiences in TypeScript with OMS Wallet: email 
 Before you start:
 
 - Use an OMS publishable key for your project. Use sandbox/dev keys for local development and testnet flows.
-- Browser apps work out of the box. Node.js and React Native apps should provide custom storage when they need persistent sessions.
+- Browser apps work out of the box. Node.js and other custom runtimes should provide custom storage when they need persistent sessions.
 - Start with a sign-in, sign-message, or balance-read flow. Transaction examples below use Polygon Amoy; mainnet transactions can move real funds.
 
 Install the published SDK package in your application:
@@ -466,7 +466,7 @@ Provider configs are the source of truth for OIDC scopes. If `scopes` is omitted
 
 ### Custom Storage and Signing
 
-The default storage backend is browser `localStorage` when available, otherwise in-memory storage for wallet metadata only. The default browser signer stores its non-extractable key reference separately through WebCrypto-compatible browser storage. Provide a custom `StorageManager` for persistent Node.js, React Native, or testing sessions:
+The default storage backend is browser `localStorage` when available, otherwise in-memory storage for wallet metadata only. The default browser signer stores its non-extractable key reference separately through WebCrypto-compatible browser storage. Provide a custom `StorageManager` when Node.js, tests, or another custom runtime needs persistence:
 
 ```typescript
 import { MemoryStorageManager, OMSWallet } from '@polygonlabs/oms-wallet'
