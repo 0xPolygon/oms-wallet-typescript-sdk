@@ -125,6 +125,18 @@ export function cleanOidcCallbackUrl(callbackUrl: string): string {
     return url.toString();
 }
 
+export function matchesRedirectUri(callbackUrl: string, redirectUri: string): boolean {
+    try {
+        const callback = new URL(callbackUrl);
+        const expected = new URL(redirectUri);
+        return callback.protocol.toLowerCase() === expected.protocol.toLowerCase() &&
+            callback.host.toLowerCase() === expected.host.toLowerCase() &&
+            callback.pathname === expected.pathname;
+    } catch {
+        return false;
+    }
+}
+
 export function redirectUriFromCurrentUrl(currentUrl: string): string {
     const url = new URL(currentUrl);
     url.search = '';

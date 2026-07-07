@@ -121,6 +121,7 @@ describe("WalletClient errors", () => {
                             clientId: "google-client",
                             issuer: "https://accounts.google.com",
                             authorizationUrl: "https://accounts.google.com/o/oauth2/v2/auth",
+                            providerRedirectUri: "https://app.example/callback",
                         },
                     },
                 },
@@ -140,7 +141,7 @@ describe("WalletClient errors", () => {
         });
         await expect(wallet.startOidcRedirectAuth({
             provider: "google",
-            redirectUri: "https://app.example/callback",
+            omsRelayReturnUri: "https://app.example/callback",
             sessionLifetimeSeconds: 1.5,
         })).rejects.toMatchObject({
             code: "OMS_VALIDATION_ERROR",

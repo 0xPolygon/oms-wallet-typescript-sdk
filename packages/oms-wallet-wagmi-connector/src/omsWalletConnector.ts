@@ -1,5 +1,6 @@
 import { createConnector } from "@wagmi/core";
 import { getAddress, numberToHex, SwitchChainError, type Address } from "viem";
+import { supportedNetworks } from "@polygonlabs/oms-wallet";
 
 import { OMSWalletProvider, OMSWalletProviderRpcError } from "./provider.js";
 import type {
@@ -27,8 +28,8 @@ export function omsWalletConnector(parameters: OMSWalletConnectorParameters) {
             ? await (parameters.omsWallet as () => MaybePromise<OMSWalletLike>)()
             : parameters.omsWallet;
 
-    const configuredNetworks = (omsWallet?: OMSWalletLike): readonly OMSWalletNetwork[] =>
-        parameters.networks ?? omsWallet?.supportedNetworks ?? [];
+    const configuredNetworks = (): readonly OMSWalletNetwork[] =>
+        parameters.networks ?? supportedNetworks;
 
     return createConnector<OMSWalletProvider, Record<string, unknown>, OMSWalletConnectorStorageItemMap>((config) => {
         const isManuallyDisconnected = async (): Promise<boolean> => {
@@ -49,14 +50,11 @@ export function omsWalletConnector(parameters: OMSWalletConnectorParameters) {
             }
         };
         const defaultChainId = () => chainId ?? config.chains[0].id;
-        const setChainId = (nextChainId: number): void => {
-            chainId = nextChainId;
-        };
         const syncChainId = (nextChainId: number): void => {
-            setChainId(nextChainId);
+            chainId = nextChainId;
             config.emitter.emit("change", {chainId: nextChainId});
         };
-        const getNetworks = async () => configuredNetworks(await resolveOmsWallet());
+        const getNetworks = async () => configuredNetworks();
         const ensureChainId = async (): Promise<number> => {
             if (chainId === undefined) {
                 chainId = resolveInitialChainId(await getNetworks());
@@ -140,7 +138,6 @@ export function omsWalletConnector(parameters: OMSWalletConnectorParameters) {
                 parameters,
                 resolveOmsWallet,
                 getProviderChainId,
-                setChainId,
                 syncChainId,
                 getNetworks,
                 nextChainId => Boolean(chainById(nextChainId)),
@@ -156,7 +153,7 @@ export function omsWalletConnector(parameters: OMSWalletConnectorParameters) {
             async setup() {
                 const omsWallet = await resolveOmsWallet();
                 try {
-                    chainId = chainId ?? resolveInitialChainId(configuredNetworks(omsWallet));
+                    chainId = chainId ?? resolveInitialChainId(configuredNetworks());
                 } catch {
                     // `setup` runs outside the user's connect call in wagmi, so defer validation
                     // errors until `connect` where consumers can catch them normally.

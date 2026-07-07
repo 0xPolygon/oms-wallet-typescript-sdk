@@ -43,7 +43,6 @@ export class OMSWalletProvider {
         private readonly params: OMSWalletConnectorParameters,
         private readonly getOmsWallet: () => MaybePromise<OMSWalletLike>,
         private readonly getChainId: () => number,
-        private readonly setChainId: (chainId: number) => void,
         private readonly syncChainId: (chainId: number) => void,
         private readonly getNetworks: () => MaybePromise<readonly OMSWalletNetwork[]>,
         private readonly isChainConfigured: (chainId: number) => boolean,

@@ -4,7 +4,6 @@
 
 - [OMSWallet](#omswallet)
   - [Constructor](#constructor)
-  - [supportedNetworks](#supportednetworks)
 - [WalletClient](#walletclient)
   - [walletAddress](#walletaddress)
   - [session](#session)
@@ -130,15 +129,6 @@ new OMSWallet(params: {
 |---|---|---|
 | `wallet` | `WalletClient` | Handles authentication, signing, and transactions. |
 | `indexer` | `IndexerClient` | Queries on-chain state and token balances. |
-| `supportedNetworks` | `readonly Network[]` | Networks configured by the SDK. Same value as the exported `supportedNetworks`. |
-
-### supportedNetworks
-
-```typescript
-omsWallet.supportedNetworks: readonly Network[]
-```
-
-Returns the supported network registry. Each entry has `id`, `name`, `nativeTokenSymbol`, `explorerUrl`, and `displayName`.
 
 ## WalletClient
 
@@ -203,7 +193,7 @@ const unsubscribe = wallet.onSessionExpired((event) => {
 })
 ```
 
-Registers a listener for expired wallet sessions and returns an unsubscribe function. The wallet client stores the latest expired-session event and replays it to each new listener until a new auth flow, new wallet session, or `signOut()` clears it.
+Registers a listener for expired wallet sessions and returns an unsubscribe function. Calling `unsubscribe()` removes that listener from future expiry notifications. The wallet client stores the latest expired-session event and replays it to each new listener until a new auth flow, new wallet session, or `signOut()` clears it.
 
 ---
 
@@ -362,11 +352,10 @@ await selection.selectWallet({ walletId: selection.wallets[0].id })
 ```typescript
 startOidcRedirectAuth(params: {
   provider: string | OidcProviderConfig
-  redirectUri?: string
+  omsRelayReturnUri?: string
   walletType?: WalletType
   walletSelection?: 'automatic' | 'manual'
   sessionLifetimeSeconds?: number
-  relayRedirectUri?: string
   authorizeParams?: Record<string, string>
   loginHint?: string
 }): Promise<{ authorizationUrl: string; state: string; challenge: string }>
@@ -376,9 +365,9 @@ Starts an OIDC authorization-code redirect flow and returns the provider authori
 
 If `provider` is a string, it must match a configured `auth.oidcProviders` key. Passing an `OidcProviderConfig` object directly is also supported.
 
-In browser environments, `redirectUri` defaults to the current page URL without query or hash. Outside a browser, pass `redirectUri`.
+Custom OIDC providers must configure `providerRedirectUri`. That value is sent to the provider as OAuth/OIDC `redirect_uri`, and the callback must arrive at the same scheme, authority, and path. Custom providers do not use `omsRelayReturnUri`.
 
-When `relayRedirectUri` is set, the provider redirects through that relay before returning to the app `redirectUri`. If omitted for the built-in Google or Apple providers, the SDK derives the relay URL from the publishable key environment and provider: `{apiBase}/auth/waas/callback/{provider}`.
+For SDK built-in Google and Apple providers, the SDK sends the provider to the OMS relay callback URL. `omsRelayReturnUri` is the URL where the OMS relay returns the user after that callback. In browser environments, `omsRelayReturnUri` defaults to the current page URL without query or hash. Outside a browser, pass `omsRelayReturnUri`.
 
 Pass `walletSelection` or `sessionLifetimeSeconds` at start to store completion preferences in the pending redirect state. `sessionLifetimeSeconds` must be from `1` through `2592000` seconds (30 days). `completeOidcRedirectAuth` uses those stored values after the provider redirects back unless completion params override them.
 
@@ -387,7 +376,7 @@ Pass `loginHint` for Google redirect flows to set the Google `login_hint` author
 ```typescript
 const { authorizationUrl } = await omsWallet.wallet.startOidcRedirectAuth({
   provider: 'google',
-  redirectUri: `${window.location.origin}/auth/callback`,
+  omsRelayReturnUri: `${window.location.origin}/auth/callback`,
 })
 
 window.location.assign(authorizationUrl)
@@ -431,10 +420,9 @@ if (result) {
 ```typescript
 signInWithOidcRedirect(params: {
   provider: string | OidcProviderConfig
-  redirectUri?: string
+  omsRelayReturnUri?: string
   walletType?: WalletType
   walletSelection?: 'automatic' | 'manual'
-  relayRedirectUri?: string
   authorizeParams?: Record<string, string>
   loginHint?: string
   sessionLifetimeSeconds?: number
@@ -445,7 +433,7 @@ signInWithOidcRedirect(params: {
 
 Browser convenience method for regular web apps. It starts OIDC redirect auth, stores pending redirect state, redirects with `window.location.assign`, and returns `void`. Use [`completeOidcRedirectAuth`](#completeoidcredirectauth) on the callback page to finish auth.
 
-`redirectUri` defaults to the current page URL without query or hash. Pass `currentUrl` to derive that value from a specific URL, and pass `assignUrl` outside a browser or when testing. `walletSelection` and `sessionLifetimeSeconds` are stored with the pending redirect state and used by `completeOidcRedirectAuth` after the provider redirects back. `sessionLifetimeSeconds` must be from `1` through `2592000` seconds (30 days).
+For SDK built-in Google and Apple providers, `omsRelayReturnUri` defaults to the current page URL without query or hash. Pass `currentUrl` to derive that value from a specific URL, and pass `assignUrl` outside a browser or when testing. Custom providers use their configured `providerRedirectUri` directly. `walletSelection` and `sessionLifetimeSeconds` are stored with the pending redirect state and used by `completeOidcRedirectAuth` after the provider redirects back. `sessionLifetimeSeconds` must be from `1` through `2592000` seconds (30 days).
 
 ```typescript
 void omsWallet.wallet.signInWithOidcRedirect({ provider: 'google' })
@@ -1094,22 +1082,34 @@ const omsWallet = new OMSWallet({
 ### OidcProviderConfig
 
 ```typescript
-type OidcProviderConfig = {
+type OidcProviderConfig = CustomOidcProviderConfig | HelperOidcProviderConfig
+
+interface OidcProviderConfigBase {
   clientId: string
   issuer: string
   authorizationUrl: string
   provider?: string
   providerLabel?: string
   scopes?: string[]
-  relayRedirectUri?: string
   authorizeParams?: Record<string, string>
   authMode?: AuthMode.AuthCode | AuthMode.AuthCodePKCE
+}
+
+interface CustomOidcProviderConfig extends OidcProviderConfigBase {
+  providerRedirectUri: string
+}
+
+// Returned by googleOidcProvider() and appleOidcProvider().
+interface HelperOidcProviderConfig extends OidcProviderConfigBase {
+  providerRedirectUri?: string
 }
 ```
 
 Provider configs are the source of truth for authorization scopes and optional provider display metadata. If `scopes` is omitted or empty, the SDK does not send a `scope` authorization parameter. `authMode` defaults to `AuthMode.AuthCodePKCE`. `provider` is a stable app-facing provider key, and `providerLabel` is display text stored in `session.auth` after redirect auth completes.
 
-Google can be configured with the `googleOidcProvider` helper. The default Google provider uses the SDK default client ID, `openid email profile` scopes, PKCE auth-code mode, and Google authorization parameters `access_type=offline` and `prompt=consent`. Unless `relayRedirectUri` is supplied, the SDK derives the relay URL from the publishable key environment as `{apiBase}/auth/waas/callback/google`.
+Custom providers must provide `providerRedirectUri`; the SDK sends it as the OAuth/OIDC `redirect_uri`. A manual provider keyed `google`, or using the Google issuer, is still custom unless it was created by `googleOidcProvider()`.
+
+Google can be configured with the `googleOidcProvider` helper. The default Google provider uses the SDK default client ID, `openid email profile` scopes, PKCE auth-code mode, and Google authorization parameters `access_type=offline` and `prompt=consent`. Unless `providerRedirectUri` is supplied, the SDK derives the OMS relay callback URL from the publishable key environment as `{apiBase}/auth/waas/callback/google`. If you pass `providerRedirectUri` and still use an intermediate relay, pass `omsRelayReturnUri` when starting auth so the relay can return to your app. To bypass the relay, omit `omsRelayReturnUri`.
 
 ```typescript
 // Uses the SDK default Google client id and derived relay redirect URI.
@@ -1118,11 +1118,11 @@ googleOidcProvider()
 // Override defaults when needed.
 googleOidcProvider({
   clientId: 'your-google-client-id',
-  relayRedirectUri: 'http://localhost:8090/callback',
+  providerRedirectUri: 'http://localhost:8090/callback',
 })
 ```
 
-Apple can be configured with the `appleOidcProvider` helper. The default Apple provider uses `openid email` scopes, `response_mode=form_post`, and PKCE auth-code mode. Unless `relayRedirectUri` is supplied, the SDK derives the relay URL from the publishable key environment as `{apiBase}/auth/waas/callback/apple`.
+Apple can be configured with the `appleOidcProvider` helper. The default Apple provider uses `openid email` scopes, `response_mode=form_post`, and PKCE auth-code mode. Unless `providerRedirectUri` is supplied, the SDK derives the OMS relay callback URL from the publishable key environment as `{apiBase}/auth/waas/callback/apple`. If you pass `providerRedirectUri` and still use an intermediate relay, pass `omsRelayReturnUri` when starting auth so the relay can return to your app. To bypass the relay, omit `omsRelayReturnUri`.
 
 ```typescript
 // Uses the SDK default Apple Services ID and derived relay redirect URI.
@@ -1131,7 +1131,7 @@ appleOidcProvider()
 // Override defaults when needed.
 appleOidcProvider({
   clientId: 'your-apple-services-id',
-  relayRedirectUri: 'https://app.example/auth/callback',
+  providerRedirectUri: 'https://app.example/auth/callback',
 })
 ```
 
@@ -1146,7 +1146,7 @@ type OidcProviderInput<Env> = OidcProviderName<Env> | OidcProviderConfig
 
 interface GoogleOidcProviderParams {
   clientId?: string
-  relayRedirectUri?: string
+  providerRedirectUri?: string
   provider?: string
   providerLabel?: string
   scopes?: string[]
@@ -1156,7 +1156,7 @@ interface GoogleOidcProviderParams {
 
 interface AppleOidcProviderParams {
   clientId?: string
-  relayRedirectUri?: string
+  providerRedirectUri?: string
   provider?: string
   providerLabel?: string
   scopes?: string[]
@@ -1208,11 +1208,10 @@ interface CompleteOidcIdTokenAuthResult {
 
 interface StartOidcRedirectAuthParams<Env> {
   provider: OidcProviderInput<Env>
-  redirectUri?: string
+  omsRelayReturnUri?: string
   walletType?: WalletType
   walletSelection?: WalletSelectionBehavior
   sessionLifetimeSeconds?: number
-  relayRedirectUri?: string
   authorizeParams?: Record<string, string>
   loginHint?: string
 }
@@ -1240,10 +1239,9 @@ interface CompleteOidcRedirectAuthResult {
 
 interface SignInWithOidcRedirectParams<Env> {
   provider: OidcProviderInput<Env>
-  redirectUri?: string
+  omsRelayReturnUri?: string
   walletType?: WalletType
   walletSelection?: WalletSelectionBehavior
-  relayRedirectUri?: string
   authorizeParams?: Record<string, string>
   loginHint?: string
   sessionLifetimeSeconds?: number

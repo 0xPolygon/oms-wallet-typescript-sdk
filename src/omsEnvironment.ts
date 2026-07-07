@@ -4,17 +4,29 @@ import type {AuthMode} from "./generated/waas.gen.js";
 
 export type OidcAuthMode = AuthMode.AuthCode | AuthMode.AuthCodePKCE;
 
-export interface OidcProviderConfig {
+declare const omsRelayOidcProviderConfigBrand: unique symbol;
+
+export interface OidcProviderConfigBase {
     clientId: string;
     issuer: string;
     authorizationUrl: string;
     provider?: string;
     providerLabel?: string;
     scopes?: string[];
-    relayRedirectUri?: string;
     authorizeParams?: Record<string, string>;
     authMode?: OidcAuthMode;
 }
+
+export interface CustomOidcProviderConfig extends OidcProviderConfigBase {
+    providerRedirectUri: string;
+}
+
+export interface OmsRelayOidcProviderConfig extends OidcProviderConfigBase {
+    providerRedirectUri?: string;
+    readonly [omsRelayOidcProviderConfigBrand]: "google" | "apple";
+}
+
+export type OidcProviderConfig = CustomOidcProviderConfig | OmsRelayOidcProviderConfig;
 
 export interface OMSWalletAuthConfig<
     OidcProviders extends Record<string, OidcProviderConfig> = Record<string, OidcProviderConfig>,

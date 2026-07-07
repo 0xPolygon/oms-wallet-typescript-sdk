@@ -21,9 +21,11 @@ import {
     decodeOidcState,
     encodeOidcState,
     generateOidcNonce,
+    matchesRedirectUri,
     parseOidcCallbackUrl,
     redirectUriFromCurrentUrl,
 } from "../utils/oidcRedirect.js";
+import {defaultRelayProviderForOidcProvider} from "../oidc.js";
 import {
     oidcIdTokenExpiresAtEpochSeconds,
     oidcIdTokenHandleHash,
@@ -98,11 +100,10 @@ export type OidcProviderInput<Env extends OMSWalletEnvironment = OMSWalletEnviro
 
 export interface StartOidcRedirectAuthParams<Env extends OMSWalletEnvironment = OMSWalletEnvironment> {
     provider: OidcProviderInput<Env>;
-    redirectUri?: string;
+    omsRelayReturnUri?: string;
     walletType?: WalletType;
     walletSelection?: WalletSelectionBehavior;
     sessionLifetimeSeconds?: number;
-    relayRedirectUri?: string;
     authorizeParams?: Record<string, string>;
     loginHint?: string;
 }
@@ -244,11 +245,10 @@ export interface IsValidTypedDataSignatureParams {
 
 export interface SignInWithOidcRedirectParams<Env extends OMSWalletEnvironment = OMSWalletEnvironment> {
     provider: OidcProviderInput<Env>;
-    redirectUri?: string;
+    omsRelayReturnUri?: string;
     walletType?: WalletType;
     walletSelection?: WalletSelectionBehavior;
     sessionLifetimeSeconds?: number;
-    relayRedirectUri?: string;
     authorizeParams?: Record<string, string>;
     loginHint?: string;
     currentUrl?: string;
@@ -266,7 +266,7 @@ interface PendingOidcRedirectAuth {
     sessionLifetimeSeconds?: number;
     signerCredentialId: string;
     signerKeyType: CredentialSigningAlgorithm;
-    redirectUri: string;
+    expectedCallbackUri: string;
     issuer: string;
     projectId: string;
 }
@@ -649,12 +649,20 @@ export class WalletClient<Env extends OMSWalletEnvironment = OMSWalletEnvironmen
             const sessionLifetimeSeconds = params.sessionLifetimeSeconds === undefined
                 ? undefined
                 : this.sessionLifetimeSeconds(params.sessionLifetimeSeconds, WalletOperation.startOidcRedirectAuth)
-            const redirectUri = params.redirectUri ??
-                redirectUriFromCurrentUrl(this.browserCurrentUrl('startOidcRedirectAuth', 'redirectUri'))
-            const oauthRedirectUri = params.relayRedirectUri ??
-                provider.config.relayRedirectUri ??
-                this.derivedRelayRedirectUri(provider) ??
-                redirectUri
+            const defaultRelayProvider = defaultRelayProviderForOidcProvider(provider.config)
+            const providerRedirectUri = provider.config.providerRedirectUri ??
+                this.derivedOmsRelayRedirectUri(defaultRelayProvider)
+            if (!providerRedirectUri) {
+                throw new Error('OIDC provider requires providerRedirectUri')
+            }
+            if (!defaultRelayProvider && params.omsRelayReturnUri !== undefined) {
+                throw new Error('omsRelayReturnUri is only supported for SDK built-in Google and Apple OIDC providers')
+            }
+            const omsRelayReturnUri = params.omsRelayReturnUri ??
+                (defaultRelayProvider
+                    ? redirectUriFromCurrentUrl(this.browserCurrentUrl('startOidcRedirectAuth', 'omsRelayReturnUri'))
+                    : undefined)
+            const expectedCallbackUri = omsRelayReturnUri ?? providerRedirectUri
 
             await this.clearSession()
 
@@ -664,7 +672,7 @@ export class WalletClient<Env extends OMSWalletEnvironment = OMSWalletEnvironmen
                 metadata: {
                     iss: provider.config.issuer,
                     aud: provider.config.clientId,
-                    redirect_uri: oauthRedirectUri,
+                    redirect_uri: providerRedirectUri,
                 },
             }
             const response = await this.client.commitVerifier(request)
@@ -673,7 +681,7 @@ export class WalletClient<Env extends OMSWalletEnvironment = OMSWalletEnvironmen
             const state = encodeOidcState({
                 nonce,
                 scope: this.projectId,
-                ...(oauthRedirectUri !== redirectUri ? {redirect_uri: redirectUri} : {}),
+                ...(omsRelayReturnUri ? {redirect_uri: omsRelayReturnUri} : {}),
             })
 
             this.savePendingOidcRedirectAuth(redirectAuthStorage, {
@@ -687,7 +695,7 @@ export class WalletClient<Env extends OMSWalletEnvironment = OMSWalletEnvironmen
                 sessionLifetimeSeconds,
                 signerCredentialId,
                 signerKeyType: this.credentialSigner.signingAlgorithm,
-                redirectUri,
+                expectedCallbackUri,
                 issuer: provider.config.issuer,
                 projectId: this.projectId,
             })
@@ -699,7 +707,7 @@ export class WalletClient<Env extends OMSWalletEnvironment = OMSWalletEnvironmen
             const url = buildOidcAuthorizationUrl({
                 authorizationUrl: provider.config.authorizationUrl,
                 clientId: provider.config.clientId,
-                redirectUri: oauthRedirectUri,
+                redirectUri: providerRedirectUri,
                 scopes: this.resolveOidcScopes(provider.config),
                 state,
                 challenge: response.challenge,
@@ -758,6 +766,9 @@ export class WalletClient<Env extends OMSWalletEnvironment = OMSWalletEnvironmen
 
                 const pending = this.loadPendingOidcRedirectAuth(redirectAuthStorage)
                 this.validateOidcState(callback.state, pending)
+                if (!matchesRedirectUri(callbackUrl, pending.expectedCallbackUri)) {
+                    return undefined
+                }
                 shouldClearPendingRedirectAuth = true
 
                 if (params.cleanUrl ?? (params.callbackUrl === undefined)) {
@@ -822,16 +833,19 @@ export class WalletClient<Env extends OMSWalletEnvironment = OMSWalletEnvironmen
                 throw new Error('signInWithOidcRedirect requires provider to start auth')
             }
 
-            const redirectUri = params.redirectUri ?? redirectUriFromCurrentUrl(
-                params.currentUrl ?? this.browserCurrentUrl('signInWithOidcRedirect', 'currentUrl'),
-            )
+            const provider = this.resolveOidcProvider(params.provider)
+            const omsRelayReturnUri = params.omsRelayReturnUri ??
+                (defaultRelayProviderForOidcProvider(provider.config)
+                    ? redirectUriFromCurrentUrl(
+                        params.currentUrl ?? this.browserCurrentUrl('signInWithOidcRedirect', 'currentUrl'),
+                    )
+                    : undefined)
             const result = await this.startOidcRedirectAuth({
                 provider: params.provider,
-                redirectUri,
+                omsRelayReturnUri,
                 walletType: params.walletType,
                 walletSelection: params.walletSelection,
                 sessionLifetimeSeconds: params.sessionLifetimeSeconds,
-                relayRedirectUri: params.relayRedirectUri,
                 authorizeParams: params.authorizeParams,
                 loginHint: params.loginHint,
             })
@@ -1530,8 +1544,7 @@ export class WalletClient<Env extends OMSWalletEnvironment = OMSWalletEnvironmen
         return provider.providerLabel ?? builtInOidcProviderLabelForIssuer(provider.issuer)
     }
 
-    private derivedRelayRedirectUri(provider: ResolvedOidcProvider): string | undefined {
-        const relayProvider = this.sessionProviderFromOidcProvider(provider)
+    private derivedOmsRelayRedirectUri(relayProvider: "google" | "apple" | undefined): string | undefined {
         if (relayProvider !== "google" && relayProvider !== "apple") {
             return undefined
         }
@@ -1575,7 +1588,7 @@ export class WalletClient<Env extends OMSWalletEnvironment = OMSWalletEnvironmen
                 !isOidcAuthMode(parsed.authMode) ||
                 typeof parsed.signerCredentialId !== 'string' ||
                 typeof parsed.signerKeyType !== 'string' ||
-                typeof parsed.redirectUri !== 'string' ||
+                typeof parsed.expectedCallbackUri !== 'string' ||
                 typeof parsed.issuer !== 'string' ||
                 typeof parsed.projectId !== 'string'
             ) {
@@ -1595,7 +1608,7 @@ export class WalletClient<Env extends OMSWalletEnvironment = OMSWalletEnvironmen
                     : undefined,
                 signerCredentialId: parsed.signerCredentialId,
                 signerKeyType: parsed.signerKeyType as CredentialSigningAlgorithm,
-                redirectUri: parsed.redirectUri,
+                expectedCallbackUri: parsed.expectedCallbackUri,
                 issuer: parsed.issuer,
                 projectId: parsed.projectId,
             }
@@ -1612,7 +1625,7 @@ export class WalletClient<Env extends OMSWalletEnvironment = OMSWalletEnvironmen
         if (state.scope !== pending.projectId) {
             throw new Error('OIDC state scope mismatch')
         }
-        if (state.redirect_uri !== undefined && state.redirect_uri !== pending.redirectUri) {
+        if (state.redirect_uri !== undefined && state.redirect_uri !== pending.expectedCallbackUri) {
             throw new Error('OIDC state redirect_uri mismatch')
         }
     }

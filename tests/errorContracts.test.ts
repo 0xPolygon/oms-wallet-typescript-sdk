@@ -560,17 +560,15 @@ describe("public API error contracts", () => {
         await expect(publicErrors([
             ["wallet.startOidcRedirectAuth.unknownProvider", () => oms.wallet.startOidcRedirectAuth({
                 provider: "github",
-                redirectUri: "https://app.example/auth/callback",
+                omsRelayReturnUri: "https://app.example/auth/callback",
             })],
             ["wallet.startOidcRedirectAuth.missingRedirectStorage", () => omsWithoutRedirectStorage.wallet.startOidcRedirectAuth({
                 provider: testOidcProvider(),
-                redirectUri: "https://app.example/auth/callback",
             })],
             ["wallet.startOidcRedirectAuth.redirectStorageWriteFailure", () => createOmsClient({
                 redirectAuthStorage: new ThrowingSetStorage(),
             }).wallet.startOidcRedirectAuth({
                 provider: testOidcProvider(),
-                redirectUri: "https://app.example/auth/callback",
             })],
             ["wallet.completeOidcRedirectAuth.missingCallbackParams", () => oms.wallet.completeOidcRedirectAuth({
                 callbackUrl: "https://app.example/auth/callback",
@@ -579,7 +577,6 @@ describe("public API error contracts", () => {
                 const providerErrorOms = createOmsClient();
                 const started = await providerErrorOms.wallet.startOidcRedirectAuth({
                     provider: testOidcProvider(),
-                    redirectUri: "https://app.example/auth/callback",
                 });
                 return providerErrorOms.wallet.completeOidcRedirectAuth({
                     callbackUrl: `https://app.example/auth/callback?error=access_denied&error_description=User%20cancelled&state=${started.state}`,
@@ -592,7 +589,6 @@ describe("public API error contracts", () => {
                 const cleanUrlOms = createOmsClient();
                 const started = await cleanUrlOms.wallet.startOidcRedirectAuth({
                     provider: testOidcProvider(),
-                    redirectUri: "https://app.example/auth/callback",
                 });
                 return cleanUrlOms.wallet.completeOidcRedirectAuth({
                     callbackUrl: `https://app.example/auth/callback?code=code-1&state=${started.state}`,
@@ -600,7 +596,7 @@ describe("public API error contracts", () => {
                 });
             }],
             ["wallet.signInWithOidcRedirect.missingCurrentUrl", () => oms.wallet.signInWithOidcRedirect({
-                provider: testOidcProvider(),
+                provider: "google",
             })],
         ])).resolves.toMatchInlineSnapshot(`
           [
@@ -727,7 +723,6 @@ describe("public API error contracts", () => {
         const nonceOms = createOmsClient({redirectAuthStorage: new MemoryStorageManager()});
         await nonceOms.wallet.startOidcRedirectAuth({
             provider: testOidcProvider(),
-            redirectUri: "https://app.example/auth/callback",
         });
         errors.push({
             label: "wallet.completeOidcRedirectAuth.nonceMismatch",
@@ -746,7 +741,6 @@ describe("public API error contracts", () => {
         });
         const started = await signerOms.wallet.startOidcRedirectAuth({
             provider: testOidcProvider(),
-            redirectUri: "https://app.example/auth/callback",
         });
         signer.setCredential("0x04" + "99".repeat(64));
         errors.push({
@@ -1680,6 +1674,7 @@ function testOidcProvider() {
         clientId: "client-id",
         issuer: "https://issuer.example",
         authorizationUrl: "https://issuer.example/oauth/authorize",
+        providerRedirectUri: "https://app.example/auth/callback",
     };
 }
 

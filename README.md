@@ -176,7 +176,7 @@ console.log(tx.txnHash ?? tx.txnId)
 
 ## Authentication Flow
 
-OMS supports email-based OTP and OIDC authorization-code redirect auth.
+OMS supports email-based OTP, OIDC ID-token auth, and OIDC authorization-code redirect auth.
 
 ### Email OTP Auth
 
@@ -216,7 +216,7 @@ For router-driven apps, use the explicit start/complete methods:
 ```typescript
 const { authorizationUrl } = await omsWallet.wallet.startOidcRedirectAuth({
   provider: 'google',
-  redirectUri: `${window.location.origin}/auth/callback`, // optional in browser apps
+  omsRelayReturnUri: `${window.location.origin}/auth/callback`, // optional in browser apps
 })
 
 window.location.assign(authorizationUrl)
@@ -244,7 +244,7 @@ console.log('Wallet address:', result.walletAddress)
 
 Use `walletSelection: 'manual'` with `signInWithOidcIdToken` when your app needs to present its own wallet picker after the token is verified.
 
-For simple browser apps, use `signInWithOidcRedirect` from a sign-in action. It calls `startOidcRedirectAuth`, derives the current page as `redirectUri`, and navigates with `window.location.assign`:
+For simple browser apps, use `signInWithOidcRedirect` from a sign-in action. For SDK built-in Google and Apple providers, it calls `startOidcRedirectAuth`, derives the current page as `omsRelayReturnUri`, and navigates with `window.location.assign`:
 
 ```typescript
 void omsWallet.wallet.signInWithOidcRedirect({ provider: 'google' })
@@ -257,13 +257,30 @@ if (result) {
 }
 ```
 
+For SDK built-in Google and Apple providers, `omsRelayReturnUri` is the URL where the OMS relay returns the user after Google or Apple redirects to the OMS callback. In browser convenience flows, the SDK derives it from the current page URL when omitted. Custom OIDC providers do not use `omsRelayReturnUri`; configure their OAuth callback with `providerRedirectUri` instead:
+
+```typescript
+const auth = defineOMSWalletAuthConfig({
+  oidcProviders: {
+    acme: {
+      issuer: 'https://login.acme.example',
+      clientId: 'acme-client-id',
+      authorizationUrl: 'https://login.acme.example/oauth/authorize',
+      providerRedirectUri: 'https://app.example/auth/callback',
+    },
+  },
+})
+```
+
 Pass `loginHint` only when you want to prefill or select a specific Google account, such as during session-expiry reauth. The SDK only sends `login_hint` for Google providers. When omitted, the SDK falls back to the previous active session email when one exists before the redirect auth attempt starts. After `signOut()`, that previous session email is cleared. To force no `login_hint` for a call, pass `loginHint: ''`.
 
 Pending redirect state is stored in `sessionStorage` by default. Final wallet session metadata continues to use the configured SDK storage.
 
-`googleOidcProvider()` uses the SDK default Google client ID, `openid email profile` scopes, and PKCE auth-code mode by default. Unless `relayRedirectUri` is supplied, the SDK derives the relay URL from the publishable key environment as `{apiBase}/auth/waas/callback/google`.
+`googleOidcProvider()` uses the SDK default Google client ID, `openid email profile` scopes, and PKCE auth-code mode by default. Unless `providerRedirectUri` is supplied, the SDK derives the OMS relay callback URL from the publishable key environment as `{apiBase}/auth/waas/callback/google`.
 
-`appleOidcProvider()` uses the SDK default Apple Services ID, `openid email` scopes, `response_mode=form_post`, and PKCE auth-code mode by default. Unless `relayRedirectUri` is supplied, the SDK derives the relay URL from the publishable key environment as `{apiBase}/auth/waas/callback/apple`.
+`appleOidcProvider()` uses the SDK default Apple Services ID, `openid email` scopes, `response_mode=form_post`, and PKCE auth-code mode by default. Unless `providerRedirectUri` is supplied, the SDK derives the OMS relay callback URL from the publishable key environment as `{apiBase}/auth/waas/callback/apple`.
+
+If you pass `providerRedirectUri` to a Google or Apple helper and still use an intermediate relay, pass `omsRelayReturnUri` when starting auth so the relay can return to your app. To bypass the relay, omit `omsRelayReturnUri`.
 
 ### Session State
 

@@ -48,11 +48,11 @@ describe("Networks", () => {
         expect(findNetworkByName("Ethereum")).toBeUndefined();
     });
 
-    it("is available from OMSWallet", () => {
+    it("does not expose the registry from OMSWallet instances", () => {
         const oms = new OMSWallet({
             publishableKey: "pk_dev_sdbx_project_key",
         });
 
-        expect(oms.supportedNetworks).toBe(supportedNetworks);
+        expect("supportedNetworks" in oms).toBe(false);
     });
 });

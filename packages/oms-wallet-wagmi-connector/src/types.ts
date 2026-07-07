@@ -55,7 +55,6 @@ export interface WalletLike {
 
 export interface OMSWalletLike {
     wallet: WalletLike
-    supportedNetworks?: readonly OMSWalletNetwork[]
 }
 
 export type MaybePromise<T> = T | Promise<T>;

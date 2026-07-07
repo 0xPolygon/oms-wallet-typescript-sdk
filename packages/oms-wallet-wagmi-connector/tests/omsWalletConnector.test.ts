@@ -110,6 +110,28 @@ describe("omsWalletConnector", () => {
         });
     });
 
+    it("defaults to the exported OMS network registry", async () => {
+        const omsWallet = createOmsWallet({walletAddress: "0x9999999999999999999999999999999999999999"});
+        const config = createConfig({
+            chains: [polygon],
+            connectors: [omsWalletConnector({omsWallet})],
+            transports: {
+                [polygon.id]: http(),
+            },
+        });
+
+        await connect(config, {connector: config.connectors[0]});
+        await signMessage(config, {message: "hello"});
+
+        expect(omsWallet.wallet.signMessage).toHaveBeenCalledWith({
+            network: expect.objectContaining({
+                id: polygon.id,
+                name: "polygon",
+            }),
+            message: "hello",
+        });
+    });
+
     it("rejects provider signing validation errors before calling OMS", async () => {
         const omsWallet = createOmsWallet({walletAddress: "0x9999999999999999999999999999999999999999"});
         const config = createWagmiConfig(omsWallet);
@@ -890,7 +912,6 @@ function createOmsWallet(params: {walletAddress?: Address} = {}): TestOMSWallet 
 
     return {
         wallet,
-        supportedNetworks: networks,
         expireSession() {
             for (const listener of sessionExpiredListeners) {
                 void listener({expiredAt: new Date().toISOString()});

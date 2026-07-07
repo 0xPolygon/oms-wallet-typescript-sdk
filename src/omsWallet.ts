@@ -8,7 +8,6 @@ import {
 import {createDefaultStorage, StorageManager} from "./storageManager.js";
 import {IndexerClient} from "./clients/indexerClient.js";
 import type {CredentialSigner} from "./credentialSigner.js";
-import {supportedNetworks} from "./networks.js";
 import {parsePublishableKey} from "./publishableKey.js";
 
 interface OMSWalletBaseParams {
@@ -33,7 +32,6 @@ type ProvidersFromAuth<Auth extends OMSWalletAuthConfig> =
 class OMSWalletImpl<Env extends OMSWalletEnvironment = DefaultOMSWalletEnvironment> {
     public readonly wallet: WalletClient<Env>;
     public readonly indexer: IndexerClient;
-    public readonly supportedNetworks = supportedNetworks;
 
     constructor(params: OMSWalletBaseParams) {
         const parsedKey = parsePublishableKey(params.publishableKey);

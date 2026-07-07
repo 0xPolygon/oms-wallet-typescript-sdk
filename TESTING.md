@@ -25,8 +25,8 @@ How testing works in this repo. `AGENTS.md` points here so agents know how to ve
   expected shapes. These catch public API regressions that runtime tests cannot.
 - **Location:** `type-tests/oidcProviderTypes.ts`
 - **Run:** `pnpm test:types`
-- **Note:** A few tests in `tests/` seed private wallet state via `(wallet as any)` for legacy
-  compatibility. Use public methods or small fixtures for any new test coverage.
+- **Note:** A few existing tests in `tests/` seed private wallet state via `(wallet as any)` to
+  exercise established session fixtures. Use public methods or small fixtures for new coverage.
 
 ## When to run what
 

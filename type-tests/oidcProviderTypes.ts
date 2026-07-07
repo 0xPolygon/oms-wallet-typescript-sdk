@@ -27,6 +27,7 @@ import {
     type OMSWalletEnvironment,
     type OMSWalletParams,
     type OidcAuthMode,
+    type OidcProviderConfig,
     type SendDataTransactionParams,
     type SendNativeTransactionParams,
     type SendTransactionBase,
@@ -64,21 +65,37 @@ void configuredAppleProvider;
 const unknownProvider: ProviderName = "github";
 void unknownProvider;
 
+const customOidcProvider: OidcProviderConfig = {
+    clientId: "custom-client",
+    issuer: "https://issuer.example",
+    authorizationUrl: "https://issuer.example/oauth/authorize",
+    providerRedirectUri: "https://app.example/auth/callback",
+};
+void customOidcProvider;
+
+// @ts-expect-error custom OIDC redirect providers require providerRedirectUri.
+const customOidcProviderWithoutRedirectUri: OidcProviderConfig = {
+    clientId: "custom-client",
+    issuer: "https://issuer.example",
+    authorizationUrl: "https://issuer.example/oauth/authorize",
+};
+void customOidcProviderWithoutRedirectUri;
+
 if (false) {
     const wallet = configuredOmsWallet.wallet;
     void wallet.startOidcRedirectAuth({
         provider: "google",
-        redirectUri: "https://app.example/auth/callback",
+        omsRelayReturnUri: "https://app.example/auth/callback",
     });
     void wallet.startOidcRedirectAuth({
         provider: "apple",
-        redirectUri: "https://app.example/auth/callback",
+        omsRelayReturnUri: "https://app.example/auth/callback",
     });
 
     void wallet.startOidcRedirectAuth({
         // @ts-expect-error github is not configured in this static environment.
         provider: "github",
-        redirectUri: "https://app.example/auth/callback",
+        omsRelayReturnUri: "https://app.example/auth/callback",
     });
 
     void (async () => {
@@ -144,6 +161,8 @@ new OMSWallet({
     onSessionExpired: () => {},
 });
 const session: OMSWalletSessionState = defaultClient.wallet.session;
+// @ts-expect-error sessions are owned by the wallet sub-client.
+void defaultClient.session;
 const defaultEnvironmentTypedClient: OMSWallet<DefaultOMSWalletEnvironment> = defaultClient;
 void defaultEnvironmentTypedClient;
 const omsWalletParams: OMSWalletParams = {publishableKey: "pk_dev_sdbx_project_key"};
@@ -239,6 +258,7 @@ void upstreamError;
 void maybeUpstreamError;
 void transactionExecutionCode;
 void storageCode;
+// @ts-expect-error network helpers are package exports, not OMSWallet properties.
 void defaultClient.supportedNetworks;
 // @ts-expect-error findNetworkById accepts numeric chain IDs only.
 findNetworkById("80002");
@@ -281,12 +301,12 @@ const transactionHistoryParams: GetTransactionHistoryParams = {
 void defaultClient.indexer.getTransactionHistory(transactionHistoryParams);
 void defaultClient.wallet.startOidcRedirectAuth({
     provider: "google",
-    redirectUri: "https://app.example/auth/callback",
+    omsRelayReturnUri: "https://app.example/auth/callback",
 });
 void (async () => {
     const redirectStart = await defaultClient.wallet.startOidcRedirectAuth({
         provider: "google",
-        redirectUri: "https://app.example/auth/callback",
+        omsRelayReturnUri: "https://app.example/auth/callback",
     });
     const authorizationUrl: string = redirectStart.authorizationUrl;
     void authorizationUrl;
@@ -298,7 +318,17 @@ void defaultClient.wallet.startOidcRedirectAuth({
 });
 void defaultClient.wallet.startOidcRedirectAuth({
     provider: "apple",
+    omsRelayReturnUri: "https://app.example/auth/callback",
+});
+void defaultClient.wallet.startOidcRedirectAuth({
+    provider: "google",
+    // @ts-expect-error redirectUri was replaced by omsRelayReturnUri for SDK relayed providers.
     redirectUri: "https://app.example/auth/callback",
+});
+void defaultClient.wallet.startOidcRedirectAuth({
+    provider: "google",
+    // @ts-expect-error relayRedirectUri was replaced by providerRedirectUri on provider config.
+    relayRedirectUri: "https://relay.example/callback",
 });
 void defaultClient.wallet.completeOidcRedirectAuth();
 void defaultClient.wallet.completeOidcRedirectAuth({
@@ -337,7 +367,7 @@ void defaultClient.wallet.signInWithOidcIdToken({
 void defaultClient.wallet.startOidcRedirectAuth({
     // @ts-expect-error github is not configured on the default auth config.
     provider: "github",
-    redirectUri: "https://app.example/auth/callback",
+    omsRelayReturnUri: "https://app.example/auth/callback",
 });
 void defaultClient.wallet.signInWithOidcRedirect({
     provider: "google",
@@ -352,9 +382,9 @@ void defaultClient.wallet.signInWithOidcRedirect({
 });
 // @ts-expect-error provider is required when starting redirect sign-in.
 void defaultClient.wallet.signInWithOidcRedirect();
-// @ts-expect-error provider is required when starting redirect with a redirectUri override.
+// @ts-expect-error provider is required when starting redirect with an omsRelayReturnUri override.
 void defaultClient.wallet.signInWithOidcRedirect({
-    redirectUri: "https://app.example/auth/callback",
+    omsRelayReturnUri: "https://app.example/auth/callback",
 });
 // @ts-expect-error provider is required when starting redirect with assignUrl.
 void defaultClient.wallet.signInWithOidcRedirect({
@@ -371,11 +401,11 @@ broadlyTypedClient = customClient;
 void broadlyTypedClient;
 void customClient.wallet.startOidcRedirectAuth({
     provider: "google",
-    redirectUri: "https://app.example/auth/callback",
+    omsRelayReturnUri: "https://app.example/auth/callback",
 });
 void customClient.wallet.startOidcRedirectAuth({
     provider: "apple",
-    redirectUri: "https://app.example/auth/callback",
+    omsRelayReturnUri: "https://app.example/auth/callback",
 });
 
 const noProviderClient = new OMSWallet({
@@ -385,7 +415,7 @@ const noProviderClient = new OMSWallet({
 void noProviderClient.wallet.startOidcRedirectAuth({
     // @ts-expect-error string provider names are not available without configured providers.
     provider: "google",
-    redirectUri: "https://app.example/auth/callback",
+    omsRelayReturnUri: "https://app.example/auth/callback",
 });
 
 const abiArg: AbiArg = {type: "uint256", value: "1"};

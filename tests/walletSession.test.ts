@@ -236,6 +236,31 @@ describe("WalletClient session storage", () => {
         expect(replayListener).toHaveBeenCalledOnce();
     });
 
+    it("does not notify a listener after it unsubscribes", async () => {
+        const storage = new MemoryStorageManager();
+        const signer = new MockSigner();
+        const onSessionExpired = vi.fn();
+        const wallet = new WalletClient({
+            publishableKey: "publishable-key",
+            projectId: "project-id",
+            environment: testEnvironment(),
+            storage,
+            credentialSigner: signer,
+        });
+        const unsubscribe = wallet.onSessionExpired(onSessionExpired);
+        unsubscribe();
+        (wallet as any).persistSession("wallet-id", "0x1111111111111111111111111111111111111111", {
+            expiresAt: "2000-01-01T00:00:00Z",
+            auth: emailAuth(),
+        });
+
+        await expect(wallet.signMessage({network: Networks.polygon, message: "hello"})).rejects.toMatchObject({
+            code: "OMS_SESSION_EXPIRED",
+        });
+
+        expect(onSessionExpired).not.toHaveBeenCalled();
+    });
+
     it("notifies session expiry listeners when signer cleanup fails", async () => {
         const storage = new MemoryStorageManager();
         const signer = new MockSigner();
