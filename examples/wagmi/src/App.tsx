@@ -12,7 +12,7 @@ import {
   useSwitchChain,
   useWaitForTransactionReceipt,
 } from 'wagmi'
-import { TrailsWidget } from '0xtrails'
+import { TrailsWidget, type TransactionState } from '0xtrails'
 import { formatEther, isAddress, parseEther, type Address, type Hash } from 'viem'
 import type { FeeOptionWithBalance } from '@polygonlabs/oms-wallet'
 import {
@@ -403,6 +403,39 @@ export function App() {
     setWalletStatus('Transaction cancelled.')
   }
 
+  function handleTrailsWidgetStatus({ transactionStates }: { transactionStates: TransactionState[] }) {
+    const transactionState = latestWidgetTransactionState(transactionStates)
+    if (transactionState) {
+      setLastTransactionHash(transactionState.transactionHash)
+      setLastTransactionChainId(transactionState.chainId as OMSWalletChainId)
+    }
+
+    if (transactionStates.some((state) => state.state === 'failed')) {
+      setWalletStatus('Trails widget transaction failed.')
+      return
+    }
+    if (transactionStates.some((state) => state.state === 'aborted')) {
+      setWalletStatus('Trails widget transaction aborted.')
+      return
+    }
+    if (transactionStates.some((state) => state.state === 'confirmed')) {
+      setWalletStatus('Trails widget transaction confirmed.')
+      return
+    }
+    if (transactionStates.some((state) => state.state === 'pending')) {
+      setWalletStatus('Trails widget transaction submitted.')
+    }
+  }
+
+  function handleTrailsWidgetSuccess() {
+    setWalletStatus('Trails widget transaction complete.')
+  }
+
+  function handleTrailsWidgetError({ error }: { error: unknown }) {
+    setWalletStatus(describeError(error))
+    feeOptionSelection.clearFeeOptions()
+  }
+
   return (
     <main className="shell">
       <section className="panel">
@@ -527,6 +560,9 @@ export function App() {
                     customCss={TRAILS_WIDGET_CSS}
                     isSmartWallet
                     mode="swap"
+                    onError={handleTrailsWidgetError}
+                    onStatus={handleTrailsWidgetStatus}
+                    onSuccess={handleTrailsWidgetSuccess}
                   >
                     <button
                       type="button"
@@ -653,4 +689,18 @@ function networkForChainId(chainId: number) {
     throw new Error(`OMS network ${defaultChain.id} is not configured.`)
   }
   return defaultNetwork
+}
+
+function latestWidgetTransactionState(transactionStates: TransactionState[]): (TransactionState & { transactionHash: Hash }) | undefined {
+  return transactionStates
+    .slice()
+    .reverse()
+    .find((state): state is TransactionState & { transactionHash: Hash } => {
+      if (!isTransactionHash(state.transactionHash)) return false
+      return omsWalletNetworks.some((network) => network.id === state.chainId)
+    })
+}
+
+function isTransactionHash(value: string): value is Hash {
+  return /^0x[0-9a-fA-F]{64}$/.test(value)
 }
