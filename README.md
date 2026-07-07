@@ -35,11 +35,9 @@ const omsWallet = new OMSWallet({
 
 The SDK derives the wallet API and indexer endpoints from the publishable key prefix.
 
-In Vite browser apps, keep the publishable key in local environment variables:
-
 ```typescript
 const omsWallet = new OMSWallet({
-  publishableKey: import.meta.env.VITE_OMS_PUBLISHABLE_KEY,
+  publishableKey: 'your-publishable-key',
 })
 ```
 

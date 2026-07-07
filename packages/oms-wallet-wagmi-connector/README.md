@@ -11,7 +11,7 @@ import { FeeOptionSelector, OMSWallet } from '@polygonlabs/oms-wallet'
 import { omsWalletConnector } from '@polygonlabs/oms-wallet-wagmi-connector'
 
 const omsWallet = new OMSWallet({
-  publishableKey: import.meta.env.VITE_OMS_PUBLISHABLE_KEY,
+  publishableKey: 'your-publishable-key',
 })
 
 const omsConnector = omsWalletConnector({
