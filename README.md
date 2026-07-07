@@ -38,15 +38,8 @@ The SDK derives the wallet API and indexer endpoints from the publishable key pr
 In Vite browser apps, keep the publishable key in local environment variables:
 
 ```typescript
-function requiredEnv(name: string, value: string | undefined): string {
-  if (!value) {
-    throw new Error(`Missing ${name}`)
-  }
-  return value
-}
-
 const omsWallet = new OMSWallet({
-  publishableKey: requiredEnv('VITE_OMS_PUBLISHABLE_KEY', import.meta.env.VITE_OMS_PUBLISHABLE_KEY),
+  publishableKey: import.meta.env.VITE_OMS_PUBLISHABLE_KEY,
 })
 ```
 
@@ -75,13 +68,13 @@ const signature = await omsWallet.wallet.signMessage({
 })
 console.log('Signature:', signature)
 
-// 5. Read testnet balances.
+// 5. Read balances from the chains your app needs.
 const balances = await omsWallet.indexer.getBalances({
   walletAddress,
-  networks: [Networks.amoy],
+  networks: [Networks.polygon, Networks.base, Networks.arbitrum],
   includeMetadata: true,
 })
-console.log('Native balances:', balances.nativeBalances)
+console.log('Balances:', balances)
 ```
 
 ## Overview
@@ -257,59 +250,64 @@ To end the session, call:
 await omsWallet.wallet.signOut()
 ```
 
-## Errors
+## Core Workflows
 
-Public methods throw `OMSWalletError` subclasses with stable SDK fields such as `code`, `operation`, `status`, and `retryable`. When a failure comes from a remote OMS service response or transport failure, the error also includes `upstreamError` with normalized wallet API or indexer details for logging and service-specific troubleshooting. Application logic should usually branch on the SDK-level `code`.
-
-For transaction writes, `OMS_TRANSACTION_EXECUTION_UNCONFIRMED` means the SDK has a `txnId` from preparation, but the execute request failed before the SDK could confirm whether the transaction was submitted; do not blindly resend the same write. `OMS_TRANSACTION_STATUS_LOOKUP_FAILED` means the transaction was submitted but status polling failed, so retry status lookup with the returned `txnId`. `retryable` describes the failed SDK operation, not the whole user intent.
+### Sign and Validate Messages
 
 ```typescript
-import { OMSWalletError } from '@polygonlabs/oms-wallet'
+const signature = await omsWallet.wallet.signMessage({
+  network: Networks.amoy,
+  message: 'some message to sign',
+})
 
-try {
-  await omsWallet.wallet.startEmailAuth({ email: 'user@example.com' })
-} catch (err) {
-  if (err instanceof OMSWalletError) {
-    console.log(err.code, err.operation, err.upstreamError)
-  }
+const isValid = await omsWallet.wallet.isValidMessageSignature({
+  network: Networks.amoy,
+  walletAddress: omsWallet.wallet.walletAddress,
+  message: 'some message to sign',
+  signature,
+})
+```
+
+### Sign and Validate Typed Data
+
+```typescript
+const signature = await omsWallet.wallet.signTypedData({
+  network: Networks.amoy,
+  typedData,
+})
+
+const isValid = await omsWallet.wallet.isValidTypedDataSignature({
+  network: Networks.amoy,
+  walletAddress: omsWallet.wallet.walletAddress,
+  typedData,
+  signature,
+})
+```
+
+### Query Balances
+
+```typescript
+const { walletAddress } = omsWallet.wallet
+if (!walletAddress) throw new Error('No active wallet session')
+
+const result = await omsWallet.indexer.getBalances({
+  networks: [Networks.polygon, Networks.base, Networks.arbitrum],
+  walletAddress,
+  includeMetadata: true,
+})
+
+for (const b of result.nativeBalances) {
+  console.log(b.symbol, b.balance)
+}
+
+for (const b of result.balances) {
+  console.log(b.contractInfo?.symbol, b.balance, b.contractInfo?.decimals)
 }
 ```
 
-## Networks
+Pass `contractAddresses` to filter balances to specific token contracts. Omit `networks` to query mainnets by default, or pass `networkType: 'TESTNETS'` / `'ALL'`. With `includeMetadata: true`, ERC-20 decimals are available as `contractInfo.decimals`. The response is paginated; pass `page` when requesting later pages.
 
-The SDK exports `Networks`, `supportedNetworks`, `findNetworkById(id)`, and `findNetworkByName(name)` for the networks currently configured by OMS. Each network has `id`, `name`, `nativeTokenSymbol`, `explorerUrl`, and `displayName`. `name` is the registry/routing slug, while `displayName` is the user-facing label.
-
-The `network` parameter on all transaction and signing methods accepts a `Network` from the SDK registry:
-
-```typescript
-import { Networks, findNetworkById, supportedNetworks } from '@polygonlabs/oms-wallet'
-
-await omsWallet.wallet.signMessage({ network: Networks.amoy, message: 'some message to sign' })
-
-console.log(supportedNetworks)
-console.log(findNetworkById(80002)) // Networks.amoy
-```
-
-| Key | id | name | display name | native token | explorerUrl |
-|---|---:|---|---|---|---|
-| `Networks.mainnet` | 1 | `mainnet` | Ethereum | ETH | `https://etherscan.io` |
-| `Networks.sepolia` | 11155111 | `sepolia` | Sepolia | ETH | `https://sepolia.etherscan.io` |
-| `Networks.polygon` | 137 | `polygon` | Polygon | POL | `https://polygonscan.com` |
-| `Networks.amoy` | 80002 | `amoy` | Polygon Amoy | POL | `https://amoy.polygonscan.com` |
-| `Networks.arbitrum` | 42161 | `arbitrum` | Arbitrum | ETH | `https://arbiscan.io` |
-| `Networks.arbitrumSepolia` | 421614 | `arbitrum-sepolia` | Arbitrum Sepolia | ETH | `https://sepolia.arbiscan.io` |
-| `Networks.optimism` | 10 | `optimism` | Optimism | ETH | `https://optimistic.etherscan.io` |
-| `Networks.optimismSepolia` | 11155420 | `optimism-sepolia` | Optimism Sepolia | ETH | `https://sepolia-optimism.etherscan.io` |
-| `Networks.base` | 8453 | `base` | Base | ETH | `https://basescan.org` |
-| `Networks.baseSepolia` | 84532 | `base-sepolia` | Base Sepolia | ETH | `https://sepolia.basescan.org` |
-| `Networks.bsc` | 56 | `bsc` | BSC | BNB | `https://bscscan.com` |
-| `Networks.bscTestnet` | 97 | `bsc-testnet` | BSC Testnet | BNB | `https://testnet.bscscan.com` |
-| `Networks.arbitrumNova` | 42170 | `arbitrum-nova` | Arbitrum Nova | ETH | `https://nova.arbiscan.io` |
-| `Networks.avalanche` | 43114 | `avalanche` | Avalanche | AVAX | `https://subnets.avax.network/c-chain` |
-| `Networks.avalancheTestnet` | 43113 | `avalanche-testnet` | Avalanche Testnet | AVAX | `https://subnets-test.avax.network/c-chain` |
-| `Networks.katana` | 747474 | `katana` | Katana | ETH | `https://katanascan.com` |
-
-## Sending Transactions
+### Sending Transactions
 
 `sendTransaction` can move real funds on mainnet. Start on a testnet such as Polygon Amoy, fund the wallet from a faucet, and use a small value before switching to production networks.
 
@@ -321,7 +319,7 @@ pnpm add viem
 
 `sendTransaction` has three overloaded signatures to cover the most common patterns.
 
-### First Testnet Transfer
+#### First Testnet Transfer
 
 ```typescript
 import { FeeOptionSelector, Networks } from '@polygonlabs/oms-wallet'
@@ -337,7 +335,7 @@ const tx = await omsWallet.wallet.sendTransaction({
 console.log(tx.txnHash ?? tx.txnId)
 ```
 
-### Raw Data Transaction
+#### Raw Data Transaction
 
 ```typescript
 const tx = await omsWallet.wallet.sendTransaction({
@@ -347,7 +345,7 @@ const tx = await omsWallet.wallet.sendTransaction({
 })
 ```
 
-### ABI-Encoded Contract Call (via viem)
+#### ABI-Encoded Contract Call (via viem)
 
 Pass an ABI and function name — the SDK encodes the calldata automatically using viem.
 
@@ -371,6 +369,22 @@ const tx = await omsWallet.wallet.sendTransaction({
   abi: erc20Abi,
   functionName: 'transfer',
   args: ['0x1111111111111111111111111111111111111111', parseUnits('0.001', 18)],
+})
+```
+
+#### Call a Contract (method string + args)
+
+```typescript
+import { parseUnits } from 'viem'
+
+const tx = await omsWallet.wallet.callContract({
+  network: Networks.amoy,
+  contractAddress: '0x3333333333333333333333333333333333333333',
+  method: 'transfer(address,uint256)',
+  args: [
+    { type: 'address', value: '0x1111111111111111111111111111111111111111' },
+    { type: 'uint256', value: parseUnits('0.001', 18).toString() },
+  ],
 })
 ```
 
@@ -428,7 +442,7 @@ const tx = await omsWallet.wallet.sendTransaction({
 })
 ```
 
-## Configuration
+## Advanced Configuration
 
 ### Publishable-Key Routing
 
@@ -479,78 +493,59 @@ const omsWallet = new OMSWallet({
 
 OIDC redirect auth uses separate transient storage for verifier/state data. In browsers it defaults to `sessionStorage`; pass `redirectAuthStorage` to override it. Final wallet session metadata continues to use the configured `storage`.
 
-## More Examples
+## Reference
 
-### Sign and Validate Message
+### Networks
+
+The SDK exports `Networks`, `supportedNetworks`, `findNetworkById(id)`, and `findNetworkByName(name)` for the networks currently configured by OMS. Each network has `id`, `name`, `nativeTokenSymbol`, `explorerUrl`, and `displayName`. `name` is the registry/routing slug, while `displayName` is the user-facing label.
+
+The `network` parameter on all transaction and signing methods accepts a `Network` from the SDK registry:
 
 ```typescript
-const signature = await omsWallet.wallet.signMessage({
-  network: Networks.amoy,
-  message: 'some message to sign',
-})
+import { Networks, findNetworkById, supportedNetworks } from '@polygonlabs/oms-wallet'
 
-const isValid = await omsWallet.wallet.isValidMessageSignature({
-  network: Networks.amoy,
-  walletAddress: omsWallet.wallet.walletAddress,
-  message: 'some message to sign',
-  signature,
-})
+await omsWallet.wallet.signMessage({ network: Networks.amoy, message: 'some message to sign' })
+
+console.log(supportedNetworks)
+console.log(findNetworkById(80002)) // Networks.amoy
 ```
 
-### Sign and Validate Typed Data
+| Key | id | name | display name | native token | explorerUrl |
+|---|---:|---|---|---|---|
+| `Networks.mainnet` | 1 | `mainnet` | Ethereum | ETH | `https://etherscan.io` |
+| `Networks.sepolia` | 11155111 | `sepolia` | Sepolia | ETH | `https://sepolia.etherscan.io` |
+| `Networks.polygon` | 137 | `polygon` | Polygon | POL | `https://polygonscan.com` |
+| `Networks.amoy` | 80002 | `amoy` | Polygon Amoy | POL | `https://amoy.polygonscan.com` |
+| `Networks.arbitrum` | 42161 | `arbitrum` | Arbitrum | ETH | `https://arbiscan.io` |
+| `Networks.arbitrumSepolia` | 421614 | `arbitrum-sepolia` | Arbitrum Sepolia | ETH | `https://sepolia.arbiscan.io` |
+| `Networks.optimism` | 10 | `optimism` | Optimism | ETH | `https://optimistic.etherscan.io` |
+| `Networks.optimismSepolia` | 11155420 | `optimism-sepolia` | Optimism Sepolia | ETH | `https://sepolia-optimism.etherscan.io` |
+| `Networks.base` | 8453 | `base` | Base | ETH | `https://basescan.org` |
+| `Networks.baseSepolia` | 84532 | `base-sepolia` | Base Sepolia | ETH | `https://sepolia.basescan.org` |
+| `Networks.bsc` | 56 | `bsc` | BSC | BNB | `https://bscscan.com` |
+| `Networks.bscTestnet` | 97 | `bsc-testnet` | BSC Testnet | BNB | `https://testnet.bscscan.com` |
+| `Networks.arbitrumNova` | 42170 | `arbitrum-nova` | Arbitrum Nova | ETH | `https://nova.arbiscan.io` |
+| `Networks.avalanche` | 43114 | `avalanche` | Avalanche | AVAX | `https://subnets.avax.network/c-chain` |
+| `Networks.avalancheTestnet` | 43113 | `avalanche-testnet` | Avalanche Testnet | AVAX | `https://subnets-test.avax.network/c-chain` |
+| `Networks.katana` | 747474 | `katana` | Katana | ETH | `https://katanascan.com` |
+
+### Errors
+
+Public methods throw `OMSWalletError` subclasses with stable SDK fields such as `code`, `operation`, `status`, and `retryable`. When a failure comes from a remote OMS service response or transport failure, the error also includes `upstreamError` with normalized wallet API or indexer details for logging and service-specific troubleshooting. Application logic should usually branch on the SDK-level `code`.
+
+For transaction writes, `OMS_TRANSACTION_EXECUTION_UNCONFIRMED` means the SDK has a `txnId` from preparation, but the execute request failed before the SDK could confirm whether the transaction was submitted; do not blindly resend the same write. `OMS_TRANSACTION_STATUS_LOOKUP_FAILED` means the transaction was submitted but status polling failed, so retry status lookup with the returned `txnId`. `retryable` describes the failed SDK operation, not the whole user intent.
 
 ```typescript
-const signature = await omsWallet.wallet.signTypedData({
-  network: Networks.amoy,
-  typedData,
-})
+import { OMSWalletError } from '@polygonlabs/oms-wallet'
 
-const isValid = await omsWallet.wallet.isValidTypedDataSignature({
-  network: Networks.amoy,
-  walletAddress: omsWallet.wallet.walletAddress,
-  typedData,
-  signature,
-})
-```
-
-### Call a Contract (method string + args)
-
-```typescript
-import { parseUnits } from 'viem'
-
-const tx = await omsWallet.wallet.callContract({
-  network: Networks.amoy,
-  contractAddress: '0x3333333333333333333333333333333333333333',
-  method: 'transfer(address,uint256)',
-  args: [
-    { type: 'address', value: '0x1111111111111111111111111111111111111111' },
-    { type: 'uint256', value: parseUnits('0.001', 18).toString() },
-  ],
-})
-```
-
-### Query Balances
-
-```typescript
-const { walletAddress } = omsWallet.wallet
-if (!walletAddress) throw new Error('No active wallet session')
-
-const result = await omsWallet.indexer.getBalances({
-  networks: [Networks.amoy],
-  walletAddress,
-  includeMetadata: true,
-})
-
-for (const b of result.nativeBalances) {
-  console.log(b.symbol, b.balance)
-}
-
-for (const b of result.balances) {
-  console.log(b.contractInfo?.symbol, b.balance, b.contractInfo?.decimals)
+try {
+  await omsWallet.wallet.startEmailAuth({ email: 'user@example.com' })
+} catch (err) {
+  if (err instanceof OMSWalletError) {
+    console.log(err.code, err.operation, err.upstreamError)
+  }
 }
 ```
-
-Pass `contractAddresses` to filter balances to specific token contracts. Omit `networks` to query mainnets by default, or pass `networkType: 'TESTNETS'` / `'ALL'`. With `includeMetadata: true`, ERC-20 decimals are available as `contractInfo.decimals`. The response is paginated; pass `page` when requesting later pages.
 
 ### Manage Access
 
