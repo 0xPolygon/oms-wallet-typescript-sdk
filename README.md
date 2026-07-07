@@ -1,8 +1,14 @@
 # OMS Wallet TypeScript SDK
 
-A TypeScript SDK for OMS Wallet. Provides email, OIDC ID-token, and OIDC redirect wallet authentication, on-chain transaction submission, message signing, and token balance queries — with automatic session persistence.
+Add OMS Wallet-powered EVM wallets to TypeScript apps with email or OIDC auth, automatic session persistence, message signing, transaction submission, and token balance queries. Browser sessions use a non-extractable WebCrypto signing credential so the private session key is not written to `localStorage`.
 
 ## Usage
+
+Before you start:
+
+- Use an OMS publishable key for your project. Use sandbox/dev keys for local development and testnet flows.
+- Browser apps work out of the box with `localStorage`, `sessionStorage`, and WebCrypto. Node.js and React Native apps should provide custom storage when they need persistent sessions.
+- Start with a sign-in, sign-message, or balance-read flow. Transaction examples below use Polygon Amoy; mainnet transactions can move real funds.
 
 Install the published SDK package in your application:
 
@@ -27,7 +33,7 @@ const omsWallet = new OMSWallet({
 })
 ```
 
-The SDK derives the WaaS API and IndexerGateway endpoints from the publishable key prefix.
+The SDK derives the wallet API and indexer endpoints from the publishable key prefix.
 
 In Vite browser apps, keep the publishable key in local environment variables:
 
@@ -44,7 +50,7 @@ const omsWallet = new OMSWallet({
 })
 ```
 
-If your app imports utilities from `viem`, such as the `parseUnits` helper used in the quick start below, install it as a direct dependency too:
+If your app imports utilities from `viem`, such as the `parseUnits` helper used in the transaction examples below, install it as a direct dependency too:
 
 ```bash
 pnpm add viem
@@ -59,86 +65,10 @@ pnpm install
 pnpm build
 ```
 
-## React Example
-
-A deployed React example is available at [https://0xsequence.github.io/typescript-sdk/react-example/](https://0xsequence.github.io/typescript-sdk/react-example/).
-
-To run it locally from the repository root:
-
-```bash
-cp examples/react/.env.example examples/react/.env.local
-# Fill VITE_OMS_PUBLISHABLE_KEY in examples/react/.env.local
-pnpm dev:example
-```
-
-## Wagmi Connector
-
-This workspace also includes `@polygonlabs/oms-wallet-wagmi-connector`, an ESM-only package that adapts an
-active OMS Wallet SDK instance to wagmi's connector API.
-
-```bash
-pnpm --filter @polygonlabs/oms-wallet-wagmi-connector build
-pnpm --filter @polygonlabs/oms-wallet-wagmi-connector test
-```
-
-See [packages/oms-wallet-wagmi-connector/README.md](./packages/oms-wallet-wagmi-connector/README.md) for usage.
-
-## Wagmi React Example
-
-The Wagmi example uses `@polygonlabs/oms-wallet-wagmi-connector`, wagmi's MetaMask connector, and the Trails widget.
-
-The deployed Wagmi example is available at [https://0xsequence.github.io/typescript-sdk/wagmi-example/](https://0xsequence.github.io/typescript-sdk/wagmi-example/).
-
-To run it locally from the repository root:
-
-```bash
-cp examples/wagmi/.env.example examples/wagmi/.env.local
-# Fill VITE_OMS_PUBLISHABLE_KEY in examples/wagmi/.env.local
-# Replace VITE_TRAILS_API_KEY only if you need a different Trails project
-pnpm dev:wagmi-example
-```
-
-## Trails Actions React Example
-
-The Trails Actions example prepares and sends Polygon swap, Earn deposit, swap plus Earn deposit, and Earn withdrawal flows with `0xtrails/actions`.
-
-The deployed Trails Actions example is available at [https://0xsequence.github.io/typescript-sdk/trails-actions-example/](https://0xsequence.github.io/typescript-sdk/trails-actions-example/).
-
-To run it locally from the repository root:
-
-```bash
-cp examples/trails-actions/.env.example examples/trails-actions/.env.local
-# Fill VITE_OMS_PUBLISHABLE_KEY in examples/trails-actions/.env.local
-pnpm dev:trails-actions-example
-```
-
-## Node Example
-
-The Node example walks through email OTP sign-in and message signing from a terminal.
-
-To run it locally from the repository root:
-
-```bash
-OMS_PUBLISHABLE_KEY=your-publishable-key pnpm dev:node-example
-```
-
-## Node Contract Deploy Example
-
-The Node contract deploy example compiles a small ERC-20 contract and submits a Polygon Amoy deployment transaction through the OMS Wallet API.
-
-To run it locally from the repository root:
-
-```bash
-cp examples/node-contract-deploy-example/.env.example examples/node-contract-deploy-example/.env.local
-# Fill OMS_PUBLISHABLE_KEY in examples/node-contract-deploy-example/.env.local
-pnpm dev:node-contract-deploy-example
-```
-
 ## Quick Start
 
 ```typescript
-import { FeeOptionSelector, Networks, OMSWallet, WalletType } from '@polygonlabs/oms-wallet'
-import { parseUnits } from 'viem'
+import { Networks, OMSWallet } from '@polygonlabs/oms-wallet'
 
 const omsWallet = new OMSWallet({
   publishableKey: 'your-publishable-key',
@@ -147,22 +77,26 @@ const omsWallet = new OMSWallet({
 // 1. Send a one-time code to the user's email
 await omsWallet.wallet.startEmailAuth({ email: 'user@example.com' })
 
-// 2. User enters the code — verifies it and sets up the wallet automatically
-const { walletAddress, credential } = await omsWallet.wallet.completeEmailAuth({ code: '123456' })
+// 2. User enters the code from their inbox.
+const { walletAddress } = await omsWallet.wallet.completeEmailAuth({ code: '123456' })
 
 // 3. The wallet is ready
 console.log('Wallet address:', walletAddress)
-console.log('Credential:', credential.credentialId)
 
-// 4. Send a transaction
-const tx = await omsWallet.wallet.sendTransaction({
-  network: Networks.polygon,
-  to: '0x1111111111111111111111111111111111111111',
-  value: parseUnits('1', 18), // 1 POL
-  // If this Polygon mainnet transaction is not sponsored, choose the first fee token the wallet can pay.
-  selectFeeOption: FeeOptionSelector.firstAvailable,
+// 4. Prove the wallet can sign without moving funds.
+const signature = await omsWallet.wallet.signMessage({
+  network: Networks.amoy,
+  message: 'hello from OMS Wallet',
 })
-console.log(tx.txnHash ?? tx.txnId)
+console.log('Signature:', signature)
+
+// 5. Read testnet balances.
+const balances = await omsWallet.indexer.getBalances({
+  walletAddress,
+  networks: [Networks.amoy],
+  includeMetadata: true,
+})
+console.log('Native balances:', balances.nativeBalances)
 ```
 
 ## Overview
@@ -173,6 +107,14 @@ console.log(tx.txnHash ?? tx.txnId)
 |---|---|---|
 | `omsWallet.wallet` | `WalletClient` | Authentication, signing, and transaction submission. |
 | `omsWallet.indexer` | `IndexerClient` | Read token balances and on-chain state. |
+
+## Security Model
+
+The SDK stores completed wallet-session metadata in the configured storage so apps can restore an active session after refresh or restart. Pending email OTP and OIDC redirect state are transient and are not exposed through `session`.
+
+In browsers, wallet API requests are signed with a non-extractable WebCrypto P-256 credential. The private session key is not written to `localStorage`; persisted session metadata contains identifiers, wallet address, expiry, and auth metadata needed to restore the session. Non-browser runtimes fall back to in-memory storage unless you provide a custom `StorageManager`.
+
+Completed auth requests ask for a one-week session lifetime by default. You can request a shorter or longer lifetime up to 30 days. Expired sessions become inactive before protected wallet operations; call `signOut()` to end the session and clear active wallet state.
 
 ## Authentication Flow
 
@@ -190,7 +132,6 @@ Use manual wallet selection when the app needs to present wallet choices:
 ```typescript
 const selection = await omsWallet.wallet.completeEmailAuth({
   code: '123456',
-  walletType: WalletType.Ethereum,
   walletSelection: 'manual',
 })
 
@@ -258,6 +199,12 @@ if (result) {
 ```
 
 For SDK built-in Google and Apple providers, `omsRelayReturnUri` is the URL where the OMS relay returns the user after Google or Apple redirects to the OMS callback. In browser convenience flows, the SDK derives it from the current page URL when omitted. Custom OIDC providers do not use `omsRelayReturnUri`; configure their OAuth callback with `providerRedirectUri` instead:
+
+| Flow | Provider config | App return URL | Provider OAuth callback |
+|---|---|---|---|
+| SDK default Google/Apple | `provider: 'google'` / `provider: 'apple'`, or `googleOidcProvider()` / `appleOidcProvider()` | `omsRelayReturnUri` | OMS relay callback derived as `{apiBase}/auth/waas/callback/{google|apple}` |
+| Custom OIDC provider | Custom `OidcProviderConfig` | `providerRedirectUri` | `providerRedirectUri` |
+| Google/Apple without SDK relay | Custom `OidcProviderConfig` for Google or Apple | `providerRedirectUri` | `providerRedirectUri` |
 
 ```typescript
 const auth = defineOMSWalletAuthConfig({
@@ -352,7 +299,7 @@ The `network` parameter on all transaction and signing methods accepts a `Networ
 ```typescript
 import { Networks, findNetworkById, supportedNetworks } from '@polygonlabs/oms-wallet'
 
-await omsWallet.wallet.signMessage({ network: Networks.polygon, message: 'some message to sign' })
+await omsWallet.wallet.signMessage({ network: Networks.amoy, message: 'some message to sign' })
 
 console.log(supportedNetworks)
 console.log(findNetworkById(80002)) // Networks.amoy
@@ -379,25 +326,37 @@ console.log(findNetworkById(80002)) // Networks.amoy
 
 ## Sending Transactions
 
+`sendTransaction` can move real funds on mainnet. Start on a testnet such as Polygon Amoy, fund the wallet from a faucet, and use a small value before switching to production networks.
+
+Install `viem` when using `parseUnits` for transaction values:
+
+```bash
+pnpm add viem
+```
+
 `sendTransaction` has three overloaded signatures to cover the most common patterns.
 
-### Native Token Transfer
+### First Testnet Transfer
 
 ```typescript
+import { FeeOptionSelector, Networks } from '@polygonlabs/oms-wallet'
 import { parseUnits } from 'viem'
 
 const tx = await omsWallet.wallet.sendTransaction({
-  network: Networks.polygon,
+  network: Networks.amoy,
   to: '0x1111111111111111111111111111111111111111',
-  value: parseUnits('1', 18), // 1 POL
+  value: parseUnits('0.001', 18), // 0.001 testnet POL
+  selectFeeOption: FeeOptionSelector.firstAvailable,
 })
+
+console.log(tx.txnHash ?? tx.txnId)
 ```
 
 ### Raw Data Transaction
 
 ```typescript
 const tx = await omsWallet.wallet.sendTransaction({
-  network: Networks.polygon,
+  network: Networks.amoy,
   to: '0x2222222222222222222222222222222222222222',
   data: '0x12345678',
 })
@@ -422,11 +381,11 @@ const erc20Abi = [
 ] as const
 
 const tx = await omsWallet.wallet.sendTransaction({
-  network: Networks.polygon,
+  network: Networks.amoy,
   to: '0x3333333333333333333333333333333333333333',
   abi: erc20Abi,
   functionName: 'transfer',
-  args: ['0x1111111111111111111111111111111111111111', parseUnits('1', 18)],
+  args: ['0x1111111111111111111111111111111111111111', parseUnits('0.001', 18)],
 })
 ```
 
@@ -442,7 +401,7 @@ returned `txnId`.
 import { parseUnits } from 'viem'
 
 const tx = await omsWallet.wallet.sendTransaction({
-  network: Networks.polygon,
+  network: Networks.amoy,
   to: '0x1111111111111111111111111111111111111111',
   value: parseUnits('0.001', 18),
   waitForStatus: false,
@@ -457,7 +416,7 @@ To tune polling, pass `statusPolling`:
 import { parseUnits } from 'viem'
 
 await omsWallet.wallet.sendTransaction({
-  network: Networks.polygon,
+  network: Networks.amoy,
   to: '0x1111111111111111111111111111111111111111',
   value: parseUnits('0.001', 18),
   statusPolling: {
@@ -474,7 +433,7 @@ wallet can pay, or return `option.selection` from a custom selector.
 
 ```typescript
 const tx = await omsWallet.wallet.sendTransaction({
-  network: Networks.polygon,
+  network: Networks.amoy,
   to: '0x3333333333333333333333333333333333333333',
   data: '0x12345678',
   selectFeeOption: async (feeOptions) => {
@@ -488,7 +447,7 @@ const tx = await omsWallet.wallet.sendTransaction({
 
 ### Publishable-Key Routing
 
-`OMSWallet` derives service endpoints from the publishable key. WaaS requests use the API base URL directly; indexer requests use the same base URL with `/v1/IndexerGateway/`.
+`OMSWallet` derives service endpoints from the publishable key. Wallet requests use the API base URL directly; indexer requests use the same environment-specific API base.
 
 | Publishable key prefix | API base URL |
 |---|---|
@@ -510,6 +469,7 @@ const omsWallet = new OMSWallet({
         clientId: 'custom-client-id',
         issuer: 'https://issuer.example',
         authorizationUrl: 'https://issuer.example/oauth/authorize',
+        providerRedirectUri: 'https://app.example/auth/callback',
         scopes: ['openid', 'email', 'profile'],
       },
     },
@@ -540,12 +500,12 @@ OIDC redirect auth uses separate transient storage for verifier/state data. In b
 
 ```typescript
 const signature = await omsWallet.wallet.signMessage({
-  network: Networks.polygon,
+  network: Networks.amoy,
   message: 'some message to sign',
 })
 
 const isValid = await omsWallet.wallet.isValidMessageSignature({
-  network: Networks.polygon,
+  network: Networks.amoy,
   walletAddress: omsWallet.wallet.walletAddress,
   message: 'some message to sign',
   signature,
@@ -556,12 +516,12 @@ const isValid = await omsWallet.wallet.isValidMessageSignature({
 
 ```typescript
 const signature = await omsWallet.wallet.signTypedData({
-  network: Networks.polygon,
+  network: Networks.amoy,
   typedData,
 })
 
 const isValid = await omsWallet.wallet.isValidTypedDataSignature({
-  network: Networks.polygon,
+  network: Networks.amoy,
   walletAddress: omsWallet.wallet.walletAddress,
   typedData,
   signature,
@@ -574,12 +534,12 @@ const isValid = await omsWallet.wallet.isValidTypedDataSignature({
 import { parseUnits } from 'viem'
 
 const tx = await omsWallet.wallet.callContract({
-  network: Networks.polygon,
+  network: Networks.amoy,
   contractAddress: '0x3333333333333333333333333333333333333333',
   method: 'transfer(address,uint256)',
   args: [
     { type: 'address', value: '0x1111111111111111111111111111111111111111' },
-    { type: 'uint256', value: parseUnits('1', 18).toString() },
+    { type: 'uint256', value: parseUnits('0.001', 18).toString() },
   ],
 })
 ```
@@ -591,7 +551,7 @@ const { walletAddress } = omsWallet.wallet
 if (!walletAddress) throw new Error('No active wallet session')
 
 const result = await omsWallet.indexer.getBalances({
-  networks: [Networks.polygon],
+  networks: [Networks.amoy],
   walletAddress,
   includeMetadata: true,
 })
@@ -621,6 +581,81 @@ for await (const page of omsWallet.wallet.listAccessPages({ pageSize: 25 })) {
 }
 
 await omsWallet.wallet.revokeAccess({ targetCredentialId: grants[0].credentialId })
+```
+
+## React Example
+
+A deployed React example is available at [https://0xsequence.github.io/typescript-sdk/react-example/](https://0xsequence.github.io/typescript-sdk/react-example/).
+
+To run it locally from the repository root:
+
+```bash
+cp examples/react/.env.example examples/react/.env.local
+# Fill VITE_OMS_PUBLISHABLE_KEY in examples/react/.env.local
+pnpm dev:example
+```
+
+## Wagmi Connector
+
+This workspace also includes `@polygonlabs/oms-wallet-wagmi-connector`, an ESM-only package that adapts an
+active OMS Wallet SDK instance to wagmi's connector API.
+
+```bash
+pnpm --filter @polygonlabs/oms-wallet-wagmi-connector build
+pnpm --filter @polygonlabs/oms-wallet-wagmi-connector test
+```
+
+See [packages/oms-wallet-wagmi-connector/README.md](./packages/oms-wallet-wagmi-connector/README.md) for usage.
+
+## Wagmi React Example
+
+The Wagmi example uses `@polygonlabs/oms-wallet-wagmi-connector`, wagmi's MetaMask connector, and the Trails widget.
+
+The deployed Wagmi example is available at [https://0xsequence.github.io/typescript-sdk/wagmi-example/](https://0xsequence.github.io/typescript-sdk/wagmi-example/).
+
+To run it locally from the repository root:
+
+```bash
+cp examples/wagmi/.env.example examples/wagmi/.env.local
+# Fill VITE_OMS_PUBLISHABLE_KEY in examples/wagmi/.env.local
+# Replace VITE_TRAILS_API_KEY only if you need a different Trails project
+pnpm dev:wagmi-example
+```
+
+## Trails Actions React Example
+
+The Trails Actions example prepares and sends Polygon swap, Earn deposit, swap plus Earn deposit, and Earn withdrawal flows with `0xtrails/actions`.
+
+The deployed Trails Actions example is available at [https://0xsequence.github.io/typescript-sdk/trails-actions-example/](https://0xsequence.github.io/typescript-sdk/trails-actions-example/).
+
+To run it locally from the repository root:
+
+```bash
+cp examples/trails-actions/.env.example examples/trails-actions/.env.local
+# Fill VITE_OMS_PUBLISHABLE_KEY in examples/trails-actions/.env.local
+pnpm dev:trails-actions-example
+```
+
+## Node Example
+
+The Node example walks through email OTP sign-in and message signing from a terminal.
+
+To run it locally from the repository root:
+
+```bash
+OMS_PUBLISHABLE_KEY=your-publishable-key pnpm dev:node-example
+```
+
+## Node Contract Deploy Example
+
+The Node contract deploy example compiles a small ERC-20 contract and submits a Polygon Amoy deployment transaction through the OMS Wallet API.
+
+To run it locally from the repository root:
+
+```bash
+cp examples/node-contract-deploy-example/.env.example examples/node-contract-deploy-example/.env.local
+# Fill OMS_PUBLISHABLE_KEY in examples/node-contract-deploy-example/.env.local
+pnpm dev:node-contract-deploy-example
 ```
 
 ## API Reference
