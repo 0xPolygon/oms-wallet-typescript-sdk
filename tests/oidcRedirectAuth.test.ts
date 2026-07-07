@@ -289,10 +289,10 @@ describe("WalletClient OIDC redirect auth", () => {
         expect(authorizeUrl.searchParams.get("login_hint")).toBeNull();
     });
 
-    it("starts a relay OIDC redirect flow with final redirect_uri in state", async () => {
+    it("starts a configured SDK Google relay flow with final redirect_uri in state", async () => {
         const fetchMock = vi.fn(async (_input: RequestInfo | URL, init?: RequestInit) => {
             const body = JSON.parse(init?.body as string);
-            expect(body.metadata.redirect_uri).toBe("http://localhost:8090/callback");
+            expect(body.metadata.redirect_uri).toBe(expectedDefaultGoogleRelayRedirectUri);
             return jsonResponse({
                 verifier: "verifier-1",
                 challenge: "challenge-1",
@@ -309,7 +309,6 @@ describe("WalletClient OIDC redirect auth", () => {
                     oidcProviders: {
                         google: googleOidcProvider({
                             clientId: "google-client",
-                            providerRedirectUri: "http://localhost:8090/callback",
                         }),
                     },
                 },
@@ -322,19 +321,19 @@ describe("WalletClient OIDC redirect auth", () => {
         });
 
         const authorizeUrl = new URL(result.authorizationUrl);
-        expect(authorizeUrl.searchParams.get("redirect_uri")).toBe("http://localhost:8090/callback");
+        expect(authorizeUrl.searchParams.get("redirect_uri")).toBe(expectedDefaultGoogleRelayRedirectUri);
 
         const state = decodeOidcState(result.state);
         expect(state.redirect_uri).toBe("http://localhost:5173/auth/callback");
     });
 
-    it("uses provider relay defaults and project ID in headers and state", async () => {
+    it("uses SDK relay defaults and project ID in headers and state", async () => {
         const fetchMock = vi.fn(async (_input: RequestInfo | URL, init?: RequestInit) => {
             const headers = init?.headers as Record<string, string>;
             expect(headers["OMS-Wallet-Signature"]).toContain('scope="proj_custom"');
             expect(headers.Authorization).toBeUndefined();
             const body = JSON.parse(init?.body as string);
-            expect(body.metadata.redirect_uri).toBe("https://relay.example/callback");
+            expect(body.metadata.redirect_uri).toBe(expectedDefaultGoogleRelayRedirectUri);
             return jsonResponse({
                 verifier: "verifier-1",
                 challenge: "challenge-1",
@@ -354,7 +353,6 @@ describe("WalletClient OIDC redirect auth", () => {
                     oidcProviders: {
                         google: googleOidcProvider({
                             clientId: "google-client",
-                            providerRedirectUri: "https://relay.example/callback",
                         }),
                     },
                 },
@@ -367,7 +365,7 @@ describe("WalletClient OIDC redirect auth", () => {
         });
 
         const authorizeUrl = new URL(result.authorizationUrl);
-        expect(authorizeUrl.searchParams.get("redirect_uri")).toBe("https://relay.example/callback");
+        expect(authorizeUrl.searchParams.get("redirect_uri")).toBe(expectedDefaultGoogleRelayRedirectUri);
 
         const state = decodeOidcState(result.state);
         expect(state.scope).toBe("proj_custom");

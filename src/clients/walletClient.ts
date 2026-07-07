@@ -5,7 +5,7 @@ import {
     Address,
     EncodeFunctionDataParameters} from 'viem'
 
-import {type OidcAuthMode, OidcProviderConfig, OMSWalletEnvironment} from "../omsEnvironment.js";
+import {type CustomOidcProviderConfig, type OidcAuthMode, OidcProviderConfig, OMSWalletEnvironment} from "../omsEnvironment.js";
 import {createDefaultStorage, SessionStorageManager, StorageManager} from "../storageManager.js";
 import {createSignedFetch} from "../signedFetch.js";
 import {Constants} from "../utils/constants.js";
@@ -650,8 +650,9 @@ export class WalletClient<Env extends OMSWalletEnvironment = OMSWalletEnvironmen
                 ? undefined
                 : this.sessionLifetimeSeconds(params.sessionLifetimeSeconds, WalletOperation.startOidcRedirectAuth)
             const defaultRelayProvider = defaultRelayProviderForOidcProvider(provider.config)
-            const providerRedirectUri = provider.config.providerRedirectUri ??
-                this.derivedOmsRelayRedirectUri(defaultRelayProvider)
+            const providerRedirectUri = defaultRelayProvider
+                ? this.derivedOmsRelayRedirectUri(defaultRelayProvider)
+                : (provider.config as CustomOidcProviderConfig).providerRedirectUri
             if (!providerRedirectUri) {
                 throw new Error('OIDC provider requires providerRedirectUri')
             }

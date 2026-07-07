@@ -1100,16 +1100,14 @@ interface CustomOidcProviderConfig extends OidcProviderConfigBase {
 }
 
 // Returned by googleOidcProvider() and appleOidcProvider().
-interface HelperOidcProviderConfig extends OidcProviderConfigBase {
-  providerRedirectUri?: string
-}
+type HelperOidcProviderConfig = OidcProviderConfigBase
 ```
 
 Provider configs are the source of truth for authorization scopes and optional provider display metadata. If `scopes` is omitted or empty, the SDK does not send a `scope` authorization parameter. `authMode` defaults to `AuthMode.AuthCodePKCE`. `provider` is a stable app-facing provider key, and `providerLabel` is display text stored in `session.auth` after redirect auth completes.
 
 Custom providers must provide `providerRedirectUri`; the SDK sends it as the OAuth/OIDC `redirect_uri`. A manual provider keyed `google`, or using the Google issuer, is still custom unless it was created by `googleOidcProvider()`.
 
-Google can be configured with the `googleOidcProvider` helper. The default Google provider uses the SDK default client ID, `openid email profile` scopes, PKCE auth-code mode, and Google authorization parameters `access_type=offline` and `prompt=consent`. Unless `providerRedirectUri` is supplied, the SDK derives the OMS relay callback URL from the publishable key environment as `{apiBase}/auth/waas/callback/google`. If you pass `providerRedirectUri` and still use an intermediate relay, pass `omsRelayReturnUri` when starting auth so the relay can return to your app. To bypass the relay, omit `omsRelayReturnUri`.
+Google can be configured with the `googleOidcProvider` helper. The default Google provider uses the SDK default client ID, `openid email profile` scopes, PKCE auth-code mode, and Google authorization parameters `access_type=offline` and `prompt=consent`. This helper is the SDK default OMS-relayed Google option: the SDK derives the provider callback URL from the publishable key environment as `{apiBase}/auth/waas/callback/google`, and `omsRelayReturnUri` is the final app URL where the OMS relay returns the user. To use Google without the SDK relay, configure Google as a custom provider with `providerRedirectUri`.
 
 ```typescript
 // Uses the SDK default Google client id and derived relay redirect URI.
@@ -1118,11 +1116,10 @@ googleOidcProvider()
 // Override defaults when needed.
 googleOidcProvider({
   clientId: 'your-google-client-id',
-  providerRedirectUri: 'http://localhost:8090/callback',
 })
 ```
 
-Apple can be configured with the `appleOidcProvider` helper. The default Apple provider uses `openid email` scopes, `response_mode=form_post`, and PKCE auth-code mode. Unless `providerRedirectUri` is supplied, the SDK derives the OMS relay callback URL from the publishable key environment as `{apiBase}/auth/waas/callback/apple`. If you pass `providerRedirectUri` and still use an intermediate relay, pass `omsRelayReturnUri` when starting auth so the relay can return to your app. To bypass the relay, omit `omsRelayReturnUri`.
+Apple can be configured with the `appleOidcProvider` helper. The default Apple provider uses `openid email` scopes, `response_mode=form_post`, and PKCE auth-code mode. This helper is the SDK default OMS-relayed Apple option: the SDK derives the provider callback URL from the publishable key environment as `{apiBase}/auth/waas/callback/apple`, and `omsRelayReturnUri` is the final app URL where the OMS relay returns the user. To use Apple without the SDK relay, configure Apple as a custom provider with `providerRedirectUri`.
 
 ```typescript
 // Uses the SDK default Apple Services ID and derived relay redirect URI.
@@ -1131,7 +1128,6 @@ appleOidcProvider()
 // Override defaults when needed.
 appleOidcProvider({
   clientId: 'your-apple-services-id',
-  providerRedirectUri: 'https://app.example/auth/callback',
 })
 ```
 
@@ -1146,7 +1142,6 @@ type OidcProviderInput<Env> = OidcProviderName<Env> | OidcProviderConfig
 
 interface GoogleOidcProviderParams {
   clientId?: string
-  providerRedirectUri?: string
   provider?: string
   providerLabel?: string
   scopes?: string[]
@@ -1156,7 +1151,6 @@ interface GoogleOidcProviderParams {
 
 interface AppleOidcProviderParams {
   clientId?: string
-  providerRedirectUri?: string
   provider?: string
   providerLabel?: string
   scopes?: string[]

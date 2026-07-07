@@ -81,6 +81,15 @@ const customOidcProviderWithoutRedirectUri: OidcProviderConfig = {
 };
 void customOidcProviderWithoutRedirectUri;
 
+void googleOidcProvider({
+    // @ts-expect-error SDK default Google helper uses the OMS relay and does not accept providerRedirectUri.
+    providerRedirectUri: "https://app.example/auth/callback",
+});
+void appleOidcProvider({
+    // @ts-expect-error SDK default Apple helper uses the OMS relay and does not accept providerRedirectUri.
+    providerRedirectUri: "https://app.example/auth/callback",
+});
+
 if (false) {
     const wallet = configuredOmsWallet.wallet;
     void wallet.startOidcRedirectAuth({

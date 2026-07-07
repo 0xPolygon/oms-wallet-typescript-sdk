@@ -22,7 +22,6 @@ export interface CustomOidcProviderConfig extends OidcProviderConfigBase {
 }
 
 export interface OmsRelayOidcProviderConfig extends OidcProviderConfigBase {
-    providerRedirectUri?: string;
     readonly [omsRelayOidcProviderConfigBrand]: "google" | "apple";
 }
 

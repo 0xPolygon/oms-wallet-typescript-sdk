@@ -276,11 +276,11 @@ Pass `loginHint` only when you want to prefill or select a specific Google accou
 
 Pending redirect state is stored in `sessionStorage` by default. Final wallet session metadata continues to use the configured SDK storage.
 
-`googleOidcProvider()` uses the SDK default Google client ID, `openid email profile` scopes, and PKCE auth-code mode by default. Unless `providerRedirectUri` is supplied, the SDK derives the OMS relay callback URL from the publishable key environment as `{apiBase}/auth/waas/callback/google`.
+`googleOidcProvider()` uses the SDK default Google client ID, `openid email profile` scopes, and PKCE auth-code mode by default. It is the SDK default OMS-relayed Google option: the SDK derives the provider callback URL from the publishable key environment as `{apiBase}/auth/waas/callback/google`, then the relay returns to `omsRelayReturnUri`.
 
-`appleOidcProvider()` uses the SDK default Apple Services ID, `openid email` scopes, `response_mode=form_post`, and PKCE auth-code mode by default. Unless `providerRedirectUri` is supplied, the SDK derives the OMS relay callback URL from the publishable key environment as `{apiBase}/auth/waas/callback/apple`.
+`appleOidcProvider()` uses the SDK default Apple Services ID, `openid email` scopes, `response_mode=form_post`, and PKCE auth-code mode by default. It is the SDK default OMS-relayed Apple option: the SDK derives the provider callback URL from the publishable key environment as `{apiBase}/auth/waas/callback/apple`, then the relay returns to `omsRelayReturnUri`.
 
-If you pass `providerRedirectUri` to a Google or Apple helper and still use an intermediate relay, pass `omsRelayReturnUri` when starting auth so the relay can return to your app. To bypass the relay, omit `omsRelayReturnUri`.
+To use Google or Apple without the SDK relay, configure that provider as a custom OIDC provider with `providerRedirectUri`; custom providers do not use `omsRelayReturnUri`.
 
 ### Session State
 

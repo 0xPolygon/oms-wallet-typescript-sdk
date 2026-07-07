@@ -5,7 +5,6 @@ export type OmsRelayOidcProvider = "google" | "apple";
 
 export interface GoogleOidcProviderParams {
     clientId?: string;
-    providerRedirectUri?: string;
     provider?: string;
     providerLabel?: string;
     scopes?: string[];
@@ -15,7 +14,6 @@ export interface GoogleOidcProviderParams {
 
 export interface AppleOidcProviderParams {
     clientId?: string;
-    providerRedirectUri?: string;
     provider?: string;
     providerLabel?: string;
     scopes?: string[];
@@ -53,7 +51,6 @@ export function googleOidcProvider(params: GoogleOidcProviderParams = {}): OmsRe
         provider: params.provider ?? 'google',
         providerLabel: params.providerLabel ?? 'Google',
         scopes: params.scopes ?? ['openid', 'email', 'profile'],
-        providerRedirectUri: params.providerRedirectUri,
         authMode: params.authMode ?? AuthMode.AuthCodePKCE,
         authorizeParams: {
             access_type: 'offline',
@@ -71,7 +68,6 @@ export function appleOidcProvider(params: AppleOidcProviderParams = {}): OmsRela
         provider: params.provider ?? 'apple',
         providerLabel: params.providerLabel ?? 'Apple',
         scopes: params.scopes ?? ['openid', 'email'],
-        providerRedirectUri: params.providerRedirectUri,
         authMode: params.authMode ?? AuthMode.AuthCodePKCE,
         authorizeParams: {
             response_mode: 'form_post',
