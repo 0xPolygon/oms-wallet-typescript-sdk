@@ -48,6 +48,8 @@
     "check:stable-package-versions": "node scripts/check-package-versions.cjs --stable",
     "dev:example": "pnpm --filter react-example dev",
     "build:example": "pnpm --filter react-example build",
+    "dev:custom-google-redirect-example": "pnpm --filter custom-google-redirect-example dev",
+    "build:custom-google-redirect-example": "pnpm --filter custom-google-redirect-example build",
     "dev:trails-actions-example": "pnpm --filter trails-actions-example dev",
     "build:trails-actions-example": "pnpm --filter trails-actions-example build",
     "dev:wagmi-example": "pnpm --filter @polygonlabs/oms-wallet-wagmi-connector build && pnpm --filter wagmi-example dev",

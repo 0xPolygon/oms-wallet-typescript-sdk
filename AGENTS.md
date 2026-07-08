@@ -49,6 +49,7 @@ This repository is a pnpm workspace for the OMS Wallet TypeScript SDK. The root 
 - `tests/`: Vitest coverage for wallet, OIDC, transactions, signing, access, indexer, and errors.
 - `type-tests/`: Compile-time API tests.
 - `examples/react/`: Vite React demo that consumes the SDK through the workspace.
+- `examples/custom-google-redirect/`: Local-only Vite React demo for Google as a custom OIDC provider with a localhost redirect URI.
 - `examples/wagmi/`: Vite React wagmi demo using the OMS Wallet connector and MetaMask connector.
 - `examples/trails-actions/`: Vite React demo for Trails swap, Earn deposit, and Earn withdrawal flows.
 - `examples/node/`: Interactive Node OTP/signing example.
@@ -70,11 +71,13 @@ This repository is a pnpm workspace for the OMS Wallet TypeScript SDK. The root 
 - `pnpm --filter @polygonlabs/oms-wallet-wagmi-connector build`: Build the wagmi connector package.
 - `pnpm --filter @polygonlabs/oms-wallet-wagmi-connector test`: Run the wagmi connector package tests.
 - `pnpm build:example`: Build the React example for Vite/GitHub Pages output after `pnpm build` has produced SDK output.
+- `pnpm build:custom-google-redirect-example`: Build the local-only custom Google redirect React example.
 - `pnpm build:trails-actions-example`: Build the Trails Actions React example.
 - `pnpm build:wagmi-example`: Build the wagmi React example.
 - `pnpm build:node-example`: Typecheck the Node example.
 - `pnpm build:node-contract-deploy-example`: Typecheck the Node contract deploy example.
 - `pnpm dev:example`: Start the React demo dev server.
+- `pnpm dev:custom-google-redirect-example`: Start the local custom Google redirect React demo dev server on port `5173`.
 - `pnpm dev:trails-actions-example`: Start the Trails Actions React demo dev server.
 - `pnpm dev:wagmi-example`: Start the wagmi React demo dev server.
 - `pnpm dev:node-example`: Run the interactive Node OTP example.
@@ -95,9 +98,10 @@ example code.
 6. Run `pnpm build:node-example` when SDK exports, module resolution, or Node example usage changes.
 7. Run `pnpm build` before release/build-output work, package entrypoint changes, or React example builds from a clean tree.
 8. Run `pnpm build:example` after `pnpm build` when changing the React example, Vite config, public browser API shape, or Pages deployment assumptions.
-9. Run `pnpm build:trails-actions-example` after `pnpm build` when changing the Trails Actions example, shared browser example utilities, or Pages deployment assumptions.
-10. Run `pnpm build:wagmi-example` after `pnpm build` when changing the wagmi example, connector browser usage, or Pages deployment assumptions.
-11. Run `pnpm build:node-contract-deploy-example` when SDK exports, transaction APIs, module resolution, or the Node contract deploy example changes.
+9. Run `pnpm build:custom-google-redirect-example` when changing the custom Google redirect example, OIDC redirect provider configuration, or browser callback assumptions.
+10. Run `pnpm build:trails-actions-example` after `pnpm build` when changing the Trails Actions example, shared browser example utilities, or Pages deployment assumptions.
+11. Run `pnpm build:wagmi-example` after `pnpm build` when changing the wagmi example, connector browser usage, or Pages deployment assumptions.
+12. Run `pnpm build:node-contract-deploy-example` when SDK exports, transaction APIs, module resolution, or the Node contract deploy example changes.
 
 ## Coding and Architecture Rules
 
@@ -111,7 +115,7 @@ example code.
 
 ## Example App Styling
 
-- The browser examples (`examples/react`, `examples/wagmi`, `examples/trails-actions`) share one set of design tokens in `examples/shared/oms-tokens.css`, mirrored from `oms-sdk-design-system`'s `omsTokens`. Each example's `styles.css` imports it via `@import url("../../shared/oms-tokens.css")`.
+- The browser examples (`examples/react`, `examples/custom-google-redirect`, `examples/wagmi`, `examples/trails-actions`) share one set of design tokens in `examples/shared/oms-tokens.css`, mirrored from `oms-sdk-design-system`'s `omsTokens`. Each example's `styles.css` imports it via `@import url("../../shared/oms-tokens.css")`.
 - Reference the `--oms-*` CSS variables (colors, radius, typography, focus rings) for any example styling. Do not hardcode new hex/radius values in the per-app `styles.css` files; if a token is missing, add it to `examples/shared/oms-tokens.css` so all examples stay in sync. (The `.burn-button` fire gradient in the React example is an intentional decorative-effect exception, not a token.)
 - When tokens change in `oms-sdk-design-system`, update `examples/shared/oms-tokens.css` to match rather than editing each example.
 
@@ -139,12 +143,13 @@ execution commands.
 - The generated WaaS header records the upstream schema path and generation command. This repo does not currently include that schema; if regenerating the client, document the schema source and exact command used.
 - The wagmi connector's SDK peer dependency is intentionally `workspace:^` in source and its SDK dev dependency is intentionally `workspace:*`. Release with pnpm so the published peer gets the compatible release range; do not hand-edit that peer to a literal version.
 - `pnpm-lock.yaml` is the dependency lockfile. Update it through pnpm, not by hand.
-- `dist/`, `examples/react/dist/`, `examples/wagmi/dist/`, `examples/trails-actions/dist/`, and `*.tsbuildinfo` files are build outputs and should not be edited as source.
+- `dist/`, `examples/react/dist/`, `examples/custom-google-redirect/dist/`, `examples/wagmi/dist/`, `examples/trails-actions/dist/`, and `*.tsbuildinfo` files are build outputs and should not be edited as source.
 
 ## Security and Configuration
 
 - Do not commit real secrets. `.env.local` and `.env.*.local` files are ignored for local overrides.
 - The React example uses `examples/react/.env.example` for `VITE_OMS_PUBLISHABLE_KEY`; keep local overrides in `examples/react/.env.local`.
+- The custom Google redirect example uses `examples/custom-google-redirect/.env.example` for `VITE_OMS_PUBLISHABLE_KEY`; keep local overrides in `examples/custom-google-redirect/.env.local`.
 - The wagmi React example uses `examples/wagmi/.env.example` for `VITE_OMS_PUBLISHABLE_KEY`; keep local overrides in `examples/wagmi/.env.local`.
 - The Trails Actions example uses `examples/trails-actions/.env.example` for `VITE_OMS_PUBLISHABLE_KEY`; keep local overrides in `examples/trails-actions/.env.local`.
 - The Node contract deploy example uses `examples/node-contract-deploy-example/.env.example` for `OMS_PUBLISHABLE_KEY`; keep local overrides in `examples/node-contract-deploy-example/.env.local`.
@@ -182,5 +187,5 @@ execution commands.
 | Publishable package versioning or workspace peer protocol | `PUBLISHING.md`, `scripts/check-package-versions.cjs`, `pnpm-lock.yaml` |
 | `src/generated/waas.gen.ts` (regenerated) | Document schema source + regen command in PR description |
 | Repo structure (new top-level dirs) | `AGENTS.md` Repository Layout section |
-| Examples added or renamed | `pnpm-workspace.yaml`, root `package.json` scripts, `pages.yml` |
+| Examples added or renamed | `pnpm-workspace.yaml`, root `package.json` scripts, `pages.yml` when deployed |
 | Design tokens (`oms-sdk-design-system`) | `examples/shared/oms-tokens.css` (single source; examples import it — never hardcode hex/radius in per-app `styles.css`) |

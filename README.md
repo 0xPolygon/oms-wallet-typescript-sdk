@@ -591,6 +591,20 @@ cp examples/react/.env.example examples/react/.env.local
 pnpm dev:example
 ```
 
+## Custom Google Redirect Example
+
+The custom Google redirect example verifies Google configured as a custom OIDC
+provider with `providerRedirectUri: "http://localhost:5173"`. It does not use
+the SDK built-in Google relay helper.
+
+To run it locally from the repository root:
+
+```bash
+cp examples/custom-google-redirect/.env.example examples/custom-google-redirect/.env.local
+# Fill VITE_OMS_PUBLISHABLE_KEY in examples/custom-google-redirect/.env.local
+pnpm dev:custom-google-redirect-example
+```
+
 ## Wagmi Connector
 
 This workspace also includes `@polygonlabs/oms-wallet-wagmi-connector`, an ESM-only package that adapts an
