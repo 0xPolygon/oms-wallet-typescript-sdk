@@ -2,13 +2,16 @@
 
 Build non-custodial EVM wallet experiences in TypeScript with OMS Wallet: email and OIDC auth, session restore, message signing, transaction submission, and token balance queries.
 
-## Usage
+**Requirements:** Node.js 22+ for Node runtimes and local builds. Browser apps
+need a modern browser with WebCrypto support.
 
-Before you start:
+## Before You Start
 
 - Use an OMS publishable key for your project. Use sandbox/dev keys for local development and testnet flows.
 - Browser apps work out of the box. Node.js and other custom runtimes should provide custom storage when they need persistent sessions.
 - Start with a sign-in, sign-message, or balance-read flow. Transaction examples below use Polygon Amoy; mainnet transactions can move real funds.
+
+## Installation
 
 Install the published SDK package in your application:
 
@@ -34,12 +37,6 @@ const omsWallet = new OMSWallet({
 ```
 
 The SDK derives the wallet API and indexer endpoints from the publishable key prefix.
-
-```typescript
-const omsWallet = new OMSWallet({
-  publishableKey: 'your-publishable-key',
-})
-```
 
 ## Quick Start
 
@@ -120,12 +117,20 @@ The returned pending selection is bound to the verified auth flow and signer. Ho
 
 ### OIDC Redirect Auth
 
-Google and Apple redirect auth are configured by default. The redirect auth APIs are provider-neutral, so `auth.oidcProviders` can replace the configured provider set when you need custom providers.
+Google and Apple redirect auth are configured by default. For simple browser
+apps, call `signInWithOidcRedirect` from a sign-in action. For SDK built-in
+Google and Apple providers, it calls `startOidcRedirectAuth`, derives the
+current page as `omsRelayReturnUri`, and navigates with `window.location.assign`:
 
 ```typescript
-const omsWallet = new OMSWallet({
-  publishableKey: 'your-publishable-key',
-})
+void omsWallet.wallet.signInWithOidcRedirect({ provider: 'google' })
+void omsWallet.wallet.signInWithOidcRedirect({ provider: 'apple' })
+
+// On the callback page:
+const result = await omsWallet.wallet.completeOidcRedirectAuth()
+if (result) {
+  console.log('Wallet address:', result.walletAddress)
+}
 ```
 
 For router-driven apps, use the explicit start/complete methods:
@@ -145,9 +150,36 @@ if (result) {
 }
 ```
 
-OIDC redirect auth also supports manual wallet selection by passing `walletSelection: 'manual'` to `startOidcRedirectAuth` or `completeOidcRedirectAuth`. Options passed at start are stored with the pending redirect state and used after the provider redirects back.
+OIDC redirect auth also supports manual wallet selection by passing
+`walletSelection: 'manual'` to `startOidcRedirectAuth` or
+`completeOidcRedirectAuth`. Options passed at start are stored with the pending
+redirect state and used after the provider redirects back.
 
-For OIDC ID-token flows, obtain the provider token in your app or backend flow, then pass it to the SDK with the issuer and audience:
+For SDK built-in Google and Apple providers, `omsRelayReturnUri` is the URL where the OMS relay returns the user after Google or Apple redirects to the OMS callback. In browser convenience flows, the SDK derives it from the current page URL when omitted. Custom OIDC providers do not use `omsRelayReturnUri`; configure their OAuth callback with `providerRedirectUri` instead:
+
+| Flow | Provider config | App return URL | Provider OAuth callback |
+|---|---|---|---|
+| SDK default Google/Apple | `provider: 'google'` / `provider: 'apple'`, or `googleOidcProvider()` / `appleOidcProvider()` | `omsRelayReturnUri` | OMS relay callback derived as `{apiBase}/auth/waas/callback/{google|apple}` |
+| Custom OIDC provider | Custom `OidcProviderConfig` | `providerRedirectUri` | `providerRedirectUri` |
+| Google/Apple without SDK relay | Custom `OidcProviderConfig` for Google or Apple | `providerRedirectUri` | `providerRedirectUri` |
+
+Pass `loginHint` only when you want to prefill or select a specific Google
+account, such as during session-expiry reauth. When omitted, the SDK falls back
+to the previous active session email when one exists before the redirect auth
+attempt starts. To force no `login_hint` for a call, pass `loginHint: ''`.
+
+Pending redirect state is stored in `sessionStorage` by default. Final wallet session metadata continues to use the configured SDK storage.
+
+The `googleOidcProvider()` and `appleOidcProvider()` helpers use SDK default
+client IDs, scopes, and PKCE auth-code mode. They are OMS-relayed provider
+configs, so the SDK derives the provider callback URL from the publishable-key
+environment as `{apiBase}/auth/waas/callback/{provider}`. For custom providers,
+see [Custom OIDC Providers](#custom-oidc-providers).
+
+### OIDC ID-Token Auth
+
+For OIDC ID-token flows, obtain the provider token in your app or backend flow,
+then pass it to the SDK with the issuer and audience:
 
 ```typescript
 const result = await omsWallet.wallet.signInWithOidcIdToken({
@@ -159,51 +191,8 @@ const result = await omsWallet.wallet.signInWithOidcIdToken({
 console.log('Wallet address:', result.walletAddress)
 ```
 
-Use `walletSelection: 'manual'` with `signInWithOidcIdToken` when your app needs to present its own wallet picker after the token is verified.
-
-For simple browser apps, use `signInWithOidcRedirect` from a sign-in action. For SDK built-in Google and Apple providers, it calls `startOidcRedirectAuth`, derives the current page as `omsRelayReturnUri`, and navigates with `window.location.assign`:
-
-```typescript
-void omsWallet.wallet.signInWithOidcRedirect({ provider: 'google' })
-void omsWallet.wallet.signInWithOidcRedirect({ provider: 'apple' })
-
-// On the callback page:
-const result = await omsWallet.wallet.completeOidcRedirectAuth()
-if (result) {
-  console.log('Wallet address:', result.walletAddress)
-}
-```
-
-For SDK built-in Google and Apple providers, `omsRelayReturnUri` is the URL where the OMS relay returns the user after Google or Apple redirects to the OMS callback. In browser convenience flows, the SDK derives it from the current page URL when omitted. Custom OIDC providers do not use `omsRelayReturnUri`; configure their OAuth callback with `providerRedirectUri` instead:
-
-| Flow | Provider config | App return URL | Provider OAuth callback |
-|---|---|---|---|
-| SDK default Google/Apple | `provider: 'google'` / `provider: 'apple'`, or `googleOidcProvider()` / `appleOidcProvider()` | `omsRelayReturnUri` | OMS relay callback derived as `{apiBase}/auth/waas/callback/{google|apple}` |
-| Custom OIDC provider | Custom `OidcProviderConfig` | `providerRedirectUri` | `providerRedirectUri` |
-| Google/Apple without SDK relay | Custom `OidcProviderConfig` for Google or Apple | `providerRedirectUri` | `providerRedirectUri` |
-
-```typescript
-const auth = defineOMSWalletAuthConfig({
-  oidcProviders: {
-    acme: {
-      issuer: 'https://login.acme.example',
-      clientId: 'acme-client-id',
-      authorizationUrl: 'https://login.acme.example/oauth/authorize',
-      providerRedirectUri: 'https://app.example/auth/callback',
-    },
-  },
-})
-```
-
-Pass `loginHint` only when you want to prefill or select a specific Google account, such as during session-expiry reauth. The SDK only sends `login_hint` for Google providers. When omitted, the SDK falls back to the previous active session email when one exists before the redirect auth attempt starts. After `signOut()`, that previous session email is cleared. To force no `login_hint` for a call, pass `loginHint: ''`.
-
-Pending redirect state is stored in `sessionStorage` by default. Final wallet session metadata continues to use the configured SDK storage.
-
-`googleOidcProvider()` uses the SDK default Google client ID, `openid email profile` scopes, and PKCE auth-code mode by default. It is the SDK default OMS-relayed Google option: the SDK derives the provider callback URL from the publishable key environment as `{apiBase}/auth/waas/callback/google`, then the relay returns to `omsRelayReturnUri`.
-
-`appleOidcProvider()` uses the SDK default Apple Services ID, `openid email` scopes, `response_mode=form_post`, and PKCE auth-code mode by default. It is the SDK default OMS-relayed Apple option: the SDK derives the provider callback URL from the publishable key environment as `{apiBase}/auth/waas/callback/apple`, then the relay returns to `omsRelayReturnUri`.
-
-To use Google or Apple without the SDK relay, configure that provider as a custom OIDC provider with `providerRedirectUri`; custom providers do not use `omsRelayReturnUri`.
+Use `walletSelection: 'manual'` with `signInWithOidcIdToken` when your app needs
+to present its own wallet picker after the token is verified.
 
 ### Session State
 
@@ -250,7 +239,7 @@ await omsWallet.wallet.signOut()
 
 ## Core Workflows
 
-### Sign and Validate Messages
+### Sign and Verify Messages
 
 ```typescript
 const signature = await omsWallet.wallet.signMessage({
@@ -266,7 +255,7 @@ const isValid = await omsWallet.wallet.isValidMessageSignature({
 })
 ```
 
-### Sign and Validate Typed Data
+### Sign and Verify Typed Data
 
 ```typescript
 const signature = await omsWallet.wallet.signTypedData({
@@ -304,6 +293,23 @@ for (const b of result.balances) {
 ```
 
 Pass `contractAddresses` to filter balances to specific token contracts. Omit `networks` to query mainnets by default, or pass `networkType: 'TESTNETS'` / `'ALL'`. With `includeMetadata: true`, ERC-20 decimals are available as `contractInfo.decimals`. The response is paginated; pass `page` when requesting later pages.
+
+### Query Transaction History
+
+```typescript
+const { walletAddress } = omsWallet.wallet
+if (!walletAddress) throw new Error('No active wallet session')
+
+const history = await omsWallet.indexer.getTransactionHistory({
+  walletAddress,
+  networks: [Networks.polygon, Networks.base, Networks.arbitrum],
+  includeMetadata: true,
+})
+
+for (const transaction of history.transactions) {
+  console.log(transaction.txnHash, transaction.timestamp)
+}
+```
 
 ### Sending Transactions
 
@@ -423,10 +429,13 @@ await omsWallet.wallet.sendTransaction({
 })
 ```
 
-If the wallet API returns fee options, pass a selector to choose one. The selector receives
-fee options enriched with the current wallet balance for each token when
-available. Use `FeeOptionSelector.firstAvailable` to choose the first option the
-wallet can pay, or return `option.selection` from a custom selector.
+If the wallet API returns fee options, pass a selector to choose one. The
+selector receives `FeeOptionWithBalance` values. `balance` is the selected
+wallet's raw indexer balance for that fee token when available, `available` is
+formatted with the token decimals, `availableRaw` keeps the raw integer value,
+and `decimals` is the token decimal count used for formatting. Use
+`FeeOptionSelector.firstAvailable` to choose the first option the wallet can
+pay, or return `option.selection` from a custom selector.
 
 ```typescript
 const tx = await omsWallet.wallet.sendTransaction({
@@ -457,20 +466,29 @@ const tx = await omsWallet.wallet.sendTransaction({
 
 ### Custom OIDC Providers
 
+Passing `auth.oidcProviders` replaces the default Google and Apple provider set.
+Include every provider key your app should support. Use
+`defineOMSWalletAuthConfig` when you want TypeScript to preserve custom provider
+keys.
+
 ```typescript
-const omsWallet = new OMSWallet({
-  publishableKey: 'your-publishable-key',
-  auth: {
-    oidcProviders: {
-      custom: {
-        clientId: 'custom-client-id',
-        issuer: 'https://issuer.example',
-        authorizationUrl: 'https://issuer.example/oauth/authorize',
-        providerRedirectUri: 'https://app.example/auth/callback',
-        scopes: ['openid', 'email', 'profile'],
-      },
+import { OMSWallet, defineOMSWalletAuthConfig } from '@polygonlabs/oms-wallet'
+
+const auth = defineOMSWalletAuthConfig({
+  oidcProviders: {
+    acme: {
+      clientId: 'acme-client-id',
+      issuer: 'https://login.acme.example',
+      authorizationUrl: 'https://login.acme.example/oauth/authorize',
+      providerRedirectUri: 'https://app.example/auth/callback',
+      scopes: ['openid', 'email', 'profile'],
     },
   },
+})
+
+const omsWallet = new OMSWallet({
+  publishableKey: 'your-publishable-key',
+  auth,
 })
 ```
 
@@ -653,3 +671,7 @@ See [PUBLISHING.md](./PUBLISHING.md) for release and npm publishing steps.
 5. **Open a PR** — the PR template will walk you through the checklist.
 
 See [`TESTING.md`](./TESTING.md) for full testing conventions and commands.
+
+## License
+
+Apache-2.0. See [LICENSE](./LICENSE).

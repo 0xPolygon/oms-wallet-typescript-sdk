@@ -6,52 +6,21 @@ instructions.
 
 ---
 
-## Behavioral Guidelines
+## Working Principles
 
-Behavioral guidelines to reduce common LLM coding mistakes. (Adapted from Andrej Karpathy's
-[CLAUDE.md](https://github.com/multica-ai/andrej-karpathy-skills/blob/main/CLAUDE.md).)
-
-**Tradeoff:** These guidelines bias toward caution over speed. For trivial tasks, use judgment.
-
-### 1. Think Before Coding
-**Don't assume. Don't hide confusion. Surface tradeoffs.**
-- State your assumptions explicitly. If uncertain, ask.
-- If multiple interpretations exist, present them — don't pick silently.
-- If a simpler approach exists, say so. Push back when warranted.
-- If something is unclear, stop. Name what's confusing. Ask.
-
-### 2. Simplicity First
-**Minimum code that solves the problem. Nothing speculative.**
-- No features beyond what was asked.
-- No abstractions for single-use code.
-- No "flexibility" or "configurability" that wasn't requested.
-- If you write 200 lines and it could be 50, rewrite it.
-
-Ask yourself: "Would a senior engineer say this is overcomplicated?" If yes, simplify.
-
-### 3. Surgical Changes
-**Touch only what you must. Clean up only your own mess.**
-- Don't "improve" adjacent code, comments, or formatting.
-- Don't refactor things that aren't broken.
-- Match existing style, even if you'd do it differently.
-- Remove imports/variables YOUR changes made unused; leave pre-existing dead code unless asked.
-
-The test: every changed line should trace directly to the request.
-
-### 4. Goal-Driven Execution
-**Define success criteria. Loop until verified.**
-- "Add validation" → "Write tests for invalid inputs, then make them pass."
-- "Fix the bug" → "Write a test that reproduces it, then make it pass."
-
-For multi-step tasks, state a brief plan with a verify step for each item.
+- State assumptions when ambiguity affects implementation, public API, security, or release behavior.
+- Keep changes surgical and traceable to the request. Avoid speculative abstractions, broad refactors, and formatting churn.
+- Preserve user work in the tree and match the local style of the files you touch.
+- Define success criteria for non-trivial work and choose verification proportional to the risk.
 
 ---
 
 ## Third-Party Library Docs
 
-For **any third-party library** (`viem`, `vitest`, etc.), use the **context7** MCP to fetch
-up-to-date documentation rather than relying on training data, which lags real library APIs. If
-the context7 MCP server is not available, set it up: https://context7.com/install
+For non-trivial or version-sensitive third-party library questions (`viem`, `vitest`, etc.),
+prefer context7 or official documentation over training-data recall. If context7 is unavailable,
+use official docs or local package types and note the fallback; do not block ordinary repo work just
+to install extra tooling.
 
 ---
 
@@ -85,6 +54,8 @@ This repository is a pnpm workspace for the OMS Wallet TypeScript SDK. The root 
 - `examples/node/`: Interactive Node OTP/signing example.
 - `examples/node-contract-deploy-example/`: Interactive Node ERC-20 deployment example.
 - `examples/shared/`: Shared browser-example design tokens, base styles, components, utilities, and Vite aliases.
+- `docs/error-contracts.md`: Public error contract matrix and expectations.
+- `docs/session-expiry-flow.md`: Session expiry, reauthentication, and related wallet behavior notes.
 - `scripts/write-esm-package.cjs`: Writes `dist/esm/package.json` during the root build.
 
 ## Commands
@@ -112,6 +83,10 @@ This repository is a pnpm workspace for the OMS Wallet TypeScript SDK. The root 
 
 ## Verification Workflow
 
+For README/API/docs-only edits, use source-backed spot checks plus `git diff --check`; run compilers
+or example builds only when the docs claim changed source behavior, public API shape, or runnable
+example code.
+
 1. Run the smallest relevant Vitest file or type check for the changed behavior.
 2. Run `pnpm test` for SDK behavior changes.
 3. Run `pnpm exec tsc --noEmit` before handing off source or public type changes.
@@ -127,7 +102,7 @@ This repository is a pnpm workspace for the OMS Wallet TypeScript SDK. The root 
 ## Coding and Architecture Rules
 
 - Source files under `src/` use explicit `.js` extensions in relative imports so emitted JavaScript resolves correctly. Preserve that pattern in SDK source.
-- Treat `src/index.ts` as the public API gate. Export new public types or clients there intentionally, and update `API.md`, `README.md`, and type tests when public behavior changes.
+- Treat `src/index.ts` and exported types as the public API gate. Export new public types or clients intentionally, and update `API.md`, `README.md`, and type tests when public behavior changes.
 - Route wallet API calls through `WalletClient`, generated WaaS types, `createSignedFetch`, and `CredentialSigner` instead of duplicating signing or header logic.
 - Use `StorageManager` abstractions for persistence-sensitive code. Browser storage and memory fallback behavior are part of the SDK contract.
 - Preserve typed SDK error classes and `toOMSWalletError` behavior when wrapping network, generated-client, validation, session, and transaction-status failures.
@@ -147,19 +122,16 @@ execution commands.
 
 ### Testing Guidance
 
-- Test promises, not implementation. Use `Promise -> Risk -> Evidence -> Cost -> Action` for non-trivial changes.
-- Prefer the lowest reliable evidence level: TypeScript checks for impossible states, Vitest tests for SDK behavior, type tests for public API constraints, and example builds for consumer compatibility.
-- Existing tests stub network boundaries while asserting public wallet/indexer behavior, request payloads, error mapping, OIDC state handling, pagination, transaction status behavior, and type-level API promises. Keep that behavior focus.
-- Some existing tests seed private wallet state through `(wallet as any)`. Use that only as local compatibility in existing test areas; prefer public methods or small fixtures for new coverage.
-- Bug fixes should include regression evidence when feasible.
-- For auth, signing, transaction execution, access revocation, storage persistence, and error classification, add focused tests that would fail if the externally visible promise breaks.
+- Use `TESTING.md` as the source of truth for test boundaries and public error contract rules.
+- Test promises, not implementation. Choose the cheapest reliable evidence for the risk.
+- Prefer TypeScript checks for impossible states, Vitest tests for SDK behavior, type tests for public API constraints, and example builds for consumer compatibility.
+- For auth, signing, transaction execution, access revocation, storage persistence, and error classification, add focused regression tests when externally visible behavior changes.
 
 ### Public Error Contract Tests
 
-- Follow the detailed rules in `TESTING.md` before adding or updating public error contract tests.
-- Exercise real public runtime APIs and mock only external boundaries.
+- Follow `TESTING.md` before adding or updating public error contract tests.
+- Exercise public runtime APIs and mock only external boundaries.
 - Snapshot stable public fields only; do not snapshot raw `cause`, stacks, generated internals, headers, timestamps, or full backend payloads.
-- Snapshot changes are not automatically regressions. First decide whether the new error shape is the intended public contract, then either update the snapshot or fix the implementation.
 
 ## Generated Files and External Artifacts
 
@@ -167,7 +139,7 @@ execution commands.
 - The generated WaaS header records the upstream schema path and generation command. This repo does not currently include that schema; if regenerating the client, document the schema source and exact command used.
 - The wagmi connector's SDK peer dependency is intentionally `workspace:^` in source and its SDK dev dependency is intentionally `workspace:*`. Release with pnpm so the published peer gets the compatible release range; do not hand-edit that peer to a literal version.
 - `pnpm-lock.yaml` is the dependency lockfile. Update it through pnpm, not by hand.
-- `dist/`, `examples/react/dist/`, `examples/wagmi/dist/`, and `*.tsbuildinfo` files are build outputs and should not be edited as source.
+- `dist/`, `examples/react/dist/`, `examples/wagmi/dist/`, `examples/trails-actions/dist/`, and `*.tsbuildinfo` files are build outputs and should not be edited as source.
 
 ## Security and Configuration
 
@@ -203,10 +175,10 @@ execution commands.
 
 | When this changes… | Also update… |
 |---|---|
-| Public API in `src/index.ts` | `API.md`, `README.md`, `type-tests/oidcProviderTypes.ts` |
+| Public API exported through `src/index.ts` or exported public types | `API.md`, `README.md`, `type-tests/oidcProviderTypes.ts` |
 | Test commands (`package.json` scripts) | `TESTING.md`, `.github/workflows/tests.yml`, `AGENTS.md` Commands section |
 | Node or pnpm version | `.nvmrc`, `package.json#packageManager`, `.github/workflows/*.yml` |
-| New third-party dependency | `package.json`, `pnpm-lock.yaml`, context7 instruction in `AGENTS.md` |
+| New third-party dependency | `package.json`, `pnpm-lock.yaml`, third-party docs guidance in `AGENTS.md` |
 | Publishable package versioning or workspace peer protocol | `PUBLISHING.md`, `scripts/check-package-versions.cjs`, `pnpm-lock.yaml` |
 | `src/generated/waas.gen.ts` (regenerated) | Document schema source + regen command in PR description |
 | Repo structure (new top-level dirs) | `AGENTS.md` Repository Layout section |
