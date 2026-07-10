@@ -1,6 +1,6 @@
 import { createConnector } from "@wagmi/core";
 import { getAddress, numberToHex, SwitchChainError, type Address } from "viem";
-import { supportedNetworks } from "@polygonlabs/oms-wallet";
+import { Networks } from "@polygonlabs/oms-wallet";
 
 import { OMSWalletProvider, OMSWalletProviderRpcError } from "./provider.js";
 import type {
@@ -11,6 +11,8 @@ import type {
 } from "./types.js";
 
 omsWalletConnector.type = "omsWallet" as const;
+
+const supportedNetworks = Object.values(Networks);
 
 type OMSWalletConnectorStorageItemMap = Record<`${string}.manuallyDisconnected`, boolean>;
 

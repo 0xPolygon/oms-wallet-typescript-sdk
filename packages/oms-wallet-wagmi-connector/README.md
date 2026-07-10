@@ -68,7 +68,7 @@ await omsWallet.wallet.signOut()
 
 OMS `Network` values are not wagmi chain definitions. Wagmi still needs viem `Chain` objects with RPC transport configuration. Use `wagmi/chains`, `viem/chains`, or custom viem `Chain` objects.
 
-By default, the connector validates OMS support with the SDK's exported `supportedNetworks` registry. Pass `networks` only when you intentionally want a narrower or custom OMS network set for this connector instance.
+By default, the connector validates OMS support with `Object.values(Networks)`. Pass `networks` only when you intentionally want a narrower set of SDK-defined OMS networks for this connector instance.
 
 The connector validates `initialChainId`, `switchChain`, and provider chain switches against both the wagmi chain list and the OMS network list. A transaction `chainId` is used for that transaction without switching the connector's current chain, and must be supported by OMS.
 
