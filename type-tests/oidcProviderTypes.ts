@@ -79,6 +79,9 @@ new OMSWalletError({code: "OMS_VALIDATION_ERROR", message: "invalid"});
 
 if (false) {
     const wallet = configuredOmsWallet.wallet;
+    void wallet.startEmailAuth({email: "user@example.com", sessionLifetimeSeconds: 120});
+    // @ts-expect-error Email session lifetime is selected before sending the OTP.
+    void wallet.completeEmailAuth({code: "123456", sessionLifetimeSeconds: 120});
     void wallet.startOidcRedirectAuth({
         provider: OmsRelayOidcProviders.google,
         omsRelayReturnUri: "https://app.example/auth/callback",

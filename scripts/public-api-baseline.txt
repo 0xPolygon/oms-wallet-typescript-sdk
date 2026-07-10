@@ -300,7 +300,7 @@ export { LocalStorageManager, MemoryStorageManager, SessionStorageManager, creat
 export { Networks, findNetworkById, findNetworkByName, type Network, } from './networks.js';
 export { AuthMode, TransactionMode, TransactionStatus, WalletType, type OidcAuthMode, type AbiArg, type FeeOption, type FeeOptionSelection, type TransactionStatusResponse, } from './types/waas.js';
 export { OMSWalletRequestError, OMSWalletResponseError, OMSWalletError, OMSWalletSessionError, OMSWalletTransactionError, OMSWalletSelectionError, OMSWalletValidationError, OMSWalletStorageError, isOMSWalletError, type OMSWalletErrorCode, type OMSWalletUpstreamError, } from './errors.js';
-export type { CompleteEmailAuthParams, CompleteEmailAuthResult, CompleteOidcIdTokenAuthResult, CompleteOidcRedirectAuthParams, CompleteOidcRedirectAuthResult, GetIdTokenParams, IsValidMessageSignatureParams, IsValidTypedDataSignatureParams, OMSWalletEmailSessionAuth, OMSWalletOidcSessionAuth, OMSWalletOidcSessionAuthFlow, OMSWalletSessionAuth, OMSWalletSessionExpiredEvent, OMSWalletSessionExpiredListener, OMSWalletSessionState, WalletAccount, PendingWalletSelection, SignInWithOidcIdTokenParams, SignMessageParams, SignInWithOidcRedirectParams, SignTypedDataParams, StartOidcRedirectAuthParams, StartOidcRedirectAuthResult, WalletActivationResult, WalletSelectionBehavior, OMSWalletClient, } from './wallet.js';
+export type { CompleteEmailAuthParams, CompleteEmailAuthResult, CompleteOidcIdTokenAuthResult, CompleteOidcRedirectAuthParams, CompleteOidcRedirectAuthResult, GetIdTokenParams, IsValidMessageSignatureParams, IsValidTypedDataSignatureParams, OMSWalletEmailSessionAuth, OMSWalletOidcSessionAuth, OMSWalletOidcSessionAuthFlow, OMSWalletSessionAuth, OMSWalletSessionExpiredEvent, OMSWalletSessionExpiredListener, OMSWalletSessionState, WalletAccount, PendingWalletSelection, SignInWithOidcIdTokenParams, SignMessageParams, SignInWithOidcRedirectParams, SignTypedDataParams, StartEmailAuthParams, StartOidcRedirectAuthParams, StartOidcRedirectAuthResult, WalletActivationResult, WalletSelectionBehavior, OMSWalletClient, } from './wallet.js';
 export type { BalancesResult, ContractVerificationStatus, GetBalancesParams, GetTransactionHistoryParams, IndexerNetworkType, MetadataOptions, OMSWalletIndexerClient, SortBy, TokenContractInfo, TokenBalance, TokenBalancesPage, TokenMetadata, TokenMetadataAsset, Transaction, TransactionHistoryResult, TransactionTransfer, } from './clients/indexerClient.js';
 export type { AccessGrant, AccessGrantPage, ListAccessParams, WalletCredential, } from './types/accessGrant.js';
 export type { FeeOptionWithBalance, SendContractTransactionParams, SendDataTransactionParams, SendNativeTransactionParams, SendTransactionBase, SendTransactionParams, SendTransactionResponse, TransactionStatusPollingOptions, } from './types/transactionTypes.js';
@@ -713,11 +713,14 @@ export interface CompleteOidcRedirectAuthParams {
     walletSelection?: WalletSelectionBehavior;
     sessionLifetimeSeconds?: number;
 }
+export interface StartEmailAuthParams {
+    email: string;
+    sessionLifetimeSeconds?: number;
+}
 export interface CompleteEmailAuthParams {
     code: string;
     walletType?: WalletType;
     walletSelection?: WalletSelectionBehavior;
-    sessionLifetimeSeconds?: number;
 }
 export interface SignInWithOidcIdTokenParams {
     idToken: string;
@@ -839,9 +842,7 @@ export interface OMSWalletClient {
     readonly walletAddress: Address | undefined;
     readonly session: OMSWalletSessionState;
     onSessionExpired(listener: OMSWalletSessionExpiredListener): () => void;
-    startEmailAuth(params: {
-        email: string;
-    }): Promise<void>;
+    startEmailAuth(params: StartEmailAuthParams): Promise<void>;
     completeEmailAuth(params: ManualWalletSelectionParams<CompleteEmailAuthParams>): Promise<PendingWalletSelection>;
     completeEmailAuth(params: AutomaticWalletSelectionParams<CompleteEmailAuthParams>): Promise<CompleteEmailAuthResult>;
     completeEmailAuth(params: CompleteEmailAuthParams): Promise<CompleteEmailAuthResult | PendingWalletSelection>;

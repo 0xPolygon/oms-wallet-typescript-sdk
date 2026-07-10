@@ -136,6 +136,7 @@ import type {
     SignInWithOidcRedirectParams,
     SignMessageParams,
     SignTypedDataParams,
+    StartEmailAuthParams,
     StartOidcRedirectAuthParams,
     StartOidcRedirectAuthResult,
     WalletAccount,
@@ -218,12 +219,12 @@ interface EmailAuthCompletionParams {
     code: string;
     walletType: WalletType;
     walletSelection: WalletSelectionBehavior;
-    sessionLifetimeSeconds: number;
 }
 
 interface ActiveEmailAuthAttempt {
     verifier: string;
     challenge: string;
+    sessionLifetimeSeconds: number;
     completion?: {
         params: EmailAuthCompletionParams;
         promise: Promise<CompleteEmailAuthResult | PendingWalletSelection>;
@@ -415,10 +416,12 @@ export class WalletClient implements OMSWalletClient {
      *
      * After this resolves, show your OTP entry UI and pass the code to `completeEmailAuth`.
      */
-    async startEmailAuth(params: {
-        email: string
-    }): Promise<void> {
+    async startEmailAuth(params: StartEmailAuthParams): Promise<void> {
         return this.runOperation(WalletOperation.startEmailAuth, async () => {
+            const sessionLifetimeSeconds = this.sessionLifetimeSeconds(
+                params.sessionLifetimeSeconds,
+                WalletOperation.startEmailAuth,
+            )
             await this.clearSession({operation: WalletOperation.startEmailAuth})
             const request: CommitVerifierRequest = {
                 identityType: IdentityType.Email,
@@ -430,6 +433,7 @@ export class WalletClient implements OMSWalletClient {
             this.activeEmailAuthAttempt = {
                 verifier: response.verifier,
                 challenge: response.challenge,
+                sessionLifetimeSeconds,
             }
         })
     }
@@ -450,10 +454,6 @@ export class WalletClient implements OMSWalletClient {
                 code: params.code,
                 walletType: params.walletType ?? WalletType.Ethereum,
                 walletSelection: params.walletSelection ?? "automatic",
-                sessionLifetimeSeconds: this.sessionLifetimeSeconds(
-                    params.sessionLifetimeSeconds,
-                    WalletOperation.completeEmailAuth,
-                ),
             }
             const attempt = this.currentEmailAuthAttempt(WalletOperation.completeEmailAuth)
             const completion = attempt.completion
@@ -1146,7 +1146,7 @@ export class WalletClient implements OMSWalletClient {
             authMode: GeneratedAuthMode.OTP,
             verifier: attempt.verifier,
             answer,
-            lifetime: params.sessionLifetimeSeconds,
+            lifetime: attempt.sessionLifetimeSeconds,
         }
         const response = await this.client.completeAuth(request)
         this.requireActiveEmailAuthAttempt(attempt, WalletOperation.completeEmailAuth)
@@ -2265,8 +2265,7 @@ function sameEmailAuthCompletionParams(
 ): boolean {
     return left.code === right.code &&
         left.walletType === right.walletType &&
-        left.walletSelection === right.walletSelection &&
-        left.sessionLifetimeSeconds === right.sessionLifetimeSeconds
+        left.walletSelection === right.walletSelection
 }
 
 function normalizeCredentialId(value: string): string {

@@ -42,8 +42,9 @@ function seedEmailAuthAttempt(
     wallet: WalletClient,
     verifier = "verifier-1",
     challenge = "challenge-1",
+    sessionLifetimeSeconds = 604_800,
 ): void {
-    (wallet as any).activeEmailAuthAttempt = {verifier, challenge};
+    (wallet as any).activeEmailAuthAttempt = {verifier, challenge, sessionLifetimeSeconds};
 }
 
 function emailAuth(email = "user@example.com") {
@@ -952,6 +953,10 @@ describe("WalletClient session storage", () => {
             const url = input.toString();
             const body = JSON.parse(init?.body as string);
 
+            if (url.endsWith("/CommitVerifier")) {
+                return jsonResponse({verifier: "verifier-1", challenge: "challenge-1"});
+            }
+
             if (url.endsWith("/CompleteAuth")) {
                 expect(body.lifetime).toBe(120);
                 return jsonResponse({
@@ -977,13 +982,11 @@ describe("WalletClient session storage", () => {
             storage: new MemoryStorageManager(),
             credentialSigner: new MockSigner(),
         });
-        seedEmailAuthAttempt(wallet);
 
-        await wallet.completeEmailAuth({
-            code: "123456",
-            sessionLifetimeSeconds: 120,
-        });
+        await wallet.startEmailAuth({email: "user@example.com", sessionLifetimeSeconds: 120});
+        await wallet.completeEmailAuth({code: "123456"});
 
+        expect(requestCount(fetchMock, "/CommitVerifier")).toBe(1);
         expect(requestCount(fetchMock, "/CompleteAuth")).toBe(1);
     });
 

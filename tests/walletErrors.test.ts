@@ -119,13 +119,12 @@ describe("WalletClient errors", () => {
             credentialSigner: new MockSigner(),
         });
 
-        seedEmailAuthAttempt(wallet);
-        await expect(wallet.completeEmailAuth({
-            code: "123456",
+        await expect(wallet.startEmailAuth({
+            email: "user@example.com",
             sessionLifetimeSeconds: 0,
         })).rejects.toMatchObject({
             code: "OMS_VALIDATION_ERROR",
-            operation: "wallet.completeEmailAuth",
+            operation: "wallet.startEmailAuth",
         });
         await expect(wallet.startOidcRedirectAuth({
             provider: {
@@ -157,6 +156,7 @@ function seedEmailAuthAttempt(wallet: WalletClient): void {
     (wallet as any).activeEmailAuthAttempt = {
         verifier: "verifier-1",
         challenge: "challenge-1",
+        sessionLifetimeSeconds: 604_800,
     };
 }
 

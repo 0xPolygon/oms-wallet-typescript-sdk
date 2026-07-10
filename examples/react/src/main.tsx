@@ -144,7 +144,10 @@ function App() {
     if (!email.trim()) return
     await run('Sending code...', setEmailAuthStatus, async () => {
       setPendingWalletSelection(null)
-      await omsWallet.wallet.startEmailAuth({ email: email.trim() })
+      await omsWallet.wallet.startEmailAuth({
+        email: email.trim(),
+        sessionLifetimeSeconds,
+      })
       setStep('code')
       setEmailAuthStatus('Code sent. Check your email.')
     })
@@ -156,7 +159,6 @@ function App() {
       const result = await omsWallet.wallet.completeEmailAuth({
         code: code.trim(),
         walletSelection,
-        sessionLifetimeSeconds,
       })
       handleAuthCompletion(result, 'Email login complete.')
     })

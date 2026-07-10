@@ -285,7 +285,10 @@ function App() {
         setSessionExpiredPrompt(null)
         setPendingWalletSelection(null)
         setAuthStatus('Requesting email code...')
-        await omsWallet.wallet.startEmailAuth({ email: normalizedEmail })
+        await omsWallet.wallet.startEmailAuth({
+          email: normalizedEmail,
+          sessionLifetimeSeconds,
+        })
         setEmail('')
         setAuthStep('code')
         setAuthStatus(`Code requested for ${normalizedEmail}`)
@@ -306,7 +309,6 @@ function App() {
         const result = await omsWallet.wallet.completeEmailAuth({
           code: normalizedCode,
           walletSelection,
-          sessionLifetimeSeconds,
         })
         setCode('')
         setAuthStep('email')
@@ -458,7 +460,7 @@ function App() {
           setPendingWalletSelection(null)
           setEmail(email)
           setAuthStatus('Requesting email code...')
-          await omsWallet.wallet.startEmailAuth({ email })
+          await omsWallet.wallet.startEmailAuth({email, sessionLifetimeSeconds})
           setAuthStep('code')
           setAuthStatus('Code sent. Check your email.')
         },

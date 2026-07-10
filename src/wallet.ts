@@ -54,11 +54,15 @@ export interface CompleteOidcRedirectAuthParams {
     sessionLifetimeSeconds?: number
 }
 
+export interface StartEmailAuthParams {
+    email: string
+    sessionLifetimeSeconds?: number
+}
+
 export interface CompleteEmailAuthParams {
     code: string
     walletType?: WalletType
     walletSelection?: WalletSelectionBehavior
-    sessionLifetimeSeconds?: number
 }
 
 export interface SignInWithOidcIdTokenParams {
@@ -188,7 +192,7 @@ export interface OMSWalletClient {
     readonly session: OMSWalletSessionState
 
     onSessionExpired(listener: OMSWalletSessionExpiredListener): () => void
-    startEmailAuth(params: {email: string}): Promise<void>
+    startEmailAuth(params: StartEmailAuthParams): Promise<void>
     completeEmailAuth(params: ManualWalletSelectionParams<CompleteEmailAuthParams>): Promise<PendingWalletSelection>
     completeEmailAuth(params: AutomaticWalletSelectionParams<CompleteEmailAuthParams>): Promise<CompleteEmailAuthResult>
     completeEmailAuth(params: CompleteEmailAuthParams): Promise<CompleteEmailAuthResult | PendingWalletSelection>

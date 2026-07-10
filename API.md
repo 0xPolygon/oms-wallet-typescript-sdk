@@ -196,10 +196,13 @@ Registers a listener for expired wallet sessions and returns an unsubscribe func
 ### startEmailAuth
 
 ```typescript
-startEmailAuth(params: { email: string }): Promise<void>
+startEmailAuth(params: {
+  email: string
+  sessionLifetimeSeconds?: number
+}): Promise<void>
 ```
 
-Sends a one-time passcode to the provided email address to begin authentication. If a wallet session is already active, it is cleared before the new auth attempt starts.
+Validates the requested session lifetime and sends a one-time passcode to the provided email address to begin authentication. If a wallet session is already active, it is cleared after validation and before the new auth attempt starts. The selected lifetime is retained for [`completeEmailAuth`](#completeemailauth).
 
 After this resolves, display an OTP input and pass the code to [`completeEmailAuth`](#completeemailauth).
 
@@ -208,6 +211,7 @@ After this resolves, display an OTP input and pass the code to [`completeEmailAu
 | Name | Type | Description |
 |---|---|---|
 | `email` | `string` | The email address to send the one-time passcode to. |
+| `sessionLifetimeSeconds` | `number` | Requested session lifetime in seconds, from `1` through `2592000` (30 days). Defaults to one week. |
 
 **Returns** `Promise<void>`
 
@@ -216,7 +220,10 @@ After this resolves, display an OTP input and pass the code to [`completeEmailAu
 **Example**
 
 ```typescript
-await omsWallet.wallet.startEmailAuth({ email: 'user@example.com' })
+await omsWallet.wallet.startEmailAuth({
+  email: 'user@example.com',
+  sessionLifetimeSeconds: 3600,
+})
 ```
 
 ---
@@ -228,7 +235,6 @@ completeEmailAuth(params: {
   code: string
   walletType?: WalletType
   walletSelection?: 'automatic' | 'manual'
-  sessionLifetimeSeconds?: number
 }): Promise<
   | { readonly walletAddress: Address; readonly wallet: WalletAccount; readonly wallets: ReadonlyArray<WalletAccount>; readonly credential: Readonly<WalletCredential> }
   | PendingWalletSelection
@@ -237,7 +243,7 @@ completeEmailAuth(params: {
 
 Verifies the OTP code and activates a wallet. Must be called after [`startEmailAuth`](#startemailauth).
 
-This method verifies the code with a one-week session lifetime by default, loads all wallet pages, then automatically selects an existing wallet matching `walletType`, or creates a new one if none exists. Wallet metadata is persisted to storage. Pass `sessionLifetimeSeconds` to request a shorter or longer session lifetime, from `1` through `2592000` seconds (30 days). Pass `walletSelection: 'manual'` to return a [`PendingWalletSelection`](#pendingwalletselection) bound to the verified auth flow; complete selection through that object.
+This method verifies the code with the lifetime selected by `startEmailAuth`, which defaults to one week. It then loads all wallet pages and automatically selects an existing wallet matching `walletType`, or creates a new one if none exists. Wallet metadata is persisted to storage. Pass `walletSelection: 'manual'` to return a [`PendingWalletSelection`](#pendingwalletselection) bound to the verified auth flow; complete selection through that object.
 
 **Parameters**
 
@@ -246,7 +252,6 @@ This method verifies the code with a one-week session lifetime by default, loads
 | `code` | `string` | Yes | The one-time passcode entered by the user. |
 | `walletType` | `WalletType` | No | The wallet type to load or create. Defaults to `WalletType.Ethereum`. |
 | `walletSelection` | `'automatic' \| 'manual'` | No | Defaults to `'automatic'`. Set to `'manual'` to let the app choose an existing wallet or create one through the returned pending selection. |
-| `sessionLifetimeSeconds` | `number` | No | Requested session lifetime in seconds, from `1` through `2592000` (30 days). Defaults to one week. |
 
 **Returns** `Promise<{ readonly walletAddress: Address; readonly wallet: WalletAccount; readonly wallets: ReadonlyArray<WalletAccount>; readonly credential: Readonly<WalletCredential> }>` by default, or `Promise<PendingWalletSelection>` when `walletSelection` is `'manual'`.
 
@@ -1066,11 +1071,15 @@ const appleProvider = OmsRelayOidcProviders.apple
 ### Auth Method Types
 
 ```typescript
+interface StartEmailAuthParams {
+  email: string
+  sessionLifetimeSeconds?: number
+}
+
 interface CompleteEmailAuthParams {
   code: string
   walletType?: WalletType
   walletSelection?: WalletSelectionBehavior
-  sessionLifetimeSeconds?: number
 }
 
 interface CompleteEmailAuthResult {

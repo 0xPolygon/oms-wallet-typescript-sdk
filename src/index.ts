@@ -70,6 +70,7 @@ export type {
     SignMessageParams,
     SignInWithOidcRedirectParams,
     SignTypedDataParams,
+    StartEmailAuthParams,
     StartOidcRedirectAuthParams,
     StartOidcRedirectAuthResult,
     WalletActivationResult,
