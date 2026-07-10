@@ -66,6 +66,7 @@ This repository is a pnpm workspace for the OMS Wallet TypeScript SDK. The root 
 - `pnpm check:package-versions`: Verify publishable workspace package versions match, allow exact stable or prerelease semver, and require the connector SDK peer to use `workspace:^` and dev dependency to use `workspace:*`.
 - `pnpm check:stable-package-versions`: Verify publishable workspace package versions match and are exact stable semver for stable releases.
 - `pnpm check:public-api`: Compare built declarations with the committed baseline and reject generated WaaS type leaks.
+- `pnpm verify`: Run the full SDK verification suite, including package, test, example, and publishable-artifact checks.
 - `pnpm exec tsc --noEmit`: Typecheck SDK source.
 - `pnpm test`: Run Vitest and type tests.
 - `pnpm test:types`: Compile `type-tests/oidcProviderTypes.ts`; useful for public type/API changes.

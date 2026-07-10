@@ -31,11 +31,11 @@ git pull
 pnpm install --frozen-lockfile
 ```
 
-2. Capture the release version and verify the release:
+2. Capture the release version and verify the SDK:
 
 ```bash
 VERSION=$(node -p "require('./package.json').version")
-pnpm verify:release --stable
+pnpm verify --stable
 ```
 
 This is the same command CI runs, with the additional stable-version check. It typechecks and tests
@@ -105,7 +105,7 @@ Then capture and verify the prerelease:
 
 ```bash
 VERSION=$(node -p "require('./package.json').version")
-pnpm verify:release
+pnpm verify
 ```
 
 2. Dry-run with the matching npm tag:

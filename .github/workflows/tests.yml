@@ -29,5 +29,5 @@ jobs:
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
 
-      - name: Verify release
-        run: pnpm verify:release
+      - name: Verify
+        run: pnpm verify

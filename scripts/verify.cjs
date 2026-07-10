@@ -35,7 +35,7 @@ run('Build custom Google redirect example', ['--filter', 'custom-google-redirect
 run('Build Trails Actions example', ['--filter', 'trails-actions-example', 'build'], releaseEnv)
 run('Build wagmi example', ['--filter', 'wagmi-example', 'build'], releaseEnv)
 
-console.log('\nVerified TypeScript SDK release packages and examples.')
+console.log('\nVerified TypeScript SDK packages and examples.')
 
 function run(label, args, env = process.env, quiet = false) {
   console.log(`\n==> ${label}`)
