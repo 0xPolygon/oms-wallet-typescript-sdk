@@ -58,12 +58,14 @@ This repository is a pnpm workspace for the OMS Wallet TypeScript SDK. The root 
 - `docs/error-contracts.md`: Public error contract matrix and expectations.
 - `docs/session-expiry-flow.md`: Session expiry, reauthentication, and related wallet behavior notes.
 - `scripts/write-esm-package.cjs`: Writes `dist/esm/package.json` during the root build.
+- `scripts/check-public-api.cjs`: Compares built public declarations with the committed baseline and rejects generated WaaS type leaks.
 
 ## Commands
 
 - `pnpm install --frozen-lockfile`: Install dependencies in CI-compatible mode.
 - `pnpm check:package-versions`: Verify publishable workspace package versions match, allow exact stable or prerelease semver, and require the connector SDK peer to use `workspace:^` and dev dependency to use `workspace:*`.
 - `pnpm check:stable-package-versions`: Verify publishable workspace package versions match and are exact stable semver for stable releases.
+- `pnpm check:public-api`: Compare built declarations with the committed baseline and reject generated WaaS type leaks.
 - `pnpm exec tsc --noEmit`: Typecheck SDK source.
 - `pnpm test`: Run Vitest and type tests.
 - `pnpm test:types`: Compile `type-tests/oidcProviderTypes.ts`; useful for public type/API changes.
@@ -97,11 +99,12 @@ example code.
 5. Run `pnpm --filter @polygonlabs/oms-wallet-wagmi-connector test` and `pnpm --filter @polygonlabs/oms-wallet-wagmi-connector build` when changing the wagmi connector package.
 6. Run `pnpm build:node-example` when SDK exports, module resolution, or Node example usage changes.
 7. Run `pnpm build` before release/build-output work, package entrypoint changes, or React example builds from a clean tree.
-8. Run `pnpm build:example` after `pnpm build` when changing the React example, Vite config, public browser API shape, or Pages deployment assumptions.
-9. Run `pnpm build:custom-google-redirect-example` when changing the custom Google redirect example, OIDC redirect provider configuration, or browser callback assumptions.
-10. Run `pnpm build:trails-actions-example` after `pnpm build` when changing the Trails Actions example, shared browser example utilities, or Pages deployment assumptions.
-11. Run `pnpm build:wagmi-example` after `pnpm build` when changing the wagmi example, connector browser usage, or Pages deployment assumptions.
-12. Run `pnpm build:node-contract-deploy-example` when SDK exports, transaction APIs, module resolution, or the Node contract deploy example changes.
+8. Run `pnpm check:public-api` after `pnpm build` when changing root exports or public declarations.
+9. Run `pnpm build:example` after `pnpm build` when changing the React example, Vite config, public browser API shape, or Pages deployment assumptions.
+10. Run `pnpm build:custom-google-redirect-example` when changing the custom Google redirect example, OIDC redirect provider configuration, or browser callback assumptions.
+11. Run `pnpm build:trails-actions-example` after `pnpm build` when changing the Trails Actions example, shared browser example utilities, or Pages deployment assumptions.
+12. Run `pnpm build:wagmi-example` after `pnpm build` when changing the wagmi example, connector browser usage, or Pages deployment assumptions.
+13. Run `pnpm build:node-contract-deploy-example` when SDK exports, transaction APIs, module resolution, or the Node contract deploy example changes.
 
 ## Coding and Architecture Rules
 
@@ -110,7 +113,7 @@ example code.
 - Route wallet API calls through `WalletClient`, generated WaaS types, `createSignedFetch`, and `CredentialSigner` instead of duplicating signing or header logic.
 - Use `StorageManager` abstractions for persistence-sensitive code. Browser storage and memory fallback behavior are part of the SDK contract.
 - Preserve typed SDK error classes and `toOMSWalletError` behavior when wrapping network, generated-client, validation, session, and transaction-status failures.
-- Keep supported network metadata and chain ID lookup going through `src/networks.ts`, `Networks`, `supportedNetworks`, `findNetworkById`, and `findNetworkByName` instead of ad hoc conversion.
+- Keep supported network metadata and chain ID lookup going through `src/networks.ts`, `Networks`, `findNetworkById`, and `findNetworkByName` instead of ad hoc conversion.
 - The TypeScript compiler is the enforced style gate. There is no separate lint or formatter command in the root scripts, so avoid broad formatting churn and match the local file style.
 
 ## Example App Styling

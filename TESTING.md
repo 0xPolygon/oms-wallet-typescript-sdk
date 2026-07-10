@@ -6,6 +6,7 @@ How testing works in this repo. `AGENTS.md` points here so agents know how to ve
 
 - **Test runner:** [Vitest](https://vitest.dev/) v4+
 - **Type tests:** `tsc --noEmit` (compile-time API assertions in `type-tests/`)
+- **Packaged API check:** TypeScript AST comparison of built declarations with a committed public API baseline
 - **No coverage enforcement** currently — focus is on behavioral correctness
 - **Environment:** `dotenv` loaded via `vitest.config.ts`; tests run serially (`fileParallelism: false`)
 
@@ -43,6 +44,7 @@ How testing works in this repo. `AGENTS.md` points here so agents know how to ve
 | Changed Node example | `pnpm build:node-example` |
 | Changed Node contract deploy example | `pnpm build:node-contract-deploy-example` |
 | Changed public types / `src/index.ts` | `pnpm test:types` |
+| Changed built declarations or package exports | `pnpm build && pnpm check:public-api` |
 | Full pre-handoff check | `pnpm exec tsc --noEmit && pnpm test` |
 | Watch mode during development | `pnpm test:watch` |
 | High-risk paths (auth, signing, tx, storage) | Add a focused regression test, then `pnpm test` |
@@ -90,4 +92,5 @@ How testing works in this repo. `AGENTS.md` points here so agents know how to ve
 | Run type tests | `pnpm test:types` |
 | Run everything | `pnpm test` |
 | Typecheck (no emit) | `pnpm exec tsc --noEmit` |
+| Check packaged declarations | `pnpm check:public-api` |
 | Watch mode | `pnpm test:watch` |
