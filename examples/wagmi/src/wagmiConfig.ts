@@ -1,4 +1,4 @@
-import { supportedNetworks } from '@polygonlabs/oms-wallet'
+import { Networks } from '@polygonlabs/oms-wallet'
 import { omsWalletConnector } from '@polygonlabs/oms-wallet-wagmi-connector'
 import { wagmiAdapter } from '@0xtrails/adapter-wagmi'
 import { createConfig, http } from 'wagmi'
@@ -43,7 +43,7 @@ export const omsWalletChains = [
   katana,
 ] as const
 
-export const omsWalletNetworks = supportedNetworks
+export const omsWalletNetworks = Object.values(Networks)
 export const defaultChain = polygonAmoy
 
 export const wagmiConfig = createConfig({

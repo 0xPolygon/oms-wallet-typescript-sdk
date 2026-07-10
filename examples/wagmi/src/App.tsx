@@ -14,7 +14,7 @@ import {
 } from 'wagmi'
 import { TrailsWidget, type TransactionState } from '0xtrails'
 import { formatEther, isAddress, parseEther, type Address, type Hash } from 'viem'
-import type { FeeOptionWithBalance } from '@polygonlabs/oms-wallet'
+import { OmsRelayOidcProviders, type FeeOptionWithBalance } from '@polygonlabs/oms-wallet'
 import {
   EmailCodeForm,
   EmailLoginForm,
@@ -218,7 +218,7 @@ export function App() {
     const providerLabel = formatOidcProvider(provider)
     await runAuth(`Redirecting to ${providerLabel}...`, async () => {
       await omsWallet.wallet.signInWithOidcRedirect({
-        provider,
+        provider: provider === 'google' ? OmsRelayOidcProviders.google : OmsRelayOidcProviders.apple,
       })
     })
   }

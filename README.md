@@ -78,8 +78,8 @@ console.log('Balances:', balances)
 
 | Property | Type | Description |
 |---|---|---|
-| `omsWallet.wallet` | `WalletClient` | Authentication, signing, and transaction submission. |
-| `omsWallet.indexer` | `IndexerClient` | Read token balances and on-chain state. |
+| `omsWallet.wallet` | `OMSWalletClient` | Authentication, signing, and transaction submission. |
+| `omsWallet.indexer` | `OMSWalletIndexerClient` | Read token balances and on-chain state. |
 
 ## Security Model
 
@@ -117,14 +117,16 @@ The returned pending selection is bound to the verified auth flow and signer. Ho
 
 ### OIDC Redirect Auth
 
-Google and Apple redirect auth are configured by default. For simple browser
-apps, call `signInWithOidcRedirect` from a sign-in action. For SDK built-in
-Google and Apple providers, it calls `startOidcRedirectAuth`, derives the
+For simple browser apps, call `signInWithOidcRedirect` from a sign-in action.
+Pass one of the immutable `OmsRelayOidcProviders` values for Google or Apple.
+For these OMS-relayed providers, the method calls `startOidcRedirectAuth`, derives the
 current page as `omsRelayReturnUri`, and navigates with `window.location.assign`:
 
 ```typescript
-void omsWallet.wallet.signInWithOidcRedirect({ provider: 'google' })
-void omsWallet.wallet.signInWithOidcRedirect({ provider: 'apple' })
+import { OmsRelayOidcProviders } from '@polygonlabs/oms-wallet'
+
+void omsWallet.wallet.signInWithOidcRedirect({ provider: OmsRelayOidcProviders.google })
+void omsWallet.wallet.signInWithOidcRedirect({ provider: OmsRelayOidcProviders.apple })
 
 // On the callback page:
 const result = await omsWallet.wallet.completeOidcRedirectAuth()
@@ -137,7 +139,7 @@ For router-driven apps, use the explicit start/complete methods:
 
 ```typescript
 const { authorizationUrl } = await omsWallet.wallet.startOidcRedirectAuth({
-  provider: 'google',
+  provider: OmsRelayOidcProviders.google,
   omsRelayReturnUri: `${window.location.origin}/auth/callback`, // optional in browser apps
 })
 
@@ -159,9 +161,9 @@ For SDK built-in Google and Apple providers, `omsRelayReturnUri` is the URL wher
 
 | Flow | Provider config | App return URL | Provider OAuth callback |
 |---|---|---|---|
-| SDK default Google/Apple | `provider: 'google'` / `provider: 'apple'`, or `googleOidcProvider()` / `appleOidcProvider()` | `omsRelayReturnUri` | OMS relay callback derived as `{apiBase}/auth/waas/callback/{google|apple}` |
-| Custom OIDC provider | Custom `OidcProviderConfig` | `providerRedirectUri` | `providerRedirectUri` |
-| Google/Apple without SDK relay | Custom `OidcProviderConfig` for Google or Apple | `providerRedirectUri` | `providerRedirectUri` |
+| OMS relay Google/Apple | `OmsRelayOidcProviders.google` / `.apple` | `omsRelayReturnUri` | OMS relay callback derived as `{apiBase}/auth/waas/callback/{google|apple}` |
+| Custom OIDC provider | `CustomOidcProviderConfig` | `providerRedirectUri` | `providerRedirectUri` |
+| Google/Apple without SDK relay | Direct custom config for Google or Apple | `providerRedirectUri` | `providerRedirectUri` |
 
 Pass `loginHint` only when you want to prefill or select a specific Google
 account, such as during session-expiry reauth. When omitted, the SDK falls back
@@ -170,11 +172,12 @@ attempt starts. To force no `login_hint` for a call, pass `loginHint: ''`.
 
 Pending redirect state is stored in `sessionStorage` by default. Final wallet session metadata continues to use the configured SDK storage.
 
-The `googleOidcProvider()` and `appleOidcProvider()` helpers use SDK default
-client IDs, scopes, and PKCE auth-code mode. They are OMS-relayed provider
-configs, so the SDK derives the provider callback URL from the publishable-key
-environment as `{apiBase}/auth/waas/callback/{provider}`. For custom providers,
-see [Custom OIDC Providers](#custom-oidc-providers).
+`OmsRelayOidcProviders.google` and `OmsRelayOidcProviders.apple` are deeply
+frozen, opaque SDK values. Their client IDs, scopes, authorization parameters,
+and PKCE auth-code mode are not caller-editable. The SDK derives their provider
+callback URL from the publishable-key environment as
+`{apiBase}/auth/waas/callback/{provider}`.
+For custom providers, see [Custom OIDC Providers](#custom-oidc-providers).
 
 ### OIDC ID-Token Auth
 
@@ -196,7 +199,7 @@ to present its own wallet picker after the token is verified.
 
 ### Session State
 
-Email and OIDC auth both persist the active wallet session in the configured SDK storage. Browser storage defaults to `localStorage` when available; non-browser runtimes fall back to in-memory storage unless you provide a custom `StorageManager`. Browser signing defaults to a non-extractable WebCrypto P-256 credential using `ecdsa-p256-sha256`. Completed auth requests ask the wallet API for a one-week session lifetime.
+Email and OIDC auth both persist the active wallet session in the configured SDK storage. The versioned session record is scoped to the publishable key project and API environment. A client rejects and clears a stored session when either scope differs. Browser storage defaults to `localStorage` when available; non-browser runtimes fall back to in-memory storage unless you provide a custom `StorageManager`. Browser signing defaults to a non-extractable WebCrypto P-256 credential using `ecdsa-p256-sha256`. Completed auth requests ask the wallet API for a one-week session lifetime.
 
 Pass `sessionLifetimeSeconds` to `completeEmailAuth`, `signInWithOidcIdToken`, `startOidcRedirectAuth`, `completeOidcRedirectAuth`, or `signInWithOidcRedirect` to request a different session lifetime. Values must be integer seconds from `1` through `2592000` (30 days). For OIDC redirects, values passed at start are stored with the pending redirect state and used on callback completion unless completion overrides them.
 
@@ -392,9 +395,11 @@ const tx = await omsWallet.wallet.callContract({
 })
 ```
 
-`sendTransaction` prepares and executes the transaction, then polls the wallet API for
+`sendTransaction` and `callContract` prepare and execute the transaction, then poll the wallet API for
 the latest transaction status. The response includes `txnId`, `status`, and `txnHash`
-when the transaction has been published.
+when the transaction has been published. `statusResolution` is `resolved` when
+polling finds a terminal status or transaction hash, and `timed-out` when the
+polling deadline is reached.
 
 To return immediately after execute without status polling, pass
 `waitForStatus: false`. You can then call `getTransactionStatus` with the
@@ -412,6 +417,8 @@ const tx = await omsWallet.wallet.sendTransaction({
 
 const status = await omsWallet.wallet.getTransactionStatus({ txnId: tx.txnId })
 ```
+
+With `waitForStatus: false`, the response has `statusResolution: 'not-requested'`.
 
 To tune polling, pass `statusPolling`:
 
@@ -466,30 +473,24 @@ const tx = await omsWallet.wallet.sendTransaction({
 
 ### Custom OIDC Providers
 
-Passing `auth.oidcProviders` replaces the default Google and Apple provider set.
-Include every provider key your app should support. Use
-`defineOMSWalletAuthConfig` when you want TypeScript to preserve custom provider
-keys.
+Create a `CustomOidcProviderConfig` and pass it directly to an OIDC redirect
+method. Custom configs require `providerRedirectUri`.
+They cannot use `omsRelayReturnUri`.
 
 ```typescript
-import { OMSWallet, defineOMSWalletAuthConfig } from '@polygonlabs/oms-wallet'
+import { type CustomOidcProviderConfig } from '@polygonlabs/oms-wallet'
 
-const auth = defineOMSWalletAuthConfig({
-  oidcProviders: {
-    acme: {
-      clientId: 'acme-client-id',
-      issuer: 'https://login.acme.example',
-      authorizationUrl: 'https://login.acme.example/oauth/authorize',
-      providerRedirectUri: 'https://app.example/auth/callback',
-      scopes: ['openid', 'email', 'profile'],
-    },
-  },
-})
+const acmeProvider = {
+  clientId: 'acme-client-id',
+  issuer: 'https://login.acme.example',
+  authorizationUrl: 'https://login.acme.example/oauth/authorize',
+  provider: 'acme',
+  providerLabel: 'Acme',
+  providerRedirectUri: 'https://app.example/auth/callback',
+  scopes: ['openid', 'email', 'profile'],
+} satisfies CustomOidcProviderConfig
 
-const omsWallet = new OMSWallet({
-  publishableKey: 'your-publishable-key',
-  auth,
-})
+await omsWallet.wallet.signInWithOidcRedirect({ provider: acmeProvider })
 ```
 
 Provider configs are the source of truth for OIDC scopes. If `scopes` is omitted or empty, the SDK does not send a `scope` authorization parameter. OIDC auth mode defaults to PKCE; pass `authMode` when a provider needs a different authorization-code mode.
@@ -513,16 +514,16 @@ OIDC redirect auth uses separate transient storage for verifier/state data. In b
 
 ### Networks
 
-The SDK exports `Networks`, `supportedNetworks`, `findNetworkById(id)`, and `findNetworkByName(name)` for the networks currently configured by OMS. Each network has `id`, `name`, `nativeTokenSymbol`, `explorerUrl`, and `displayName`. `name` is the registry/routing slug, while `displayName` is the user-facing label.
+The SDK exports `Networks`, `findNetworkById(id)`, and `findNetworkByName(name)` for the networks currently configured by OMS. Each network has `id`, `name`, `nativeTokenSymbol`, `explorerUrl`, and `displayName`. `name` is the registry/routing slug, while `displayName` is the user-facing label. `Network` is a closed SDK type: use a `Networks` value or a successful lookup result.
 
 The `network` parameter on all transaction and signing methods accepts a `Network` from the SDK registry:
 
 ```typescript
-import { Networks, findNetworkById, supportedNetworks } from '@polygonlabs/oms-wallet'
+import { Networks, findNetworkById } from '@polygonlabs/oms-wallet'
 
 await omsWallet.wallet.signMessage({ network: Networks.amoy, message: 'some message to sign' })
 
-console.log(supportedNetworks)
+console.log(Object.values(Networks))
 console.log(findNetworkById(80002)) // Networks.amoy
 ```
 

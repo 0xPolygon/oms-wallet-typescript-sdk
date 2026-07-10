@@ -4,7 +4,7 @@ import { Networks, type TokenBalance } from '@polygonlabs/oms-wallet'
 import './styles.css'
 import { formatSessionAuth, formatSessionExpiry, hasOidcCallbackParams, isPendingWalletSelection } from '../../shared/example-utils'
 import { CUSTOM_GOOGLE_CLIENT_ID, CUSTOM_GOOGLE_ISSUER, CUSTOM_GOOGLE_REDIRECT_URI } from './config'
-import { omsWallet } from './omsWallet'
+import { customGoogleOidcProvider, omsWallet } from './omsWallet'
 
 const DEFAULT_MESSAGE = 'hello from OMS Wallet'
 const BALANCE_NETWORKS = [Networks.polygon, Networks.base, Networks.arbitrum]
@@ -46,7 +46,7 @@ function App() {
   async function startRedirect() {
     await run('Opening Google sign-in...', async () => {
       await omsWallet.wallet.signInWithOidcRedirect({
-        provider: 'google',
+        provider: customGoogleOidcProvider,
       })
     })
   }

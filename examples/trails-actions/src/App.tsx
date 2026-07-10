@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import {
+  OmsRelayOidcProviders,
   FeeOptionSelector,
   type FeeOptionSelection,
   type FeeOptionWithBalance,
@@ -327,7 +328,7 @@ function App() {
         setPendingWalletSelection(null)
         setRedirectStatus(`Redirecting to ${providerLabel}...`)
         await omsWallet.wallet.signInWithOidcRedirect({
-          provider,
+          provider: provider === 'google' ? OmsRelayOidcProviders.google : OmsRelayOidcProviders.apple,
           walletSelection,
           sessionLifetimeSeconds,
         })
@@ -415,7 +416,7 @@ function App() {
           setPendingWalletSelection(null)
           setRedirectStatus('Redirecting to Google...')
           await omsWallet.wallet.signInWithOidcRedirect({
-            provider: 'google',
+            provider: OmsRelayOidcProviders.google,
             walletSelection,
             sessionLifetimeSeconds,
           })
@@ -436,7 +437,7 @@ function App() {
           setPendingWalletSelection(null)
           setRedirectStatus('Redirecting to Apple...')
           await omsWallet.wallet.signInWithOidcRedirect({
-            provider: 'apple',
+            provider: OmsRelayOidcProviders.apple,
             walletSelection,
             sessionLifetimeSeconds,
           })

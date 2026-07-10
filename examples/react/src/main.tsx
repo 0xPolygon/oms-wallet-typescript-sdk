@@ -2,7 +2,7 @@ import React, { useEffect, useRef, useState } from 'react'
 import { createRoot } from 'react-dom/client'
 import {
   Networks,
-  supportedNetworks,
+  OmsRelayOidcProviders,
   type FeeOptionSelection,
   type FeeOptionWithBalance,
   type AccessGrant,
@@ -47,6 +47,7 @@ const DEFAULT_MESSAGE = 'test'
 const DEFAULT_TX_TO = '0xE5E8B483FfC05967FcFed58cc98D053265af6D99'
 const MANUAL_WALLET_SELECTION_KEY = 'oms-demo-manual-wallet-selection'
 const SESSION_LIFETIME_SECONDS_KEY = 'oms-demo-session-lifetime-seconds-v2'
+const supportedNetworks = Object.values(Networks)
 
 function App() {
   const [step, setStep] = useState<Step>('email')
@@ -167,7 +168,7 @@ function App() {
       saveSessionPreferences()
       setPendingWalletSelection(null)
       await omsWallet.wallet.signInWithOidcRedirect({
-        provider,
+        provider: provider === 'google' ? OmsRelayOidcProviders.google : OmsRelayOidcProviders.apple,
         walletSelection,
         sessionLifetimeSeconds,
       })
@@ -246,7 +247,7 @@ function App() {
         saveSessionPreferences()
         setPendingWalletSelection(null)
         await omsWallet.wallet.signInWithOidcRedirect({
-          provider: 'google',
+          provider: OmsRelayOidcProviders.google,
           walletSelection,
           sessionLifetimeSeconds,
         })
@@ -260,7 +261,7 @@ function App() {
         saveSessionPreferences()
         setPendingWalletSelection(null)
         await omsWallet.wallet.signInWithOidcRedirect({
-          provider: 'apple',
+          provider: OmsRelayOidcProviders.apple,
           walletSelection,
           sessionLifetimeSeconds,
         })

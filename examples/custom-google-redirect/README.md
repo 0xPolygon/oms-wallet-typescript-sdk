@@ -2,7 +2,8 @@
 
 This Vite React example verifies Google as a custom OIDC provider. It configures
 Google with `providerRedirectUri: "http://localhost:5173"` and does not use the
-SDK built-in Google relay helper.
+SDK built-in Google relay value. The example passes its direct
+`CustomOidcProviderConfig` to `signInWithOidcRedirect`.
 
 ## Run Locally
 
