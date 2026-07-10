@@ -1,19 +1,9 @@
 export { OMSWallet } from './omsWallet.js'
 export type { OMSWalletParams } from './omsWallet.js'
 export {
-    defaultOMSWalletAuthConfig,
-    defineOMSWalletAuthConfig,
-    type DefaultOMSWalletEnvironment,
-    type OidcProviderConfig,
-    type OidcAuthMode,
-    type OMSWalletAuthConfig,
-    type OMSWalletEnvironment,
-} from './omsEnvironment.js'
-export {
-    appleOidcProvider,
-    googleOidcProvider,
-    type AppleOidcProviderParams,
-    type GoogleOidcProviderParams,
+    OmsRelayOidcProviders,
+    type CustomOidcProviderConfig,
+    type OmsRelayOidcProvider,
 } from './oidc.js'
 export {
     EthereumPrivateKeyCredentialSigner,
@@ -32,7 +22,6 @@ export {
     Networks,
     findNetworkById,
     findNetworkByName,
-    supportedNetworks,
     type Network,
 } from './networks.js'
 export {
@@ -40,9 +29,12 @@ export {
     TransactionMode,
     TransactionStatus,
     WalletType,
+    type OidcAuthMode,
     type AbiArg,
+    type FeeOption,
+    type FeeOptionSelection,
     type TransactionStatusResponse,
-} from './generated/waas.gen.js'
+} from './types/waas.js'
 export {
     OMSWalletRequestError,
     OMSWalletResponseError,
@@ -73,8 +65,6 @@ export type {
     OMSWalletSessionExpiredListener,
     OMSWalletSessionState,
     WalletAccount,
-    OidcProviderInput,
-    OidcProviderName,
     PendingWalletSelection,
     SignInWithOidcIdTokenParams,
     SignMessageParams,
@@ -84,7 +74,8 @@ export type {
     StartOidcRedirectAuthResult,
     WalletActivationResult,
     WalletSelectionBehavior,
-} from './clients/walletClient.js'
+    OMSWalletClient,
+} from './wallet.js'
 export type {
     BalancesResult,
     ContractVerificationStatus,
@@ -92,6 +83,7 @@ export type {
     GetTransactionHistoryParams,
     IndexerNetworkType,
     MetadataOptions,
+    OMSWalletIndexerClient,
     SortBy,
     TokenContractInfo,
     TokenBalance,
@@ -109,8 +101,6 @@ export type {
     WalletCredential,
 } from './types/accessGrant.js'
 export type {
-    FeeOption,
-    FeeOptionSelection,
     FeeOptionWithBalance,
     SendContractTransactionParams,
     SendDataTransactionParams,

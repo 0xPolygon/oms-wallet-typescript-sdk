@@ -302,7 +302,12 @@ interface IndexerClientEnvironment {
     indexerGatewayUrl: string;
 }
 
-export class IndexerClient {
+export interface OMSWalletIndexerClient {
+    getBalances(params: GetBalancesParams): Promise<BalancesResult>
+    getTransactionHistory(params: GetTransactionHistoryParams): Promise<TransactionHistoryResult>
+}
+
+export class IndexerClient implements OMSWalletIndexerClient {
     private readonly publishableKey: string;
     private readonly environment: IndexerClientEnvironment;
     private readonly client: HttpClient;

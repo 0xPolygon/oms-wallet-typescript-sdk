@@ -1,10 +1,9 @@
 import {keccak256, toBytes, type Hex} from "viem";
 import {privateKeyToAccount} from "viem/accounts";
 
-import {SigningAlgorithm} from "./generated/waas.gen.js";
 import {ByteUtils} from "./utils/byteUtils.js";
 
-export type CredentialSigningAlgorithm = `${SigningAlgorithm}`;
+export type CredentialSigningAlgorithm = "ecdsa-p256-sha256" | "ecdsa-p256k-eip191";
 
 export interface CredentialSigner {
     readonly signingAlgorithm: CredentialSigningAlgorithm;
@@ -17,7 +16,7 @@ export interface CredentialSigner {
 
 interface StoredWebCryptoCredential {
     id: string;
-    signingAlgorithm: typeof SigningAlgorithm.ECDSA_P256_SHA256;
+    signingAlgorithm: "ecdsa-p256-sha256";
     credentialId: string;
     keyPair: CryptoKeyPair;
     nonce: string;
@@ -28,7 +27,7 @@ const credentialStoreName = "credentials";
 const defaultWebCryptoCredentialId = "default-webcrypto-p256";
 
 export class WebCryptoP256CredentialSigner implements CredentialSigner {
-    readonly signingAlgorithm = SigningAlgorithm.ECDSA_P256_SHA256;
+    readonly signingAlgorithm = "ecdsa-p256-sha256" as const;
 
     private keyPair?: CryptoKeyPair;
     private credential?: string;
@@ -204,7 +203,7 @@ export class WebCryptoP256CredentialSigner implements CredentialSigner {
 }
 
 export class EthereumPrivateKeyCredentialSigner implements CredentialSigner {
-    readonly signingAlgorithm = SigningAlgorithm.ECDSA_P256K_EIP191;
+    readonly signingAlgorithm = "ecdsa-p256k-eip191" as const;
     private nonce = 0n;
 
     constructor(private readonly privateKey: Uint8Array) {}
@@ -237,7 +236,7 @@ function assertWebCryptoSupport(): void {
 function isUsableStoredCredential(stored: StoredWebCryptoCredential | undefined): stored is StoredWebCryptoCredential {
     return Boolean(
         stored
-        && stored.signingAlgorithm === SigningAlgorithm.ECDSA_P256_SHA256
+        && stored.signingAlgorithm === "ecdsa-p256-sha256"
         && stored.credentialId.startsWith("0x04")
         && stored.keyPair?.privateKey
         && stored.keyPair.privateKey.extractable === false,

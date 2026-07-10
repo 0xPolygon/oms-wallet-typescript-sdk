@@ -2,7 +2,7 @@ import {afterEach, describe, expect, it, vi} from "vitest";
 
 import {WalletClient} from "../src/clients/walletClient";
 import type {CredentialSigner} from "../src/credentialSigner";
-import {AuthMode, WalletType} from "../src/generated/waas.gen";
+import {AuthMode, WalletType} from "../src/types/waas";
 import {MemoryStorageManager} from "../src/storageManager";
 import {oidcIdTokenHandleHash} from "../src/utils/oidcIdToken";
 import {base64UrlEncodeString} from "../src/utils/oidcRedirect";
@@ -110,7 +110,7 @@ describe("WalletClient OIDC ID-token auth", () => {
             providerLabel: "Google",
             email: "user@example.com",
         });
-        expect(JSON.parse(storage.get(Constants.sessionAuthStorageKey) ?? "null")).toEqual(wallet.session.auth);
+        expect(JSON.parse(storage.get(Constants.sessionStorageKey) ?? "null").auth).toEqual(wallet.session.auth);
         expect(requestCount(fetchMock, "/CommitVerifier")).toBe(1);
         expect(requestCount(fetchMock, "/CompleteAuth")).toBe(1);
         expect(requestCount(fetchMock, "/UseWallet")).toBe(1);
@@ -307,8 +307,7 @@ describe("WalletClient OIDC ID-token auth", () => {
             message: "Wallet session changed while auth was in flight",
         });
         expect(wallet.walletAddress).toBeUndefined();
-        expect(storage.get(Constants.walletIdStorageKey)).toBeNull();
-        expect(storage.get(Constants.walletAddressStorageKey)).toBeNull();
+        expect(storage.get(Constants.sessionStorageKey)).toBeNull();
     });
 });
 

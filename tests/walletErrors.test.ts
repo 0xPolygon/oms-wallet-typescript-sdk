@@ -113,19 +113,7 @@ describe("WalletClient errors", () => {
         const wallet = new WalletClient({
             publishableKey: "publishable-key",
             projectId: "project-id",
-            environment: {
-                ...testEnvironment(),
-                auth: {
-                    oidcProviders: {
-                        google: {
-                            clientId: "google-client",
-                            issuer: "https://accounts.google.com",
-                            authorizationUrl: "https://accounts.google.com/o/oauth2/v2/auth",
-                            providerRedirectUri: "https://app.example/callback",
-                        },
-                    },
-                },
-            },
+            environment: testEnvironment(),
             storage: new MemoryStorageManager(),
             redirectAuthStorage: new MemoryStorageManager(),
             credentialSigner: new MockSigner(),
@@ -140,8 +128,12 @@ describe("WalletClient errors", () => {
             operation: "wallet.completeEmailAuth",
         });
         await expect(wallet.startOidcRedirectAuth({
-            provider: "google",
-            omsRelayReturnUri: "https://app.example/callback",
+            provider: {
+                clientId: "google-client",
+                issuer: "https://accounts.google.com",
+                authorizationUrl: "https://accounts.google.com/o/oauth2/v2/auth",
+                providerRedirectUri: "https://app.example/callback",
+            },
             sessionLifetimeSeconds: 1.5,
         })).rejects.toMatchObject({
             code: "OMS_VALIDATION_ERROR",

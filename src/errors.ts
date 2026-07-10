@@ -23,8 +23,8 @@ export interface OMSWalletUpstreamError {
     status?: number
 }
 
-export interface OMSWalletErrorParams {
-    code: OMSWalletErrorCode
+export interface OMSWalletErrorParams<Code extends OMSWalletErrorCode = OMSWalletErrorCode> {
+    code: Code
     message: string
     operation?: string
     status?: number
@@ -34,7 +34,7 @@ export interface OMSWalletErrorParams {
     cause?: unknown
 }
 
-export class OMSWalletError extends Error {
+export abstract class OMSWalletError extends Error {
     readonly code: OMSWalletErrorCode
     readonly operation?: string
     readonly status?: number
@@ -42,7 +42,7 @@ export class OMSWalletError extends Error {
     readonly retryable?: boolean
     readonly upstreamError?: OMSWalletUpstreamError
 
-    constructor(params: OMSWalletErrorParams) {
+    protected constructor(params: OMSWalletErrorParams) {
         super(params.message)
         this.name = "OMSWalletError"
         this.code = params.code
@@ -58,55 +58,63 @@ export class OMSWalletError extends Error {
     }
 }
 
+type OMSWalletSessionErrorCode = "OMS_SESSION_MISSING" | "OMS_SESSION_EXPIRED"
+type OMSWalletRequestErrorCode = "OMS_HTTP_ERROR" | "OMS_REQUEST_FAILED" | "OMS_AUTH_COMMITMENT_CONSUMED"
+type OMSWalletResponseErrorCode = "OMS_INVALID_RESPONSE"
+type OMSWalletTransactionErrorCode =
+    | "OMS_TRANSACTION_EXECUTION_UNCONFIRMED"
+    | "OMS_TRANSACTION_STATUS_LOOKUP_FAILED"
+type OMSWalletSelectionErrorCode =
+    | "OMS_WALLET_SELECTION_STALE"
+    | "OMS_WALLET_SELECTION_UNAVAILABLE"
+    | "OMS_WALLET_SELECTION_IN_FLIGHT"
+type OMSWalletValidationErrorCode = "OMS_VALIDATION_ERROR"
+type OMSWalletStorageErrorCode = "OMS_STORAGE_ERROR"
+
 export class OMSWalletSessionError extends OMSWalletError {
-    constructor(params: Omit<OMSWalletErrorParams, "code"> & { code?: OMSWalletErrorCode }) {
+    constructor(params: Omit<OMSWalletErrorParams<OMSWalletSessionErrorCode>, "code"> & { code?: OMSWalletSessionErrorCode }) {
         super({...params, code: params.code ?? "OMS_SESSION_MISSING"})
         this.name = "OMSWalletSessionError"
     }
 }
 
 export class OMSWalletRequestError extends OMSWalletError {
-    constructor(params: Omit<OMSWalletErrorParams, "code"> & { code?: OMSWalletErrorCode }) {
+    constructor(params: Omit<OMSWalletErrorParams<OMSWalletRequestErrorCode>, "code"> & { code?: OMSWalletRequestErrorCode }) {
         super({...params, code: params.code ?? "OMS_REQUEST_FAILED"})
         this.name = "OMSWalletRequestError"
     }
 }
 
 export class OMSWalletResponseError extends OMSWalletError {
-    constructor(params: Omit<OMSWalletErrorParams, "code"> & { code?: OMSWalletErrorCode }) {
+    constructor(params: Omit<OMSWalletErrorParams<OMSWalletResponseErrorCode>, "code"> & { code?: OMSWalletResponseErrorCode }) {
         super({...params, code: params.code ?? "OMS_INVALID_RESPONSE"})
         this.name = "OMSWalletResponseError"
     }
 }
 
 export class OMSWalletTransactionError extends OMSWalletError {
-    constructor(params: Omit<OMSWalletErrorParams, "code"> & { code?: OMSWalletErrorCode }) {
+    constructor(params: Omit<OMSWalletErrorParams<OMSWalletTransactionErrorCode>, "code"> & { code?: OMSWalletTransactionErrorCode }) {
         super({...params, code: params.code ?? "OMS_TRANSACTION_STATUS_LOOKUP_FAILED"})
         this.name = "OMSWalletTransactionError"
     }
 }
 
 export class OMSWalletSelectionError extends OMSWalletError {
-    constructor(params: Omit<OMSWalletErrorParams, "code"> & {
-        code:
-            | "OMS_WALLET_SELECTION_STALE"
-            | "OMS_WALLET_SELECTION_UNAVAILABLE"
-            | "OMS_WALLET_SELECTION_IN_FLIGHT"
-    }) {
+    constructor(params: OMSWalletErrorParams<OMSWalletSelectionErrorCode>) {
         super(params)
         this.name = "OMSWalletSelectionError"
     }
 }
 
 export class OMSWalletValidationError extends OMSWalletError {
-    constructor(params: Omit<OMSWalletErrorParams, "code"> & { code?: OMSWalletErrorCode }) {
+    constructor(params: Omit<OMSWalletErrorParams<OMSWalletValidationErrorCode>, "code"> & { code?: OMSWalletValidationErrorCode }) {
         super({...params, code: params.code ?? "OMS_VALIDATION_ERROR"})
         this.name = "OMSWalletValidationError"
     }
 }
 
 export class OMSWalletStorageError extends OMSWalletError {
-    constructor(params: Omit<OMSWalletErrorParams, "code"> & { code?: OMSWalletErrorCode }) {
+    constructor(params: Omit<OMSWalletErrorParams<OMSWalletStorageErrorCode>, "code"> & { code?: OMSWalletStorageErrorCode }) {
         super({...params, code: params.code ?? "OMS_STORAGE_ERROR"})
         this.name = "OMSWalletStorageError"
     }

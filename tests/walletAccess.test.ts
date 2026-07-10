@@ -146,6 +146,8 @@ function createWalletWithSession(): WalletClient {
     (wallet as any).persistSession("wallet-id", "0x1111111111111111111111111111111111111111", {
         expiresAt: "2099-01-01T00:00:00Z",
         auth: {type: "email", email: "user@example.com"},
+        signerCredentialId: "0x04" + "11".repeat(64),
+        signerKeyType: "ecdsa-p256-sha256",
     });
     return wallet;
 }

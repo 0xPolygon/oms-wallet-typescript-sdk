@@ -15,11 +15,11 @@ export interface BuildOidcAuthorizationUrlParams {
     authorizationUrl: string;
     clientId: string;
     redirectUri: string;
-    scopes: string[];
+    scopes: readonly string[];
     state: string;
     challenge: string;
     usePkce?: boolean;
-    authorizeParams?: Record<string, string>;
+    authorizeParams?: Readonly<Record<string, string>>;
     loginHint?: string;
 }
 

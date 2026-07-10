@@ -7,6 +7,7 @@ import {
     OMSWallet,
     OMSWalletRequestError,
     OMSWalletError,
+    OmsRelayOidcProviders,
     SessionStorageManager,
     WalletType,
     WebCryptoP256CredentialSigner,
@@ -558,10 +559,6 @@ describe("public API error contracts", () => {
         const omsWithoutRedirectStorage = createOmsClient({redirectAuthStorage: null});
 
         await expect(publicErrors([
-            ["wallet.startOidcRedirectAuth.unknownProvider", () => oms.wallet.startOidcRedirectAuth({
-                provider: "github",
-                omsRelayReturnUri: "https://app.example/auth/callback",
-            })],
             ["wallet.startOidcRedirectAuth.missingRedirectStorage", () => omsWithoutRedirectStorage.wallet.startOidcRedirectAuth({
                 provider: testOidcProvider(),
             })],
@@ -579,7 +576,7 @@ describe("public API error contracts", () => {
                     provider: testOidcProvider(),
                 });
                 return providerErrorOms.wallet.completeOidcRedirectAuth({
-                    callbackUrl: `https://app.example/auth/callback?error=access_denied&error_description=User%20cancelled&state=${started.state}`,
+                    callbackUrl: `https://app.example/auth/callback?error=access_denied&error_description=User%20cancelled&state=${authorizationState(started)}`,
                 });
             }],
             ["wallet.completeOidcRedirectAuth.noPendingAuth", () => oms.wallet.completeOidcRedirectAuth({
@@ -591,28 +588,15 @@ describe("public API error contracts", () => {
                     provider: testOidcProvider(),
                 });
                 return cleanUrlOms.wallet.completeOidcRedirectAuth({
-                    callbackUrl: `https://app.example/auth/callback?code=code-1&state=${started.state}`,
+                    callbackUrl: `https://app.example/auth/callback?code=code-1&state=${authorizationState(started)}`,
                     cleanUrl: true,
                 });
             }],
             ["wallet.signInWithOidcRedirect.missingCurrentUrl", () => oms.wallet.signInWithOidcRedirect({
-                provider: "google",
+                provider: OmsRelayOidcProviders.google,
             })],
         ])).resolves.toMatchInlineSnapshot(`
           [
-            {
-              "error": {
-                "code": "OMS_VALIDATION_ERROR",
-                "message": "OIDC provider "github" is not configured",
-                "name": "OMSWalletValidationError",
-                "operation": "wallet.startOidcRedirectAuth",
-                "retryable": null,
-                "status": null,
-                "txnId": null,
-                "upstreamError": null,
-              },
-              "label": "wallet.startOidcRedirectAuth.unknownProvider",
-            },
             {
               "error": {
                 "code": "OMS_VALIDATION_ERROR",
@@ -746,7 +730,7 @@ describe("public API error contracts", () => {
         errors.push({
             label: "wallet.completeOidcRedirectAuth.signerMismatch",
             error: await publicError(() => signerOms.wallet.completeOidcRedirectAuth({
-                callbackUrl: `https://app.example/auth/callback?code=auth-code&state=${started.state}`,
+                callbackUrl: `https://app.example/auth/callback?code=auth-code&state=${authorizationState(started)}`,
             })),
         });
 
@@ -1664,6 +1648,8 @@ function createOmsClientWithSession(): OMSWallet {
         {
             expiresAt: "2099-01-01T00:00:00Z",
             auth: {type: "email", email: "user@example.com"},
+            signerCredentialId: "0x04" + "11".repeat(64),
+            signerKeyType: "ecdsa-p256-sha256",
         },
     );
     return oms;
@@ -1676,6 +1662,12 @@ function testOidcProvider() {
         authorizationUrl: "https://issuer.example/oauth/authorize",
         providerRedirectUri: "https://app.example/auth/callback",
     };
+}
+
+function authorizationState(result: {authorizationUrl: string}): string {
+    const state = new URL(result.authorizationUrl).searchParams.get("state");
+    if (!state) throw new Error("Authorization URL is missing state");
+    return state;
 }
 
 function completeAuthResponse() {

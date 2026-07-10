@@ -1,6 +1,7 @@
-import {Fetch} from "./generated/waas.gen.js";
 import {RequestUtils} from "./utils/requestUtils.js";
 import type {CredentialSigner} from "./credentialSigner.js";
+
+type Fetch = (input: RequestInfo, init?: RequestInit) => Promise<Response>;
 
 async function buildWalletSignatureHeader(
     endpoint: string,
