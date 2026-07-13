@@ -23,8 +23,11 @@ export function formatSessionAuth(
   switch (auth?.type) {
     case 'email':
       return 'Email'
-    case 'oidc':
-      return auth.providerLabel ?? auth.provider ?? auth.issuer
+    case 'oidc': {
+      const provider = auth.providerLabel ?? auth.provider ?? auth.issuer
+      const flow = auth.flow === 'id-token' ? 'ID token' : 'Redirect'
+      return `${provider} (${flow})`
+    }
     default:
       return fallback
   }

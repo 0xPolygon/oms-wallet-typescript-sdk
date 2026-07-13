@@ -141,5 +141,6 @@ export function redirectUriFromCurrentUrl(currentUrl: string): string {
     const url = new URL(currentUrl);
     url.search = '';
     url.hash = '';
-    return url.toString();
+    const redirectUri = url.toString();
+    return redirectUri === `${url.origin}/` ? url.origin : redirectUri;
 }

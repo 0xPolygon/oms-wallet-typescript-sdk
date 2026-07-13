@@ -1124,6 +1124,7 @@ describe("WalletClient OIDC redirect auth", () => {
         const assignedUrl = new URL(assignUrl.mock.calls[0][0]);
         expect(assignedUrl.searchParams.get("redirect_uri")).toBe(expectedDefaultGoogleRelayRedirectUri);
         expect(redirectUriFromCurrentUrl("https://app.example/login?from=home#section")).toBe("https://app.example/login");
+        expect(redirectUriFromCurrentUrl("http://localhost:5173/?from=home#section")).toBe("http://localhost:5173");
 
         const replaceUrl = vi.fn();
         const completed = await wallet.completeOidcRedirectAuth({
