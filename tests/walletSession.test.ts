@@ -43,8 +43,9 @@ function seedEmailAuthAttempt(
     verifier = "verifier-1",
     challenge = "challenge-1",
     sessionLifetimeSeconds = 604_800,
+    email = "user@example.com",
 ): void {
-    (wallet as any).activeEmailAuthAttempt = {verifier, challenge, sessionLifetimeSeconds};
+    (wallet as any).activeEmailAuthAttempt = {email, verifier, challenge, sessionLifetimeSeconds};
 }
 
 function emailAuth(email = "user@example.com") {
@@ -829,7 +830,6 @@ describe("WalletClient session storage", () => {
                 expect(body.answer).toEqual(expect.any(String));
                 return jsonResponse({
                     identity: {type: "email", sub: "user-1"},
-                    email: "user@example.com",
                     wallets: [{
                         id: "wallet-id",
                         type: WalletType.Ethereum,

@@ -34,11 +34,33 @@ describe("IndexerClient", () => {
                     balance: "141799",
                     balanceUSD: "0.141799",
                     priceUSD: "1",
+                    blockHash: "0xblock",
+                    blockNumber: 123,
                     chainId: 137,
                     contractInfo: {
+                        chainId: 137,
+                        address: "0x3c499c542cef5e3811e1192ce70d8cc03d5c3359",
+                        source: "TOKEN_DIRECTORY_SEQUENCE_GITHUB",
                         name: "USDC",
+                        type: "ERC20",
                         symbol: "USDC",
                         decimals: 6,
+                        deployed: true,
+                        bytecodeHash: "0xbytecode",
+                        extensions: {},
+                        updatedAt: "2026-01-01T00:00:00Z",
+                        queuedAt: null,
+                        status: "AVAILABLE",
+                    },
+                    tokenMetadata: {
+                        tokenId: "0",
+                        source: "metadata",
+                        name: "USD Coin",
+                        attributes: [],
+                        image_data: "raw-image-data",
+                        external_url: "https://example.com/usdc",
+                        status: "AVAILABLE",
+                        queuedAt: null,
                     },
                 }],
             }],
@@ -50,13 +72,20 @@ describe("IndexerClient", () => {
             environment: testEnvironment(),
         });
 
-        await expect(indexer.getBalances({
+        const result = await indexer.getBalances({
             networks: [Networks.polygon],
             walletAddress: "0x9999999999999999999999999999999999999999",
             includeMetadata: true,
             contractAddresses: ["0x3c499c542cef5e3811e1192ce70d8cc03d5c3359"],
-            page: {page: 1, pageSize: 25},
-        })).resolves.toMatchObject({
+            page: {
+                page: 1,
+                column: "blockNumber",
+                after: "cursor",
+                sort: [{column: "blockNumber", order: "DESC"}],
+                pageSize: 25,
+            },
+        });
+        expect(result).toMatchObject({
             status: 200,
             page: {page: 1, pageSize: 25, more: false},
             nativeBalances: [{
@@ -75,8 +104,14 @@ describe("IndexerClient", () => {
                     symbol: "USDC",
                     decimals: 6,
                 },
+                tokenMetadata: {
+                    imageData: "raw-image-data",
+                    externalUrl: "https://example.com/usdc",
+                },
             }],
         });
+        expect(result.balances[0].contractInfo?.queuedAt).toBeUndefined();
+        expect(result.balances[0].tokenMetadata?.queuedAt).toBeUndefined();
 
         expect(fetchMock.mock.calls[0][0].toString()).toBe("https://indexer.example/GetTokenBalancesDetails");
         expect(fetchMock.mock.calls[0][1]?.headers).toMatchObject({
@@ -91,7 +126,13 @@ describe("IndexerClient", () => {
                 omitNativeBalances: false,
             },
             omitMetadata: false,
-            page: {page: 1, pageSize: 25},
+            page: {
+                page: 1,
+                column: "blockNumber",
+                after: "cursor",
+                sort: [{column: "blockNumber", order: "DESC"}],
+                pageSize: 25,
+            },
         });
     });
 
@@ -184,6 +225,61 @@ describe("IndexerClient", () => {
         });
     });
 
+    it("normalizes nullable transaction metadata with an empty transfer list", async () => {
+        vi.stubGlobal("fetch", vi.fn(async () => new Response(JSON.stringify({
+            transactions: [{
+                chainId: 137,
+                results: [{
+                    txnHash: "0xtxn",
+                    blockNumber: 1,
+                    blockHash: "",
+                    chainId: 137,
+                    metaTxnID: null,
+                    transfers: [],
+                    timestamp: "2026-01-01T00:00:00Z",
+                }],
+            }],
+        }), {status: 200})));
+
+        const indexer = new IndexerClient({
+            publishableKey: "publishable-key",
+            environment: testEnvironment(),
+        });
+
+        const result = await indexer.getTransactionHistory({walletAddress: "0xwallet"});
+        expect(result.transactions[0]).toMatchObject({
+            txnHash: "0xtxn",
+            transfers: [],
+        });
+        expect(result.transactions[0].metaTxnId).toBeUndefined();
+    });
+
+    it("rejects transactions missing the required transfer list", async () => {
+        vi.stubGlobal("fetch", vi.fn(async () => new Response(JSON.stringify({
+            transactions: [{
+                chainId: 137,
+                results: [{
+                    txnHash: "0xtxn",
+                    blockNumber: 1,
+                    blockHash: "0xblock",
+                    chainId: 137,
+                    timestamp: "2026-01-01T00:00:00Z",
+                }],
+            }],
+        }), {status: 200})));
+
+        const indexer = new IndexerClient({
+            publishableKey: "publishable-key",
+            environment: testEnvironment(),
+        });
+
+        await expect(indexer.getTransactionHistory({walletAddress: "0xwallet"})).rejects.toMatchObject({
+            code: "OMS_INVALID_RESPONSE",
+            operation: "indexer.getTransactionHistory",
+            status: 200,
+        });
+    });
+
     it("does not set a synthetic Origin when the runtime already has one", async () => {
         const fetchMock = vi.fn(async () => new Response(JSON.stringify({
             page: {page: 0, pageSize: 40, more: false},
@@ -256,6 +352,35 @@ describe("IndexerClient", () => {
             status: 200,
         });
         expect(fetchMock.mock.calls[0][0].toString()).toBe("https://indexer.example/GetTokenBalancesDetails");
+    });
+
+    it("rejects balance objects missing evidence-backed core fields", async () => {
+        vi.stubGlobal("fetch", vi.fn(async () => new Response(JSON.stringify({
+            nativeBalances: [],
+            balances: [{
+                chainId: 137,
+                results: [{
+                    contractType: "ERC20",
+                    contractAddress: "0xtoken",
+                    accountAddress: "0xwallet",
+                    tokenID: "0",
+                    balance: "1",
+                    blockNumber: 1,
+                    chainId: 137,
+                }],
+            }],
+        }), {status: 200})));
+
+        const indexer = new IndexerClient({
+            publishableKey: "publishable-key",
+            environment: testEnvironment(),
+        });
+
+        await expect(indexer.getBalances({walletAddress: "0xwallet"})).rejects.toMatchObject({
+            code: "OMS_INVALID_RESPONSE",
+            operation: "indexer.getBalances",
+            status: 200,
+        });
     });
 
     it("wraps non-JSON HTTP responses as retryable HTTP errors", async () => {

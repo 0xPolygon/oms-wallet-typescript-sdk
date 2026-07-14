@@ -203,8 +203,12 @@ function App() {
                       key={`${balance.chainId}-${balance.contractAddress ?? 'native'}-${balance.tokenId ?? index}`}
                       className="balance-row"
                     >
-                      <span>{balance.symbol ?? balance.contractInfo?.symbol ?? 'Token'}</span>
-                      <code>{balance.balance ?? '0'}</code>
+                      <span>
+                        {balance.contractAddress === undefined
+                          ? balance.symbol
+                          : (balance.contractInfo?.symbol ?? 'Token')}
+                      </span>
+                      <code>{balance.balance}</code>
                     </article>
                   ))}
                 </div>

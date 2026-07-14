@@ -222,6 +222,7 @@ interface EmailAuthCompletionParams {
 }
 
 interface ActiveEmailAuthAttempt {
+    email: string;
     verifier: string;
     challenge: string;
     sessionLifetimeSeconds: number;
@@ -431,6 +432,7 @@ export class WalletClient implements OMSWalletClient {
             }
             const response = await this.client.commitVerifier(request)
             this.activeEmailAuthAttempt = {
+                email: params.email,
                 verifier: response.verifier,
                 challenge: response.challenge,
                 sessionLifetimeSeconds,
@@ -1154,7 +1156,7 @@ export class WalletClient implements OMSWalletClient {
             response,
             params.walletType,
             params.walletSelection,
-            this.emailSessionAuthFromResponse(response),
+            this.emailSessionAuthFromResponse(response, attempt.email),
             WalletOperation.completeEmailAuth,
             {
                 validate: () => this.requireActiveEmailAuthAttempt(attempt, WalletOperation.completeEmailAuth),
@@ -1545,10 +1547,13 @@ export class WalletClient implements OMSWalletClient {
         }
     }
 
-    private emailSessionAuthFromResponse(response: CompleteAuthResponse): OMSWalletEmailSessionAuth {
+    private emailSessionAuthFromResponse(
+        response: CompleteAuthResponse,
+        requestedEmail: string,
+    ): OMSWalletEmailSessionAuth {
         return {
             type: 'email',
-            email: response.email,
+            email: response.email ?? requestedEmail,
         }
     }
 
@@ -1877,20 +1882,9 @@ export class WalletClient implements OMSWalletClient {
         const tokenBalances = new Map<string, TokenBalance | undefined>(
             contractAddresses.map(contractAddress => [
                 contractAddress,
-                balances
-                    ? balances.balances.find(balance =>
-                        this.normalizeAddress(balance.contractAddress) === contractAddress,
-                    ) ?? {
-                        contractType: 'ERC20',
-                        contractAddress,
-                        accountAddress: walletAddress,
-                        tokenId: undefined,
-                        balance: '0',
-                        blockHash: undefined,
-                        blockNumber: undefined,
-                        chainId: network.id,
-                    }
-                    : undefined,
+                balances?.balances.find(balance =>
+                    this.normalizeAddress(balance.contractAddress) === contractAddress,
+                ),
             ]),
         )
 
@@ -2302,10 +2296,10 @@ function normalizeSessionAuth(value: unknown): OMSWalletSessionAuth | undefined 
     if (!value || typeof value !== 'object') return undefined
 
     const auth = value as Record<string, unknown>
-    if (auth.type === 'email') {
+    if (auth.type === 'email' && typeof auth.email === 'string') {
         return {
             type: 'email',
-            email: typeof auth.email === 'string' ? auth.email : undefined,
+            email: auth.email,
         }
     }
 

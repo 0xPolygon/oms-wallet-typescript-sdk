@@ -77,6 +77,7 @@
   - [Transaction](#transaction)
   - [TransactionTransfer](#transactiontransfer)
   - [TokenBalancesPage](#tokenbalancespage)
+  - [TokenBalancesPageRequest](#tokenbalancespagerequest)
   - [TokenBalance](#tokenbalance)
   - [TokenContractInfo](#tokencontractinfo)
   - [TokenMetadata](#tokenmetadata)
@@ -143,7 +144,7 @@ The on-chain address of the active wallet (`Address` is the viem/abitype hex add
 ```typescript
 interface OMSWalletEmailSessionAuth {
   readonly type: 'email'
-  readonly email: string | undefined
+  readonly email: string
 }
 
 type OMSWalletOidcSessionAuthFlow = 'redirect' | 'id-token'
@@ -836,7 +837,7 @@ getBalances(params: {
   omitPrices?: boolean
   tokenIds?: string[]
   contractStatus?: ContractVerificationStatus
-  page?: TokenBalancesPage
+  page?: TokenBalancesPageRequest
 }): Promise<BalancesResult>
 ```
 
@@ -854,7 +855,7 @@ Fetches native and token balances for a wallet. Pass `networks` to query explici
 | `omitPrices` | `boolean` | Optional price exclusion flag. |
 | `tokenIds` | `string[]` | Optional token ID filter. |
 | `contractStatus` | `ContractVerificationStatus` | Optional contract verification filter. |
-| `page` | `TokenBalancesPage` | Optional pagination request. Defaults to `{ page: 0, pageSize: 40 }`. |
+| `page` | `TokenBalancesPageRequest` | Optional pagination request. Defaults to `{ page: 0, pageSize: 40 }`. |
 
 **Returns** `Promise<BalancesResult>` — see [BalancesResult](#balancesresult).
 
@@ -897,7 +898,7 @@ getTransactionHistory(params: {
   includeMetadata?: boolean
   omitPrices?: boolean
   metadataOptions?: MetadataOptions
-  page?: TokenBalancesPage
+  page?: TokenBalancesPageRequest
 }): Promise<TransactionHistoryResult>
 ```
 
@@ -919,7 +920,7 @@ Fetches mined transaction history for a wallet. Pass `networks` to query explici
 | `includeMetadata` | `boolean` | Optional metadata flag. Defaults to `true`. |
 | `omitPrices` | `boolean` | Optional price exclusion flag. |
 | `metadataOptions` | `MetadataOptions` | Optional metadata enrichment filters. See [MetadataOptions](#metadataoptions). |
-| `page` | `TokenBalancesPage` | Optional pagination request. |
+| `page` | `TokenBalancesPageRequest` | Optional pagination request. |
 
 **Returns** `Promise<TransactionHistoryResult>` — see [TransactionHistoryResult](#transactionhistoryresult).
 
@@ -1221,7 +1222,7 @@ class EthereumPrivateKeyCredentialSigner implements CredentialSigner {
 ```typescript
 interface OMSWalletEmailSessionAuth {
   readonly type: 'email'
-  readonly email: string | undefined
+  readonly email: string
 }
 
 type OMSWalletOidcSessionAuthFlow = 'redirect' | 'id-token'
@@ -1633,7 +1634,7 @@ interface GetBalancesParams {
   omitPrices?: boolean
   tokenIds?: string[]
   contractStatus?: ContractVerificationStatus
-  page?: TokenBalancesPage
+  page?: TokenBalancesPageRequest
 }
 ```
 
@@ -1657,7 +1658,7 @@ interface GetTransactionHistoryParams {
   includeMetadata?: boolean
   omitPrices?: boolean
   metadataOptions?: MetadataOptions
-  page?: TokenBalancesPage
+  page?: TokenBalancesPageRequest
 }
 ```
 
@@ -1724,8 +1725,8 @@ Sort descriptor used in indexer pagination requests.
 interface BalancesResult {
   status: number
   page?: TokenBalancesPage
-  nativeBalances: TokenBalance[]
-  balances: TokenBalance[]
+  nativeBalances: NativeTokenBalance[]
+  balances: ContractTokenBalance[]
 }
 ```
 
@@ -1733,8 +1734,8 @@ interface BalancesResult {
 |---|---|---|
 | `status` | `number` | Response status code. |
 | `page` | `TokenBalancesPage` | Pagination metadata, if present. |
-| `nativeBalances` | `TokenBalance[]` | Native token balances for the requested address. |
-| `balances` | `TokenBalance[]` | Array of token balance entries for the requested address. |
+| `nativeBalances` | `NativeTokenBalance[]` | Native token balances for the requested address. |
+| `balances` | `ContractTokenBalance[]` | Contract token balances for the requested address. |
 
 ---
 
@@ -1765,7 +1766,7 @@ interface Transaction {
   blockHash: string
   chainId: number
   metaTxnId?: string
-  transfers?: TransactionTransfer[]
+  transfers: TransactionTransfer[]
   timestamp: string
 }
 ```
@@ -1778,14 +1779,14 @@ Indexer transaction entry returned by [`getTransactionHistory`](#gettransactionh
 
 ```typescript
 interface TransactionTransfer {
-  transferType?: string
-  contractAddress?: string
-  contractType?: string
-  from?: string
-  to?: string
+  transferType: string
+  contractAddress: string
+  contractType: string
+  from: string
+  to: string
   tokenIds?: string[]
-  amounts?: string[]
-  logIndex?: number
+  amounts: string[]
+  logIndex: number
   amountsUSD?: string[]
   pricesUSD?: string[]
   contractInfo?: TokenContractInfo
@@ -1801,10 +1802,10 @@ Token or native transfer details associated with an indexer transaction entry.
 
 ```typescript
 interface TokenBalancesPage {
-  page?: number
+  page: number
   column?: string
-  pageSize?: number
-  more?: boolean
+  pageSize: number
+  more: boolean
   before?: unknown
   after?: unknown
   sort?: SortBy[]
@@ -1823,49 +1824,60 @@ interface TokenBalancesPage {
 
 ---
 
+### TokenBalancesPageRequest
+
+```typescript
+interface TokenBalancesPageRequest {
+  page?: number
+  column?: string
+  before?: unknown
+  after?: unknown
+  sort?: SortBy[]
+  pageSize?: number
+}
+```
+
+Pagination values accepted by balance and transaction-history requests.
+
+---
+
 ### TokenBalance
 
 ```typescript
-interface TokenBalance {
-  contractType?: string
-  contractAddress?: string
-  accountAddress?: string
-  tokenId?: string
-  name?: string
-  symbol?: string
-  balance?: string
+interface NativeTokenBalance {
+  contractType: 'NATIVE'
+  accountAddress: string
+  name: string
+  symbol: string
+  balance: string
+  chainId: number
   balanceUSD?: string
   priceUSD?: string
   priceUpdatedAt?: string
-  blockHash?: string
-  blockNumber?: number
-  chainId?: number
+}
+
+interface ContractTokenBalance {
+  contractType: string
+  contractAddress: string
+  accountAddress: string
+  tokenId: string
+  balance: string
+  blockHash: string
+  blockNumber: number
+  chainId: number
+  balanceUSD?: string
+  priceUSD?: string
+  priceUpdatedAt?: string
   uniqueCollectibles?: string
   isSummary?: boolean
   contractInfo?: TokenContractInfo
   tokenMetadata?: TokenMetadata
 }
+
+type TokenBalance = NativeTokenBalance | ContractTokenBalance
 ```
 
-| Field | Type | Description |
-|---|---|---|
-| `contractType` | `string` | Token standard, e.g. `"ERC20"`, `"ERC721"`, `"ERC1155"`. |
-| `contractAddress` | `string` | Address of the token contract. |
-| `accountAddress` | `string` | Wallet address this balance belongs to. |
-| `tokenId` | `string` | For ERC-721/ERC-1155 tokens, the token ID. |
-| `name` | `string` | Token name, when returned directly on the balance row. |
-| `symbol` | `string` | Token symbol, when returned directly on the balance row. |
-| `balance` | `string` | Balance in the token's smallest denomination. |
-| `balanceUSD` | `string` | USD value when returned by the Indexer. |
-| `priceUSD` | `string` | Token price in USD when returned by the Indexer. |
-| `priceUpdatedAt` | `string` | Timestamp for the returned USD price. |
-| `blockHash` | `string` | Block hash at which this balance was recorded. |
-| `blockNumber` | `number` | Block number at which this balance was recorded. |
-| `chainId` | `number` | Numeric chain ID. |
-| `uniqueCollectibles` | `string` | Number of unique collectibles represented by a summary row. |
-| `isSummary` | `boolean` | Whether the row represents an aggregated collection summary. |
-| `contractInfo` | `TokenContractInfo` | Contract display metadata. ERC-20 decimals are exposed as `contractInfo.decimals`. |
-| `tokenMetadata` | `TokenMetadata` | Token-level metadata for NFT/collection entries when returned. |
+`NativeTokenBalance` contains native currency names and symbols. `ContractTokenBalance` contains the contract, token, and block identifiers. Price and metadata fields remain optional because the Indexer may omit them.
 
 ---
 
@@ -1873,20 +1885,20 @@ interface TokenBalance {
 
 ```typescript
 interface TokenContractInfo {
-  chainId?: number
-  address?: string
-  source?: string
-  name?: string
-  type?: string
-  symbol?: string
+  chainId: number
+  address: string
+  source: string
+  name: string
+  type: string
+  symbol: string
   decimals?: number
   logoURI?: string
-  deployed?: boolean
-  bytecodeHash?: string
-  extensions?: Record<string, unknown>
-  updatedAt?: string
-  queuedAt?: string | null
-  status?: string
+  deployed: boolean
+  bytecodeHash: string
+  extensions: Record<string, unknown>
+  updatedAt: string
+  queuedAt?: string
+  status: string
 }
 ```
 
@@ -1900,24 +1912,24 @@ Contract-level metadata returned by the Indexer when `includeMetadata` is `true`
 interface TokenMetadata {
   chainId?: number
   contractAddress?: string
-  tokenId?: string
-  source?: string
-  name?: string
+  tokenId: string
+  source: string
+  name: string
   description?: string
   image?: string
   video?: string
   audio?: string
   properties?: Record<string, unknown>
-  attributes?: Record<string, unknown>[]
-  image_data?: string
-  external_url?: string
-  background_color?: string
-  animation_url?: string
+  attributes: Record<string, unknown>[]
+  imageData?: string
+  externalUrl?: string
+  backgroundColor?: string
+  animationUrl?: string
   decimals?: number
   updatedAt?: string
   assets?: TokenMetadataAsset[]
-  status?: string
-  queuedAt?: string | null
+  status: string
+  queuedAt?: string
   lastFetched?: string
 }
 ```

@@ -34,6 +34,8 @@ import {
     type SendTransactionParams,
     type SendTransactionResponse,
     type SendContractTransactionParams,
+    type ContractTokenBalance,
+    type NativeTokenBalance,
     type TokenBalance,
     type TokenBalancesPage,
     type TokenContractInfo,
@@ -213,21 +215,56 @@ const unsupportedNetwork: Network = {
     explorerUrl: "https://example.com",
     displayName: "Unsupported",
 };
-const tokenContractInfo: TokenContractInfo = {symbol: "USDC", decimals: 6};
-const tokenMetadata: TokenMetadata = {tokenId: "0", name: "USDC"};
-const tokenBalance: TokenBalance = {
+const tokenContractInfo: TokenContractInfo = {
+    chainId: 137,
+    address: "0xtoken",
+    source: "token-directory",
+    name: "USD Coin",
+    type: "ERC20",
+    symbol: "USDC",
+    decimals: 6,
+    deployed: true,
+    bytecodeHash: "0xhash",
+    extensions: {},
+    updatedAt: "2026-01-01T00:00:00Z",
+    status: "AVAILABLE",
+};
+const tokenMetadata: TokenMetadata = {
+    tokenId: "0",
+    source: "metadata",
+    name: "USDC",
+    attributes: [],
+    status: "AVAILABLE",
+};
+const contractTokenBalance: ContractTokenBalance = {
+    contractType: "ERC20",
+    contractAddress: "0xtoken",
+    accountAddress: "0xwallet",
+    tokenId: "0",
+    balance: "141799",
     chainId: Networks.polygon.id,
+    blockHash: "0xblock",
+    blockNumber: 1,
     contractInfo: tokenContractInfo,
     tokenMetadata,
     balanceUSD: "0.141799",
     priceUSD: "1",
 };
+const nativeTokenBalance: NativeTokenBalance = {
+    contractType: "NATIVE",
+    accountAddress: "0xwallet",
+    balance: "1000000000000000000",
+    chainId: Networks.polygon.id,
+    name: "POL",
+    symbol: "POL",
+};
+const tokenBalance: TokenBalance = contractTokenBalance;
 const tokenBalancesPage: TokenBalancesPage = {page: 0, pageSize: 40, more: false};
 const tokenBalancesResult: BalancesResult = {
     status: 200,
     page: tokenBalancesPage,
-    nativeBalances: [tokenBalance],
-    balances: [tokenBalance],
+    nativeBalances: [nativeTokenBalance],
+    balances: [contractTokenBalance],
 };
 const indexerNetworkType: IndexerNetworkType = "MAINNETS";
 const transactionHistoryResult: TransactionHistoryResult = {status: 200, page: tokenBalancesPage, transactions: []};

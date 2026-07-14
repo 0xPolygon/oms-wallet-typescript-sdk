@@ -3,33 +3,41 @@ import type { Network } from "../networks.js";
 export type IndexerNetworkType = "MAINNETS" | "TESTNETS" | "ALL";
 export type ContractVerificationStatus = "VERIFIED" | "UNVERIFIED" | "ALL";
 export interface TokenBalancesPage {
+    page: number;
+    column?: string;
+    before?: unknown;
+    after?: unknown;
+    sort?: SortBy[];
+    pageSize: number;
+    more: boolean;
+}
+export interface TokenBalancesPageRequest {
     page?: number;
     column?: string;
     before?: unknown;
     after?: unknown;
     sort?: SortBy[];
     pageSize?: number;
-    more?: boolean;
 }
 export interface SortBy {
     column: string;
     order: "DESC" | "ASC";
 }
 export interface TokenContractInfo {
-    chainId?: number;
-    address?: string;
-    source?: string;
-    name?: string;
-    type?: string;
-    symbol?: string;
+    chainId: number;
+    address: string;
+    source: string;
+    name: string;
+    type: string;
+    symbol: string;
     decimals?: number;
     logoURI?: string;
-    deployed?: boolean;
-    bytecodeHash?: string;
-    extensions?: Record<string, unknown>;
-    updatedAt?: string;
-    queuedAt?: string | null;
-    status?: string;
+    deployed: boolean;
+    bytecodeHash: string;
+    extensions: Record<string, unknown>;
+    updatedAt: string;
+    queuedAt?: string;
+    status: string;
 }
 export interface TokenMetadataAsset {
     id?: number;
@@ -47,46 +55,54 @@ export interface TokenMetadataAsset {
 export interface TokenMetadata {
     chainId?: number;
     contractAddress?: string;
-    tokenId?: string;
-    source?: string;
-    name?: string;
+    tokenId: string;
+    source: string;
+    name: string;
     description?: string;
     image?: string;
     video?: string;
     audio?: string;
     properties?: Record<string, unknown>;
-    attributes?: Record<string, unknown>[];
-    image_data?: string;
-    external_url?: string;
-    background_color?: string;
-    animation_url?: string;
+    attributes: Record<string, unknown>[];
+    imageData?: string;
+    externalUrl?: string;
+    backgroundColor?: string;
+    animationUrl?: string;
     decimals?: number;
     updatedAt?: string;
     assets?: TokenMetadataAsset[];
-    status?: string;
-    queuedAt?: string | null;
+    status: string;
+    queuedAt?: string;
     lastFetched?: string;
 }
-export interface TokenBalance {
-    contractType?: string;
-    contractAddress?: string;
-    accountAddress?: string;
-    /** Wire format uses `tokenID`; this field is re-mapped during decoding. */
-    tokenId?: string;
-    name?: string;
-    symbol?: string;
-    balance?: string;
+interface TokenBalanceBase {
+    contractType: string;
+    accountAddress: string;
+    balance: string;
+    chainId: number;
     balanceUSD?: string;
     priceUSD?: string;
     priceUpdatedAt?: string;
-    blockHash?: string;
-    blockNumber?: number;
-    chainId?: number;
+}
+export interface NativeTokenBalance extends TokenBalanceBase {
+    contractType: "NATIVE";
+    name: string;
+    symbol: string;
+    contractAddress?: undefined;
+    tokenId?: undefined;
+}
+export interface ContractTokenBalance extends TokenBalanceBase {
+    contractAddress: string;
+    /** The gateway returns `tokenID`; the SDK exposes it as `tokenId`. */
+    tokenId: string;
+    blockHash: string;
+    blockNumber: number;
     uniqueCollectibles?: string;
     isSummary?: boolean;
     contractInfo?: TokenContractInfo;
     tokenMetadata?: TokenMetadata;
 }
+export type TokenBalance = NativeTokenBalance | ContractTokenBalance;
 export interface MetadataOptions {
     verifiedOnly?: boolean;
     unverifiedOnly?: boolean;
@@ -101,23 +117,23 @@ export interface GetBalancesParams {
     omitPrices?: boolean;
     tokenIds?: string[];
     contractStatus?: ContractVerificationStatus;
-    page?: TokenBalancesPage;
+    page?: TokenBalancesPageRequest;
 }
 export interface BalancesResult {
     status: number;
     page?: TokenBalancesPage;
-    nativeBalances: TokenBalance[];
-    balances: TokenBalance[];
+    nativeBalances: NativeTokenBalance[];
+    balances: ContractTokenBalance[];
 }
 export interface TransactionTransfer {
-    transferType?: string;
-    contractAddress?: string;
-    contractType?: string;
-    from?: string;
-    to?: string;
+    transferType: string;
+    contractAddress: string;
+    contractType: string;
+    from: string;
+    to: string;
     tokenIds?: string[];
-    amounts?: string[];
-    logIndex?: number;
+    amounts: string[];
+    logIndex: number;
     amountsUSD?: string[];
     pricesUSD?: string[];
     contractInfo?: TokenContractInfo;
@@ -129,7 +145,7 @@ export interface Transaction {
     blockHash: string;
     chainId: number;
     metaTxnId?: string;
-    transfers?: TransactionTransfer[];
+    transfers: TransactionTransfer[];
     timestamp: string;
 }
 export interface GetTransactionHistoryParams {
@@ -145,7 +161,7 @@ export interface GetTransactionHistoryParams {
     includeMetadata?: boolean;
     omitPrices?: boolean;
     metadataOptions?: MetadataOptions;
-    page?: TokenBalancesPage;
+    page?: TokenBalancesPageRequest;
 }
 export interface TransactionHistoryResult {
     status: number;
@@ -172,6 +188,7 @@ export declare class IndexerClient implements OMSWalletIndexerClient {
     private postJson;
     private chainScope;
     private requestPage;
+    private decodeResponse;
     private indexerGatewayUrl;
     private defaultHeaders;
 }
@@ -301,7 +318,7 @@ export { Networks, findNetworkById, findNetworkByName, type Network, } from './n
 export { AuthMode, TransactionMode, TransactionStatus, WalletType, type OidcAuthMode, type AbiArg, type FeeOption, type FeeOptionSelection, type TransactionStatusResponse, } from './types/waas.js';
 export { OMSWalletRequestError, OMSWalletResponseError, OMSWalletError, OMSWalletSessionError, OMSWalletTransactionError, OMSWalletSelectionError, OMSWalletValidationError, OMSWalletStorageError, isOMSWalletError, type OMSWalletErrorCode, type OMSWalletUpstreamError, } from './errors.js';
 export type { CompleteEmailAuthParams, CompleteEmailAuthResult, CompleteOidcIdTokenAuthResult, CompleteOidcRedirectAuthParams, CompleteOidcRedirectAuthResult, GetIdTokenParams, IsValidMessageSignatureParams, IsValidTypedDataSignatureParams, OMSWalletEmailSessionAuth, OMSWalletOidcSessionAuth, OMSWalletOidcSessionAuthFlow, OMSWalletSessionAuth, OMSWalletSessionExpiredEvent, OMSWalletSessionExpiredListener, OMSWalletSessionState, WalletAccount, PendingWalletSelection, SignInWithOidcIdTokenParams, SignMessageParams, SignInWithOidcRedirectParams, SignTypedDataParams, StartEmailAuthParams, StartOidcRedirectAuthParams, StartOidcRedirectAuthResult, WalletActivationResult, WalletSelectionBehavior, OMSWalletClient, } from './wallet.js';
-export type { BalancesResult, ContractVerificationStatus, GetBalancesParams, GetTransactionHistoryParams, IndexerNetworkType, MetadataOptions, OMSWalletIndexerClient, SortBy, TokenContractInfo, TokenBalance, TokenBalancesPage, TokenMetadata, TokenMetadataAsset, Transaction, TransactionHistoryResult, TransactionTransfer, } from './clients/indexerClient.js';
+export type { BalancesResult, ContractVerificationStatus, ContractTokenBalance, GetBalancesParams, GetTransactionHistoryParams, IndexerNetworkType, MetadataOptions, NativeTokenBalance, OMSWalletIndexerClient, SortBy, TokenContractInfo, TokenBalance, TokenBalancesPage, TokenBalancesPageRequest, TokenMetadata, TokenMetadataAsset, Transaction, TransactionHistoryResult, TransactionTransfer, } from './clients/indexerClient.js';
 export type { AccessGrant, AccessGrantPage, ListAccessParams, WalletCredential, } from './types/accessGrant.js';
 export type { FeeOptionWithBalance, SendContractTransactionParams, SendDataTransactionParams, SendNativeTransactionParams, SendTransactionBase, SendTransactionParams, SendTransactionResponse, TransactionStatusPollingOptions, } from './types/transactionTypes.js';
 export { FeeOptionSelector, } from './types/transactionTypes.js';
@@ -778,7 +795,7 @@ export interface PendingWalletSelection {
 }
 export interface OMSWalletEmailSessionAuth {
     readonly type: 'email';
-    readonly email: string | undefined;
+    readonly email: string;
 }
 export type OMSWalletOidcSessionAuthFlow = 'redirect' | 'id-token';
 export interface OMSWalletOidcSessionAuth {

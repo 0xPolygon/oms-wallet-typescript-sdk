@@ -117,7 +117,7 @@ export interface PendingWalletSelection {
 
 export interface OMSWalletEmailSessionAuth {
     readonly type: 'email'
-    readonly email: string | undefined
+    readonly email: string
 }
 
 export type OMSWalletOidcSessionAuthFlow = 'redirect' | 'id-token'
