@@ -8,8 +8,6 @@ SDK built-in Google relay value. The example passes its direct
 ## Run Locally
 
 ```bash
-cp examples/custom-google-redirect/.env.example examples/custom-google-redirect/.env.local
-# Fill VITE_OMS_PUBLISHABLE_KEY in examples/custom-google-redirect/.env.local
 pnpm dev:custom-google-redirect-example
 ```
 

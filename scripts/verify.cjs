@@ -11,12 +11,6 @@ const { spawnSync } = require('node:child_process')
 const rootDir = join(__dirname, '..')
 const pnpm = process.platform === 'win32' ? 'pnpm.cmd' : 'pnpm'
 const stable = process.argv.includes('--stable')
-const releaseEnv = {
-  ...process.env,
-  VITE_OMS_PUBLISHABLE_KEY: process.env.VITE_OMS_PUBLISHABLE_KEY || 'pk_ci_sdbx_ciproject_cikey',
-  VITE_GOOGLE_CLIENT_ID: process.env.VITE_GOOGLE_CLIENT_ID || 'ci-google-client-id',
-  VITE_TRAILS_API_KEY: process.env.VITE_TRAILS_API_KEY || 'ci-trails-key',
-}
 
 process.chdir(rootDir)
 
@@ -31,10 +25,10 @@ run('Check generated API reference', ['check:api:built'])
 run('Test wagmi connector', ['--filter', '@polygonlabs/oms-wallet-wagmi-connector', 'test'])
 run('Build Node example', ['--filter', 'node-example', 'build'])
 run('Build Node contract deployment example', ['--filter', 'node-contract-deploy-example', 'build'])
-run('Build React example', ['--filter', 'react-example', 'build'], releaseEnv)
-run('Build custom Google redirect example', ['--filter', 'custom-google-redirect-example', 'build'], releaseEnv)
-run('Build Trails Actions example', ['--filter', 'trails-actions-example', 'build'], releaseEnv)
-run('Build wagmi example', ['--filter', 'wagmi-example', 'build'], releaseEnv)
+run('Build React example', ['--filter', 'react-example', 'build'])
+run('Build custom Google redirect example', ['--filter', 'custom-google-redirect-example', 'build'])
+run('Build Trails Actions example', ['--filter', 'trails-actions-example', 'build'])
+run('Build wagmi example', ['--filter', 'wagmi-example', 'build'])
 
 console.log('\nVerified TypeScript SDK packages and examples.')
 

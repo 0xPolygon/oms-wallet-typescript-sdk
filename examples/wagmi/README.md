@@ -7,11 +7,10 @@ Run it from the repository root:
 ```bash
 pnpm install
 pnpm build
-cp examples/wagmi/.env.example examples/wagmi/.env.local
-# Fill VITE_OMS_PUBLISHABLE_KEY
-# Replace VITE_TRAILS_API_KEY only if you need a different Trails project
 pnpm dev:wagmi-example
 ```
+
+The example uses the Development sandbox OMS project and its configured Trails project.
 
 The dev server runs at `http://localhost:5173`.
 

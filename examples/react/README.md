@@ -11,8 +11,6 @@ Run it from the repository root:
 ```bash
 pnpm install
 pnpm build
-cp examples/react/.env.example examples/react/.env.local
-# Fill VITE_OMS_PUBLISHABLE_KEY
 pnpm dev:example
 ```
 

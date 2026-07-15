@@ -589,8 +589,6 @@ A deployed React example is available at [https://0xsequence.github.io/typescrip
 To run it locally from the repository root:
 
 ```bash
-cp examples/react/.env.example examples/react/.env.local
-# Fill VITE_OMS_PUBLISHABLE_KEY in examples/react/.env.local
 pnpm dev:example
 ```
 
@@ -603,8 +601,6 @@ the SDK built-in Google relay helper.
 To run it locally from the repository root:
 
 ```bash
-cp examples/custom-google-redirect/.env.example examples/custom-google-redirect/.env.local
-# Fill VITE_OMS_PUBLISHABLE_KEY in examples/custom-google-redirect/.env.local
 pnpm dev:custom-google-redirect-example
 ```
 
@@ -629,9 +625,6 @@ The deployed Wagmi example is available at [https://0xsequence.github.io/typescr
 To run it locally from the repository root:
 
 ```bash
-cp examples/wagmi/.env.example examples/wagmi/.env.local
-# Fill VITE_OMS_PUBLISHABLE_KEY in examples/wagmi/.env.local
-# Replace VITE_TRAILS_API_KEY only if you need a different Trails project
 pnpm dev:wagmi-example
 ```
 
@@ -644,8 +637,6 @@ The deployed Trails Actions example is available at [https://0xsequence.github.i
 To run it locally from the repository root:
 
 ```bash
-cp examples/trails-actions/.env.example examples/trails-actions/.env.local
-# Fill VITE_OMS_PUBLISHABLE_KEY in examples/trails-actions/.env.local
 pnpm dev:trails-actions-example
 ```
 
