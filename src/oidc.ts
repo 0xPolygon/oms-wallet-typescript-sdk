@@ -2,7 +2,10 @@ import {AuthMode, type OidcAuthMode} from './types/waas.js'
 
 declare const omsRelayOidcProviderBrand: unique symbol
 
-/** An opaque SDK-owned OMS relay provider value. */
+/**
+ * An opaque SDK-owned OMS relay provider value.
+ * Obtain values from OmsRelayOidcProviders; object literals are invalid.
+ */
 export interface OmsRelayOidcProvider<Provider extends 'google' | 'apple' = 'google' | 'apple'> {
     readonly provider: Provider
     readonly [omsRelayOidcProviderBrand]: true

@@ -2,6 +2,8 @@
 
 Build non-custodial EVM wallet experiences in TypeScript with OMS Wallet: email and OIDC auth, session restore, message signing, transaction submission, and token balance queries.
 
+[API reference](https://docs.polygon.technology/wallets/sdk/typescript/api-reference)
+
 **Requirements:** Node.js 22+ for Node runtimes and local builds. Browser apps
 need a modern browser with WebCrypto support.
 

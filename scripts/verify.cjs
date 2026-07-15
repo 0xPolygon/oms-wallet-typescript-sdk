@@ -27,6 +27,7 @@ run(
 run('Typecheck SDK', ['exec', 'tsc', '--noEmit'])
 run('Test SDK', ['test'])
 verifyPackages()
+run('Check generated API reference', ['check:api:built'])
 run('Test wagmi connector', ['--filter', '@polygonlabs/oms-wallet-wagmi-connector', 'test'])
 run('Build Node example', ['--filter', 'node-example', 'build'])
 run('Build Node contract deployment example', ['--filter', 'node-contract-deploy-example', 'build'])
@@ -60,9 +61,14 @@ function run(label, args, env = process.env, quiet = false) {
 function verifyPackages() {
   const packageDir = mkdtempSync(join(tmpdir(), 'oms-wallet-release-'))
   try {
-    run('Build and pack release packages', [
+    run('Build and pack SDK release package', [
       '--filter',
       '@polygonlabs/oms-wallet',
+      'pack',
+      '--pack-destination',
+      packageDir,
+    ], process.env, true)
+    run('Build and pack wagmi connector release package', [
       '--filter',
       '@polygonlabs/oms-wallet-wagmi-connector',
       'pack',
