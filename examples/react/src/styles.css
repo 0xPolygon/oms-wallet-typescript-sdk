@@ -1,6 +1,53 @@
 /* Shared example structure and tokens live in examples/shared. */
 @import url("../../shared/oms-example-base.css");
 
+.environment-option {
+  margin-top: 14px;
+}
+
+.environment-option + .header-options {
+  margin-top: 10px;
+}
+
+.environment-badge {
+  display: inline-flex;
+  align-items: center;
+  width: fit-content;
+  min-height: 28px;
+  margin-top: 10px;
+  padding: 5px 10px;
+  border: 1px solid var(--oms-purple-200);
+  border-radius: 999px;
+  color: var(--oms-brand);
+  background: var(--oms-purple-50);
+  font-size: 12px;
+  font-weight: 700;
+  line-height: 1;
+}
+
+.select-control {
+  position: relative;
+  display: block;
+}
+
+.select-control::after {
+  content: "";
+  position: absolute;
+  top: 50%;
+  right: 16px;
+  width: 7px;
+  height: 7px;
+  border-right: 2px solid var(--oms-muted-ink);
+  border-bottom: 2px solid var(--oms-muted-ink);
+  pointer-events: none;
+  transform: translateY(-70%) rotate(45deg);
+}
+
+.select-control select {
+  appearance: none;
+  padding-right: 44px;
+}
+
 button.danger {
   color: var(--oms-red-700);
   background: var(--oms-red-50);
