@@ -34,6 +34,12 @@ import {
   type OidcRedirectProvider,
 } from '../../shared/example-utils'
 import { useSessionPreferences } from '../../shared/use-session-preferences'
+import {
+  DEMO_ENVIRONMENTS,
+  SELECTED_DEMO_ENVIRONMENT,
+  selectDemoEnvironment,
+  type DemoEnvironmentId,
+} from './config'
 import { TEST_SESSION_LIFETIME_SECONDS, omsWallet } from './omsWallet'
 import { WalletKitDollarExample } from './WalletKitDollarExample'
 
@@ -294,6 +300,12 @@ function App() {
     setStep('email')
   }
 
+  function changeDemoEnvironment(id: DemoEnvironmentId) {
+    if (id === SELECTED_DEMO_ENVIRONMENT.id) return
+    selectDemoEnvironment(id)
+    window.location.reload()
+  }
+
   async function selectPendingWallet(wallet: WalletAccount) {
     if (!pendingWalletSelection) return
     await run('Selecting wallet...', setEmailAuthStatus, async () => {
@@ -487,14 +499,36 @@ function App() {
         <header>
           <p className="eyebrow">OMS Wallet TypeScript SDK</p>
           <h1>Wallet Demo</h1>
+          {step === 'wallet' && (
+            <span className="environment-badge">{SELECTED_DEMO_ENVIRONMENT.label}</span>
+          )}
           {step === 'email' && (
-            <SessionOptions
-              useManualWalletSelection={useManualWalletSelection}
-              sessionLifetimeSeconds={sessionLifetimeSeconds}
-              disabled={isBusy}
-              onManualWalletSelectionChange={setUseManualWalletSelection}
-              onSessionLifetimeChange={updateSessionLifetime}
-            />
+            <>
+              <label className="environment-option">
+                Environment
+                <span className="select-control">
+                  <select
+                    aria-label="Environment"
+                    value={SELECTED_DEMO_ENVIRONMENT.id}
+                    onChange={(event) => changeDemoEnvironment(event.target.value as DemoEnvironmentId)}
+                    disabled={isBusy}
+                  >
+                    {DEMO_ENVIRONMENTS.map(environment => (
+                      <option key={environment.id} value={environment.id}>
+                        {environment.label}
+                      </option>
+                    ))}
+                  </select>
+                </span>
+              </label>
+              <SessionOptions
+                useManualWalletSelection={useManualWalletSelection}
+                sessionLifetimeSeconds={sessionLifetimeSeconds}
+                disabled={isBusy}
+                onManualWalletSelectionChange={setUseManualWalletSelection}
+                onSessionLifetimeChange={updateSessionLifetime}
+              />
+            </>
           )}
         </header>
 
