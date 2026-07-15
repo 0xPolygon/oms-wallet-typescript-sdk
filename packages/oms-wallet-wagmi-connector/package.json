@@ -1,7 +1,8 @@
 {
-  "name": "@0xsequence/oms-wallet-wagmi-connector",
-  "version": "0.1.0-alpha.4",
+  "name": "@polygonlabs/oms-wallet-wagmi-connector",
+  "version": "0.2.0",
   "description": "Wagmi connector for OMS Wallet.",
+  "license": "Apache-2.0",
   "type": "module",
   "main": "dist/index.js",
   "types": "dist/index.d.ts",
@@ -16,6 +17,9 @@
     }
   },
   "sideEffects": false,
+  "engines": {
+    "node": ">=22"
+  },
   "repository": {
     "type": "git",
     "url": "git+https://github.com/0xsequence/typescript-sdk.git"
@@ -25,23 +29,23 @@
   },
   "homepage": "https://github.com/0xsequence/typescript-sdk#readme",
   "publishConfig": {
-    "access": "public",
-    "tag": "alpha"
+    "access": "public"
   },
   "scripts": {
     "clean": "rm -rf dist",
-    "build": "pnpm clean && tsc -p tsconfig.json",
+    "build": "pnpm --dir ../.. build && pnpm clean && tsc -p tsconfig.json",
     "prepack": "pnpm build",
+    "prepublishOnly": "pnpm --dir ../.. check:package-versions && pnpm build && pnpm test",
     "test": "vitest run",
     "test:watch": "vitest"
   },
   "peerDependencies": {
-    "@0xsequence/typescript-sdk": "workspace:*",
+    "@polygonlabs/oms-wallet": "workspace:^",
     "@wagmi/core": ">=3.5.0 <4",
     "viem": ">=2.48.4 <3"
   },
   "devDependencies": {
-    "@0xsequence/typescript-sdk": "workspace:*",
+    "@polygonlabs/oms-wallet": "workspace:*",
     "@wagmi/core": "^3.5.0",
     "typescript": "^5.9.3",
     "viem": "^2.48.4",

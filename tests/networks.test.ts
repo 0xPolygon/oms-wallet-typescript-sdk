@@ -1,15 +1,15 @@
 import {describe, expect, it} from "vitest";
 
 import {
-    OMSClient,
+    Networks,
+    OMSWallet,
     findNetworkById,
     findNetworkByName,
-    supportedNetworks,
 } from "../src";
 
 describe("Networks", () => {
     it("exposes the supported network registry", () => {
-        expect(supportedNetworks).toEqual([
+        expect(Object.values(Networks)).toEqual([
             {id: 1, name: "mainnet", nativeTokenSymbol: "ETH", explorerUrl: "https://etherscan.io", displayName: "Ethereum"},
             {id: 11155111, name: "sepolia", nativeTokenSymbol: "ETH", explorerUrl: "https://sepolia.etherscan.io", displayName: "Sepolia"},
             {id: 137, name: "polygon", nativeTokenSymbol: "POL", explorerUrl: "https://polygonscan.com", displayName: "Polygon"},
@@ -27,6 +27,8 @@ describe("Networks", () => {
             {id: 43113, name: "avalanche-testnet", nativeTokenSymbol: "AVAX", explorerUrl: "https://subnets-test.avax.network/c-chain", displayName: "Avalanche Testnet"},
             {id: 747474, name: "katana", nativeTokenSymbol: "ETH", explorerUrl: "https://katanascan.com", displayName: "Katana"},
         ]);
+        expect(Object.isFrozen(Networks)).toBe(true);
+        expect(Object.values(Networks).every(Object.isFrozen)).toBe(true);
     });
 
     it("looks up networks by id or name", () => {
@@ -48,11 +50,11 @@ describe("Networks", () => {
         expect(findNetworkByName("Ethereum")).toBeUndefined();
     });
 
-    it("is available from OMSClient", () => {
-        const oms = new OMSClient({
+    it("does not expose the registry from OMSWallet instances", () => {
+        const oms = new OMSWallet({
             publishableKey: "pk_dev_sdbx_project_key",
         });
 
-        expect(oms.supportedNetworks).toBe(supportedNetworks);
+        expect("supportedNetworks" in oms).toBe(false);
     });
 });

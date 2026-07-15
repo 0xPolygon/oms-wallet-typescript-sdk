@@ -1,10 +1,11 @@
 {
-  "name": "@0xsequence/typescript-sdk",
-  "version": "0.1.0-alpha.4",
-  "description": "TypeScript SDK for OMS (Open Money Stack).",
+  "name": "@polygonlabs/oms-wallet",
+  "version": "0.2.0",
+  "description": "TypeScript SDK for OMS Wallet.",
+  "license": "Apache-2.0",
   "main": "dist/index.js",
   "module": "dist/esm/index.js",
-  "types": "dist/index.d.ts",
+  "types": "dist/esm/index.d.ts",
   "files": [
     "dist",
     "README.md",
@@ -12,10 +13,18 @@
   ],
   "exports": {
     ".": {
-      "types": "./dist/index.d.ts",
-      "import": "./dist/esm/index.js",
-      "require": "./dist/index.js"
+      "import": {
+        "types": "./dist/esm/index.d.ts",
+        "default": "./dist/esm/index.js"
+      },
+      "require": {
+        "types": "./dist/index.d.ts",
+        "default": "./dist/index.js"
+      }
     }
+  },
+  "engines": {
+    "node": ">=22"
   },
   "sideEffects": false,
   "repository": {
@@ -27,22 +36,33 @@
   },
   "homepage": "https://github.com/0xsequence/typescript-sdk#readme",
   "publishConfig": {
-    "access": "public",
-    "tag": "alpha"
+    "access": "public"
   },
   "packageManager": "pnpm@11.1.3",
   "scripts": {
     "clean": "rm -rf dist",
     "build": "pnpm clean && tsc && tsc -p tsconfig.esm.json && node scripts/write-esm-package.cjs",
-    "prepack": "pnpm build",
+    "prepack": "pnpm build && pnpm check:public-api && pnpm check:api:built",
     "prepublishOnly": "pnpm check:package-versions && pnpm exec tsc --noEmit && pnpm test",
     "check:package-versions": "node scripts/check-package-versions.cjs",
+    "check:stable-package-versions": "node scripts/check-package-versions.cjs --stable",
+    "check:public-api": "node scripts/check-public-api.cjs",
+    "generate:api": "pnpm build && pnpm generate:api:built",
+    "generate:api:built": "node scripts/generate-api-docs.cjs",
+    "test:api-generator": "node --test scripts/generate-api-docs.test.cjs",
+    "check:api": "pnpm build && pnpm check:public-api && pnpm check:api:built",
+    "check:api:built": "pnpm test:api-generator && node scripts/generate-api-docs.cjs --check",
+    "verify": "node scripts/verify.cjs",
+    "release:dry-run": "pnpm --filter @polygonlabs/oms-wallet publish --dry-run --no-git-checks --access public && pnpm --filter @polygonlabs/oms-wallet-wagmi-connector publish --dry-run --no-git-checks --access public",
+    "release:publish": "pnpm --filter @polygonlabs/oms-wallet publish --access public && pnpm --filter @polygonlabs/oms-wallet-wagmi-connector publish --access public",
     "dev:example": "pnpm --filter react-example dev",
     "build:example": "pnpm --filter react-example build",
+    "dev:custom-google-redirect-example": "pnpm --filter custom-google-redirect-example dev",
+    "build:custom-google-redirect-example": "pnpm --filter custom-google-redirect-example build",
     "dev:trails-actions-example": "pnpm --filter trails-actions-example dev",
     "build:trails-actions-example": "pnpm --filter trails-actions-example build",
-    "dev:wagmi-example": "pnpm --filter @0xsequence/oms-wallet-wagmi-connector build && pnpm --filter wagmi-example dev",
-    "build:wagmi-example": "pnpm --filter @0xsequence/oms-wallet-wagmi-connector build && pnpm --filter wagmi-example build",
+    "dev:wagmi-example": "pnpm --filter @polygonlabs/oms-wallet-wagmi-connector build && pnpm --filter wagmi-example dev",
+    "build:wagmi-example": "pnpm --filter @polygonlabs/oms-wallet-wagmi-connector build && pnpm --filter wagmi-example build",
     "dev:node-example": "pnpm --filter node-example dev",
     "build:node-example": "pnpm --filter node-example build",
     "dev:node-contract-deploy-example": "pnpm --filter node-contract-deploy-example dev",

@@ -1,21 +1,21 @@
-# @0xsequence/oms-wallet-wagmi-connector
+# @polygonlabs/oms-wallet-wagmi-connector
 
-Wagmi connector for an active `@0xsequence/typescript-sdk` OMS client.
+Wagmi connector for an active `@polygonlabs/oms-wallet` SDK instance.
 
 ## Basic setup
 
 ```ts
 import { createConfig, http } from 'wagmi'
 import { polygon } from 'wagmi/chains'
-import { FeeOptionSelector, OMSClient } from '@0xsequence/typescript-sdk'
-import { omsWalletConnector } from '@0xsequence/oms-wallet-wagmi-connector'
+import { FeeOptionSelector, OMSWallet } from '@polygonlabs/oms-wallet'
+import { omsWalletConnector } from '@polygonlabs/oms-wallet-wagmi-connector'
 
-const oms = new OMSClient({
-  publishableKey: import.meta.env.VITE_OMS_PUBLISHABLE_KEY,
+const omsWallet = new OMSWallet({
+  publishableKey: 'your-publishable-key',
 })
 
 const omsConnector = omsWalletConnector({
-  client: oms,
+  omsWallet,
   initialChainId: polygon.id,
   transactionOptions: {
     selectFeeOption: FeeOptionSelector.firstAvailable,
@@ -33,15 +33,15 @@ export const wagmiConfig = createConfig({
 
 ## Authentication
 
-The connector does not render authentication UI. Authenticate with the OMS SDK first, then call wagmi `connect` with the OMS Wallet connector once `oms.wallet.walletAddress` is set.
+The connector does not render authentication UI. Authenticate with the OMS Wallet SDK first, then call wagmi `connect` with the OMS Wallet connector once `omsWallet.wallet.walletAddress` is set.
 
 Email example:
 
 ```ts
-await oms.wallet.startEmailAuth({ email })
-await oms.wallet.completeEmailAuth({ code })
+await omsWallet.wallet.startEmailAuth({ email })
+await omsWallet.wallet.completeEmailAuth({ code })
 
-if (!oms.wallet.walletAddress) {
+if (!omsWallet.wallet.walletAddress) {
   throw new Error('OMS auth completed without an active wallet.')
 }
 
@@ -61,14 +61,14 @@ To sign out completely, disconnect wagmi state and then sign out with the SDK:
 
 ```ts
 await disconnect()
-await oms.wallet.signOut()
+await omsWallet.wallet.signOut()
 ```
 
 ## Networks
 
 OMS `Network` values are not wagmi chain definitions. Wagmi still needs viem `Chain` objects with RPC transport configuration. Use `wagmi/chains`, `viem/chains`, or custom viem `Chain` objects.
 
-By default, the connector validates OMS support with `client.supportedNetworks`. Pass `networks` only when you intentionally want a narrower or custom OMS network set for this connector instance.
+By default, the connector validates OMS support with `Object.values(Networks)`. Pass `networks` only when you intentionally want a narrower set of SDK-defined OMS networks for this connector instance.
 
 The connector validates `initialChainId`, `switchChain`, and provider chain switches against both the wagmi chain list and the OMS network list. A transaction `chainId` is used for that transaction without switching the connector's current chain, and must be supported by OMS.
 
@@ -77,10 +77,10 @@ The connector validates `initialChainId`, `switchChain`, and provider chain swit
 Wagmi transaction parameters do not include OMS fee-option preferences. Pass `transactionOptions` to the connector to apply static options or resolve options per transaction request.
 
 ```ts
-import { TransactionMode } from '@0xsequence/typescript-sdk'
+import { TransactionMode } from '@polygonlabs/oms-wallet'
 
 omsWalletConnector({
-  client: oms,
+  omsWallet,
   transactionOptions: ({ chainId, request }) => ({
     mode: TransactionMode.Relayer,
     selectFeeOption: async (feeOptions) => {
@@ -115,7 +115,7 @@ Use this package through wagmi connector APIs. Do not treat `getProvider()` as a
 
 Supported provider methods are limited to the wallet operations and state queries that map to the SDK today: `eth_chainId`, `net_version`, `eth_accounts`, `eth_requestAccounts`, `wallet_switchEthereumChain`, `personal_sign`, `eth_signTypedData_v4`, `eth_sendTransaction`, `wallet_sendTransaction`, and `wallet_getCapabilities`.
 
-Unsupported methods include direct read/RPC methods such as `eth_call`, `eth_estimateGas`, `eth_getBalance`, `eth_getCode`, `eth_getTransactionCount`, `eth_getTransactionReceipt`, and `eth_blockNumber`. Use wagmi public transports for reads, or use `oms.wallet` directly for OMS SDK operations.
+Unsupported methods include direct read/RPC methods such as `eth_call`, `eth_estimateGas`, `eth_getBalance`, `eth_getCode`, `eth_getTransactionCount`, `eth_getTransactionReceipt`, and `eth_blockNumber`. Use wagmi public transports for reads, or use `omsWallet.wallet` directly for OMS Wallet SDK operations.
 
 Raw byte message signing is not supported because OMS Wallet signs string messages. `eth_sign` and legacy `eth_signTypedData` are not supported; use `personal_sign` and `eth_signTypedData_v4`.
 

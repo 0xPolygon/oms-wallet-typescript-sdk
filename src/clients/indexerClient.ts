@@ -1,7 +1,7 @@
 // Minimal hand-written IndexerGateway adapter for the SDK surface we expose.
 
 import {HttpClient} from "../httpClient.js";
-import {errorMessage, OmsRequestError, OmsResponseError, type OmsUpstreamError} from "../errors.js";
+import {errorMessage, OMSWalletRequestError, OMSWalletResponseError, type OMSWalletUpstreamError} from "../errors.js";
 import type {Network} from "../networks.js";
 import {IndexerOperation} from "../operations.js";
 
@@ -11,13 +11,22 @@ export type IndexerNetworkType = "MAINNETS" | "TESTNETS" | "ALL";
 export type ContractVerificationStatus = "VERIFIED" | "UNVERIFIED" | "ALL";
 
 export interface TokenBalancesPage {
+    page: number;
+    column?: string;
+    before?: unknown;
+    after?: unknown;
+    sort?: SortBy[];
+    pageSize: number;
+    more: boolean;
+}
+
+export interface TokenBalancesPageRequest {
     page?: number;
     column?: string;
     before?: unknown;
     after?: unknown;
     sort?: SortBy[];
     pageSize?: number;
-    more?: boolean;
 }
 
 export interface SortBy {
@@ -26,20 +35,20 @@ export interface SortBy {
 }
 
 export interface TokenContractInfo {
-    chainId?: number;
-    address?: string;
-    source?: string;
-    name?: string;
-    type?: string;
-    symbol?: string;
+    chainId: number;
+    address: string;
+    source: string;
+    name: string;
+    type: string;
+    symbol: string;
     decimals?: number;
     logoURI?: string;
-    deployed?: boolean;
-    bytecodeHash?: string;
-    extensions?: Record<string, unknown>;
-    updatedAt?: string;
-    queuedAt?: string | null;
-    status?: string;
+    deployed: boolean;
+    bytecodeHash: string;
+    extensions: Record<string, unknown>;
+    updatedAt: string;
+    queuedAt?: string;
+    status: string;
 }
 
 export interface TokenMetadataAsset {
@@ -59,47 +68,58 @@ export interface TokenMetadataAsset {
 export interface TokenMetadata {
     chainId?: number;
     contractAddress?: string;
-    tokenId?: string;
-    source?: string;
-    name?: string;
+    tokenId: string;
+    source: string;
+    name: string;
     description?: string;
     image?: string;
     video?: string;
     audio?: string;
     properties?: Record<string, unknown>;
-    attributes?: Record<string, unknown>[];
-    image_data?: string;
-    external_url?: string;
-    background_color?: string;
-    animation_url?: string;
+    attributes: Record<string, unknown>[];
+    imageData?: string;
+    externalUrl?: string;
+    backgroundColor?: string;
+    animationUrl?: string;
     decimals?: number;
     updatedAt?: string;
     assets?: TokenMetadataAsset[];
-    status?: string;
-    queuedAt?: string | null;
+    status: string;
+    queuedAt?: string;
     lastFetched?: string;
 }
 
-export interface TokenBalance {
-    contractType?: string;
-    contractAddress?: string;
-    accountAddress?: string;
-    /** Wire format uses `tokenID`; this field is re-mapped during decoding. */
-    tokenId?: string;
-    name?: string;
-    symbol?: string;
-    balance?: string;
+interface TokenBalanceBase {
+    contractType: string;
+    accountAddress: string;
+    balance: string;
+    chainId: number;
     balanceUSD?: string;
     priceUSD?: string;
     priceUpdatedAt?: string;
-    blockHash?: string;
-    blockNumber?: number;
-    chainId?: number;
+}
+
+export interface NativeTokenBalance extends TokenBalanceBase {
+    contractType: "NATIVE";
+    name: string;
+    symbol: string;
+    contractAddress?: undefined;
+    tokenId?: undefined;
+}
+
+export interface ContractTokenBalance extends TokenBalanceBase {
+    contractAddress: string;
+    /** The gateway returns `tokenID`; the SDK exposes it as `tokenId`. */
+    tokenId: string;
+    blockHash: string;
+    blockNumber: number;
     uniqueCollectibles?: string;
     isSummary?: boolean;
     contractInfo?: TokenContractInfo;
     tokenMetadata?: TokenMetadata;
 }
+
+export type TokenBalance = NativeTokenBalance | ContractTokenBalance;
 
 export interface MetadataOptions {
     verifiedOnly?: boolean;
@@ -116,25 +136,25 @@ export interface GetBalancesParams {
     omitPrices?: boolean;
     tokenIds?: string[];
     contractStatus?: ContractVerificationStatus;
-    page?: TokenBalancesPage;
+    page?: TokenBalancesPageRequest;
 }
 
 export interface BalancesResult {
     status: number;
     page?: TokenBalancesPage;
-    nativeBalances: TokenBalance[];
-    balances: TokenBalance[];
+    nativeBalances: NativeTokenBalance[];
+    balances: ContractTokenBalance[];
 }
 
 export interface TransactionTransfer {
-    transferType?: string;
-    contractAddress?: string;
-    contractType?: string;
-    from?: string;
-    to?: string;
+    transferType: string;
+    contractAddress: string;
+    contractType: string;
+    from: string;
+    to: string;
     tokenIds?: string[];
-    amounts?: string[];
-    logIndex?: number;
+    amounts: string[];
+    logIndex: number;
     amountsUSD?: string[];
     pricesUSD?: string[];
     contractInfo?: TokenContractInfo;
@@ -147,7 +167,7 @@ export interface Transaction {
     blockHash: string;
     chainId: number;
     metaTxnId?: string;
-    transfers?: TransactionTransfer[];
+    transfers: TransactionTransfer[];
     timestamp: string;
 }
 
@@ -164,7 +184,7 @@ export interface GetTransactionHistoryParams {
     includeMetadata?: boolean;
     omitPrices?: boolean;
     metadataOptions?: MetadataOptions;
-    page?: TokenBalancesPage;
+    page?: TokenBalancesPageRequest;
 }
 
 export interface TransactionHistoryResult {
@@ -192,60 +212,117 @@ interface GatewayTransaction {
 }
 
 interface NativeTokenBalanceRaw {
-    accountAddress?: string;
-    chainId?: number;
-    name?: string;
-    symbol?: string;
-    balance?: string;
-    balanceUSD?: string;
-    priceUSD?: string;
-    priceUpdatedAt?: string;
-    errorReason?: string;
+    accountAddress?: unknown;
+    chainId?: unknown;
+    name?: unknown;
+    symbol?: unknown;
+    balance?: unknown;
+    balanceWei?: unknown;
+    balanceUSD?: unknown;
+    priceUSD?: unknown;
+    priceUpdatedAt?: unknown;
+    errorReason?: unknown;
 }
 
 interface TokenBalanceRaw {
-    contractType?: string;
-    contractAddress?: string;
-    accountAddress?: string;
-    tokenID?: string; // note the wire key
-    balance?: string;
-    balanceUSD?: string;
-    priceUSD?: string;
-    priceUpdatedAt?: string;
-    blockHash?: string;
-    blockNumber?: number;
-    chainId?: number;
-    uniqueCollectibles?: string;
-    isSummary?: boolean;
-    contractInfo?: TokenContractInfo;
-    tokenMetadata?: TokenMetadataRaw;
+    contractType?: unknown;
+    contractAddress?: unknown;
+    accountAddress?: unknown;
+    tokenID?: unknown;
+    balance?: unknown;
+    balanceUSD?: unknown;
+    priceUSD?: unknown;
+    priceUpdatedAt?: unknown;
+    blockHash?: unknown;
+    blockNumber?: unknown;
+    chainId?: unknown;
+    uniqueCollectibles?: unknown;
+    isSummary?: unknown;
+    contractInfo?: unknown;
+    tokenMetadata?: unknown;
 }
 
-interface TokenMetadataRaw extends Omit<TokenMetadata, "tokenId" | "assets"> {
-    tokenId?: string;
-    tokenID?: string;
-    assets?: TokenMetadataAssetRaw[];
+interface TokenContractInfoRaw {
+    chainId?: unknown;
+    address?: unknown;
+    source?: unknown;
+    name?: unknown;
+    type?: unknown;
+    symbol?: unknown;
+    decimals?: unknown;
+    logoURI?: unknown;
+    deployed?: unknown;
+    bytecodeHash?: unknown;
+    extensions?: unknown;
+    updatedAt?: unknown;
+    queuedAt?: unknown;
+    status?: unknown;
 }
 
-interface TokenMetadataAssetRaw extends Omit<TokenMetadataAsset, "tokenId"> {
-    tokenId?: string;
-    tokenID?: string;
+interface TokenMetadataRaw {
+    chainId?: unknown;
+    contractAddress?: unknown;
+    tokenId?: unknown;
+    tokenID?: unknown;
+    source?: unknown;
+    name?: unknown;
+    description?: unknown;
+    image?: unknown;
+    video?: unknown;
+    audio?: unknown;
+    properties?: unknown;
+    attributes?: unknown;
+    image_data?: unknown;
+    external_url?: unknown;
+    background_color?: unknown;
+    animation_url?: unknown;
+    decimals?: unknown;
+    updatedAt?: unknown;
+    assets?: unknown;
+    status?: unknown;
+    queuedAt?: unknown;
+    lastFetched?: unknown;
+}
+
+interface TokenMetadataAssetRaw {
+    id?: unknown;
+    collectionId?: unknown;
+    tokenId?: unknown;
+    tokenID?: unknown;
+    url?: unknown;
+    metadataField?: unknown;
+    name?: unknown;
+    filesize?: unknown;
+    mimeType?: unknown;
+    width?: unknown;
+    height?: unknown;
+    updatedAt?: unknown;
 }
 
 interface TransactionRaw {
-    txnHash: string;
-    blockNumber: number;
-    blockHash: string;
-    chainId: number;
-    metaTxnID?: string;
-    transfers?: TransactionTransferRaw[];
-    timestamp: string;
+    txnHash?: unknown;
+    blockNumber?: unknown;
+    blockHash?: unknown;
+    chainId?: unknown;
+    metaTxnID?: unknown;
+    transfers?: unknown;
+    timestamp?: unknown;
 }
 
-interface TransactionTransferRaw extends Omit<TransactionTransfer, "tokenIds" | "tokenMetadata"> {
-    tokenIds?: string[];
-    tokenIDs?: string[];
-    tokenMetadata?: Record<string, TokenMetadataRaw>;
+interface TransactionTransferRaw {
+    transferType?: unknown;
+    contractAddress?: unknown;
+    contractType?: unknown;
+    from?: unknown;
+    to?: unknown;
+    tokenIds?: unknown;
+    tokenIDs?: unknown;
+    amounts?: unknown;
+    logIndex?: unknown;
+    amountsUSD?: unknown;
+    pricesUSD?: unknown;
+    contractInfo?: unknown;
+    tokenMetadata?: unknown;
 }
 
 interface TokenBalancesFilter {
@@ -264,11 +341,11 @@ interface GetTokenBalancesDetailsRequest {
     networkType?: IndexerNetworkType;
     filter: TokenBalancesFilter;
     omitMetadata?: boolean;
-    page?: TokenBalancesPage;
+    page?: TokenBalancesPageRequest;
 }
 
 interface GetTokenBalancesDetailsResponse {
-    page?: TokenBalancesPage;
+    page?: unknown;
     nativeBalances?: GatewayNativeTokenBalances[];
     balances?: GatewayTokenBalance[];
 }
@@ -290,27 +367,31 @@ interface GetTransactionHistoryRequest {
     filter: TransactionHistoryFilter;
     includeMetadata?: boolean;
     metadataOptions?: MetadataOptions;
-    page?: TokenBalancesPage;
+    page?: TokenBalancesPageRequest;
 }
 
 interface GetTransactionHistoryResponse {
-    page?: TokenBalancesPage;
+    page?: unknown;
     transactions?: GatewayTransaction[];
 }
 
-// Matches the Swift `OmsEnvironment` shape used by IndexerClient.
-export interface OmsEnvironment {
+interface IndexerClientEnvironment {
     indexerGatewayUrl: string;
 }
 
-export class IndexerClient {
+export interface OMSWalletIndexerClient {
+    getBalances(params: GetBalancesParams): Promise<BalancesResult>
+    getTransactionHistory(params: GetTransactionHistoryParams): Promise<TransactionHistoryResult>
+}
+
+export class IndexerClient implements OMSWalletIndexerClient {
     private readonly publishableKey: string;
-    private readonly environment: OmsEnvironment;
+    private readonly environment: IndexerClientEnvironment;
     private readonly client: HttpClient;
 
     constructor(params: {
         publishableKey: string,
-        environment: OmsEnvironment
+        environment: IndexerClientEnvironment
     }) {
         this.publishableKey = params.publishableKey;
         this.environment = params.environment;
@@ -339,12 +420,12 @@ export class IndexerClient {
             headers: this.defaultHeaders(),
         });
 
-        return {
+        return this.decodeResponse(IndexerOperation.getBalances, response.statusCode, () => ({
             status: response.statusCode,
-            page: response.payload.page,
+            page: mapTokenBalancesPage(response.payload.page),
             nativeBalances: flattenGatewayResults(response.payload.nativeBalances).map(mapNativeTokenBalance),
-            balances: flattenGatewayResults(response.payload.balances).map(mapTokenBalance),
-        };
+            balances: flattenGatewayResults(response.payload.balances).map(mapContractTokenBalance),
+        }));
     }
 
     async getTransactionHistory(params: GetTransactionHistoryParams): Promise<TransactionHistoryResult> {
@@ -372,11 +453,11 @@ export class IndexerClient {
             headers: this.defaultHeaders(),
         });
 
-        return {
+        return this.decodeResponse(IndexerOperation.getTransactionHistory, response.statusCode, () => ({
             status: response.statusCode,
-            page: response.payload.page,
+            page: mapTokenBalancesPage(response.payload.page),
             transactions: flattenGatewayResults(response.payload.transactions).map(mapTransaction),
-        };
+        }));
     }
 
     private async postJson<T>(
@@ -387,7 +468,7 @@ export class IndexerClient {
         try {
             response = await this.client.postJson(args);
         } catch (error) {
-            throw new OmsRequestError({
+            throw new OMSWalletRequestError({
                 operation,
                 retryable: true,
                 upstreamError: indexerRequestFailure(error),
@@ -400,7 +481,7 @@ export class IndexerClient {
         if (response.statusCode < 200 || response.statusCode >= 300) {
             const errorPayload = parseJsonOrText(response.body);
             const message = responseErrorMessage(errorPayload, operation, response.statusCode);
-            throw new OmsRequestError({
+            throw new OMSWalletRequestError({
                 code: "OMS_HTTP_ERROR",
                 operation,
                 status: response.statusCode,
@@ -415,7 +496,7 @@ export class IndexerClient {
             payload = JSON.parse(response.body) as T;
         } catch (error) {
             const message = `Invalid JSON response from ${operation}`;
-            throw new OmsResponseError({
+            throw new OMSWalletResponseError({
                 operation,
                 status: response.statusCode,
                 upstreamError: {
@@ -441,12 +522,31 @@ export class IndexerClient {
         return {networkType: params.networkType ?? "MAINNETS"};
     }
 
-    private requestPage(page: TokenBalancesPage | undefined): TokenBalancesPage {
+    private requestPage(page: TokenBalancesPageRequest | undefined): TokenBalancesPageRequest {
         return {
             ...page,
             page: page?.page ?? 0,
             pageSize: page?.pageSize ?? 40,
         };
+    }
+
+    private decodeResponse<T>(operation: IndexerOperation, status: number, decode: () => T): T {
+        try {
+            return decode();
+        } catch (error) {
+            const message = `Invalid JSON response from ${operation}`;
+            throw new OMSWalletResponseError({
+                operation,
+                status,
+                upstreamError: {
+                    service: "indexer",
+                    status,
+                    message,
+                },
+                cause: error,
+                message,
+            });
+        }
     }
 
     private indexerGatewayUrl(): string {
@@ -460,22 +560,7 @@ export class IndexerClient {
             Webrpc: WebrpcHeaderValue,
         };
 
-        const origin = this.originHeader();
-        if (origin) {
-            headers.Origin = origin;
-        }
-
         return headers;
-    }
-
-    private originHeader(): string | undefined {
-        if (typeof globalThis.location?.origin === "string") {
-            return undefined;
-        }
-
-        // The dev IndexerGateway currently rejects originless publishable-key requests.
-        // Send the local dev origin from originless runtimes until the gateway accepts them.
-        return "http://localhost:5173";
     }
 }
 
@@ -487,85 +572,249 @@ function nonEmpty<T>(values: T[] | undefined): T[] | undefined {
     return values && values.length > 0 ? values : undefined;
 }
 
-function mapNativeTokenBalance(raw: NativeTokenBalanceRaw): TokenBalance {
+function mapNativeTokenBalance(raw: NativeTokenBalanceRaw): NativeTokenBalance {
     return {
         contractType: "NATIVE",
-        contractAddress: undefined,
-        accountAddress: raw.accountAddress,
-        tokenId: undefined,
-        name: raw.name,
-        symbol: raw.symbol,
-        balance: raw.balance,
-        balanceUSD: raw.balanceUSD,
-        priceUSD: raw.priceUSD,
-        priceUpdatedAt: raw.priceUpdatedAt,
-        blockHash: undefined,
-        blockNumber: undefined,
-        chainId: raw.chainId,
+        accountAddress: requiredString(raw.accountAddress, "nativeBalances[].accountAddress"),
+        name: requiredString(raw.name, "nativeBalances[].name"),
+        symbol: requiredString(raw.symbol, "nativeBalances[].symbol"),
+        balance: requiredString(raw.balance ?? raw.balanceWei, "nativeBalances[].balance"),
+        balanceUSD: optionalString(raw.balanceUSD, "nativeBalances[].balanceUSD"),
+        priceUSD: optionalString(raw.priceUSD, "nativeBalances[].priceUSD"),
+        priceUpdatedAt: optionalString(raw.priceUpdatedAt, "nativeBalances[].priceUpdatedAt"),
+        chainId: requiredNumber(raw.chainId, "nativeBalances[].chainId"),
     };
 }
 
 /** Re-maps the wire key `tokenID` onto the camelCase `tokenId` field. */
-function mapTokenBalance(raw: TokenBalanceRaw): TokenBalance {
+function mapContractTokenBalance(raw: TokenBalanceRaw): ContractTokenBalance {
     return {
-        contractType: raw.contractType,
-        contractAddress: raw.contractAddress,
-        accountAddress: raw.accountAddress,
-        tokenId: raw.tokenID,
-        balance: raw.balance,
-        balanceUSD: raw.balanceUSD,
-        priceUSD: raw.priceUSD,
-        priceUpdatedAt: raw.priceUpdatedAt,
-        blockHash: raw.blockHash,
-        blockNumber: raw.blockNumber,
-        chainId: raw.chainId,
-        uniqueCollectibles: raw.uniqueCollectibles,
-        isSummary: raw.isSummary,
-        contractInfo: raw.contractInfo,
-        tokenMetadata: raw.tokenMetadata ? mapTokenMetadata(raw.tokenMetadata) : undefined,
+        contractType: requiredString(raw.contractType, "balances[].contractType"),
+        contractAddress: requiredString(raw.contractAddress, "balances[].contractAddress"),
+        accountAddress: requiredString(raw.accountAddress, "balances[].accountAddress"),
+        tokenId: requiredString(raw.tokenID, "balances[].tokenID"),
+        balance: requiredString(raw.balance, "balances[].balance"),
+        balanceUSD: optionalString(raw.balanceUSD, "balances[].balanceUSD"),
+        priceUSD: optionalString(raw.priceUSD, "balances[].priceUSD"),
+        priceUpdatedAt: optionalString(raw.priceUpdatedAt, "balances[].priceUpdatedAt"),
+        blockHash: requiredString(raw.blockHash, "balances[].blockHash"),
+        blockNumber: requiredNumber(raw.blockNumber, "balances[].blockNumber"),
+        chainId: requiredNumber(raw.chainId, "balances[].chainId"),
+        uniqueCollectibles: optionalString(raw.uniqueCollectibles, "balances[].uniqueCollectibles"),
+        isSummary: optionalBoolean(raw.isSummary, "balances[].isSummary"),
+        contractInfo: raw.contractInfo == null ? undefined : mapTokenContractInfo(raw.contractInfo),
+        tokenMetadata: raw.tokenMetadata == null ? undefined : mapTokenMetadata(raw.tokenMetadata),
     };
 }
 
 function mapTransaction(raw: TransactionRaw): Transaction {
     return {
-        txnHash: raw.txnHash,
-        blockNumber: raw.blockNumber,
-        blockHash: raw.blockHash,
-        chainId: raw.chainId,
-        metaTxnId: raw.metaTxnID,
-        transfers: raw.transfers?.map(mapTransactionTransfer),
-        timestamp: raw.timestamp,
+        txnHash: requiredString(raw.txnHash, "transactions[].txnHash"),
+        blockNumber: requiredNumber(raw.blockNumber, "transactions[].blockNumber"),
+        blockHash: requiredString(raw.blockHash, "transactions[].blockHash"),
+        chainId: requiredNumber(raw.chainId, "transactions[].chainId"),
+        metaTxnId: optionalString(raw.metaTxnID, "transactions[].metaTxnID"),
+        transfers: requiredArray(raw.transfers, "transactions[].transfers").map(mapTransactionTransfer),
+        timestamp: requiredString(raw.timestamp, "transactions[].timestamp"),
     };
 }
 
-function mapTransactionTransfer(raw: TransactionTransferRaw): TransactionTransfer {
-    const {tokenIDs, tokenMetadata, ...transfer} = raw;
+function mapTransactionTransfer(value: unknown): TransactionTransfer {
+    const raw = asObject(value, "transactions[].transfers[]") as TransactionTransferRaw;
     return {
-        ...transfer,
-        tokenIds: raw.tokenIds ?? tokenIDs,
-        tokenMetadata: tokenMetadata ? mapTokenMetadataRecord(tokenMetadata) : undefined,
+        transferType: requiredString(raw.transferType, "transactions[].transfers[].transferType"),
+        contractAddress: requiredString(raw.contractAddress, "transactions[].transfers[].contractAddress"),
+        contractType: requiredString(raw.contractType, "transactions[].transfers[].contractType"),
+        from: requiredString(raw.from, "transactions[].transfers[].from"),
+        to: requiredString(raw.to, "transactions[].transfers[].to"),
+        tokenIds: optionalStringArray(raw.tokenIds ?? raw.tokenIDs, "transactions[].transfers[].tokenIds"),
+        amounts: requiredStringArray(raw.amounts, "transactions[].transfers[].amounts"),
+        logIndex: requiredNumber(raw.logIndex, "transactions[].transfers[].logIndex"),
+        amountsUSD: optionalStringArray(raw.amountsUSD, "transactions[].transfers[].amountsUSD"),
+        pricesUSD: optionalStringArray(raw.pricesUSD, "transactions[].transfers[].pricesUSD"),
+        contractInfo: raw.contractInfo == null ? undefined : mapTokenContractInfo(raw.contractInfo),
+        tokenMetadata: raw.tokenMetadata == null ? undefined : mapTokenMetadataRecord(raw.tokenMetadata),
     };
 }
 
-function mapTokenMetadataRecord(raw: Record<string, TokenMetadataRaw>): Record<string, TokenMetadata> {
+function mapTokenMetadataRecord(value: unknown): Record<string, TokenMetadata> {
+    const raw = asObject(value, "transactions[].transfers[].tokenMetadata");
     return Object.fromEntries(
         Object.entries(raw).map(([tokenId, metadata]) => [tokenId, mapTokenMetadata(metadata)]),
     );
 }
 
-function mapTokenMetadata(raw: TokenMetadataRaw): TokenMetadata {
-    const {tokenID, assets, ...metadata} = raw;
+function mapTokenBalancesPage(value: unknown): TokenBalancesPage | undefined {
+    if (value == null) return undefined;
+    const raw = asObject(value, "page");
+    const sort = optionalArrayOrUndefined(raw.sort, "page.sort");
     return {
-        ...metadata,
-        tokenId: raw.tokenId ?? tokenID,
-        assets: assets?.map(asset => {
-            const {tokenID: assetTokenID, ...metadataAsset} = asset;
+        page: requiredNumber(raw.page, "page.page"),
+        column: optionalString(raw.column, "page.column"),
+        before: raw.before ?? undefined,
+        after: raw.after ?? undefined,
+        sort: sort?.map((item, index) => {
+            const entry = asObject(item, `page.sort[${index}]`);
+            const order = requiredString(entry.order, `page.sort[${index}].order`);
+            if (order !== "DESC" && order !== "ASC") {
+                throw new TypeError(`page.sort[${index}].order must be DESC or ASC`);
+            }
             return {
-                ...metadataAsset,
-                tokenId: asset.tokenId ?? assetTokenID,
+                column: requiredString(entry.column, `page.sort[${index}].column`),
+                order,
             };
         }),
+        pageSize: requiredNumber(raw.pageSize, "page.pageSize"),
+        more: requiredBoolean(raw.more, "page.more"),
     };
+}
+
+function mapTokenContractInfo(value: unknown): TokenContractInfo {
+    const raw = asObject(value, "contractInfo") as TokenContractInfoRaw;
+    return {
+        chainId: requiredNumber(raw.chainId, "contractInfo.chainId"),
+        address: requiredString(raw.address, "contractInfo.address"),
+        source: requiredString(raw.source, "contractInfo.source"),
+        name: requiredString(raw.name, "contractInfo.name"),
+        type: requiredString(raw.type, "contractInfo.type"),
+        symbol: requiredString(raw.symbol, "contractInfo.symbol"),
+        decimals: optionalNumber(raw.decimals, "contractInfo.decimals"),
+        logoURI: optionalString(raw.logoURI, "contractInfo.logoURI"),
+        deployed: requiredBoolean(raw.deployed, "contractInfo.deployed"),
+        bytecodeHash: requiredString(raw.bytecodeHash, "contractInfo.bytecodeHash"),
+        extensions: requiredObject(raw.extensions, "contractInfo.extensions"),
+        updatedAt: requiredString(raw.updatedAt, "contractInfo.updatedAt"),
+        queuedAt: optionalString(raw.queuedAt, "contractInfo.queuedAt"),
+        status: requiredString(raw.status, "contractInfo.status"),
+    };
+}
+
+function mapTokenMetadata(value: unknown): TokenMetadata {
+    const raw = asObject(value, "tokenMetadata") as TokenMetadataRaw;
+    const assets = optionalArrayOrUndefined(raw.assets, "tokenMetadata.assets");
+    return {
+        chainId: optionalNumber(raw.chainId, "tokenMetadata.chainId"),
+        contractAddress: optionalString(raw.contractAddress, "tokenMetadata.contractAddress"),
+        tokenId: requiredString(raw.tokenId ?? raw.tokenID, "tokenMetadata.tokenId"),
+        source: requiredString(raw.source, "tokenMetadata.source"),
+        name: requiredString(raw.name, "tokenMetadata.name"),
+        description: optionalString(raw.description, "tokenMetadata.description"),
+        image: optionalString(raw.image, "tokenMetadata.image"),
+        video: optionalString(raw.video, "tokenMetadata.video"),
+        audio: optionalString(raw.audio, "tokenMetadata.audio"),
+        properties: optionalObject(raw.properties, "tokenMetadata.properties"),
+        attributes: requiredObjectArray(raw.attributes, "tokenMetadata.attributes"),
+        imageData: optionalString(raw.image_data, "tokenMetadata.image_data"),
+        externalUrl: optionalString(raw.external_url, "tokenMetadata.external_url"),
+        backgroundColor: optionalString(raw.background_color, "tokenMetadata.background_color"),
+        animationUrl: optionalString(raw.animation_url, "tokenMetadata.animation_url"),
+        decimals: optionalNumber(raw.decimals, "tokenMetadata.decimals"),
+        updatedAt: optionalString(raw.updatedAt, "tokenMetadata.updatedAt"),
+        assets: assets?.map(mapTokenMetadataAsset),
+        status: requiredString(raw.status, "tokenMetadata.status"),
+        queuedAt: optionalString(raw.queuedAt, "tokenMetadata.queuedAt"),
+        lastFetched: optionalString(raw.lastFetched, "tokenMetadata.lastFetched"),
+    };
+}
+
+function mapTokenMetadataAsset(value: unknown): TokenMetadataAsset {
+    const raw = asObject(value, "tokenMetadata.assets[]") as TokenMetadataAssetRaw;
+    return {
+        id: optionalNumber(raw.id, "tokenMetadata.assets[].id"),
+        collectionId: optionalNumber(raw.collectionId, "tokenMetadata.assets[].collectionId"),
+        tokenId: optionalString(raw.tokenId ?? raw.tokenID, "tokenMetadata.assets[].tokenId"),
+        url: optionalString(raw.url, "tokenMetadata.assets[].url"),
+        metadataField: optionalString(raw.metadataField, "tokenMetadata.assets[].metadataField"),
+        name: optionalString(raw.name, "tokenMetadata.assets[].name"),
+        filesize: optionalNumber(raw.filesize, "tokenMetadata.assets[].filesize"),
+        mimeType: optionalString(raw.mimeType, "tokenMetadata.assets[].mimeType"),
+        width: optionalNumber(raw.width, "tokenMetadata.assets[].width"),
+        height: optionalNumber(raw.height, "tokenMetadata.assets[].height"),
+        updatedAt: optionalString(raw.updatedAt, "tokenMetadata.assets[].updatedAt"),
+    };
+}
+
+function asObject(value: unknown, path: string): Record<string, unknown> {
+    if (typeof value !== "object" || value === null || Array.isArray(value)) {
+        throw new TypeError(`${path} must be an object`);
+    }
+    return value as Record<string, unknown>;
+}
+
+function requiredObject(value: unknown, path: string): Record<string, unknown> {
+    return asObject(value, path);
+}
+
+function optionalObject(value: unknown, path: string): Record<string, unknown> | undefined {
+    return value == null ? undefined : asObject(value, path);
+}
+
+function requiredString(value: unknown, path: string): string {
+    if (typeof value !== "string") {
+        throw new TypeError(`${path} must be a string`);
+    }
+    return value;
+}
+
+function optionalString(value: unknown, path: string): string | undefined {
+    return value == null ? undefined : requiredString(value, path);
+}
+
+function requiredNumber(value: unknown, path: string): number {
+    if (typeof value !== "number" || !Number.isFinite(value)) {
+        throw new TypeError(`${path} must be a finite number`);
+    }
+    return value;
+}
+
+function optionalNumber(value: unknown, path: string): number | undefined {
+    return value == null ? undefined : requiredNumber(value, path);
+}
+
+function requiredBoolean(value: unknown, path: string): boolean {
+    if (typeof value !== "boolean") {
+        throw new TypeError(`${path} must be a boolean`);
+    }
+    return value;
+}
+
+function optionalBoolean(value: unknown, path: string): boolean | undefined {
+    return value == null ? undefined : requiredBoolean(value, path);
+}
+
+function requiredArray(value: unknown, path: string): unknown[] {
+    if (!Array.isArray(value)) {
+        throw new TypeError(`${path} must be an array`);
+    }
+    return value;
+}
+
+function optionalArrayOrUndefined(value: unknown, path: string): unknown[] | undefined {
+    if (value == null) {
+        return undefined;
+    }
+    if (!Array.isArray(value)) {
+        throw new TypeError(`${path} must be an array`);
+    }
+    return value;
+}
+
+function requiredStringArray(value: unknown, path: string): string[] {
+    if (!Array.isArray(value) || value.some(item => typeof item !== "string")) {
+        throw new TypeError(`${path} must be an array of strings`);
+    }
+    return value;
+}
+
+function optionalStringArray(value: unknown, path: string): string[] | undefined {
+    return value == null ? undefined : requiredStringArray(value, path);
+}
+
+function requiredObjectArray(value: unknown, path: string): Record<string, unknown>[] {
+    if (!Array.isArray(value)) {
+        throw new TypeError(`${path} must be an array`);
+    }
+    return value.map((item, index) => asObject(item, `${path}[${index}]`));
 }
 
 function responseErrorMessage(payload: unknown, operation: IndexerOperation, status: number): string {
@@ -584,7 +833,7 @@ function parseJsonOrText(body: string): unknown {
     }
 }
 
-function indexerRequestFailure(error: unknown): OmsUpstreamError {
+function indexerRequestFailure(error: unknown): OMSWalletUpstreamError {
     const status = numberField(error, "status");
     return {
         service: "indexer",
@@ -595,7 +844,7 @@ function indexerRequestFailure(error: unknown): OmsUpstreamError {
     };
 }
 
-function indexerResponseError(payload: unknown, status: number, fallbackMessage: string): OmsUpstreamError {
+function indexerResponseError(payload: unknown, status: number, fallbackMessage: string): OMSWalletUpstreamError {
     return {
         service: "indexer",
         name: stringField(payload, "name") ?? stringField(payload, "error"),

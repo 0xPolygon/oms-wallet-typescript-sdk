@@ -1,8 +1,8 @@
 import { useEffect, useMemo, useState } from 'react'
-import { Networks } from '@0xsequence/typescript-sdk'
+import { Networks } from '@polygonlabs/oms-wallet'
 import { createPublicClient, formatUnits, http, isAddress, parseUnits } from 'viem'
 import type { Address } from 'viem'
-import { oms } from './omsClient'
+import { omsWallet } from './omsWallet'
 import { walletKitDollarAbi } from './walletKitDollarContract'
 
 const AMOY_RPC_URL = 'https://rpc-amoy.polygon.technology'
@@ -31,7 +31,7 @@ export function WalletKitDollarExample() {
   }), [])
 
   useEffect(() => {
-    const restoredAddress = oms.wallet.walletAddress ?? ''
+    const restoredAddress = omsWallet.wallet.walletAddress ?? ''
     setWalletAddress(restoredAddress)
     if (isAddress(restoredAddress)) {
       void refreshBalance(restoredAddress)
@@ -61,7 +61,7 @@ export function WalletKitDollarExample() {
       const activeWallet = requireWalletAddress()
       clearLastTransaction()
 
-      const tx = await oms.wallet.sendTransaction({
+      const tx = await omsWallet.wallet.sendTransaction({
         network: Networks.amoy,
         to: WKUSD_CONTRACT_ADDRESS,
         abi: walletKitDollarAbi,
@@ -94,7 +94,7 @@ export function WalletKitDollarExample() {
 
       clearLastTransaction()
 
-      const tx = await oms.wallet.sendTransaction({
+      const tx = await omsWallet.wallet.sendTransaction({
         network: Networks.amoy,
         to: WKUSD_CONTRACT_ADDRESS,
         abi: walletKitDollarAbi,
@@ -123,7 +123,7 @@ export function WalletKitDollarExample() {
   }
 
   function requireWalletAddress(): Address {
-    const activeWallet = oms.wallet.walletAddress ?? walletAddress
+    const activeWallet = omsWallet.wallet.walletAddress ?? walletAddress
     if (!isAddress(activeWallet)) {
       throw new Error('Active wallet address is not a valid EVM address.')
     }

@@ -3,7 +3,7 @@
 This example consumes the SDK as a workspace package:
 
 ```ts
-import { MemoryStorageManager, Networks, OMSClient } from '@0xsequence/typescript-sdk'
+import { MemoryStorageManager, Networks, OMSWallet } from '@polygonlabs/oms-wallet'
 ```
 
 Run it from the repository root:

@@ -1,6 +1,6 @@
 # Trails Actions React Example
 
-This Vite React app uses the TypeScript SDK wallet client with Trails actions on Polygon:
+This Vite React app uses the OMS Wallet SDK with Trails actions on Polygon:
 
 - Swap POL to USDC
 - Deposit USDC using Earn

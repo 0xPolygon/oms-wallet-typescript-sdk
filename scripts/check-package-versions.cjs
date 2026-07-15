@@ -11,30 +11,38 @@ const browserExamplePackagePaths = [
   'examples/trails-actions/package.json',
   'examples/wagmi/package.json',
 ]
-const exactWorkspaceProtocol = 'workspace:*'
-const exactSemverPattern = /^\d+\.\d+\.\d+$/
+const peerWorkspaceProtocol = 'workspace:^'
+const devWorkspaceProtocol = 'workspace:*'
+const exactPackageVersionPattern = /^\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?$/
+const exactStableSemverPattern = /^\d+\.\d+\.\d+$/
+const requireStablePackageVersions = process.argv.includes('--stable')
 
 let hasMismatch = false
 
 for (const packagePath of packagePaths) {
   const packageJson = readPackage(packagePath)
 
+  checkPackageVersion(packageJson.name, packageJson.version)
+
   if (packageJson.version !== rootPackage.version) {
     report(`${packageJson.name} version ${packageJson.version} does not match ${rootPackage.name} version ${rootPackage.version}.`)
   }
 
-  checkWorkspaceReference(packageJson.name, 'peer dependency', packageJson.peerDependencies?.[rootPackage.name])
-  checkWorkspaceReference(packageJson.name, 'dev dependency', packageJson.devDependencies?.[rootPackage.name])
+  checkRequiredWorkspaceReference(packageJson.name, 'peer dependency', packageJson.peerDependencies?.[rootPackage.name], peerWorkspaceProtocol)
+  checkRequiredWorkspaceReference(packageJson.name, 'dev dependency', packageJson.devDependencies?.[rootPackage.name], devWorkspaceProtocol)
 }
 
 for (const packagePath of browserExamplePackagePaths) {
   checkReactRuntimeVersions(packagePath, readPackage(packagePath))
 }
 
+checkPackageVersion(rootPackage.name, rootPackage.version)
+
 if (hasMismatch) {
   process.exitCode = 1
 } else {
-  console.log(`Publishable package versions match ${rootPackage.version}; SDK workspace references use ${exactWorkspaceProtocol}; browser examples pin matching React runtimes.`)
+  const packageVersionKind = requireStablePackageVersions ? 'stable package versions' : 'package versions'
+  console.log(`Publishable ${packageVersionKind} match ${rootPackage.version}; connector SDK peer uses ${peerWorkspaceProtocol}, connector SDK dev dependency uses ${devWorkspaceProtocol}; browser examples pin matching React runtimes.`)
 }
 
 function readPackage(packagePath) {
@@ -46,17 +54,35 @@ function report(message) {
   console.error(message)
 }
 
-function checkWorkspaceReference(packageName, dependencyType, version) {
-  if (version !== undefined && version !== exactWorkspaceProtocol) {
-    report(`${packageName} ${dependencyType} ${rootPackage.name}@${version} must use ${exactWorkspaceProtocol}; pnpm publish rewrites it to ${rootPackage.version}.`)
+function checkWorkspaceReference(packageName, dependencyType, version, expectedProtocol) {
+  if (version !== undefined && version !== expectedProtocol) {
+    report(`${packageName} ${dependencyType} ${rootPackage.name}@${version} must use ${expectedProtocol}; pnpm publish rewrites it to a publishable semver range.`)
   }
+}
+
+function checkPackageVersion(packageName, version) {
+  const pattern = requireStablePackageVersions ? exactStableSemverPattern : exactPackageVersionPattern
+  const versionKind = requireStablePackageVersions ? 'exact stable semver version' : 'exact semver or prerelease semver version'
+
+  if (!pattern.test(version)) {
+    report(`${packageName} version ${version} must be an ${versionKind}.`)
+  }
+}
+
+function checkRequiredWorkspaceReference(packageName, dependencyType, version, expectedProtocol) {
+  if (version === undefined) {
+    report(`${packageName} must declare ${rootPackage.name} as a ${dependencyType}.`)
+    return
+  }
+
+  checkWorkspaceReference(packageName, dependencyType, version, expectedProtocol)
 }
 
 function checkReactRuntimeVersions(packagePath, packageJson) {
   const reactVersion = packageJson.dependencies?.react
   const reactDomVersion = packageJson.dependencies?.['react-dom']
 
-  if (!exactSemverPattern.test(reactVersion)) {
+  if (!exactStableSemverPattern.test(reactVersion)) {
     report(`${packagePath} must pin react to an exact semver version; found ${reactVersion}.`)
   }
 

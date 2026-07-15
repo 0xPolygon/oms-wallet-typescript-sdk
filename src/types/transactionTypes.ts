@@ -1,19 +1,7 @@
 import {Abi, Address, ContractFunctionName, EncodeFunctionDataParameters, Hex} from "viem";
 import type {Network} from "../networks.js";
-import type {
-    FeeOption,
-    FeeOptionSelection,
-    TransactionMode,
-    TransactionStatus,
-} from "../generated/waas.gen.js";
+import type {FeeOption, FeeOptionSelection, TransactionMode, TransactionStatus} from "./waas.js";
 import type {TokenBalance} from "../clients/indexerClient.js";
-
-export type {
-    FeeOption,
-    FeeOptionSelection,
-    TransactionMode,
-    TransactionStatus,
-};
 
 export type FeeOptionWithBalance = {
     feeOption: FeeOption
@@ -53,6 +41,7 @@ export type SendTransactionResponse = {
     txnId: string
     status: TransactionStatus
     txnHash?: string
+    statusResolution: "not-requested" | "resolved" | "timed-out"
 }
 
 export type TransactionStatusPollingOptions = {

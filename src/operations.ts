@@ -3,6 +3,7 @@ export const WalletOperation = {
     pendingWalletSelectionCreateAndSelectWallet: "wallet.pendingWalletSelection.createAndSelectWallet",
     startEmailAuth: "wallet.startEmailAuth",
     completeEmailAuth: "wallet.completeEmailAuth",
+    signInWithOidcIdToken: "wallet.signInWithOidcIdToken",
     startOidcRedirectAuth: "wallet.startOidcRedirectAuth",
     completeOidcRedirectAuth: "wallet.completeOidcRedirectAuth",
     signInWithOidcRedirect: "wallet.signInWithOidcRedirect",
@@ -34,4 +35,4 @@ export const IndexerOperation = {
 
 export type IndexerOperation = typeof IndexerOperation[keyof typeof IndexerOperation]
 
-export type OmsSdkOperation = WalletOperation | IndexerOperation
+export type OMSWalletOperation = WalletOperation | IndexerOperation

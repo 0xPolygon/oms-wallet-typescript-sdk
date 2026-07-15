@@ -1,0 +1,127 @@
+@import url("../../shared/oms-example-base.css");
+
+.provider-metadata {
+  display: grid;
+  gap: 8px;
+  padding: 12px;
+  border: 1px solid var(--oms-slate-200);
+  border-radius: 12px;
+  background: var(--oms-slate-50);
+}
+
+.provider-metadata-row {
+  display: grid;
+  gap: 4px;
+  min-width: 0;
+}
+
+.provider-metadata-row span {
+  color: var(--oms-muted-ink);
+  font-size: 12px;
+  font-weight: 700;
+}
+
+.provider-metadata-row code {
+  display: block;
+  min-width: 0;
+  padding: 8px 10px;
+  border-radius: var(--oms-radius-button);
+  color: var(--oms-slate-800);
+  background: var(--oms-surface);
+  overflow-wrap: anywhere;
+}
+
+.session-details {
+  display: grid;
+  gap: 8px;
+  margin: 0;
+}
+
+.session-details div {
+  display: grid;
+  gap: 4px;
+  min-width: 0;
+}
+
+.session-details dt,
+.session-details dd {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+.session-details dt {
+  color: var(--oms-muted-ink);
+  font-size: 12px;
+  font-weight: 700;
+}
+
+.session-details dd {
+  margin: 0;
+  color: var(--oms-ink);
+  font-size: 14px;
+  font-weight: 700;
+}
+
+.result {
+  display: grid;
+  gap: 4px;
+  min-width: 0;
+  max-height: 120px;
+  overflow: auto;
+  overflow-wrap: anywhere;
+  margin: 0;
+  padding: 10px 12px;
+  border-radius: 12px;
+  background: var(--oms-slate-950);
+  color: var(--oms-purple-100);
+  font-family: var(--oms-font-mono);
+}
+
+.result-label {
+  color: var(--oms-slate-400);
+  font-size: 12px;
+  font-weight: 800;
+}
+
+.result-value {
+  color: var(--oms-purple-300);
+}
+
+.balance-list {
+  display: grid;
+  gap: 8px;
+}
+
+.balance-row {
+  display: grid;
+  grid-template-columns: minmax(0, 140px) minmax(0, 1fr);
+  gap: 10px;
+  min-width: 0;
+  padding: 10px 12px;
+  border: 1px solid var(--oms-slate-200);
+  border-radius: 12px;
+  background: var(--oms-surface);
+}
+
+.balance-row span {
+  min-width: 0;
+  color: var(--oms-ink);
+  font-size: 14px;
+  font-weight: 700;
+  overflow-wrap: anywhere;
+}
+
+.balance-row code {
+  min-width: 0;
+  text-align: right;
+}
+
+@media (max-width: 520px) {
+  .balance-row {
+    grid-template-columns: 1fr;
+  }
+
+  .balance-row code {
+    text-align: left;
+  }
+}

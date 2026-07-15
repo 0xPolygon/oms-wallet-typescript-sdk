@@ -18,7 +18,7 @@ import {
 } from '0xtrails/actions'
 import {
   Networks,
-} from '@0xsequence/typescript-sdk'
+} from '@polygonlabs/oms-wallet'
 import {
   encodeFunctionData,
   formatUnits,
@@ -27,7 +27,7 @@ import {
   type Address,
   type Hex,
 } from 'viem'
-import { oms } from './omsClient'
+import { omsWallet } from './omsWallet'
 
 export type PreparedTrailsTransaction = {
   title: string
@@ -182,7 +182,7 @@ export function requirePreparedYieldTransactions(
 }
 
 export async function getPolygonBalances(walletAddress: Address): Promise<BalanceState> {
-  const balances = await oms.indexer.getBalances({
+  const balances = await omsWallet.indexer.getBalances({
     networks: [POLYGON_NETWORK],
     contractAddresses: [POLYGON_USDC],
     walletAddress,

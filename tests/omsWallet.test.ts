@@ -1,6 +1,6 @@
 import {afterEach, describe, expect, it, vi} from "vitest";
 
-import {Networks, OMSClient} from "../src";
+import {Networks, OMSWallet} from "../src";
 import {parsePublishableKey} from "../src/publishableKey";
 import {MemoryStorageManager} from "../src/storageManager";
 
@@ -10,7 +10,7 @@ afterEach(() => {
     vi.unstubAllGlobals();
 });
 
-describe("OMSClient publishable key routing", () => {
+describe("OMSWallet publishable key routing", () => {
     it.each([
         ["pk_local_sdbx_project_key", "https://sandbox-api.local.polygon-dev.technology"],
         ["pk_local_live_project_key", "https://api.local.polygon-dev.technology"],
@@ -48,7 +48,7 @@ describe("OMSClient publishable key routing", () => {
         });
         vi.stubGlobal("fetch", fetchMock);
 
-        const oms = new OMSClient({
+        const oms = new OMSWallet({
             publishableKey: "pk_stg_live_project_key",
             storage: new MemoryStorageManager(),
         });
@@ -78,7 +78,7 @@ describe("OMSClient publishable key routing", () => {
     });
 
     it("rejects unsupported publishable key prefixes", () => {
-        expect(() => new OMSClient({
+        expect(() => new OMSWallet({
             publishableKey: "pk_test_sdbx_project_key",
             storage: new MemoryStorageManager(),
         })).toThrow("Invalid publishableKey.");

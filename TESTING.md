@@ -6,6 +6,7 @@ How testing works in this repo. `AGENTS.md` points here so agents know how to ve
 
 - **Test runner:** [Vitest](https://vitest.dev/) v4+
 - **Type tests:** `tsc --noEmit` (compile-time API assertions in `type-tests/`)
+- **Packaged API check:** TypeScript AST comparison of built declarations with a committed public API baseline
 - **No coverage enforcement** currently — focus is on behavioral correctness
 - **Environment:** `dotenv` loaded via `vitest.config.ts`; tests run serially (`fileParallelism: false`)
 
@@ -17,7 +18,7 @@ How testing works in this repo. `AGENTS.md` points here so agents know how to ve
 - **Location:** `tests/**/*.ts`
 - **Run:** `pnpm exec vitest run` (or `pnpm test` which runs this then type tests)
 - **Package tests:** `packages/oms-wallet-wagmi-connector/tests/**/*.ts` run from that package with
-  `pnpm --filter @0xsequence/oms-wallet-wagmi-connector test`
+  `pnpm --filter @polygonlabs/oms-wallet-wagmi-connector test`
 
 ## Integration / type tests
 
@@ -25,23 +26,25 @@ How testing works in this repo. `AGENTS.md` points here so agents know how to ve
   expected shapes. These catch public API regressions that runtime tests cannot.
 - **Location:** `type-tests/oidcProviderTypes.ts`
 - **Run:** `pnpm test:types`
-- **Note:** A few tests in `tests/` seed private wallet state via `(wallet as any)` for legacy
-  compatibility. Use public methods or small fixtures for any new test coverage.
+- **Note:** A few existing tests in `tests/` seed private wallet state via `(wallet as any)` to
+  exercise established session fixtures. Use public methods or small fixtures for new coverage.
 
 ## When to run what
 
 | Scenario | Command |
 |---|---|
 | Changed publishable package versions | `pnpm check:package-versions` |
+| Preparing a stable release | `pnpm check:stable-package-versions` |
 | Changed SDK behavior | `pnpm exec vitest run` |
-| Changed wagmi connector behavior | `pnpm --filter @0xsequence/oms-wallet-wagmi-connector test` |
-| Changed wagmi connector types/build | `pnpm --filter @0xsequence/oms-wallet-wagmi-connector build` |
+| Changed wagmi connector behavior | `pnpm --filter @polygonlabs/oms-wallet-wagmi-connector test` |
+| Changed wagmi connector types/build | `pnpm --filter @polygonlabs/oms-wallet-wagmi-connector build` |
 | Changed React example | `pnpm build:example` |
 | Changed Trails Actions example | `pnpm build:trails-actions-example` |
 | Changed wagmi React example | `pnpm build:wagmi-example` |
 | Changed Node example | `pnpm build:node-example` |
 | Changed Node contract deploy example | `pnpm build:node-contract-deploy-example` |
 | Changed public types / `src/index.ts` | `pnpm test:types` |
+| Changed built declarations or package exports | `pnpm build && pnpm check:public-api` |
 | Full pre-handoff check | `pnpm exec tsc --noEmit && pnpm test` |
 | Watch mode during development | `pnpm test:watch` |
 | High-risk paths (auth, signing, tx, storage) | Add a focused regression test, then `pnpm test` |
@@ -57,9 +60,9 @@ How testing works in this repo. `AGENTS.md` points here so agents know how to ve
 
 - Use `docs/error-contracts.md` as the audit matrix for public SDK/connector error surfaces,
   recovery semantics, `upstreamError` expectations, and owning tests.
-- Exercise real public runtime APIs such as `oms.wallet.*`, `oms.indexer.*`, exported storage
+- Exercise real public runtime APIs such as `omsWallet.wallet.*`, `omsWallet.indexer.*`, exported storage
   managers, signers, or wagmi connector/provider methods.
-- Do not snapshot manually constructed `OmsSdkError` subclasses unless the error class or helper
+- Do not snapshot manually constructed `OMSWalletError` subclasses unless the error class or helper
   is the unit under test.
 - Mock only external boundaries: `fetch`, browser globals, storage availability, signer behavior,
   timers, or backend responses.
@@ -89,4 +92,5 @@ How testing works in this repo. `AGENTS.md` points here so agents know how to ve
 | Run type tests | `pnpm test:types` |
 | Run everything | `pnpm test` |
 | Typecheck (no emit) | `pnpm exec tsc --noEmit` |
+| Check packaged declarations | `pnpm check:public-api` |
 | Watch mode | `pnpm test:watch` |

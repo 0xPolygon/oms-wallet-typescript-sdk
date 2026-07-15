@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
-import type { FeeOptionSelection, FeeOptionWithBalance } from '@0xsequence/typescript-sdk'
+import type { FeeOptionSelection, FeeOptionWithBalance } from '@polygonlabs/oms-wallet'
 import { subscribeToFeeOptionSelection } from './feeOptionSelectionBridge'
 
 type PendingFeeSelection = {

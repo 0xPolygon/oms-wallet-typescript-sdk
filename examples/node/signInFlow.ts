@@ -1,11 +1,11 @@
 import readline from "node:readline/promises";
-import {MemoryStorageManager, Networks, OMSClient} from "@0xsequence/typescript-sdk";
+import {MemoryStorageManager, Networks, OMSWallet} from "@polygonlabs/oms-wallet";
 
 const publishableKey = requiredEnv("OMS_PUBLISHABLE_KEY", process.env.OMS_PUBLISHABLE_KEY);
 
 async function main() {
     console.log("------------------------------------------------------------");
-    console.log(" OmsWallet sign-in flow");
+    console.log(" OMS Wallet sign-in flow");
     console.log("------------------------------------------------------------");
     console.log("publishable key :", mask(publishableKey));
     console.log();
@@ -13,20 +13,20 @@ async function main() {
     const email = await prompt("Enter your email: ");
 
     console.log();
-    console.log("[setup] creating OmsWallet…");
+    console.log("[setup] creating OMS Wallet…");
 
-    const client = new OMSClient({
+    const omsWallet = new OMSWallet({
         publishableKey,
         storage: new MemoryStorageManager(),
     });
 
-    console.log("[setup] ready:", client.wallet.constructor.name);
+    console.log("[setup] ready:", omsWallet.wallet.constructor.name);
     console.log();
     console.log(`[step 1] startEmailAuth("${email}")`);
 
     let t = Date.now();
     try {
-        await client.wallet.startEmailAuth({email});
+        await omsWallet.wallet.startEmailAuth({email});
 
         console.log(`[step 1] ok (${Date.now() - t}ms) — check your inbox`);
     } catch (err) {
@@ -41,7 +41,7 @@ async function main() {
     t = Date.now();
 
     try {
-        const result = await client.wallet.completeEmailAuth({code});
+        const result = await omsWallet.wallet.completeEmailAuth({code});
 
         console.log(`[step 2] ok (${Date.now() - t}ms)`);
         console.log(`[step 2] wallet ${result.walletAddress}`);
@@ -54,7 +54,7 @@ async function main() {
     console.log();
     console.log("✓ sign-in flow complete");
 
-    await client.wallet.signMessage({
+    await omsWallet.wallet.signMessage({
         network: Networks.amoy,
         message: "test"
     });

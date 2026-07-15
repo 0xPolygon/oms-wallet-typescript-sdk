@@ -1,0 +1,15 @@
+{
+  "groups": [
+    {
+      "label": "Fixture API",
+      "symbols": [
+        "ConfiguredClient.run",
+        "PublicClient",
+        "PublicError",
+        "RunParams",
+        "BrandedProvider",
+        "Providers"
+      ]
+    }
+  ]
+}

@@ -15,11 +15,11 @@ export interface BuildOidcAuthorizationUrlParams {
     authorizationUrl: string;
     clientId: string;
     redirectUri: string;
-    scopes: string[];
+    scopes: readonly string[];
     state: string;
     challenge: string;
     usePkce?: boolean;
-    authorizeParams?: Record<string, string>;
+    authorizeParams?: Readonly<Record<string, string>>;
     loginHint?: string;
 }
 
@@ -123,6 +123,18 @@ export function cleanOidcCallbackUrl(callbackUrl: string): string {
     url.searchParams.delete('error');
     url.searchParams.delete('error_description');
     return url.toString();
+}
+
+export function matchesRedirectUri(callbackUrl: string, redirectUri: string): boolean {
+    try {
+        const callback = new URL(callbackUrl);
+        const expected = new URL(redirectUri);
+        return callback.protocol.toLowerCase() === expected.protocol.toLowerCase() &&
+            callback.host.toLowerCase() === expected.host.toLowerCase() &&
+            callback.pathname === expected.pathname;
+    } catch {
+        return false;
+    }
 }
 
 export function redirectUriFromCurrentUrl(currentUrl: string): string {

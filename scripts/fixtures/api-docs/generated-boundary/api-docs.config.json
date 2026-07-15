@@ -1,0 +1,10 @@
+{
+  "groups": [
+    {
+      "label": "Fixture API",
+      "symbols": [
+        "PublicApi"
+      ]
+    }
+  ]
+}

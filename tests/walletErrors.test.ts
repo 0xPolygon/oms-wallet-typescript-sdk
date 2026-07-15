@@ -106,12 +106,57 @@ describe("WalletClient errors", () => {
         });
         expect(fetchMock).toHaveBeenCalledOnce();
     });
+
+    it("validates requested session lifetimes before auth requests", async () => {
+        const fetchMock = vi.fn();
+        vi.stubGlobal("fetch", fetchMock);
+        const wallet = new WalletClient({
+            publishableKey: "publishable-key",
+            projectId: "project-id",
+            environment: testEnvironment(),
+            storage: new MemoryStorageManager(),
+            redirectAuthStorage: new MemoryStorageManager(),
+            credentialSigner: new MockSigner(),
+        });
+
+        await expect(wallet.startEmailAuth({
+            email: "user@example.com",
+            sessionLifetimeSeconds: 0,
+        })).rejects.toMatchObject({
+            code: "OMS_VALIDATION_ERROR",
+            operation: "wallet.startEmailAuth",
+        });
+        await expect(wallet.startOidcRedirectAuth({
+            provider: {
+                clientId: "google-client",
+                issuer: "https://accounts.google.com",
+                authorizationUrl: "https://accounts.google.com/o/oauth2/v2/auth",
+                providerRedirectUri: "https://app.example/callback",
+            },
+            sessionLifetimeSeconds: 1.5,
+        })).rejects.toMatchObject({
+            code: "OMS_VALIDATION_ERROR",
+            operation: "wallet.startOidcRedirectAuth",
+        });
+        await expect(wallet.signInWithOidcIdToken({
+            idToken: "invalid-token",
+            issuer: "https://accounts.google.com",
+            audience: "google-client",
+            sessionLifetimeSeconds: 2_592_001,
+        })).rejects.toMatchObject({
+            code: "OMS_VALIDATION_ERROR",
+            operation: "wallet.signInWithOidcIdToken",
+            message: "wallet.signInWithOidcIdToken requires sessionLifetimeSeconds to be an integer between 1 and 2592000",
+        });
+        expect(fetchMock).not.toHaveBeenCalled();
+    });
 });
 
 function seedEmailAuthAttempt(wallet: WalletClient): void {
     (wallet as any).activeEmailAuthAttempt = {
         verifier: "verifier-1",
         challenge: "challenge-1",
+        sessionLifetimeSeconds: 604_800,
     };
 }
 

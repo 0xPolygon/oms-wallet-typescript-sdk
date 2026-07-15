@@ -1,6 +1,6 @@
 # Node Contract Deploy Example
 
-This example signs in with an OMS wallet, compiles a small Solidity ERC-20 with
+This example signs in with an OMS Wallet, compiles a small Solidity ERC-20 with
 a public `mint(address,uint256)` function, and submits a Polygon Amoy
 deployment transaction through a deployer contract.
 

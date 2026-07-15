@@ -1,17 +1,18 @@
-export { OmsWalletProvider, OmsWalletProviderRpcError, stringToPersonalSignHex } from "./provider.js";
+export { OMSWalletProviderRpcError, stringToPersonalSignHex } from "./provider.js";
+export type { OMSWalletProvider } from "./provider.js";
 export { omsWalletConnector } from "./omsWalletConnector.js";
-export type { OmsWalletConnector } from "./omsWalletConnector.js";
+export type { OMSWalletConnector } from "./omsWalletConnector.js";
 export type {
     MaybePromise,
-    OmsWalletClientLike,
-    OmsWalletConnectorParameters,
-    OmsWalletFeeOptionSelector,
-    OmsWalletNetwork,
-    OmsWalletProviderTransactionRequest,
-    OmsWalletSendTransactionParams,
-    OmsWalletSendTransactionResponse,
-    OmsWalletTransactionContext,
-    OmsWalletTransactionOptions,
-    OmsWalletTransactionStatusPollingOptions,
-    OmsWalletLike,
+    OMSWalletLike,
+    OMSWalletConnectorParameters,
+    OMSWalletFeeOptionSelector,
+    OMSWalletNetwork,
+    OMSWalletProviderTransactionRequest,
+    OMSWalletSendTransactionParams,
+    OMSWalletSendTransactionResponse,
+    OMSWalletTransactionContext,
+    OMSWalletTransactionOptions,
+    OMSWalletTransactionStatusPollingOptions,
+    WalletLike,
 } from "./types.js";

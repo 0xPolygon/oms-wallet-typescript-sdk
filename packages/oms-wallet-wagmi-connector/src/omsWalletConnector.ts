@@ -1,43 +1,49 @@
 import { createConnector } from "@wagmi/core";
 import { getAddress, numberToHex, SwitchChainError, type Address } from "viem";
+import { Networks } from "@polygonlabs/oms-wallet";
 
-import { OmsWalletProvider, OmsWalletProviderRpcError } from "./provider.js";
+import { OMSWalletProvider, OMSWalletProviderRpcError } from "./provider.js";
 import type {
     MaybePromise,
-    OmsWalletClientLike,
-    OmsWalletConnectorParameters,
-    OmsWalletNetwork,
+    OMSWalletLike,
+    OMSWalletConnectorParameters,
+    OMSWalletNetwork,
 } from "./types.js";
 
 omsWalletConnector.type = "omsWallet" as const;
 
-type OmsWalletConnectorStorageItemMap = Record<`${string}.manuallyDisconnected`, boolean>;
+const supportedNetworks = Object.values(Networks);
 
-export function omsWalletConnector(parameters: OmsWalletConnectorParameters) {
+type OMSWalletConnectorStorageItemMap = Record<`${string}.manuallyDisconnected`, boolean>;
+
+export function omsWalletConnector(parameters: OMSWalletConnectorParameters) {
     let chainId: number | undefined;
-    let provider: OmsWalletProvider | undefined;
+    let provider: OMSWalletProvider | undefined;
     let unsubscribeSessionExpired: (() => void) | undefined;
     let manuallyDisconnected = false;
+    let manuallyDisconnectedVersion = 0;
     const connectorId = parameters.id ?? "omsWallet";
-    const manuallyDisconnectedStorageKey = `${connectorId}.manuallyDisconnected` as keyof OmsWalletConnectorStorageItemMap;
+    const manuallyDisconnectedStorageKey = `${connectorId}.manuallyDisconnected` as keyof OMSWalletConnectorStorageItemMap;
 
-    const resolveClient = async (): Promise<OmsWalletClientLike> =>
-        typeof parameters.client === "function"
-            ? await (parameters.client as () => MaybePromise<OmsWalletClientLike>)()
-            : parameters.client;
+    const resolveOmsWallet = async (): Promise<OMSWalletLike> =>
+        typeof parameters.omsWallet === "function"
+            ? await (parameters.omsWallet as () => MaybePromise<OMSWalletLike>)()
+            : parameters.omsWallet;
 
-    const configuredNetworks = (client?: OmsWalletClientLike): readonly OmsWalletNetwork[] =>
-        parameters.networks ?? client?.supportedNetworks ?? [];
+    const configuredNetworks = (): readonly OMSWalletNetwork[] =>
+        parameters.networks ?? supportedNetworks;
 
-    return createConnector<OmsWalletProvider, Record<string, unknown>, OmsWalletConnectorStorageItemMap>((config) => {
+    return createConnector<OMSWalletProvider, Record<string, unknown>, OMSWalletConnectorStorageItemMap>((config) => {
         const isManuallyDisconnected = async (): Promise<boolean> => {
+            const readVersion = manuallyDisconnectedVersion;
             const storedValue = await config.storage?.getItem(manuallyDisconnectedStorageKey, null);
-            if (storedValue !== null && storedValue !== undefined) {
+            if (readVersion === manuallyDisconnectedVersion && storedValue !== null && storedValue !== undefined) {
                 manuallyDisconnected = storedValue;
             }
             return manuallyDisconnected;
         };
         const setManuallyDisconnected = async (nextValue: boolean): Promise<void> => {
+            manuallyDisconnectedVersion += 1;
             manuallyDisconnected = nextValue;
             if (nextValue) {
                 await config.storage?.setItem(manuallyDisconnectedStorageKey, true);
@@ -46,14 +52,11 @@ export function omsWalletConnector(parameters: OmsWalletConnectorParameters) {
             }
         };
         const defaultChainId = () => chainId ?? config.chains[0].id;
-        const setChainId = (nextChainId: number): void => {
-            chainId = nextChainId;
-        };
         const syncChainId = (nextChainId: number): void => {
-            setChainId(nextChainId);
+            chainId = nextChainId;
             config.emitter.emit("change", {chainId: nextChainId});
         };
-        const getNetworks = async () => configuredNetworks(await resolveClient());
+        const getNetworks = async () => configuredNetworks();
         const ensureChainId = async (): Promise<number> => {
             if (chainId === undefined) {
                 chainId = resolveInitialChainId(await getNetworks());
@@ -69,12 +72,12 @@ export function omsWalletConnector(parameters: OmsWalletConnectorParameters) {
             }
             return chain;
         };
-        const requireOmsNetwork = (nextChainId: number, networks: readonly OmsWalletNetwork[]) => {
+        const requireOmsNetwork = (nextChainId: number, networks: readonly OMSWalletNetwork[]) => {
             if (!networks.some(network => network.id === nextChainId)) {
                 throw new SwitchChainError(new Error(`OMS does not support chain ${nextChainId}.`));
             }
         };
-        const resolveInitialChainId = (networks: readonly OmsWalletNetwork[]): number => {
+        const resolveInitialChainId = (networks: readonly OMSWalletNetwork[]): number => {
             if (parameters.initialChainId !== undefined) {
                 requireConfiguredChain(parameters.initialChainId);
                 requireOmsNetwork(parameters.initialChainId, networks);
@@ -94,12 +97,12 @@ export function omsWalletConnector(parameters: OmsWalletConnectorParameters) {
             if (await isManuallyDisconnected()) {
                 return [];
             }
-            const address = (await resolveClient()).wallet.walletAddress;
+            const address = (await resolveOmsWallet()).wallet.walletAddress;
             return address ? [getAddress(address)] : [];
         };
 
-        const subscribeSessionExpired = (client: OmsWalletClientLike): void => {
-            unsubscribeSessionExpired ??= client.wallet.onSessionExpired?.(() => {
+        const subscribeSessionExpired = (omsWallet: OMSWalletLike): void => {
+            unsubscribeSessionExpired ??= omsWallet.wallet.onSessionExpired?.(() => {
                 void setManuallyDisconnected(true);
                 config.emitter.emit("disconnect");
                 provider?.emit("disconnect");
@@ -113,15 +116,15 @@ export function omsWalletConnector(parameters: OmsWalletConnectorParameters) {
                 await setManuallyDisconnected(false);
             }
             await ensureChainId();
-            const client = await resolveClient();
-            subscribeSessionExpired(client);
-            if (!client.wallet.walletAddress) {
-                throw new OmsWalletProviderRpcError(4100, "No active OMS wallet session. Authenticate with the OMS SDK before connecting through wagmi.");
+            const omsWallet = await resolveOmsWallet();
+            subscribeSessionExpired(omsWallet);
+            if (!omsWallet.wallet.walletAddress) {
+                throw new OMSWalletProviderRpcError(4100, "No active OMS Wallet session. Authenticate with the OMS Wallet SDK before connecting through wagmi.");
             }
 
             const nextAccounts = await accounts();
             if (!nextAccounts.length) {
-                throw new OmsWalletProviderRpcError(4100, "No active OMS wallet session. Authenticate with the OMS SDK before connecting through wagmi.");
+                throw new OMSWalletProviderRpcError(4100, "No active OMS Wallet session. Authenticate with the OMS Wallet SDK before connecting through wagmi.");
             }
             provider?.emit("accountsChanged", nextAccounts);
             return nextAccounts;
@@ -132,12 +135,11 @@ export function omsWalletConnector(parameters: OmsWalletConnectorParameters) {
             provider?.emit("accountsChanged", []);
         };
 
-        const createProvider = (getProviderChainId: () => number): OmsWalletProvider =>
-            new OmsWalletProvider(
+        const createProvider = (getProviderChainId: () => number): OMSWalletProvider =>
+            new OMSWalletProvider(
                 parameters,
-                resolveClient,
+                resolveOmsWallet,
                 getProviderChainId,
-                setChainId,
                 syncChainId,
                 getNetworks,
                 nextChainId => Boolean(chainById(nextChainId)),
@@ -151,15 +153,15 @@ export function omsWalletConnector(parameters: OmsWalletConnectorParameters) {
             icon: parameters.icon,
             type: omsWalletConnector.type,
             async setup() {
-                const client = await resolveClient();
+                const omsWallet = await resolveOmsWallet();
                 try {
-                    chainId = chainId ?? resolveInitialChainId(configuredNetworks(client));
+                    chainId = chainId ?? resolveInitialChainId(configuredNetworks());
                 } catch {
                     // `setup` runs outside the user's connect call in wagmi, so defer validation
                     // errors until `connect` where consumers can catch them normally.
                 }
                 void isManuallyDisconnected();
-                subscribeSessionExpired(client);
+                subscribeSessionExpired(omsWallet);
             },
             async connect<withCapabilities extends boolean = false>({
                 chainId: requestedChainId,
@@ -209,7 +211,7 @@ export function omsWalletConnector(parameters: OmsWalletConnectorParameters) {
                 return provider;
             },
             async isAuthorized() {
-                return !(await isManuallyDisconnected()) && Boolean((await resolveClient()).wallet.walletAddress);
+                return !(await isManuallyDisconnected()) && Boolean((await resolveOmsWallet()).wallet.walletAddress);
             },
             async switchChain({chainId: requestedChainId}: {chainId: number; addEthereumChainParameter?: unknown}) {
                 const chain = requireConfiguredChain(requestedChainId);
@@ -247,4 +249,4 @@ export function omsWalletConnector(parameters: OmsWalletConnectorParameters) {
     });
 }
 
-export type OmsWalletConnector = ReturnType<typeof omsWalletConnector>;
+export type OMSWalletConnector = ReturnType<typeof omsWalletConnector>;

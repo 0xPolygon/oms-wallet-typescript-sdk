@@ -1,4 +1,4 @@
-import { FeeOptionSelector, type FeeOptionSelection, type FeeOptionWithBalance } from '@0xsequence/typescript-sdk'
+import { FeeOptionSelector, type FeeOptionSelection, type FeeOptionWithBalance } from '@polygonlabs/oms-wallet'
 
 export type FeeOptionSelectionRequest = {
   options: FeeOptionWithBalance[]

@@ -15,8 +15,8 @@
 - [ ] `pnpm test` passes
 - [ ] `pnpm exec tsc --noEmit` passes
 - [ ] `pnpm test:types` passes (if public types changed)
-- [ ] `pnpm --filter @0xsequence/oms-wallet-wagmi-connector test` passes (if connector behavior changed)
-- [ ] `pnpm --filter @0xsequence/oms-wallet-wagmi-connector build` passes (if connector types/build changed)
+- [ ] `pnpm --filter @polygonlabs/oms-wallet-wagmi-connector test` passes (if connector behavior changed)
+- [ ] `pnpm --filter @polygonlabs/oms-wallet-wagmi-connector build` passes (if connector types/build changed)
 - [ ] Relevant example builds pass: `pnpm build:example`, `pnpm build:trails-actions-example`, `pnpm build:wagmi-example`, `pnpm build:node-example`, or `pnpm build:node-contract-deploy-example`
 - [ ] `pnpm build` succeeds (if touching exports, package output, or release behavior)
 

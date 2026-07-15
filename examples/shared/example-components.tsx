@@ -1,11 +1,12 @@
 import type {
   FeeOptionWithBalance,
-  OMSClientSessionExpiredEvent,
-  OmsWallet,
+  OMSWalletSessionExpiredEvent,
+  WalletAccount,
   PendingWalletSelection,
-} from '@0xsequence/typescript-sdk'
+} from '@polygonlabs/oms-wallet'
 import {
   canAffordFeeOption,
+  formatSessionAuth,
   formatOidcProvider,
   formatWalletType,
   type OidcRedirectProvider,
@@ -195,7 +196,7 @@ export function WalletSelectionPanel({
   pendingWalletSelection: PendingWalletSelection
   authStatus?: string
   disabled: boolean
-  onSelectWallet: (wallet: OmsWallet) => void
+  onSelectWallet: (wallet: WalletAccount) => void
   onCreateWallet: () => void
   onCancel: () => void
 }) {
@@ -294,7 +295,7 @@ export function SessionExpiredDialog({
   onReauthenticate,
   onDismiss,
 }: {
-  event: OMSClientSessionExpiredEvent
+  event: OMSWalletSessionExpiredEvent
   disabled: boolean
   onReauthenticate: () => void
   onDismiss: () => void
@@ -311,19 +312,17 @@ export function SessionExpiredDialog({
         <p>
           Your wallet session has expired. Reauthenticate to continue using this wallet.
         </p>
-        {event.session.sessionEmail && (
+        {event.session.auth?.email && (
           <p className="modal-detail">
-            Account <strong>{event.session.sessionEmail}</strong>
+            Account <strong>{event.session.auth.email}</strong>
           </p>
         )}
         <p className="modal-hint">
-          {event.session.loginType === 'google-auth'
-            ? 'You will be redirected to Google with the same account selected.'
-            : event.session.loginType === 'oidc'
-              ? 'You will be redirected to Apple.'
-              : event.session.loginType === 'email' && event.session.sessionEmail
-                ? 'A new sign-in code will be sent to the same email address.'
-                : 'Sign in again to continue.'}
+          {event.session.auth?.type === 'oidc'
+            ? `You will be redirected to ${formatSessionAuth(event.session.auth)}.`
+            : event.session.auth?.type === 'email' && event.session.auth.email
+              ? 'A new sign-in code will be sent to the same email address.'
+              : 'Sign in again to continue.'}
         </p>
         <div className="modal-actions">
           <button type="button" onClick={onReauthenticate} disabled={disabled}>

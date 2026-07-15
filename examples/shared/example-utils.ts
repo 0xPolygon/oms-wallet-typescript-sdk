@@ -1,9 +1,9 @@
 import type {
   FeeOptionWithBalance,
-  OMSClientSessionLoginType,
+  OMSWalletSessionAuth,
   PendingWalletSelection,
   WalletActivationResult,
-} from '@0xsequence/typescript-sdk'
+} from '@polygonlabs/oms-wallet'
 
 export type OidcRedirectProvider = 'google' | 'apple'
 
@@ -16,17 +16,18 @@ export function formatOidcProvider(provider: OidcRedirectProvider): string {
   return provider === 'google' ? 'Google' : 'Apple'
 }
 
-export function formatLoginType(
-  loginType: OMSClientSessionLoginType | undefined,
+export function formatSessionAuth(
+  auth: OMSWalletSessionAuth | undefined,
   fallback = 'Unknown',
 ): string {
-  switch (loginType) {
+  switch (auth?.type) {
     case 'email':
       return 'Email'
-    case 'google-auth':
-      return 'Google'
-    case 'oidc':
-      return 'Apple'
+    case 'oidc': {
+      const provider = auth.providerLabel ?? auth.provider ?? auth.issuer
+      const flow = auth.flow === 'id-token' ? 'ID token' : 'Redirect'
+      return `${provider} (${flow})`
+    }
     default:
       return fallback
   }

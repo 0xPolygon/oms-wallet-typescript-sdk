@@ -1,4 +1,4 @@
-import {OmsValidationError} from "./errors.js";
+import {OMSWalletValidationError} from "./errors.js";
 
 interface PublishableKeyRoute {
     prefix: string;
@@ -40,8 +40,8 @@ export function parsePublishableKey(publishableKey: string): ParsedPublishableKe
     };
 }
 
-function invalidPublishableKey(): OmsValidationError {
-    return new OmsValidationError({
+function invalidPublishableKey(): OMSWalletValidationError {
+    return new OMSWalletValidationError({
         message: "Invalid publishableKey.",
     });
 }

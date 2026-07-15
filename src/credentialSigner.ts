@@ -1,10 +1,9 @@
 import {keccak256, toBytes, type Hex} from "viem";
 import {privateKeyToAccount} from "viem/accounts";
 
-import {SigningAlgorithm} from "./generated/waas.gen.js";
 import {ByteUtils} from "./utils/byteUtils.js";
 
-export type CredentialSigningAlgorithm = `${SigningAlgorithm}`;
+export type CredentialSigningAlgorithm = "ecdsa-p256-sha256" | "ecdsa-p256k-eip191";
 
 export interface CredentialSigner {
     readonly signingAlgorithm: CredentialSigningAlgorithm;
@@ -17,7 +16,7 @@ export interface CredentialSigner {
 
 interface StoredWebCryptoCredential {
     id: string;
-    signingAlgorithm: typeof SigningAlgorithm.ECDSA_P256_SHA256;
+    signingAlgorithm: "ecdsa-p256-sha256";
     credentialId: string;
     keyPair: CryptoKeyPair;
     nonce: string;
@@ -28,7 +27,7 @@ const credentialStoreName = "credentials";
 const defaultWebCryptoCredentialId = "default-webcrypto-p256";
 
 export class WebCryptoP256CredentialSigner implements CredentialSigner {
-    readonly signingAlgorithm = SigningAlgorithm.ECDSA_P256_SHA256;
+    readonly signingAlgorithm = "ecdsa-p256-sha256" as const;
 
     private keyPair?: CryptoKeyPair;
     private credential?: string;
@@ -56,10 +55,18 @@ export class WebCryptoP256CredentialSigner implements CredentialSigner {
             const txDone = idbTransactionToPromise(tx);
             const store = tx.objectStore(credentialStoreName);
             const stored = await idbRequestToPromise<StoredWebCryptoCredential | undefined>(store.get(this.id));
-            const nonce = nextNonceValue(parseNonce(stored?.nonce ?? this.nonce.toString()));
-            this.nonce = nonce;
+            if (!isUsableStoredCredential(stored)) {
+                this.clearMemory();
+                throw new Error("WebCrypto credential signer was cleared");
+            }
 
-            await idbRequestToPromise(store.put(this.toRecord()));
+            const nonce = nextNonceValue(parseNonce(stored.nonce));
+            const nextRecord = {...stored, nonce: nonce.toString()};
+            this.nonce = nonce;
+            this.keyPair = stored.keyPair;
+            this.credential = stored.credentialId;
+
+            await idbRequestToPromise(store.put(nextRecord));
             await txDone;
             return nonce.toString();
         } finally {
@@ -94,9 +101,7 @@ export class WebCryptoP256CredentialSigner implements CredentialSigner {
     }
 
     async clear(): Promise<void> {
-        this.keyPair = undefined;
-        this.credential = undefined;
-        this.nonce = 0n;
+        this.clearMemory();
         this.initialized = undefined;
 
         const db = await openCredentialDb();
@@ -137,7 +142,7 @@ export class WebCryptoP256CredentialSigner implements CredentialSigner {
         const publicKey = await crypto.subtle.exportKey("raw", this.keyPair.publicKey);
         this.credential = `0x${ByteUtils.bytesToHex(new Uint8Array(publicKey))}`;
         this.nonce = 0n;
-        await this.persist();
+        await this.persistNewCredentialOrLoadExisting();
     }
 
     private async load(): Promise<StoredWebCryptoCredential | null> {
@@ -154,18 +159,32 @@ export class WebCryptoP256CredentialSigner implements CredentialSigner {
         }
     }
 
-    private async persist(): Promise<void> {
+    private async persistNewCredentialOrLoadExisting(): Promise<void> {
         const db = await openCredentialDb();
         if (!db) return;
 
         try {
             const tx = db.transaction(credentialStoreName, "readwrite");
             const txDone = idbTransactionToPromise(tx);
-            await idbRequestToPromise(tx.objectStore(credentialStoreName).put(this.toRecord()));
+            const store = tx.objectStore(credentialStoreName);
+            const stored = await idbRequestToPromise<StoredWebCryptoCredential | undefined>(store.get(this.id));
+            if (isUsableStoredCredential(stored)) {
+                this.keyPair = stored.keyPair;
+                this.credential = stored.credentialId;
+                this.nonce = parseNonce(stored.nonce);
+            } else {
+                await idbRequestToPromise(store.put(this.toRecord()));
+            }
             await txDone;
         } finally {
             db.close();
         }
+    }
+
+    private clearMemory(): void {
+        this.keyPair = undefined;
+        this.credential = undefined;
+        this.nonce = 0n;
     }
 
     private toRecord(): StoredWebCryptoCredential {
@@ -184,7 +203,7 @@ export class WebCryptoP256CredentialSigner implements CredentialSigner {
 }
 
 export class EthereumPrivateKeyCredentialSigner implements CredentialSigner {
-    readonly signingAlgorithm = SigningAlgorithm.ECDSA_P256K_EIP191;
+    readonly signingAlgorithm = "ecdsa-p256k-eip191" as const;
     private nonce = 0n;
 
     constructor(private readonly privateKey: Uint8Array) {}
@@ -217,7 +236,7 @@ function assertWebCryptoSupport(): void {
 function isUsableStoredCredential(stored: StoredWebCryptoCredential | undefined): stored is StoredWebCryptoCredential {
     return Boolean(
         stored
-        && stored.signingAlgorithm === SigningAlgorithm.ECDSA_P256_SHA256
+        && stored.signingAlgorithm === "ecdsa-p256-sha256"
         && stored.credentialId.startsWith("0x04")
         && stored.keyPair?.privateKey
         && stored.keyPair.privateKey.extractable === false,

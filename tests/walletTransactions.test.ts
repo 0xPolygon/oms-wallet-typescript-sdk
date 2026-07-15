@@ -2,7 +2,7 @@ import {afterEach, describe, expect, it, vi} from "vitest";
 
 import {WalletClient} from "../src/clients/walletClient";
 import type {CredentialSigner} from "../src/credentialSigner";
-import {TransactionStatus} from "../src/generated/waas.gen";
+import {TransactionStatus} from "../src/types/waas";
 import {Networks} from "../src/networks";
 import {MemoryStorageManager} from "../src/storageManager";
 import {FeeOptionSelector} from "../src/types/transactionTypes";
@@ -98,6 +98,8 @@ describe("WalletClient transactions", () => {
                         chainId: 137,
                         results: [{
                             accountAddress: "0x9999999999999999999999999999999999999999",
+                            name: "POL",
+                            symbol: "POL",
                             balance: "1000000000000000000",
                             chainId: 137,
                         }],
@@ -108,8 +110,10 @@ describe("WalletClient transactions", () => {
                             contractType: "ERC20",
                             contractAddress: "0x2222222222222222222222222222222222222222",
                             accountAddress: "0x9999999999999999999999999999999999999999",
-                            tokenID: null,
+                            tokenID: "0",
                             balance: "2500000",
+                            blockHash: "0xblock",
+                            blockNumber: 1,
                             chainId: 137,
                         }],
                     }],
@@ -156,6 +160,61 @@ describe("WalletClient transactions", () => {
             txnId: "txn-1",
             status: TransactionStatus.Executed,
             txnHash: "0xtx",
+            statusResolution: "resolved",
+        });
+    });
+
+    it("polls callContract automatically and resolves when a transaction hash appears", async () => {
+        const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+            const url = input.toString();
+            const body = JSON.parse(init?.body as string);
+
+            if (url.endsWith("/PrepareEthereumContractCall")) {
+                expect(body).toEqual({
+                    network: "137",
+                    walletId: "wallet-id",
+                    contract: "0x1111111111111111111111111111111111111111",
+                    method: "mint(address,uint256)",
+                    args: [
+                        {type: "address", value: "0x2222222222222222222222222222222222222222"},
+                        {type: "uint256", value: "1"},
+                    ],
+                    mode: "relayer",
+                });
+                return jsonResponse({
+                    txnId: "txn-contract",
+                    status: "quoted",
+                    feeOptions: [],
+                    sponsored: true,
+                    expiresAt: "2099-01-01T00:00:00Z",
+                });
+            }
+            if (url.endsWith("/Execute")) return jsonResponse({status: "pending"});
+            if (url.endsWith("/TransactionStatus")) {
+                return jsonResponse({status: "pending", txnHash: "0xcontract"});
+            }
+            throw new Error(`Unexpected request: ${url}`);
+        });
+        vi.stubGlobal("fetch", fetchMock);
+
+        const wallet = createWalletWithSession(
+            new MemoryStorageManager(),
+            "0x9999999999999999999999999999999999999999",
+        );
+
+        await expect(wallet.callContract({
+            network: Networks.polygon,
+            contractAddress: "0x1111111111111111111111111111111111111111",
+            method: "mint(address,uint256)",
+            args: [
+                {type: "address", value: "0x2222222222222222222222222222222222222222"},
+                {type: "uint256", value: "1"},
+            ],
+        })).resolves.toEqual({
+            txnId: "txn-contract",
+            status: TransactionStatus.Pending,
+            txnHash: "0xcontract",
+            statusResolution: "resolved",
         });
     });
 
@@ -217,6 +276,7 @@ describe("WalletClient transactions", () => {
         })).resolves.toEqual({
             txnId: "txn-default-fee",
             status: TransactionStatus.Pending,
+            statusResolution: "not-requested",
         });
         expect(fetchMock).toHaveBeenCalledTimes(2);
     });
@@ -276,6 +336,7 @@ describe("WalletClient transactions", () => {
         })).resolves.toEqual({
             txnId: "txn-sponsored",
             status: TransactionStatus.Pending,
+            statusResolution: "not-requested",
         });
         expect(selectFeeOption).not.toHaveBeenCalled();
     });
@@ -337,16 +398,20 @@ describe("WalletClient transactions", () => {
                                 contractType: "ERC20",
                                 contractAddress: daiAddress,
                                 accountAddress: "0x9999999999999999999999999999999999999999",
-                                tokenID: null,
+                                tokenID: "0",
                                 balance: "100",
+                                blockHash: "0xblock-dai",
+                                blockNumber: 1,
                                 chainId: 137,
                             },
                             {
                                 contractType: "ERC20",
                                 contractAddress: usdcAddress,
                                 accountAddress: "0x9999999999999999999999999999999999999999",
-                                tokenID: null,
+                                tokenID: "0",
                                 balance: "2000",
+                                blockHash: "0xblock-usdc",
+                                blockNumber: 1,
                                 chainId: 137,
                             },
                         ],
@@ -380,6 +445,7 @@ describe("WalletClient transactions", () => {
         })).resolves.toEqual({
             txnId: "txn-first-available",
             status: TransactionStatus.Pending,
+            statusResolution: "not-requested",
         });
     });
 
@@ -423,8 +489,10 @@ describe("WalletClient transactions", () => {
                             contractType: "ERC20",
                             contractAddress: usdcAddress,
                             accountAddress: "0x9999999999999999999999999999999999999999",
-                            tokenID: null,
+                            tokenID: "0",
                             balance: "100",
+                            blockHash: "0xblock",
+                            blockNumber: 1,
                             chainId: 137,
                         }],
                     }],
@@ -539,6 +607,7 @@ describe("WalletClient transactions", () => {
         expect(response).toEqual({
             txnId: "txn-1",
             status: TransactionStatus.Pending,
+            statusResolution: "not-requested",
         });
     });
 
@@ -580,8 +649,118 @@ describe("WalletClient transactions", () => {
         })).resolves.toEqual({
             txnId: "txn-failed",
             status: TransactionStatus.Failed,
+            statusResolution: "resolved",
         });
         expect(fetchMock.mock.calls.filter(([input]) => input.toString().endsWith("/TransactionStatus"))).toHaveLength(1);
+    });
+
+    it("returns the latest status when automatic polling reaches its deadline", async () => {
+        const fetchMock = vi.fn(async (input: RequestInfo | URL) => {
+            const url = input.toString();
+            if (url.endsWith("/PrepareEthereumTransaction")) {
+                return jsonResponse({
+                    txnId: "txn-timeout",
+                    status: "quoted",
+                    feeOptions: [],
+                    sponsored: true,
+                    expiresAt: "2099-01-01T00:00:00Z",
+                });
+            }
+            if (url.endsWith("/Execute")) return jsonResponse({status: "pending"});
+            if (url.endsWith("/TransactionStatus")) return jsonResponse({status: "pending"});
+            throw new Error(`Unexpected request: ${url}`);
+        });
+        vi.stubGlobal("fetch", fetchMock);
+
+        const wallet = createWalletWithSession(
+            new MemoryStorageManager(),
+            "0x9999999999999999999999999999999999999999",
+        );
+
+        await expect(wallet.sendTransaction({
+            network: Networks.polygon,
+            to: "0x1111111111111111111111111111111111111111",
+            value: 0n,
+            statusPolling: {timeoutMs: 0},
+        })).resolves.toEqual({
+            txnId: "txn-timeout",
+            status: TransactionStatus.Pending,
+            statusResolution: "timed-out",
+        });
+    });
+
+    it("keeps unknown statuses unresolved until the polling deadline", async () => {
+        const fetchMock = vi.fn(async (input: RequestInfo | URL) => {
+            const url = input.toString();
+            if (url.endsWith("/PrepareEthereumTransaction")) {
+                return jsonResponse({
+                    txnId: "txn-unknown-timeout",
+                    status: "quoted",
+                    feeOptions: [],
+                    sponsored: true,
+                    expiresAt: "2099-01-01T00:00:00Z",
+                });
+            }
+            if (url.endsWith("/Execute")) return jsonResponse({status: "pending"});
+            if (url.endsWith("/TransactionStatus")) return jsonResponse({status: "future-status"});
+            throw new Error(`Unexpected request: ${url}`);
+        });
+        vi.stubGlobal("fetch", fetchMock);
+        const wallet = createWalletWithSession(
+            new MemoryStorageManager(),
+            "0x9999999999999999999999999999999999999999",
+        );
+
+        await expect(wallet.sendTransaction({
+            network: Networks.polygon,
+            to: "0x1111111111111111111111111111111111111111",
+            value: 0n,
+            statusPolling: {timeoutMs: 0},
+        })).resolves.toEqual({
+            txnId: "txn-unknown-timeout",
+            status: TransactionStatus.Unknown,
+            statusResolution: "timed-out",
+        });
+    });
+
+    it("rejects invalid polling options before execute", async () => {
+        const invalidOptions = [
+            {timeoutMs: Number.NaN},
+            {timeoutMs: -1},
+            {intervalMs: 0},
+            {fastIntervalMs: Number.POSITIVE_INFINITY},
+            {fastPollCount: 1.5},
+        ];
+
+        for (const [index, statusPolling] of invalidOptions.entries()) {
+            const fetchMock = vi.fn(async (input: RequestInfo | URL) => {
+                const url = input.toString();
+                if (url.endsWith("/PrepareEthereumTransaction")) {
+                    return jsonResponse({
+                        txnId: `txn-invalid-polling-${index}`,
+                        status: "quoted",
+                        feeOptions: [],
+                        sponsored: true,
+                        expiresAt: "2099-01-01T00:00:00Z",
+                    });
+                }
+                throw new Error(`Unexpected request: ${url}`);
+            });
+            vi.stubGlobal("fetch", fetchMock);
+            const wallet = createWalletWithSession(
+                new MemoryStorageManager(),
+                "0x9999999999999999999999999999999999999999",
+            );
+
+            await expect(wallet.sendTransaction({
+                network: Networks.polygon,
+                to: "0x1111111111111111111111111111111111111111",
+                value: 0n,
+                statusPolling,
+            })).rejects.toMatchObject({code: "OMS_VALIDATION_ERROR"});
+            expect(fetchMock.mock.calls.filter(([input]) => input.toString().endsWith("/Execute"))).toHaveLength(0);
+            vi.unstubAllGlobals();
+        }
     });
 
     it("exposes transaction status lookup by transaction id", async () => {
@@ -667,7 +846,12 @@ function createWalletWithSession(storage: MemoryStorageManager, walletAddress: s
         storage,
         credentialSigner: new MockSigner(),
     });
-    (wallet as any).persistSession("wallet-id", walletAddress);
+    (wallet as any).persistSession("wallet-id", walletAddress, {
+        expiresAt: "2099-01-01T00:00:00Z",
+        auth: {type: "email", email: "user@example.com"},
+        signerCredentialId: "0x04" + "11".repeat(64),
+        signerKeyType: "ecdsa-p256-sha256",
+    });
     return wallet;
 }
 
