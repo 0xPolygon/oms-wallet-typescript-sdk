@@ -12,8 +12,6 @@ Run it from the repository root:
 ```bash
 pnpm install
 pnpm build
-cp examples/trails-actions/.env.example examples/trails-actions/.env.local
-# Fill VITE_OMS_PUBLISHABLE_KEY
 pnpm dev:trails-actions-example
 ```
 

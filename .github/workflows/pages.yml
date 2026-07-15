@@ -46,20 +46,16 @@ jobs:
         run: pnpm build:example
         env:
           GITHUB_PAGES: 'true'
-          VITE_OMS_PUBLISHABLE_KEY: ${{ secrets.OMS_PUBLISHABLE_KEY }}
 
       - name: Build Trails Actions example
         run: pnpm build:trails-actions-example
         env:
           GITHUB_PAGES: 'true'
-          VITE_OMS_PUBLISHABLE_KEY: ${{ secrets.OMS_PUBLISHABLE_KEY }}
 
       - name: Build Wagmi example
         run: pnpm build:wagmi-example
         env:
           GITHUB_PAGES: 'true'
-          VITE_OMS_PUBLISHABLE_KEY: ${{ secrets.OMS_PUBLISHABLE_KEY }}
-          VITE_TRAILS_API_KEY: ${{ secrets.VITE_TRAILS_API_KEY }}
 
       - name: Stage Pages artifact
         run: |
