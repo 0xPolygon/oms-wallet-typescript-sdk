@@ -128,8 +128,8 @@ importers:
         specifier: 0.16.0
         version: 0.16.0(@tanstack/react-query@5.101.0(react@19.2.7))(@types/react-dom@19.2.3(@types/react@19.2.17))(@types/react@19.2.17)(bs58@6.0.0)(bufferutil@4.1.0)(react-dom@19.2.7(react@19.2.7))(react@19.2.7)(typescript@5.9.3)(use-sync-external-store@1.4.0(react@19.2.7))(utf-8-validate@6.0.6)(viem@2.52.2(bufferutil@4.1.0)(typescript@5.9.3)(utf-8-validate@6.0.6)(zod@3.25.76))(zod@3.25.76)
       '@0xtrails/api':
-        specifier: 0.16.0
-        version: 0.16.0
+        specifier: 0.16.2
+        version: 0.16.2
       '@polygonlabs/oms-wallet':
         specifier: workspace:*
         version: link:../..
@@ -255,6 +255,9 @@ packages:
 
   '@0xtrails/api@0.16.0':
     resolution: {integrity: sha512-S/NRwHQN7QF6Vr6FBc5Ph7VFu1ByoSV1TZwXz0o6DS+J50HT+dM1IxIV1P5FiAYzAS2hhjtF+ypgYf989J3fzw==}
+
+  '@0xtrails/api@0.16.2':
+    resolution: {integrity: sha512-UZofNVjwoJAVu8h4YKNdMTmUAcx3fvmEJgHQBDRkCtH4a5uoo+ntFnQo3NIbx0lLSX6f+miXMiuBabprwz0M+A==}
 
   '@0xtrails/wallet@0.16.0':
     resolution: {integrity: sha512-35Cm1nB08RP1OIMkC0yiGFgpQrepHkle9QN5oPgTxjlYK5fJ27/w2FbTe25GsoeXdqJSxmVJqPLvxb0a15O4yA==}
@@ -3081,6 +3084,8 @@ snapshots:
       - zod
 
   '@0xtrails/api@0.16.0': {}
+
+  '@0xtrails/api@0.16.2': {}
 
   '@0xtrails/wallet@0.16.0(@tanstack/react-query@5.101.0(react@19.2.7))(@types/react@19.2.17)(bufferutil@4.1.0)(react@19.2.7)(typescript@5.9.3)(use-sync-external-store@1.4.0(react@19.2.7))(utf-8-validate@6.0.6)(viem@2.52.2(bufferutil@4.1.0)(typescript@5.9.3)(utf-8-validate@6.0.6)(zod@3.25.76))(zod@3.25.76)':
     dependencies:
