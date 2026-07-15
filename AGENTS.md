@@ -152,8 +152,7 @@ execution commands.
 ## Security and Configuration
 
 - Do not commit real secrets. `.env.local` and `.env.*.local` files are ignored for local overrides.
-- The React example checks in its selectable sandbox publishable keys and defaults to Development. The wagmi and Trails Actions examples use the same checked-in Development sandbox key.
-- The custom Google redirect example uses `examples/custom-google-redirect/.env.example` for `VITE_OMS_PUBLISHABLE_KEY`; keep local overrides in `examples/custom-google-redirect/.env.local`.
+- The React example checks in its selectable sandbox publishable keys and defaults to Development. The custom Google redirect, wagmi, and Trails Actions examples use the same checked-in Development sandbox key.
 - The wagmi React example uses its checked-in Trails API key.
 - The Node contract deploy example uses `examples/node-contract-deploy-example/.env.example` for `OMS_PUBLISHABLE_KEY`; keep local overrides in `examples/node-contract-deploy-example/.env.local`.
 - Treat credential signing, nonce handling, OIDC redirect state cleanup, session persistence, transaction execution/status polling, and access revocation as high-risk paths. Prefer focused regression tests for changes in these areas.
