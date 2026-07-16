@@ -61,13 +61,13 @@ This repository is a pnpm workspace for the OMS Wallet TypeScript SDK. The works
 - `packages/oms-wallet/docs/session-expiry-flow.md`: Session expiry, reauthentication, and related wallet behavior notes.
 - `packages/oms-wallet/scripts/write-esm-package.cjs`: Writes `dist/esm/package.json` during the SDK build.
 - `packages/oms-wallet/scripts/check-public-api.cjs`: Compares built public declarations with the committed baseline and rejects generated WaaS type leaks.
-- `scripts/`: Workspace-level orchestration scripts (`verify.cjs`, `check-package-versions.cjs`).
+- `scripts/verify.cjs`: Workspace-level verification gate (typecheck, tests, publishable-artifact pack checks, example builds) run by CI and locally.
+- `.changeset/`: changesets config. The `fixed` group keeps `@polygonlabs/oms-wallet` and `@polygonlabs/oms-wallet-wagmi-connector` on the same version; releases are automated by the changesets release workflow.
 
 ## Commands
 
 - `pnpm install --frozen-lockfile`: Install dependencies in CI-compatible mode.
-- `pnpm check:package-versions`: Verify publishable workspace package versions match, allow exact stable or prerelease semver, and require the connector SDK peer to use `workspace:^` and dev dependency to use `workspace:*`.
-- `pnpm check:stable-package-versions`: Verify publishable workspace package versions match and are exact stable semver for stable releases.
+- `pnpm exec changeset`: Add a changeset describing a change. Any PR that changes files inside a workspace package needs one (use `pnpm exec changeset add --empty` for changes with no consumer impact). The `fixed` group versions both publishable packages together.
 - `pnpm --filter @polygonlabs/oms-wallet check:public-api`: Compare built declarations with the committed baseline and reject generated WaaS type leaks.
 - `pnpm verify`: Run the full SDK verification suite, including package, test, example, and publishable-artifact checks.
 - `pnpm --filter @polygonlabs/oms-wallet exec tsc --noEmit`: Typecheck SDK source.
@@ -192,7 +192,7 @@ execution commands.
 | Test commands (`package.json` scripts) | `TESTING.md`, `.github/workflows/tests.yml`, `AGENTS.md` Commands section |
 | Node or pnpm version | `.nvmrc`, `package.json#packageManager`, `.github/workflows/*.yml` |
 | New third-party dependency | `package.json`, `pnpm-lock.yaml`, third-party docs guidance in `AGENTS.md` |
-| Publishable package versioning or workspace peer protocol | `PUBLISHING.md`, `scripts/check-package-versions.cjs`, `pnpm-lock.yaml` |
+| Publishable package versioning or workspace peer protocol | `PUBLISHING.md`, `.changeset/config.json`, `pnpm-lock.yaml` |
 | `packages/oms-wallet/src/generated/waas.gen.ts` (regenerated) | Document schema source + regen command in PR description |
 | Repo structure (new top-level dirs) | `AGENTS.md` Repository Layout section |
 | Examples added or renamed | `pnpm-workspace.yaml`, root `package.json` scripts, `pages.yml` when deployed |

@@ -29,13 +29,13 @@
   "sideEffects": false,
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/0xsequence/typescript-sdk.git",
+    "url": "git+https://github.com/0xPolygon/oms-wallet-typescript-sdk.git",
     "directory": "packages/oms-wallet"
   },
   "bugs": {
-    "url": "https://github.com/0xsequence/typescript-sdk/issues"
+    "url": "https://github.com/0xPolygon/oms-wallet-typescript-sdk/issues"
   },
-  "homepage": "https://github.com/0xsequence/typescript-sdk#readme",
+  "homepage": "https://github.com/0xPolygon/oms-wallet-typescript-sdk#readme",
   "publishConfig": {
     "access": "public"
   },

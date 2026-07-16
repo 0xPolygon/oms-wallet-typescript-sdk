@@ -2,6 +2,11 @@
 
 How testing works in this repo. `AGENTS.md` points here so agents know how to verify changes.
 
+> The SDK lives in `packages/oms-wallet`. Paths below (`tests/`, `type-tests/`, `src/`) are relative
+> to that package, and SDK-scoped commands (`vitest`, `tsc --noEmit`, `test:types`) run either from
+> inside `packages/oms-wallet` or from the repo root with `pnpm --filter @polygonlabs/oms-wallet …`.
+> The root `pnpm test` delegates to the SDK package.
+
 ## Frameworks & tools
 
 - **Test runner:** [Vitest](https://vitest.dev/) v4+
@@ -33,9 +38,9 @@ How testing works in this repo. `AGENTS.md` points here so agents know how to ve
 
 | Scenario | Command |
 |---|---|
-| Changed publishable package versions | `pnpm check:package-versions` |
-| Preparing a stable release | `pnpm check:stable-package-versions` |
-| Changed SDK behavior | `pnpm exec vitest run` |
+| Any change inside a workspace package | `pnpm exec changeset` (or `--empty` if non-shippable) |
+| Verifying a release-affecting change | `pnpm verify` |
+| Changed SDK behavior | `pnpm --filter @polygonlabs/oms-wallet exec vitest run` |
 | Changed wagmi connector behavior | `pnpm --filter @polygonlabs/oms-wallet-wagmi-connector test` |
 | Changed wagmi connector types/build | `pnpm --filter @polygonlabs/oms-wallet-wagmi-connector build` |
 | Changed React example | `pnpm build:example` |

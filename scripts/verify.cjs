@@ -8,21 +8,28 @@ const { tmpdir } = require('node:os')
 const { join } = require('node:path')
 const { spawnSync } = require('node:child_process')
 
+// Workspace-level verification gate run in CI (tests.yml) and locally.
+//
+// Package versioning is owned by changesets (the `fixed` group in
+// .changeset/config.json keeps the SDK and connector on the same version,
+// and pnpm rewrites the connector's workspace: peer/dev ranges at publish).
+// This script therefore no longer asserts version equality or the
+// workspace-protocol shape — it verifies that the workspace typechecks,
+// tests pass, the publishable artifacts pack cleanly with no leaked
+// workspace: dependency, and every example builds.
+
 const rootDir = join(__dirname, '..')
 const pnpm = process.platform === 'win32' ? 'pnpm.cmd' : 'pnpm'
-const stable = process.argv.includes('--stable')
+const sdkPackage = '@polygonlabs/oms-wallet'
+const connectorPackage = '@polygonlabs/oms-wallet-wagmi-connector'
 
 process.chdir(rootDir)
 
-run(
-  stable ? 'Check stable package versions' : 'Check package versions',
-  [stable ? 'check:stable-package-versions' : 'check:package-versions'],
-)
-run('Typecheck SDK', ['exec', 'tsc', '--noEmit'])
-run('Test SDK', ['test'])
+run('Typecheck SDK', ['--filter', sdkPackage, 'exec', 'tsc', '--noEmit'])
+run('Test SDK', ['--filter', sdkPackage, 'test'])
 verifyPackages()
-run('Check generated API reference', ['check:api:built'])
-run('Test wagmi connector', ['--filter', '@polygonlabs/oms-wallet-wagmi-connector', 'test'])
+run('Check generated API reference', ['--filter', sdkPackage, 'check:api:built'])
+run('Test wagmi connector', ['--filter', connectorPackage, 'test'])
 run('Build Node example', ['--filter', 'node-example', 'build'])
 run('Build Node contract deployment example', ['--filter', 'node-contract-deploy-example', 'build'])
 run('Build React example', ['--filter', 'react-example', 'build'])
@@ -58,14 +65,14 @@ function verifyPackages() {
   try {
     run('Build and pack SDK release package', [
       '--filter',
-      '@polygonlabs/oms-wallet',
+      sdkPackage,
       'pack',
       '--pack-destination',
       packageDir,
     ], process.env, true)
     run('Build and pack wagmi connector release package', [
       '--filter',
-      '@polygonlabs/oms-wallet-wagmi-connector',
+      connectorPackage,
       'pack',
       '--pack-destination',
       packageDir,
@@ -81,11 +88,10 @@ function verifyPackages() {
       const manifest = JSON.parse(readArchiveFile(archive, 'package/package.json'))
       const entries = listArchiveEntries(archive)
       assert(!JSON.stringify(manifest).includes('workspace:'), `${manifest.name} still contains a workspace: dependency.`)
-      assert(manifest.version === readRootVersion(), `${manifest.name} has packed version ${manifest.version}.`)
       packages.set(manifest.name, { manifest, entries })
     }
 
-    const sdk = requiredPackage(packages, '@polygonlabs/oms-wallet')
+    const sdk = requiredPackage(packages, sdkPackage)
     requireEntries(sdk.entries, sdk.manifest.name, [
       'package/dist/index.js',
       'package/dist/index.d.ts',
@@ -96,29 +102,16 @@ function verifyPackages() {
       'package/LICENSE',
     ])
 
-    const connector = requiredPackage(packages, '@polygonlabs/oms-wallet-wagmi-connector')
+    const connector = requiredPackage(packages, connectorPackage)
     requireEntries(connector.entries, connector.manifest.name, [
       'package/dist/index.js',
       'package/dist/index.d.ts',
       'package/README.md',
       'package/LICENSE',
     ])
-    const version = readRootVersion()
-    assert(
-      connector.manifest.peerDependencies?.['@polygonlabs/oms-wallet'] === `^${version}`,
-      `Packed connector peer dependency must be @polygonlabs/oms-wallet@^${version}.`,
-    )
-    assert(
-      connector.manifest.devDependencies?.['@polygonlabs/oms-wallet'] === version,
-      `Packed connector dev dependency must be @polygonlabs/oms-wallet@${version}.`,
-    )
   } finally {
     rmSync(packageDir, { recursive: true, force: true })
   }
-}
-
-function readRootVersion() {
-  return JSON.parse(readFileSync(join(rootDir, 'package.json'), 'utf8')).version
 }
 
 function readArchiveFile(archive, path) {

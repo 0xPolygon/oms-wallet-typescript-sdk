@@ -22,12 +22,12 @@
   },
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/0xsequence/typescript-sdk.git"
+    "url": "git+https://github.com/0xPolygon/oms-wallet-typescript-sdk.git"
   },
   "bugs": {
-    "url": "https://github.com/0xsequence/typescript-sdk/issues"
+    "url": "https://github.com/0xPolygon/oms-wallet-typescript-sdk/issues"
   },
-  "homepage": "https://github.com/0xsequence/typescript-sdk#readme",
+  "homepage": "https://github.com/0xPolygon/oms-wallet-typescript-sdk#readme",
   "publishConfig": {
     "access": "public"
   },
@@ -35,7 +35,7 @@
     "clean": "rm -rf dist",
     "build": "pnpm --dir ../oms-wallet build && pnpm clean && tsc -p tsconfig.json",
     "prepack": "pnpm build",
-    "prepublishOnly": "pnpm --dir ../.. check:package-versions && pnpm build && pnpm test",
+    "prepublishOnly": "pnpm build && pnpm test",
     "test": "vitest run",
     "test:watch": "vitest"
   },
