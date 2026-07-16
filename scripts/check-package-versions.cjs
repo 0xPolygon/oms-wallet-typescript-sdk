@@ -2,7 +2,7 @@ const { readFileSync } = require('node:fs')
 const { join } = require('node:path')
 
 const rootDir = join(__dirname, '..')
-const rootPackage = readPackage('package.json')
+const rootPackage = readPackage('packages/oms-wallet/package.json')
 const packagePaths = [
   'packages/oms-wallet-wagmi-connector/package.json',
 ]

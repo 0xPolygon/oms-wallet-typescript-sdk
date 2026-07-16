@@ -26,28 +26,29 @@ to install extra tooling.
 
 ## Project Overview
 
-This repository is a pnpm workspace for the OMS Wallet TypeScript SDK. The root package exports the `@polygonlabs/oms-wallet` library used by the React and Node examples. The SDK covers wallet authentication, OIDC redirect auth, signed WaaS requests, wallet/session storage, transaction submission, signing, access management, and indexer balance queries.
+This repository is a pnpm workspace for the OMS Wallet TypeScript SDK. The workspace root is a private, non-published package that only orchestrates the workspace; the publishable `@polygonlabs/oms-wallet` library lives in `packages/oms-wallet` and is used by the React and Node examples. The SDK covers wallet authentication, OIDC redirect auth, signed WaaS requests, wallet/session storage, transaction submission, signing, access management, and indexer balance queries.
 
 ## Setup and Tooling
 
 - Use Node `22`. `.nvmrc` and GitHub Actions target that major version.
 - Use pnpm `11.1.3`, matching the `packageManager` field and GitHub Actions setup.
 - Install dependencies from the repo root with `pnpm install --frozen-lockfile` when validating CI parity.
-- Run workspace commands from the repo root unless you are intentionally working inside a package-specific script.
+- Run workspace commands from the repo root. SDK-scoped scripts (build, test, type checks, API checks) live in `packages/oms-wallet` and are run from the root with `pnpm --filter @polygonlabs/oms-wallet <script>` (or from inside that package). The root `build` and `test` scripts delegate to the SDK package for convenience.
 
 ## Repository Layout
 
-- `src/index.ts`: Public SDK export surface. Keep public API changes intentional and reflected in docs and type tests when applicable.
-- `src/omsWallet.ts`: Top-level `OMSWallet` composition for wallet and indexer clients.
-- `src/clients/walletClient.ts`: Main wallet/auth/signing/transaction/access implementation.
-- `src/clients/indexerClient.ts`: Indexer balance client and HTTP error wrapping.
-- `src/generated/waas.gen.ts`: Generated WaaS client and types.
-- `src/credentialSigner.ts`, `src/signedFetch.ts`, `src/storageManager.ts`: Credential, request-signing, and persistence boundaries.
-- `src/utils/` and `src/types/`: Shared SDK helpers and exported type definitions.
+- `packages/oms-wallet/`: The publishable `@polygonlabs/oms-wallet` SDK package (source, tests, type tests, docs, API baseline, and SDK build scripts).
+- `packages/oms-wallet/src/index.ts`: Public SDK export surface. Keep public API changes intentional and reflected in docs and type tests when applicable.
+- `packages/oms-wallet/src/omsWallet.ts`: Top-level `OMSWallet` composition for wallet and indexer clients.
+- `packages/oms-wallet/src/clients/walletClient.ts`: Main wallet/auth/signing/transaction/access implementation.
+- `packages/oms-wallet/src/clients/indexerClient.ts`: Indexer balance client and HTTP error wrapping.
+- `packages/oms-wallet/src/generated/waas.gen.ts`: Generated WaaS client and types.
+- `packages/oms-wallet/src/credentialSigner.ts`, `packages/oms-wallet/src/signedFetch.ts`, `packages/oms-wallet/src/storageManager.ts`: Credential, request-signing, and persistence boundaries.
+- `packages/oms-wallet/src/utils/` and `packages/oms-wallet/src/types/`: Shared SDK helpers and exported type definitions.
 - `packages/oms-wallet-wagmi-connector/`: ESM-only `@polygonlabs/oms-wallet-wagmi-connector` package for using an
   active OMS Wallet SDK instance as a wagmi connector.
-- `tests/`: Vitest coverage for wallet, OIDC, transactions, signing, access, indexer, and errors.
-- `type-tests/`: Compile-time API tests.
+- `packages/oms-wallet/tests/`: Vitest coverage for wallet, OIDC, transactions, signing, access, indexer, and errors.
+- `packages/oms-wallet/type-tests/`: Compile-time API tests.
 - `examples/react/`: Vite React demo that consumes the SDK through the workspace.
 - `examples/custom-google-redirect/`: Local-only Vite React demo for Google as a custom OIDC provider with a localhost redirect URI.
 - `examples/custom-auth0-id-token/`: Local-only Vite React demo that passes an Auth0-issued ID token to OMS Wallet.
@@ -55,23 +56,24 @@ This repository is a pnpm workspace for the OMS Wallet TypeScript SDK. The root 
 - `examples/trails-actions/`: Vite React demo for Trails swap, Earn deposit, and Earn withdrawal flows.
 - `examples/node/`: Interactive Node OTP/signing example.
 - `examples/node-contract-deploy-example/`: Interactive Node ERC-20 deployment example.
-- `examples/shared/`: Shared browser-example design tokens, base styles, components, utilities, and Vite aliases.
-- `docs/error-contracts.md`: Public error contract matrix and expectations.
-- `docs/session-expiry-flow.md`: Session expiry, reauthentication, and related wallet behavior notes.
-- `scripts/write-esm-package.cjs`: Writes `dist/esm/package.json` during the root build.
-- `scripts/check-public-api.cjs`: Compares built public declarations with the committed baseline and rejects generated WaaS type leaks.
+- `examples/shared/`: Private `oms-example-shared` workspace package — shared browser-example design tokens, base styles, components, utilities, and Vite aliases. Declares its own `@polygonlabs/oms-wallet` and `react` dependencies so its source resolves inside each example build.
+- `packages/oms-wallet/docs/error-contracts.md`: Public error contract matrix and expectations.
+- `packages/oms-wallet/docs/session-expiry-flow.md`: Session expiry, reauthentication, and related wallet behavior notes.
+- `packages/oms-wallet/scripts/write-esm-package.cjs`: Writes `dist/esm/package.json` during the SDK build.
+- `packages/oms-wallet/scripts/check-public-api.cjs`: Compares built public declarations with the committed baseline and rejects generated WaaS type leaks.
+- `scripts/`: Workspace-level orchestration scripts (`verify.cjs`, `check-package-versions.cjs`).
 
 ## Commands
 
 - `pnpm install --frozen-lockfile`: Install dependencies in CI-compatible mode.
 - `pnpm check:package-versions`: Verify publishable workspace package versions match, allow exact stable or prerelease semver, and require the connector SDK peer to use `workspace:^` and dev dependency to use `workspace:*`.
 - `pnpm check:stable-package-versions`: Verify publishable workspace package versions match and are exact stable semver for stable releases.
-- `pnpm check:public-api`: Compare built declarations with the committed baseline and reject generated WaaS type leaks.
+- `pnpm --filter @polygonlabs/oms-wallet check:public-api`: Compare built declarations with the committed baseline and reject generated WaaS type leaks.
 - `pnpm verify`: Run the full SDK verification suite, including package, test, example, and publishable-artifact checks.
-- `pnpm exec tsc --noEmit`: Typecheck SDK source.
-- `pnpm test`: Run Vitest and type tests.
-- `pnpm test:types`: Compile `type-tests/oidcProviderTypes.ts`; useful for public type/API changes.
-- `pnpm build`: Build CJS and ESM SDK output under `dist/`.
+- `pnpm --filter @polygonlabs/oms-wallet exec tsc --noEmit`: Typecheck SDK source.
+- `pnpm test`: Run the SDK Vitest suite and type tests (delegates to `@polygonlabs/oms-wallet`).
+- `pnpm --filter @polygonlabs/oms-wallet test:types`: Compile `type-tests/oidcProviderTypes.ts`; useful for public type/API changes.
+- `pnpm build`: Build CJS and ESM SDK output under `packages/oms-wallet/dist/` (delegates to `@polygonlabs/oms-wallet`).
 - `pnpm --filter @polygonlabs/oms-wallet-wagmi-connector build`: Build the wagmi connector package.
 - `pnpm --filter @polygonlabs/oms-wallet-wagmi-connector test`: Run the wagmi connector package tests.
 - `pnpm build:example`: Build the React example for Vite/GitHub Pages output after `pnpm build` has produced SDK output.
@@ -98,12 +100,12 @@ example code.
 
 1. Run the smallest relevant Vitest file or type check for the changed behavior.
 2. Run `pnpm test` for SDK behavior changes.
-3. Run `pnpm exec tsc --noEmit` before handing off source or public type changes.
-4. Run `pnpm test:types` directly when changing public generics, overloads, exported types, OIDC provider typing, or `src/index.ts`.
+3. Run `pnpm --filter @polygonlabs/oms-wallet exec tsc --noEmit` before handing off source or public type changes.
+4. Run `pnpm --filter @polygonlabs/oms-wallet test:types` directly when changing public generics, overloads, exported types, OIDC provider typing, or `packages/oms-wallet/src/index.ts`.
 5. Run `pnpm --filter @polygonlabs/oms-wallet-wagmi-connector test` and `pnpm --filter @polygonlabs/oms-wallet-wagmi-connector build` when changing the wagmi connector package.
 6. Run `pnpm build:node-example` when SDK exports, module resolution, or Node example usage changes.
 7. Run `pnpm build` before release/build-output work, package entrypoint changes, or React example builds from a clean tree.
-8. Run `pnpm check:public-api` after `pnpm build` when changing root exports or public declarations.
+8. Run `pnpm --filter @polygonlabs/oms-wallet check:public-api` after `pnpm build` when changing SDK exports or public declarations.
 9. Run `pnpm build:example` after `pnpm build` when changing the React example, Vite config, public browser API shape, or Pages deployment assumptions.
 10. Run `pnpm build:custom-google-redirect-example` when changing the custom Google redirect example, OIDC redirect provider configuration, or browser callback assumptions.
 11. Run `pnpm build:custom-auth0-id-token-example` when changing the Auth0 ID-token example, OIDC ID-token parameters, or Auth0 browser callback assumptions.
@@ -113,12 +115,12 @@ example code.
 
 ## Coding and Architecture Rules
 
-- Source files under `src/` use explicit `.js` extensions in relative imports so emitted JavaScript resolves correctly. Preserve that pattern in SDK source.
-- Treat `src/index.ts` and exported types as the public API gate. Export new public types or clients intentionally, and update `API.md`, `README.md`, and type tests when public behavior changes.
+- Source files under `packages/oms-wallet/src/` use explicit `.js` extensions in relative imports so emitted JavaScript resolves correctly. Preserve that pattern in SDK source.
+- Treat `packages/oms-wallet/src/index.ts` and exported types as the public API gate. Export new public types or clients intentionally, and update `API.md`, `README.md`, and type tests when public behavior changes.
 - Route wallet API calls through `WalletClient`, generated WaaS types, `createSignedFetch`, and `CredentialSigner` instead of duplicating signing or header logic.
 - Use `StorageManager` abstractions for persistence-sensitive code. Browser storage and memory fallback behavior are part of the SDK contract.
 - Preserve typed SDK error classes and `toOMSWalletError` behavior when wrapping network, generated-client, validation, session, and transaction-status failures.
-- Keep supported network metadata and chain ID lookup going through `src/networks.ts`, `Networks`, `findNetworkById`, and `findNetworkByName` instead of ad hoc conversion.
+- Keep supported network metadata and chain ID lookup going through `packages/oms-wallet/src/networks.ts`, `Networks`, `findNetworkById`, and `findNetworkByName` instead of ad hoc conversion.
 - The TypeScript compiler is the enforced style gate. There is no separate lint or formatter command in the root scripts, so avoid broad formatting churn and match the local file style.
 
 ## Example App Styling
@@ -147,7 +149,7 @@ execution commands.
 
 ## Generated Files and External Artifacts
 
-- `src/generated/waas.gen.ts` is generated by Webrpc and marked `DO NOT EDIT`. Update the generated-client source of truth rather than hand-editing this file as normal source.
+- `packages/oms-wallet/src/generated/waas.gen.ts` is generated by Webrpc and marked `DO NOT EDIT`. Update the generated-client source of truth rather than hand-editing this file as normal source.
 - The generated WaaS header records the upstream schema path and generation command. This repo does not currently include that schema; if regenerating the client, document the schema source and exact command used.
 - The wagmi connector's SDK peer dependency is intentionally `workspace:^` in source and its SDK dev dependency is intentionally `workspace:*`. Release with pnpm so the published peer gets the compatible release range; do not hand-edit that peer to a literal version.
 - `pnpm-lock.yaml` is the dependency lockfile. Update it through pnpm, not by hand.
@@ -186,12 +188,12 @@ execution commands.
 
 | When this changes… | Also update… |
 |---|---|
-| Public API exported through `src/index.ts` or exported public types | `API.md`, `README.md`, `type-tests/oidcProviderTypes.ts` |
+| Public API exported through `packages/oms-wallet/src/index.ts` or exported public types | `packages/oms-wallet/API.md`, `packages/oms-wallet/README.md`, `packages/oms-wallet/type-tests/oidcProviderTypes.ts` |
 | Test commands (`package.json` scripts) | `TESTING.md`, `.github/workflows/tests.yml`, `AGENTS.md` Commands section |
 | Node or pnpm version | `.nvmrc`, `package.json#packageManager`, `.github/workflows/*.yml` |
 | New third-party dependency | `package.json`, `pnpm-lock.yaml`, third-party docs guidance in `AGENTS.md` |
 | Publishable package versioning or workspace peer protocol | `PUBLISHING.md`, `scripts/check-package-versions.cjs`, `pnpm-lock.yaml` |
-| `src/generated/waas.gen.ts` (regenerated) | Document schema source + regen command in PR description |
+| `packages/oms-wallet/src/generated/waas.gen.ts` (regenerated) | Document schema source + regen command in PR description |
 | Repo structure (new top-level dirs) | `AGENTS.md` Repository Layout section |
 | Examples added or renamed | `pnpm-workspace.yaml`, root `package.json` scripts, `pages.yml` when deployed |
 | Design tokens (`oms-sdk-design-system`) | `examples/shared/oms-tokens.css` (single source; examples import it — never hardcode hex/radius in per-app `styles.css`) |
