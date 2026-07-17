@@ -9,7 +9,9 @@
   "files": [
     "dist",
     "README.md",
-    "API.md"
+    "API.md",
+    "CHANGELOG.md",
+    "MIGRATION.md"
   ],
   "exports": {
     ".": {
