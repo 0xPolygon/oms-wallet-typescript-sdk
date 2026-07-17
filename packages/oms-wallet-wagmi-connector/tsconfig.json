@@ -4,6 +4,7 @@
     "lib": ["es2022", "dom"],
     "module": "NodeNext",
     "moduleResolution": "NodeNext",
+    "customConditions": ["@polygonlabs/source"],
     "strict": true,
     "skipLibCheck": true,
     "declaration": true,

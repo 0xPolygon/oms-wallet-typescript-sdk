@@ -122,6 +122,7 @@ example code.
 - Preserve typed SDK error classes and `toOMSWalletError` behavior when wrapping network, generated-client, validation, session, and transaction-status failures.
 - Keep supported network metadata and chain ID lookup going through `packages/oms-wallet/src/networks.ts`, `Networks`, `findNetworkById`, and `findNetworkByName` instead of ad hoc conversion.
 - The TypeScript compiler is the enforced style gate. There is no separate lint or formatter command in the root scripts, so avoid broad formatting churn and match the local file style.
+- **Build-free workspace consumption.** `@polygonlabs/oms-wallet` exposes its TypeScript source through the `@polygonlabs/source` export condition (alongside the compiled `dist/` targets). Workspace consumers resolve the SDK from source rather than a built `dist/`: the wagmi connector's `tsconfig.json` sets `customConditions: ["@polygonlabs/source"]` for typecheck/build, and its `vitest.config.ts` sets `ssr.resolve.conditions: ["@polygonlabs/source"]` for tests. This is why the connector no longer rebuilds the SDK before building itself — do not reintroduce a `pnpm --dir ../oms-wallet build` prefix. The SDK's `publishConfig.exports` omits the source condition so the published npm package exposes only `dist/`.
 
 ## Example App Styling
 

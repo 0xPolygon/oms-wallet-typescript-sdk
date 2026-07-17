@@ -33,7 +33,7 @@
   },
   "scripts": {
     "clean": "rm -rf dist",
-    "build": "pnpm --dir ../oms-wallet build && pnpm clean && tsc -p tsconfig.json",
+    "build": "pnpm clean && tsc -p tsconfig.json",
     "prepack": "pnpm build",
     "prepublishOnly": "pnpm build && pnpm test",
     "test": "vitest run",

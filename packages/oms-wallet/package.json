@@ -13,6 +13,7 @@
   ],
   "exports": {
     ".": {
+      "@polygonlabs/source": "./src/index.ts",
       "import": {
         "types": "./dist/esm/index.d.ts",
         "default": "./dist/esm/index.js"
@@ -37,7 +38,19 @@
   },
   "homepage": "https://github.com/0xPolygon/oms-wallet-typescript-sdk#readme",
   "publishConfig": {
-    "access": "public"
+    "access": "public",
+    "exports": {
+      ".": {
+        "import": {
+          "types": "./dist/esm/index.d.ts",
+          "default": "./dist/esm/index.js"
+        },
+        "require": {
+          "types": "./dist/index.d.ts",
+          "default": "./dist/index.js"
+        }
+      }
+    }
   },
   "scripts": {
     "clean": "rm -rf dist",
