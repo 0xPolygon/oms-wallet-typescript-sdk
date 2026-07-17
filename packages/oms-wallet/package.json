@@ -55,7 +55,7 @@
     }
   },
   "scripts": {
-    "clean": "rm -rf dist",
+    "clean": "rm -rf dist out-tsc *.tsbuildinfo",
     "typecheck": "tsc -b",
     "build": "pnpm clean && tsc -b tsconfig.lib.json tsconfig.esm.json && node scripts/write-esm-package.cjs",
     "prepack": "pnpm build && pnpm check:public-api && pnpm check:api:built",

@@ -41,7 +41,7 @@
     }
   },
   "scripts": {
-    "clean": "rm -rf dist",
+    "clean": "rm -rf dist out-tsc *.tsbuildinfo",
     "typecheck": "tsc -b",
     "build": "pnpm clean && tsc -b tsconfig.lib.json",
     "prepack": "pnpm build",

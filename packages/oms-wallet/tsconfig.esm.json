@@ -3,6 +3,6 @@
   "compilerOptions": {
     "module": "es2020",
     "outDir": "dist/esm",
-    "tsBuildInfoFile": "dist/esm/tsconfig.esm.tsbuildinfo"
+    "tsBuildInfoFile": "out-tsc/tsconfig.esm.tsbuildinfo"
   }
 }
