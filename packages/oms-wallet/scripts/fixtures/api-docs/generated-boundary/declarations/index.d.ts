@@ -1,1 +1,1 @@
-export type {PublicApi} from './public.js'
+export type { PublicApi } from './public.js';

@@ -1,3 +1,3 @@
 export interface GeneratedPayload {
-    internalValue: string
+  internalValue: string;
 }

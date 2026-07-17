@@ -1,51 +1,59 @@
-import { FeeOptionSelector, type FeeOptionSelection, type FeeOptionWithBalance } from '@polygonlabs/oms-wallet'
+import {
+  FeeOptionSelector,
+  type FeeOptionSelection,
+  type FeeOptionWithBalance
+} from '@polygonlabs/oms-wallet';
 
 export type FeeOptionSelectionRequest = {
-  options: FeeOptionWithBalance[]
-  resolve: (selection: FeeOptionSelection | undefined) => void
-  reject: (error: Error) => void
-}
+  options: FeeOptionWithBalance[];
+  resolve: (selection: FeeOptionSelection | undefined) => void;
+  reject: (error: Error) => void;
+};
 
-type FeeOptionSelectionListener = (request: FeeOptionSelectionRequest) => void
+type FeeOptionSelectionListener = (request: FeeOptionSelectionRequest) => void;
 
-let listener: FeeOptionSelectionListener | undefined
-let rejectPendingSelection: ((error: Error) => void) | undefined
+let listener: FeeOptionSelectionListener | undefined;
+let rejectPendingSelection: ((error: Error) => void) | undefined;
 
-export function subscribeToFeeOptionSelection(nextListener: FeeOptionSelectionListener): () => void {
-  listener = nextListener
+export function subscribeToFeeOptionSelection(
+  nextListener: FeeOptionSelectionListener
+): () => void {
+  listener = nextListener;
 
   return () => {
     if (listener === nextListener) {
-      listener = undefined
+      listener = undefined;
     }
-    rejectPendingSelection?.(new Error('Fee option selection cancelled.'))
-    rejectPendingSelection = undefined
-  }
+    rejectPendingSelection?.(new Error('Fee option selection cancelled.'));
+    rejectPendingSelection = undefined;
+  };
 }
 
-export async function selectFeeOptionWithAppUi(options: FeeOptionWithBalance[]): Promise<FeeOptionSelection | undefined> {
+export async function selectFeeOptionWithAppUi(
+  options: FeeOptionWithBalance[]
+): Promise<FeeOptionSelection | undefined> {
   if (!listener) {
-    const selection = FeeOptionSelector.firstAvailable(options)
+    const selection = FeeOptionSelector.firstAvailable(options);
     if (!selection) {
-      throw new Error('No fee option has enough balance.')
+      throw new Error('No fee option has enough balance.');
     }
-    return selection
+    return selection;
   }
 
-  rejectPendingSelection?.(new Error('Fee option selection was superseded.'))
+  rejectPendingSelection?.(new Error('Fee option selection was superseded.'));
 
   return new Promise((resolve, reject) => {
-    rejectPendingSelection = reject
+    rejectPendingSelection = reject;
     listener?.({
       options,
       resolve: (selection) => {
-        rejectPendingSelection = undefined
-        resolve(selection)
+        rejectPendingSelection = undefined;
+        resolve(selection);
       },
       reject: (error) => {
-        rejectPendingSelection = undefined
-        reject(error)
-      },
-    })
-  })
+        rejectPendingSelection = undefined;
+        reject(error);
+      }
+    });
+  });
 }

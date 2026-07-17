@@ -2,6 +2,7 @@
   "name": "oms-wallet-monorepo",
   "version": "0.0.0",
   "private": true,
+  "type": "module",
   "description": "Workspace root for the OMS Wallet TypeScript SDK and its packages.",
   "license": "Apache-2.0",
   "engines": {
@@ -16,6 +17,12 @@
     "build": "pnpm --filter @polygonlabs/oms-wallet build",
     "test": "pnpm --filter @polygonlabs/oms-wallet test",
     "typecheck": "tsc -b",
+    "lint": "concurrently --group --prefix-colors auto 'pnpm:lint:md' 'pnpm:lint:ts' 'pnpm:typecheck' 'prettier --check .'",
+    "lint:ts": "eslint .",
+    "lint:md": "markdownlint-cli2 \"**/*.md\"",
+    "format": "pnpm run format:md && pnpm run format:ts && prettier --write .",
+    "format:md": "markdownlint-cli2 --fix \"**/*.md\"",
+    "format:ts": "eslint . --fix",
     "verify": "node scripts/verify.cjs",
     "release": "changeset publish",
     "ci:publish": "changeset publish",
@@ -37,6 +44,12 @@
   "devDependencies": {
     "@changesets/changelog-github": "^0.7.0",
     "@changesets/cli": "^2.30.0",
+    "@polygonlabs/apps-team-lint": "^2.1.0",
+    "concurrently": "^9.2.1",
+    "eslint": "^10.0.0",
+    "eslint-import-resolver-typescript": "^4.4.4",
+    "markdownlint-cli2": "^0.21.0",
+    "prettier": "^3.0.0",
     "typescript": "^5.9.3"
   }
 }

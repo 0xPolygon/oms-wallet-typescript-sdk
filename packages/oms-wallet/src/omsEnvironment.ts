@@ -1,14 +1,14 @@
-import {parsePublishableKey} from './publishableKey.js'
+import { parsePublishableKey } from './publishableKey.js';
 
 export interface OMSWalletEnvironment {
-    walletApiUrl: string
-    indexerGatewayUrl: string
+  walletApiUrl: string;
+  indexerGatewayUrl: string;
 }
 
 export function environmentFromPublishableKey(publishableKey: string): OMSWalletEnvironment {
-    const parsedKey = parsePublishableKey(publishableKey)
-    return {
-        walletApiUrl: parsedKey.walletApiUrl,
-        indexerGatewayUrl: parsedKey.indexerGatewayUrl,
-    }
+  const parsedKey = parsePublishableKey(publishableKey);
+  return {
+    walletApiUrl: parsedKey.walletApiUrl,
+    indexerGatewayUrl: parsedKey.indexerGatewayUrl
+  };
 }

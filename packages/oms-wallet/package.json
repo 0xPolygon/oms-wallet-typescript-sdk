@@ -59,7 +59,7 @@
     "typecheck": "tsc -b",
     "build": "pnpm clean && tsc -b tsconfig.lib.json tsconfig.esm.json && node scripts/write-esm-package.cjs",
     "prepack": "pnpm build && pnpm check:public-api && pnpm check:api:built",
-    "prepublishOnly": "pnpm exec tsc --noEmit && pnpm test",
+    "prepublishOnly": "pnpm typecheck && pnpm test",
     "check:public-api": "node scripts/check-public-api.cjs",
     "generate:api": "pnpm build && pnpm generate:api:built",
     "generate:api:built": "node scripts/generate-api-docs.cjs",
@@ -75,7 +75,7 @@
   },
   "devDependencies": {
     "dotenv": "^17.4.2",
-    "typescript": "^5.5.3",
+    "typescript": "^5.9.3",
     "vitest": "^4.1.5"
   }
 }

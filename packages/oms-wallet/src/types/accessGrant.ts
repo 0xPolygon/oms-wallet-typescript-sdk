@@ -1,15 +1,15 @@
 export interface WalletCredential {
-    credentialId: string
-    expiresAt: string
-    isCaller: boolean
+  credentialId: string;
+  expiresAt: string;
+  isCaller: boolean;
 }
 
-export type AccessGrant = WalletCredential
+export type AccessGrant = WalletCredential;
 
 export interface ListAccessParams {
-    pageSize?: number
+  pageSize?: number;
 }
 
 export interface AccessGrantPage {
-    grants: AccessGrant[]
+  grants: AccessGrant[];
 }

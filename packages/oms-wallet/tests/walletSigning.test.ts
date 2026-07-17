@@ -1,213 +1,235 @@
-import {afterEach, describe, expect, it, vi} from "vitest";
+import { afterEach, describe, expect, it, vi } from 'vitest';
 
-import {WalletClient} from "../src/clients/walletClient";
-import type {CredentialSigner} from "../src/credentialSigner";
-import {Networks} from "../src/networks";
-import {MemoryStorageManager} from "../src/storageManager";
+import { WalletClient } from '../src/clients/walletClient';
+import type { CredentialSigner } from '../src/credentialSigner';
+import { Networks } from '../src/networks';
+import { MemoryStorageManager } from '../src/storageManager';
 
 class MockSigner implements CredentialSigner {
-    readonly signingAlgorithm = "ecdsa-p256-sha256";
+  readonly signingAlgorithm = 'ecdsa-p256-sha256';
 
-    async credentialId(): Promise<string> {
-        return "0x04" + "11".repeat(64);
-    }
+  async credentialId(): Promise<string> {
+    return '0x04' + '11'.repeat(64);
+  }
 
-    async nextNonce(): Promise<string> {
-        return "42";
-    }
+  async nextNonce(): Promise<string> {
+    return '42';
+  }
 
-    async sign(): Promise<string> {
-        return "0x" + "22".repeat(64);
-    }
+  async sign(): Promise<string> {
+    return '0x' + '22'.repeat(64);
+  }
 
-    async hasCredential(): Promise<boolean> {
-        return true;
-    }
+  async hasCredential(): Promise<boolean> {
+    return true;
+  }
 }
 
 afterEach(() => {
-    vi.restoreAllMocks();
-    vi.unstubAllGlobals();
+  vi.restoreAllMocks();
+  vi.unstubAllGlobals();
 });
 
-describe("WalletClient signing", () => {
-    it("gets an ID token for the active wallet session", async () => {
-        const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
-            const url = input.toString();
-            const body = JSON.parse(init?.body as string);
-            const headers = init?.headers as Record<string, string>;
+describe('WalletClient signing', () => {
+  it('gets an ID token for the active wallet session', async () => {
+    const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = input.toString();
+      const body = JSON.parse(init?.body as string);
+      const headers = init?.headers as Record<string, string>;
 
-            expect(headers["Api-Key"]).toBe("publishable-key");
-            expect(headers["OMS-Wallet-Signature"]).toContain('alg="ecdsa-p256-sha256"');
-            expect(headers.Authorization).toBeUndefined();
+      expect(headers['Api-Key']).toBe('publishable-key');
+      expect(headers['OMS-Wallet-Signature']).toContain('alg="ecdsa-p256-sha256"');
+      expect(headers.Authorization).toBeUndefined();
 
-            if (url.endsWith("/GetIDToken")) {
-                expect(body).toEqual({
-                    walletId: "wallet-id",
-                    ttlSeconds: 300,
-                    customClaims: {role: "admin"},
-                });
-                return jsonResponse({idToken: "jwt-token"});
-            }
-
-            throw new Error(`Unexpected request: ${url}`);
+      if (url.endsWith('/GetIDToken')) {
+        expect(body).toEqual({
+          walletId: 'wallet-id',
+          ttlSeconds: 300,
+          customClaims: { role: 'admin' }
         });
-        vi.stubGlobal("fetch", fetchMock);
+        return jsonResponse({ idToken: 'jwt-token' });
+      }
 
-        const wallet = createWalletWithSession("0x1111111111111111111111111111111111111111");
-
-        await expect(wallet.getIdToken({
-            ttlSeconds: 300,
-            customClaims: {role: "admin"},
-        })).resolves.toBe("jwt-token");
+      throw new Error(`Unexpected request: ${url}`);
     });
+    vi.stubGlobal('fetch', fetchMock);
 
-    it("signs typed data through the generated wallet client", async () => {
-        const typedData = {
-            domain: {name: "Test", chainId: 137n},
-            types: {Message: [
-                {name: "contents", type: "string"},
-                {name: "amount", type: "uint256"},
-                {name: "ids", type: "uint256[]"},
-            ]},
-            message: {
-                contents: "hello",
-                amount: 12345678901234567890n,
-                ids: [1n, 2n],
-            },
-            primaryType: "Message",
-        };
-        const serializedTypedData = {
-            domain: {name: "Test", chainId: "137"},
-            types: {Message: [
-                {name: "contents", type: "string"},
-                {name: "amount", type: "uint256"},
-                {name: "ids", type: "uint256[]"},
-            ]},
-            message: {
-                contents: "hello",
-                amount: "12345678901234567890",
-                ids: ["1", "2"],
-            },
-            primaryType: "Message",
-        };
-        const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
-            const url = input.toString();
-            const body = JSON.parse(init?.body as string);
+    const wallet = createWalletWithSession('0x1111111111111111111111111111111111111111');
 
-            expect((init?.headers as Record<string, string>)["Api-Key"]).toBe("publishable-key");
-            const headers = init?.headers as Record<string, string>;
-            expect(headers["OMS-Wallet-Signature"]).toContain('alg="ecdsa-p256-sha256"');
-            expect(headers.Authorization).toBeUndefined();
+    await expect(
+      wallet.getIdToken({
+        ttlSeconds: 300,
+        customClaims: { role: 'admin' }
+      })
+    ).resolves.toBe('jwt-token');
+  });
 
-            if (url.endsWith("/SignTypedData")) {
-                expect(body).toEqual({
-                    network: "137",
-                    walletId: "wallet-id",
-                    typedData: serializedTypedData,
-                });
-                return jsonResponse({signature: "0xsigned"});
-            }
+  it('signs typed data through the generated wallet client', async () => {
+    const typedData = {
+      domain: { name: 'Test', chainId: 137n },
+      types: {
+        Message: [
+          { name: 'contents', type: 'string' },
+          { name: 'amount', type: 'uint256' },
+          { name: 'ids', type: 'uint256[]' }
+        ]
+      },
+      message: {
+        contents: 'hello',
+        amount: 12345678901234567890n,
+        ids: [1n, 2n]
+      },
+      primaryType: 'Message'
+    };
+    const serializedTypedData = {
+      domain: { name: 'Test', chainId: '137' },
+      types: {
+        Message: [
+          { name: 'contents', type: 'string' },
+          { name: 'amount', type: 'uint256' },
+          { name: 'ids', type: 'uint256[]' }
+        ]
+      },
+      message: {
+        contents: 'hello',
+        amount: '12345678901234567890',
+        ids: ['1', '2']
+      },
+      primaryType: 'Message'
+    };
+    const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = input.toString();
+      const body = JSON.parse(init?.body as string);
 
-            throw new Error(`Unexpected request: ${url}`);
+      expect((init?.headers as Record<string, string>)['Api-Key']).toBe('publishable-key');
+      const headers = init?.headers as Record<string, string>;
+      expect(headers['OMS-Wallet-Signature']).toContain('alg="ecdsa-p256-sha256"');
+      expect(headers.Authorization).toBeUndefined();
+
+      if (url.endsWith('/SignTypedData')) {
+        expect(body).toEqual({
+          network: '137',
+          walletId: 'wallet-id',
+          typedData: serializedTypedData
         });
-        vi.stubGlobal("fetch", fetchMock);
+        return jsonResponse({ signature: '0xsigned' });
+      }
 
-        const wallet = createWalletWithSession("0x1111111111111111111111111111111111111111");
-
-        await expect(wallet.signTypedData({network: Networks.polygon, typedData})).resolves.toBe("0xsigned");
+      throw new Error(`Unexpected request: ${url}`);
     });
+    vi.stubGlobal('fetch', fetchMock);
 
-    it("validates signatures through the generated wallet public client", async () => {
-        const typedData = {
-            domain: {name: "Test", chainId: 137n},
-            types: {Message: [{name: "contents", type: "string"}, {name: "amount", type: "uint256"}]},
-            message: {contents: "hello", amount: 12345678901234567890n},
-            primaryType: "Message",
-        };
-        const serializedTypedData = {
-            domain: {name: "Test", chainId: "137"},
-            types: {Message: [{name: "contents", type: "string"}, {name: "amount", type: "uint256"}]},
-            message: {contents: "hello", amount: "12345678901234567890"},
-            primaryType: "Message",
-        };
-        const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
-            const url = input.toString();
-            const body = JSON.parse(init?.body as string);
-            const headers = init?.headers as Record<string, string>;
+    const wallet = createWalletWithSession('0x1111111111111111111111111111111111111111');
 
-            expect(headers["Api-Key"]).toBe("publishable-key");
-            expect(headers["OMS-Wallet-Signature"]).toBeUndefined();
-            expect(headers.Authorization).toBeUndefined();
+    await expect(wallet.signTypedData({ network: Networks.polygon, typedData })).resolves.toBe(
+      '0xsigned'
+    );
+  });
 
-            if (url.endsWith("/IsValidMessageSignature")) {
-                expect(body).toEqual({
-                    network: "137",
-                    walletId: "wallet-id",
-                    message: "hello",
-                    signature: "0xmessage",
-                });
-                return jsonResponse({isValid: true});
-            }
+  it('validates signatures through the generated wallet public client', async () => {
+    const typedData = {
+      domain: { name: 'Test', chainId: 137n },
+      types: {
+        Message: [
+          { name: 'contents', type: 'string' },
+          { name: 'amount', type: 'uint256' }
+        ]
+      },
+      message: { contents: 'hello', amount: 12345678901234567890n },
+      primaryType: 'Message'
+    };
+    const serializedTypedData = {
+      domain: { name: 'Test', chainId: '137' },
+      types: {
+        Message: [
+          { name: 'contents', type: 'string' },
+          { name: 'amount', type: 'uint256' }
+        ]
+      },
+      message: { contents: 'hello', amount: '12345678901234567890' },
+      primaryType: 'Message'
+    };
+    const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = input.toString();
+      const body = JSON.parse(init?.body as string);
+      const headers = init?.headers as Record<string, string>;
 
-            if (url.endsWith("/IsValidTypedDataSignature")) {
-                expect(body).toEqual({
-                    network: "137",
-                    walletAddress: "0x1111111111111111111111111111111111111111",
-                    typedData: serializedTypedData,
-                    signature: "0xtyped",
-                });
-                return jsonResponse({isValid: false});
-            }
+      expect(headers['Api-Key']).toBe('publishable-key');
+      expect(headers['OMS-Wallet-Signature']).toBeUndefined();
+      expect(headers.Authorization).toBeUndefined();
 
-            throw new Error(`Unexpected request: ${url}`);
+      if (url.endsWith('/IsValidMessageSignature')) {
+        expect(body).toEqual({
+          network: '137',
+          walletId: 'wallet-id',
+          message: 'hello',
+          signature: '0xmessage'
         });
-        vi.stubGlobal("fetch", fetchMock);
+        return jsonResponse({ isValid: true });
+      }
 
-        const wallet = createWalletWithSession("0x1111111111111111111111111111111111111111");
+      if (url.endsWith('/IsValidTypedDataSignature')) {
+        expect(body).toEqual({
+          network: '137',
+          walletAddress: '0x1111111111111111111111111111111111111111',
+          typedData: serializedTypedData,
+          signature: '0xtyped'
+        });
+        return jsonResponse({ isValid: false });
+      }
 
-        await expect(wallet.isValidMessageSignature({
-            network: Networks.polygon,
-            message: "hello",
-            signature: "0xmessage",
-        })).resolves.toBe(true);
-
-        await expect(wallet.isValidTypedDataSignature({
-            network: Networks.polygon,
-            walletAddress: "0x1111111111111111111111111111111111111111",
-            typedData,
-            signature: "0xtyped",
-        })).resolves.toBe(false);
+      throw new Error(`Unexpected request: ${url}`);
     });
+    vi.stubGlobal('fetch', fetchMock);
+
+    const wallet = createWalletWithSession('0x1111111111111111111111111111111111111111');
+
+    await expect(
+      wallet.isValidMessageSignature({
+        network: Networks.polygon,
+        message: 'hello',
+        signature: '0xmessage'
+      })
+    ).resolves.toBe(true);
+
+    await expect(
+      wallet.isValidTypedDataSignature({
+        network: Networks.polygon,
+        walletAddress: '0x1111111111111111111111111111111111111111',
+        typedData,
+        signature: '0xtyped'
+      })
+    ).resolves.toBe(false);
+  });
 });
 
 function createWalletWithSession(walletAddress: string): WalletClient {
-    const wallet = new WalletClient({
-        publishableKey: "publishable-key",
-        projectId: "project-id",
-        environment: testEnvironment(),
-        storage: new MemoryStorageManager(),
-        credentialSigner: new MockSigner(),
-    });
-    (wallet as any).persistSession("wallet-id", walletAddress, {
-        expiresAt: "2099-01-01T00:00:00Z",
-        auth: {type: "email", email: "user@example.com"},
-        signerCredentialId: "0x04" + "11".repeat(64),
-        signerKeyType: "ecdsa-p256-sha256",
-    });
-    return wallet;
+  const wallet = new WalletClient({
+    publishableKey: 'publishable-key',
+    projectId: 'project-id',
+    environment: testEnvironment(),
+    storage: new MemoryStorageManager(),
+    credentialSigner: new MockSigner()
+  });
+  (wallet as any).persistSession('wallet-id', walletAddress, {
+    expiresAt: '2099-01-01T00:00:00Z',
+    auth: { type: 'email', email: 'user@example.com' },
+    signerCredentialId: '0x04' + '11'.repeat(64),
+    signerKeyType: 'ecdsa-p256-sha256'
+  });
+  return wallet;
 }
 
 function jsonResponse(body: unknown): Response {
-    return new Response(JSON.stringify(body), {
-        status: 200,
-        headers: {"Content-Type": "application/json"},
-    });
+  return new Response(JSON.stringify(body), {
+    status: 200,
+    headers: { 'Content-Type': 'application/json' }
+  });
 }
 
 function testEnvironment() {
-    return {
-        walletApiUrl: "https://wallet.example",
-        indexerGatewayUrl: "https://indexer.example",
-    };
+  return {
+    walletApiUrl: 'https://wallet.example',
+    indexerGatewayUrl: 'https://indexer.example'
+  };
 }

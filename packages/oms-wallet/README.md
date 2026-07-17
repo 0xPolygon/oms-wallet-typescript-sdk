@@ -163,7 +163,7 @@ For SDK built-in Google and Apple providers, `omsRelayReturnUri` is the URL wher
 
 | Flow | Provider config | App return URL | Provider OAuth callback |
 |---|---|---|---|
-| OMS relay Google/Apple | `OmsRelayOidcProviders.google` / `.apple` | `omsRelayReturnUri` | OMS relay callback derived as `{apiBase}/auth/waas/callback/{google|apple}` |
+| OMS relay Google/Apple | `OmsRelayOidcProviders.google` / `.apple` | `omsRelayReturnUri` | OMS relay callback derived as `{apiBase}/auth/waas/callback/{google\|apple}` |
 | Custom OIDC provider | `CustomOidcProviderConfig` | `providerRedirectUri` | `providerRedirectUri` |
 | Google/Apple without SDK relay | Direct custom config for Google or Apple | `providerRedirectUri` | `providerRedirectUri` |
 

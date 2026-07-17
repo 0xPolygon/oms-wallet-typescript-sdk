@@ -1,5 +1,10 @@
-import { OMSWallet, type CustomOidcProviderConfig } from '@polygonlabs/oms-wallet'
-import { CUSTOM_GOOGLE_CLIENT_ID, CUSTOM_GOOGLE_ISSUER, CUSTOM_GOOGLE_REDIRECT_URI, PUBLISHABLE_KEY } from './config'
+import { OMSWallet, type CustomOidcProviderConfig } from '@polygonlabs/oms-wallet';
+import {
+  CUSTOM_GOOGLE_CLIENT_ID,
+  CUSTOM_GOOGLE_ISSUER,
+  CUSTOM_GOOGLE_REDIRECT_URI,
+  PUBLISHABLE_KEY
+} from './config';
 
 export const customGoogleOidcProvider = {
   clientId: CUSTOM_GOOGLE_CLIENT_ID,
@@ -8,9 +13,9 @@ export const customGoogleOidcProvider = {
   provider: 'google',
   providerLabel: 'Google',
   scopes: ['openid', 'email', 'profile'],
-  providerRedirectUri: CUSTOM_GOOGLE_REDIRECT_URI,
-} satisfies CustomOidcProviderConfig
+  providerRedirectUri: CUSTOM_GOOGLE_REDIRECT_URI
+} satisfies CustomOidcProviderConfig;
 
 export const omsWallet = new OMSWallet({
-  publishableKey: PUBLISHABLE_KEY,
-})
+  publishableKey: PUBLISHABLE_KEY
+});

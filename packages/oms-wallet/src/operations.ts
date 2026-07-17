@@ -1,38 +1,39 @@
 export const WalletOperation = {
-    pendingWalletSelectionSelectWallet: "wallet.pendingWalletSelection.selectWallet",
-    pendingWalletSelectionCreateAndSelectWallet: "wallet.pendingWalletSelection.createAndSelectWallet",
-    startEmailAuth: "wallet.startEmailAuth",
-    completeEmailAuth: "wallet.completeEmailAuth",
-    signInWithOidcIdToken: "wallet.signInWithOidcIdToken",
-    startOidcRedirectAuth: "wallet.startOidcRedirectAuth",
-    completeOidcRedirectAuth: "wallet.completeOidcRedirectAuth",
-    signInWithOidcRedirect: "wallet.signInWithOidcRedirect",
-    signOut: "wallet.signOut",
-    listWallets: "wallet.listWallets",
-    useWallet: "wallet.useWallet",
-    createWallet: "wallet.createWallet",
-    getIdToken: "wallet.getIdToken",
-    signMessage: "wallet.signMessage",
-    signTypedData: "wallet.signTypedData",
-    isValidMessageSignature: "wallet.isValidMessageSignature",
-    isValidTypedDataSignature: "wallet.isValidTypedDataSignature",
-    sendTransaction: "wallet.sendTransaction",
-    callContract: "wallet.callContract",
-    execute: "wallet.execute",
-    getTransactionStatus: "wallet.getTransactionStatus",
-    listAccess: "wallet.listAccess",
-    listAccessPages: "wallet.listAccessPages",
-    revokeAccess: "wallet.revokeAccess",
-    transactionStatus: "wallet.transactionStatus",
-} as const
+  pendingWalletSelectionSelectWallet: 'wallet.pendingWalletSelection.selectWallet',
+  pendingWalletSelectionCreateAndSelectWallet:
+    'wallet.pendingWalletSelection.createAndSelectWallet',
+  startEmailAuth: 'wallet.startEmailAuth',
+  completeEmailAuth: 'wallet.completeEmailAuth',
+  signInWithOidcIdToken: 'wallet.signInWithOidcIdToken',
+  startOidcRedirectAuth: 'wallet.startOidcRedirectAuth',
+  completeOidcRedirectAuth: 'wallet.completeOidcRedirectAuth',
+  signInWithOidcRedirect: 'wallet.signInWithOidcRedirect',
+  signOut: 'wallet.signOut',
+  listWallets: 'wallet.listWallets',
+  useWallet: 'wallet.useWallet',
+  createWallet: 'wallet.createWallet',
+  getIdToken: 'wallet.getIdToken',
+  signMessage: 'wallet.signMessage',
+  signTypedData: 'wallet.signTypedData',
+  isValidMessageSignature: 'wallet.isValidMessageSignature',
+  isValidTypedDataSignature: 'wallet.isValidTypedDataSignature',
+  sendTransaction: 'wallet.sendTransaction',
+  callContract: 'wallet.callContract',
+  execute: 'wallet.execute',
+  getTransactionStatus: 'wallet.getTransactionStatus',
+  listAccess: 'wallet.listAccess',
+  listAccessPages: 'wallet.listAccessPages',
+  revokeAccess: 'wallet.revokeAccess',
+  transactionStatus: 'wallet.transactionStatus'
+} as const;
 
-export type WalletOperation = typeof WalletOperation[keyof typeof WalletOperation]
+export type WalletOperation = (typeof WalletOperation)[keyof typeof WalletOperation];
 
 export const IndexerOperation = {
-    getBalances: "indexer.getBalances",
-    getTransactionHistory: "indexer.getTransactionHistory",
-} as const
+  getBalances: 'indexer.getBalances',
+  getTransactionHistory: 'indexer.getTransactionHistory'
+} as const;
 
-export type IndexerOperation = typeof IndexerOperation[keyof typeof IndexerOperation]
+export type IndexerOperation = (typeof IndexerOperation)[keyof typeof IndexerOperation];
 
-export type OMSWalletOperation = WalletOperation | IndexerOperation
+export type OMSWalletOperation = WalletOperation | IndexerOperation;

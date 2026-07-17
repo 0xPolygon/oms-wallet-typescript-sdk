@@ -177,12 +177,12 @@ export interface CompleteEmailAuthParams {
 ### `CompleteEmailAuthResult`
 
 ```typescript
-export interface CompleteEmailAuthResult {
+export type CompleteEmailAuthResult = {
     readonly walletAddress: Address;
     readonly wallet: WalletAccount;
     readonly wallets: ReadonlyArray<WalletAccount>;
     readonly credential: Readonly<WalletCredential>;
-}
+};
 ```
 
 ### `SignInWithOidcIdTokenParams`
@@ -203,12 +203,12 @@ export interface SignInWithOidcIdTokenParams {
 ### `CompleteOidcIdTokenAuthResult`
 
 ```typescript
-export interface CompleteOidcIdTokenAuthResult {
+export type CompleteOidcIdTokenAuthResult = {
     readonly walletAddress: Address;
     readonly wallet: WalletAccount;
     readonly wallets: ReadonlyArray<WalletAccount>;
     readonly credential: Readonly<WalletCredential>;
-}
+};
 ```
 
 ### `StartOidcRedirectAuthParams`
@@ -253,12 +253,12 @@ export interface CompleteOidcRedirectAuthParams {
 ### `CompleteOidcRedirectAuthResult`
 
 ```typescript
-export interface CompleteOidcRedirectAuthResult {
+export type CompleteOidcRedirectAuthResult = {
     readonly walletAddress: Address;
     readonly wallet: WalletAccount;
     readonly wallets: ReadonlyArray<WalletAccount>;
     readonly credential: Readonly<WalletCredential>;
-}
+};
 ```
 
 ### `SignInWithOidcRedirectParams`

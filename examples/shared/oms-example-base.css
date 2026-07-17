@@ -1,5 +1,5 @@
 /* Shared structure for browser examples. Design tokens live in oms-tokens.css. */
-@import url("./oms-tokens.css");
+@import url('./oms-tokens.css');
 
 * {
   box-sizing: border-box;
@@ -302,7 +302,7 @@ button.subtle {
 
 .divider::before,
 .divider::after {
-  content: "";
+  content: '';
   height: 1px;
   background: var(--oms-slate-300);
 }

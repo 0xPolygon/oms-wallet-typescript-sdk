@@ -1,63 +1,65 @@
-import {afterEach, describe, expect, it, vi} from "vitest";
+import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import {
-    LocalStorageManager,
-    MemoryStorageManager,
-    Networks,
-    OMSWallet,
-    OMSWalletRequestError,
-    OMSWalletError,
-    OmsRelayOidcProviders,
-    SessionStorageManager,
-    WalletType,
-    WebCryptoP256CredentialSigner,
-    isOMSWalletError,
-    type CredentialSigner,
-    type StorageManager,
-} from "../src";
+  LocalStorageManager,
+  MemoryStorageManager,
+  Networks,
+  OMSWallet,
+  OMSWalletRequestError,
+  OMSWalletError,
+  OmsRelayOidcProviders,
+  SessionStorageManager,
+  WalletType,
+  WebCryptoP256CredentialSigner,
+  isOMSWalletError,
+  type CredentialSigner,
+  type StorageManager
+} from '../src';
 
 class MockSigner implements CredentialSigner {
-    readonly signingAlgorithm = "ecdsa-p256-sha256";
+  readonly signingAlgorithm = 'ecdsa-p256-sha256';
 
-    constructor(private credential = "0x04" + "11".repeat(64)) {}
+  constructor(private credential = '0x04' + '11'.repeat(64)) {}
 
-    async credentialId(): Promise<string> {
-        return this.credential;
-    }
+  async credentialId(): Promise<string> {
+    return this.credential;
+  }
 
-    setCredential(credential: string): void {
-        this.credential = credential;
-    }
+  setCredential(credential: string): void {
+    this.credential = credential;
+  }
 
-    async nextNonce(): Promise<string> {
-        return "42";
-    }
+  async nextNonce(): Promise<string> {
+    return '42';
+  }
 
-    async sign(): Promise<string> {
-        return "0x" + "22".repeat(64);
-    }
+  async sign(): Promise<string> {
+    return '0x' + '22'.repeat(64);
+  }
 
-    async hasCredential(): Promise<boolean> {
-        return true;
-    }
+  async hasCredential(): Promise<boolean> {
+    return true;
+  }
 }
 
 afterEach(() => {
-    vi.restoreAllMocks();
-    vi.unstubAllGlobals();
+  vi.restoreAllMocks();
+  vi.unstubAllGlobals();
 });
 
-describe("public API error contracts", () => {
-    it("snapshots WaaS transport failures with upstream details", async () => {
-        vi.stubGlobal("fetch", vi.fn(async () => {
-            throw new TypeError("fetch failed");
-        }));
+describe('public API error contracts', () => {
+  it('snapshots WaaS transport failures with upstream details', async () => {
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async () => {
+        throw new TypeError('fetch failed');
+      })
+    );
 
-        const oms = createOmsClient();
+    const oms = createOmsClient();
 
-        await expect(publicError(() =>
-            oms.wallet.startEmailAuth({email: "user@example.com"}),
-        )).resolves.toMatchInlineSnapshot(`
+    await expect(publicError(() => oms.wallet.startEmailAuth({ email: 'user@example.com' })))
+      .resolves.toMatchInlineSnapshot(`
           {
             "code": "OMS_REQUEST_FAILED",
             "message": "request failed",
@@ -75,32 +77,37 @@ describe("public API error contracts", () => {
             },
           }
         `);
-    });
+  });
 
-    it("snapshots WaaS domain errors with upstream details", async () => {
-        vi.stubGlobal("fetch", vi.fn(async (input: RequestInfo | URL) => {
-            const url = input.toString();
-            if (url.endsWith("/CommitVerifier")) {
-                return jsonResponse({verifier: "verifier-1", challenge: "challenge-1"});
-            }
-            if (url.endsWith("/CompleteAuth")) {
-                return jsonResponse({
-                    code: 7008,
-                    name: "CommitmentConsumed",
-                    message: "The authentication commitment has already been used",
-                    status: 400,
-                }, 400);
-            }
+  it('snapshots WaaS domain errors with upstream details', async () => {
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async (input: RequestInfo | URL) => {
+        const url = input.toString();
+        if (url.endsWith('/CommitVerifier')) {
+          return jsonResponse({ verifier: 'verifier-1', challenge: 'challenge-1' });
+        }
+        if (url.endsWith('/CompleteAuth')) {
+          return jsonResponse(
+            {
+              code: 7008,
+              name: 'CommitmentConsumed',
+              message: 'The authentication commitment has already been used',
+              status: 400
+            },
+            400
+          );
+        }
 
-            throw new Error(`Unexpected request: ${url}`);
-        }));
+        throw new Error(`Unexpected request: ${url}`);
+      })
+    );
 
-        const oms = createOmsClient();
-        await oms.wallet.startEmailAuth({email: "user@example.com"});
+    const oms = createOmsClient();
+    await oms.wallet.startEmailAuth({ email: 'user@example.com' });
 
-        await expect(publicError(() =>
-            oms.wallet.completeEmailAuth({code: "123456"}),
-        )).resolves.toMatchInlineSnapshot(`
+    await expect(publicError(() => oms.wallet.completeEmailAuth({ code: '123456' }))).resolves
+      .toMatchInlineSnapshot(`
           {
             "code": "OMS_AUTH_COMMITMENT_CONSUMED",
             "message": "The authentication commitment has already been used",
@@ -118,21 +125,24 @@ describe("public API error contracts", () => {
             },
           }
         `);
-    });
+  });
 
-    it("snapshots WaaS HTTP responses with upstream details", async () => {
-        vi.stubGlobal("fetch", vi.fn(async () =>
-            new Response("<html>Bad Gateway</html>", {
-                status: 502,
-                headers: {"Content-Type": "text/html"},
-            }),
-        ));
+  it('snapshots WaaS HTTP responses with upstream details', async () => {
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(
+        async () =>
+          new Response('<html>Bad Gateway</html>', {
+            status: 502,
+            headers: { 'Content-Type': 'text/html' }
+          })
+      )
+    );
 
-        const oms = createOmsClient();
+    const oms = createOmsClient();
 
-        await expect(publicError(() =>
-            oms.wallet.startEmailAuth({email: "user@example.com"}),
-        )).resolves.toMatchInlineSnapshot(`
+    await expect(publicError(() => oms.wallet.startEmailAuth({ email: 'user@example.com' })))
+      .resolves.toMatchInlineSnapshot(`
           {
             "code": "OMS_HTTP_ERROR",
             "message": "bad response",
@@ -150,43 +160,51 @@ describe("public API error contracts", () => {
             },
           }
         `);
+  });
+
+  it('snapshots email auth completion local state errors', async () => {
+    let resolveCompleteAuth: ((response: Response) => void) | undefined;
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async (input: RequestInfo | URL) => {
+        const url = input.toString();
+        if (url.endsWith('/CommitVerifier')) {
+          return jsonResponse({ verifier: 'verifier-1', challenge: 'challenge-1' });
+        }
+        if (url.endsWith('/CompleteAuth')) {
+          return new Promise<Response>((resolve) => {
+            resolveCompleteAuth = resolve;
+          });
+        }
+
+        throw new Error(`Unexpected request: ${url}`);
+      })
+    );
+
+    const errors: Array<{ label: string; error: SerializedError }> = [];
+    errors.push({
+      label: 'wallet.completeEmailAuth.noPendingAuth',
+      error: await publicError(() => createOmsClient().wallet.completeEmailAuth({ code: '123456' }))
     });
 
-    it("snapshots email auth completion local state errors", async () => {
-        let resolveCompleteAuth: ((response: Response) => void) | undefined;
-        vi.stubGlobal("fetch", vi.fn(async (input: RequestInfo | URL) => {
-            const url = input.toString();
-            if (url.endsWith("/CommitVerifier")) {
-                return jsonResponse({verifier: "verifier-1", challenge: "challenge-1"});
-            }
-            if (url.endsWith("/CompleteAuth")) {
-                return new Promise<Response>(resolve => {
-                    resolveCompleteAuth = resolve;
-                });
-            }
+    const oms = createOmsClient();
+    await oms.wallet.startEmailAuth({ email: 'user@example.com' });
+    const firstCompletion = oms.wallet.completeEmailAuth({
+      code: '123456',
+      walletSelection: 'manual'
+    });
+    errors.push({
+      label: 'wallet.completeEmailAuth.inFlightMismatch',
+      error: await publicError(() =>
+        oms.wallet.completeEmailAuth({ code: '654321', walletSelection: 'manual' })
+      )
+    });
 
-            throw new Error(`Unexpected request: ${url}`);
-        }));
+    const resolve = await waitForValue(() => resolveCompleteAuth);
+    resolve(jsonResponse(completeAuthResponse()));
+    await firstCompletion;
 
-        const errors: Array<{label: string; error: SerializedError}> = [];
-        errors.push({
-            label: "wallet.completeEmailAuth.noPendingAuth",
-            error: await publicError(() => createOmsClient().wallet.completeEmailAuth({code: "123456"})),
-        });
-
-        const oms = createOmsClient();
-        await oms.wallet.startEmailAuth({email: "user@example.com"});
-        const firstCompletion = oms.wallet.completeEmailAuth({code: "123456", walletSelection: "manual"});
-        errors.push({
-            label: "wallet.completeEmailAuth.inFlightMismatch",
-            error: await publicError(() => oms.wallet.completeEmailAuth({code: "654321", walletSelection: "manual"})),
-        });
-
-        const resolve = await waitForValue(() => resolveCompleteAuth);
-        resolve(jsonResponse(completeAuthResponse()));
-        await firstCompletion;
-
-        expect(errors).toMatchInlineSnapshot(`
+    expect(errors).toMatchInlineSnapshot(`
           [
             {
               "error": {
@@ -216,81 +234,88 @@ describe("public API error contracts", () => {
             },
           ]
         `);
+  });
+
+  it('snapshots pending wallet selection local state errors', async () => {
+    let resolveUseWallet: ((response: Response) => void) | undefined;
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async (input: RequestInfo | URL) => {
+        const url = input.toString();
+        if (url.endsWith('/CommitVerifier')) {
+          return jsonResponse({ verifier: 'verifier-1', challenge: 'challenge-1' });
+        }
+        if (url.endsWith('/CompleteAuth')) {
+          return jsonResponse(completeAuthResponse());
+        }
+        if (url.endsWith('/UseWallet')) {
+          return new Promise<Response>((resolve) => {
+            resolveUseWallet = resolve;
+          });
+        }
+
+        throw new Error(`Unexpected request: ${url}`);
+      })
+    );
+
+    const errors: Array<{ label: string; error: SerializedError }> = [];
+
+    const unavailableOms = createOmsClient();
+    await unavailableOms.wallet.startEmailAuth({ email: 'user@example.com' });
+    const unavailableSelection = await unavailableOms.wallet.completeEmailAuth({
+      code: '123456',
+      walletSelection: 'manual'
+    });
+    errors.push({
+      label: 'wallet.pendingWalletSelection.selectWallet.unavailable',
+      error: await publicError(() =>
+        unavailableSelection.selectWallet({ walletId: 'wallet-missing' })
+      )
     });
 
-    it("snapshots pending wallet selection local state errors", async () => {
-        let resolveUseWallet: ((response: Response) => void) | undefined;
-        vi.stubGlobal("fetch", vi.fn(async (input: RequestInfo | URL) => {
-            const url = input.toString();
-            if (url.endsWith("/CommitVerifier")) {
-                return jsonResponse({verifier: "verifier-1", challenge: "challenge-1"});
-            }
-            if (url.endsWith("/CompleteAuth")) {
-                return jsonResponse(completeAuthResponse());
-            }
-            if (url.endsWith("/UseWallet")) {
-                return new Promise<Response>(resolve => {
-                    resolveUseWallet = resolve;
-                });
-            }
+    const staleOms = createOmsClient();
+    await staleOms.wallet.startEmailAuth({ email: 'first@example.com' });
+    const staleSelection = await staleOms.wallet.completeEmailAuth({
+      code: '111111',
+      walletSelection: 'manual'
+    });
+    await staleOms.wallet.startEmailAuth({ email: 'second@example.com' });
+    await staleOms.wallet.completeEmailAuth({
+      code: '222222',
+      walletSelection: 'manual'
+    });
+    errors.push({
+      label: 'wallet.pendingWalletSelection.selectWallet.stale',
+      error: await publicError(() => staleSelection.selectWallet({ walletId: 'wallet-1' }))
+    });
+    errors.push({
+      label: 'wallet.pendingWalletSelection.createAndSelectWallet.stale',
+      error: await publicError(() => staleSelection.createAndSelectWallet({ reference: 'stale' }))
+    });
 
-            throw new Error(`Unexpected request: ${url}`);
-        }));
+    const inFlightOms = createOmsClient();
+    await inFlightOms.wallet.startEmailAuth({ email: 'user@example.com' });
+    const inFlightSelection = await inFlightOms.wallet.completeEmailAuth({
+      code: '123456',
+      walletSelection: 'manual'
+    });
+    const firstSelection = inFlightSelection.selectWallet({ walletId: 'wallet-1' });
+    errors.push({
+      label: 'wallet.pendingWalletSelection.selectWallet.inFlight',
+      error: await publicError(() => inFlightSelection.selectWallet({ walletId: 'wallet-1' }))
+    });
+    errors.push({
+      label: 'wallet.pendingWalletSelection.createAndSelectWallet.inFlight',
+      error: await publicError(() =>
+        inFlightSelection.createAndSelectWallet({ reference: 'fresh' })
+      )
+    });
 
-        const errors: Array<{label: string; error: SerializedError}> = [];
+    const resolve = await waitForValue(() => resolveUseWallet);
+    resolve(jsonResponse({ wallet: testWallet() }));
+    await firstSelection;
 
-        const unavailableOms = createOmsClient();
-        await unavailableOms.wallet.startEmailAuth({email: "user@example.com"});
-        const unavailableSelection = await unavailableOms.wallet.completeEmailAuth({
-            code: "123456",
-            walletSelection: "manual",
-        });
-        errors.push({
-            label: "wallet.pendingWalletSelection.selectWallet.unavailable",
-            error: await publicError(() => unavailableSelection.selectWallet({walletId: "wallet-missing"})),
-        });
-
-        const staleOms = createOmsClient();
-        await staleOms.wallet.startEmailAuth({email: "first@example.com"});
-        const staleSelection = await staleOms.wallet.completeEmailAuth({
-            code: "111111",
-            walletSelection: "manual",
-        });
-        await staleOms.wallet.startEmailAuth({email: "second@example.com"});
-        await staleOms.wallet.completeEmailAuth({
-            code: "222222",
-            walletSelection: "manual",
-        });
-        errors.push({
-            label: "wallet.pendingWalletSelection.selectWallet.stale",
-            error: await publicError(() => staleSelection.selectWallet({walletId: "wallet-1"})),
-        });
-        errors.push({
-            label: "wallet.pendingWalletSelection.createAndSelectWallet.stale",
-            error: await publicError(() => staleSelection.createAndSelectWallet({reference: "stale"})),
-        });
-
-        const inFlightOms = createOmsClient();
-        await inFlightOms.wallet.startEmailAuth({email: "user@example.com"});
-        const inFlightSelection = await inFlightOms.wallet.completeEmailAuth({
-            code: "123456",
-            walletSelection: "manual",
-        });
-        const firstSelection = inFlightSelection.selectWallet({walletId: "wallet-1"});
-        errors.push({
-            label: "wallet.pendingWalletSelection.selectWallet.inFlight",
-            error: await publicError(() => inFlightSelection.selectWallet({walletId: "wallet-1"})),
-        });
-        errors.push({
-            label: "wallet.pendingWalletSelection.createAndSelectWallet.inFlight",
-            error: await publicError(() => inFlightSelection.createAndSelectWallet({reference: "fresh"})),
-        });
-
-        const resolve = await waitForValue(() => resolveUseWallet);
-        resolve(jsonResponse({wallet: testWallet()}));
-        await firstSelection;
-
-        expect(errors).toMatchInlineSnapshot(`
+    expect(errors).toMatchInlineSnapshot(`
           [
             {
               "error": {
@@ -359,14 +384,14 @@ describe("public API error contracts", () => {
             },
           ]
         `);
-    });
+  });
 
-    it("snapshots SDK-local errors without upstream details", async () => {
-        const oms = createOmsClient();
+  it('snapshots SDK-local errors without upstream details', async () => {
+    const oms = createOmsClient();
 
-        await expect(publicError(() =>
-            oms.wallet.signMessage({network: Networks.polygon, message: "hello"}),
-        )).resolves.toMatchInlineSnapshot(`
+    await expect(
+      publicError(() => oms.wallet.signMessage({ network: Networks.polygon, message: 'hello' }))
+    ).resolves.toMatchInlineSnapshot(`
           {
             "code": "OMS_SESSION_MISSING",
             "message": "No active wallet session",
@@ -378,38 +403,55 @@ describe("public API error contracts", () => {
             "upstreamError": null,
           }
         `);
-    });
+  });
 
-    it("snapshots missing-session contracts for protected wallet methods", async () => {
-        const oms = createOmsClient();
+  it('snapshots missing-session contracts for protected wallet methods', async () => {
+    const oms = createOmsClient();
 
-        await expect(publicErrors([
-            ["wallet.listWallets", () => oms.wallet.listWallets()],
-            ["wallet.useWallet", () => oms.wallet.useWallet({walletId: "wallet-1"})],
-            ["wallet.createWallet", () => oms.wallet.createWallet()],
-            ["wallet.getIdToken", () => oms.wallet.getIdToken()],
-            ["wallet.signTypedData", () => oms.wallet.signTypedData({
-                network: Networks.polygon,
-                typedData: {message: "hello"},
-            })],
-            ["wallet.sendTransaction", () => oms.wallet.sendTransaction({
-                network: Networks.polygon,
-                to: "0x2222222222222222222222222222222222222222",
-                value: 1n,
-            })],
-            ["wallet.callContract", () => oms.wallet.callContract({
-                network: Networks.polygon,
-                contractAddress: "0x2222222222222222222222222222222222222222",
-                method: "transfer(address,uint256)",
-                args: [
-                    {type: "address", value: "0x3333333333333333333333333333333333333333"},
-                    {type: "uint256", value: "1"},
-                ],
-            })],
-            ["wallet.listAccess", () => oms.wallet.listAccess()],
-            ["wallet.listAccessPages", () => iterateAccessPages(oms.wallet.listAccessPages())],
-            ["wallet.revokeAccess", () => oms.wallet.revokeAccess({targetCredentialId: "credential-1"})],
-        ])).resolves.toMatchInlineSnapshot(`
+    await expect(
+      publicErrors([
+        ['wallet.listWallets', () => oms.wallet.listWallets()],
+        ['wallet.useWallet', () => oms.wallet.useWallet({ walletId: 'wallet-1' })],
+        ['wallet.createWallet', () => oms.wallet.createWallet()],
+        ['wallet.getIdToken', () => oms.wallet.getIdToken()],
+        [
+          'wallet.signTypedData',
+          () =>
+            oms.wallet.signTypedData({
+              network: Networks.polygon,
+              typedData: { message: 'hello' }
+            })
+        ],
+        [
+          'wallet.sendTransaction',
+          () =>
+            oms.wallet.sendTransaction({
+              network: Networks.polygon,
+              to: '0x2222222222222222222222222222222222222222',
+              value: 1n
+            })
+        ],
+        [
+          'wallet.callContract',
+          () =>
+            oms.wallet.callContract({
+              network: Networks.polygon,
+              contractAddress: '0x2222222222222222222222222222222222222222',
+              method: 'transfer(address,uint256)',
+              args: [
+                { type: 'address', value: '0x3333333333333333333333333333333333333333' },
+                { type: 'uint256', value: '1' }
+              ]
+            })
+        ],
+        ['wallet.listAccess', () => oms.wallet.listAccess()],
+        ['wallet.listAccessPages', () => iterateAccessPages(oms.wallet.listAccessPages())],
+        [
+          'wallet.revokeAccess',
+          () => oms.wallet.revokeAccess({ targetCredentialId: 'credential-1' })
+        ]
+      ])
+    ).resolves.toMatchInlineSnapshot(`
           [
             {
               "error": {
@@ -543,59 +585,90 @@ describe("public API error contracts", () => {
             },
           ]
         `);
-    });
+  });
 
-    it("snapshots OIDC local error contracts without upstream details", async () => {
-        vi.stubGlobal("fetch", vi.fn(async (input: RequestInfo | URL) => {
-            const url = input.toString();
-            if (url.endsWith("/CommitVerifier")) {
-                return jsonResponse({verifier: "verifier-1", challenge: "challenge-1"});
-            }
+  it('snapshots OIDC local error contracts without upstream details', async () => {
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async (input: RequestInfo | URL) => {
+        const url = input.toString();
+        if (url.endsWith('/CommitVerifier')) {
+          return jsonResponse({ verifier: 'verifier-1', challenge: 'challenge-1' });
+        }
 
-            throw new Error(`Unexpected request: ${url}`);
-        }));
+        throw new Error(`Unexpected request: ${url}`);
+      })
+    );
 
-        const oms = createOmsClient();
-        const omsWithoutRedirectStorage = createOmsClient({redirectAuthStorage: null});
+    const oms = createOmsClient();
+    const omsWithoutRedirectStorage = createOmsClient({ redirectAuthStorage: null });
 
-        await expect(publicErrors([
-            ["wallet.startOidcRedirectAuth.missingRedirectStorage", () => omsWithoutRedirectStorage.wallet.startOidcRedirectAuth({
-                provider: testOidcProvider(),
-            })],
-            ["wallet.startOidcRedirectAuth.redirectStorageWriteFailure", () => createOmsClient({
-                redirectAuthStorage: new ThrowingSetStorage(),
+    await expect(
+      publicErrors([
+        [
+          'wallet.startOidcRedirectAuth.missingRedirectStorage',
+          () =>
+            omsWithoutRedirectStorage.wallet.startOidcRedirectAuth({
+              provider: testOidcProvider()
+            })
+        ],
+        [
+          'wallet.startOidcRedirectAuth.redirectStorageWriteFailure',
+          () =>
+            createOmsClient({
+              redirectAuthStorage: new ThrowingSetStorage()
             }).wallet.startOidcRedirectAuth({
-                provider: testOidcProvider(),
-            })],
-            ["wallet.completeOidcRedirectAuth.missingCallbackParams", () => oms.wallet.completeOidcRedirectAuth({
-                callbackUrl: "https://app.example/auth/callback",
-            })],
-            ["wallet.completeOidcRedirectAuth.providerError", async () => {
-                const providerErrorOms = createOmsClient();
-                const started = await providerErrorOms.wallet.startOidcRedirectAuth({
-                    provider: testOidcProvider(),
-                });
-                return providerErrorOms.wallet.completeOidcRedirectAuth({
-                    callbackUrl: `https://app.example/auth/callback?error=access_denied&error_description=User%20cancelled&state=${authorizationState(started)}`,
-                });
-            }],
-            ["wallet.completeOidcRedirectAuth.noPendingAuth", () => oms.wallet.completeOidcRedirectAuth({
-                callbackUrl: "https://app.example/auth/callback?code=code-1&state=state-1",
-            })],
-            ["wallet.completeOidcRedirectAuth.cleanUrlWithoutBrowser", async () => {
-                const cleanUrlOms = createOmsClient();
-                const started = await cleanUrlOms.wallet.startOidcRedirectAuth({
-                    provider: testOidcProvider(),
-                });
-                return cleanUrlOms.wallet.completeOidcRedirectAuth({
-                    callbackUrl: `https://app.example/auth/callback?code=code-1&state=${authorizationState(started)}`,
-                    cleanUrl: true,
-                });
-            }],
-            ["wallet.signInWithOidcRedirect.missingCurrentUrl", () => oms.wallet.signInWithOidcRedirect({
-                provider: OmsRelayOidcProviders.google,
-            })],
-        ])).resolves.toMatchInlineSnapshot(`
+              provider: testOidcProvider()
+            })
+        ],
+        [
+          'wallet.completeOidcRedirectAuth.missingCallbackParams',
+          () =>
+            oms.wallet.completeOidcRedirectAuth({
+              callbackUrl: 'https://app.example/auth/callback'
+            })
+        ],
+        [
+          'wallet.completeOidcRedirectAuth.providerError',
+          async () => {
+            const providerErrorOms = createOmsClient();
+            const started = await providerErrorOms.wallet.startOidcRedirectAuth({
+              provider: testOidcProvider()
+            });
+            return providerErrorOms.wallet.completeOidcRedirectAuth({
+              callbackUrl: `https://app.example/auth/callback?error=access_denied&error_description=User%20cancelled&state=${authorizationState(started)}`
+            });
+          }
+        ],
+        [
+          'wallet.completeOidcRedirectAuth.noPendingAuth',
+          () =>
+            oms.wallet.completeOidcRedirectAuth({
+              callbackUrl: 'https://app.example/auth/callback?code=code-1&state=state-1'
+            })
+        ],
+        [
+          'wallet.completeOidcRedirectAuth.cleanUrlWithoutBrowser',
+          async () => {
+            const cleanUrlOms = createOmsClient();
+            const started = await cleanUrlOms.wallet.startOidcRedirectAuth({
+              provider: testOidcProvider()
+            });
+            return cleanUrlOms.wallet.completeOidcRedirectAuth({
+              callbackUrl: `https://app.example/auth/callback?code=code-1&state=${authorizationState(started)}`,
+              cleanUrl: true
+            });
+          }
+        ],
+        [
+          'wallet.signInWithOidcRedirect.missingCurrentUrl',
+          () =>
+            oms.wallet.signInWithOidcRedirect({
+              provider: OmsRelayOidcProviders.google
+            })
+        ]
+      ])
+    ).resolves.toMatchInlineSnapshot(`
           [
             {
               "error": {
@@ -690,51 +763,60 @@ describe("public API error contracts", () => {
             },
           ]
         `);
+  });
+
+  it('snapshots OIDC redirect real-flow local mismatch errors', async () => {
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async (input: RequestInfo | URL) => {
+        const url = input.toString();
+        if (url.endsWith('/CommitVerifier')) {
+          return jsonResponse({ verifier: 'verifier-1', challenge: 'challenge-1' });
+        }
+
+        throw new Error(`Unexpected request: ${url}`);
+      })
+    );
+
+    const errors: Array<{ label: string; error: SerializedError }> = [];
+
+    const nonceOms = createOmsClient({ redirectAuthStorage: new MemoryStorageManager() });
+    await nonceOms.wallet.startOidcRedirectAuth({
+      provider: testOidcProvider()
+    });
+    errors.push({
+      label: 'wallet.completeOidcRedirectAuth.nonceMismatch',
+      error: await publicError(() =>
+        nonceOms.wallet.completeOidcRedirectAuth({
+          callbackUrl: `https://app.example/auth/callback?code=auth-code&state=${encodeTestOidcState(
+            {
+              nonce: 'bad-nonce',
+              scope: 'project-id'
+            }
+          )}`
+        })
+      )
     });
 
-    it("snapshots OIDC redirect real-flow local mismatch errors", async () => {
-        vi.stubGlobal("fetch", vi.fn(async (input: RequestInfo | URL) => {
-            const url = input.toString();
-            if (url.endsWith("/CommitVerifier")) {
-                return jsonResponse({verifier: "verifier-1", challenge: "challenge-1"});
-            }
+    const signer = new MockSigner();
+    const signerOms = createOmsClient({
+      credentialSigner: signer,
+      redirectAuthStorage: new MemoryStorageManager()
+    });
+    const started = await signerOms.wallet.startOidcRedirectAuth({
+      provider: testOidcProvider()
+    });
+    signer.setCredential('0x04' + '99'.repeat(64));
+    errors.push({
+      label: 'wallet.completeOidcRedirectAuth.signerMismatch',
+      error: await publicError(() =>
+        signerOms.wallet.completeOidcRedirectAuth({
+          callbackUrl: `https://app.example/auth/callback?code=auth-code&state=${authorizationState(started)}`
+        })
+      )
+    });
 
-            throw new Error(`Unexpected request: ${url}`);
-        }));
-
-        const errors: Array<{label: string; error: SerializedError}> = [];
-
-        const nonceOms = createOmsClient({redirectAuthStorage: new MemoryStorageManager()});
-        await nonceOms.wallet.startOidcRedirectAuth({
-            provider: testOidcProvider(),
-        });
-        errors.push({
-            label: "wallet.completeOidcRedirectAuth.nonceMismatch",
-            error: await publicError(() => nonceOms.wallet.completeOidcRedirectAuth({
-                callbackUrl: `https://app.example/auth/callback?code=auth-code&state=${encodeTestOidcState({
-                    nonce: "bad-nonce",
-                    scope: "project-id",
-                })}`,
-            })),
-        });
-
-        const signer = new MockSigner();
-        const signerOms = createOmsClient({
-            credentialSigner: signer,
-            redirectAuthStorage: new MemoryStorageManager(),
-        });
-        const started = await signerOms.wallet.startOidcRedirectAuth({
-            provider: testOidcProvider(),
-        });
-        signer.setCredential("0x04" + "99".repeat(64));
-        errors.push({
-            label: "wallet.completeOidcRedirectAuth.signerMismatch",
-            error: await publicError(() => signerOms.wallet.completeOidcRedirectAuth({
-                callbackUrl: `https://app.example/auth/callback?code=auth-code&state=${authorizationState(started)}`,
-            })),
-        });
-
-        expect(errors).toMatchInlineSnapshot(`
+    expect(errors).toMatchInlineSnapshot(`
           [
             {
               "error": {
@@ -764,26 +846,31 @@ describe("public API error contracts", () => {
             },
           ]
         `);
-    });
+  });
 
-    it("snapshots signInWithOidcRedirect missing assignUrl after real redirect start", async () => {
-        vi.stubGlobal("fetch", vi.fn(async (input: RequestInfo | URL) => {
-            const url = input.toString();
-            if (url.endsWith("/CommitVerifier")) {
-                return jsonResponse({verifier: "verifier-1", challenge: "challenge-1"});
-            }
+  it('snapshots signInWithOidcRedirect missing assignUrl after real redirect start', async () => {
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async (input: RequestInfo | URL) => {
+        const url = input.toString();
+        if (url.endsWith('/CommitVerifier')) {
+          return jsonResponse({ verifier: 'verifier-1', challenge: 'challenge-1' });
+        }
 
-            throw new Error(`Unexpected request: ${url}`);
-        }));
+        throw new Error(`Unexpected request: ${url}`);
+      })
+    );
 
-        const oms = createOmsClient();
+    const oms = createOmsClient();
 
-        await expect(publicError(() =>
-            oms.wallet.signInWithOidcRedirect({
-                provider: testOidcProvider(),
-                currentUrl: "https://app.example/login",
-            }),
-        )).resolves.toMatchInlineSnapshot(`
+    await expect(
+      publicError(() =>
+        oms.wallet.signInWithOidcRedirect({
+          provider: testOidcProvider(),
+          currentUrl: 'https://app.example/login'
+        })
+      )
+    ).resolves.toMatchInlineSnapshot(`
           {
             "code": "OMS_VALIDATION_ERROR",
             "message": "signInWithOidcRedirect requires assignUrl outside a browser",
@@ -795,18 +882,20 @@ describe("public API error contracts", () => {
             "upstreamError": null,
           }
         `);
-    });
+  });
 
-    it("snapshots signInWithOidcIdToken local errors", async () => {
-        const oms = createOmsClient();
+  it('snapshots signInWithOidcIdToken local errors', async () => {
+    const oms = createOmsClient();
 
-        await expect(publicError(() =>
-            oms.wallet.signInWithOidcIdToken({
-                idToken: "not-a-jwt",
-                issuer: "https://accounts.google.com",
-                audience: "google-client-id",
-            }),
-        )).resolves.toMatchInlineSnapshot(`
+    await expect(
+      publicError(() =>
+        oms.wallet.signInWithOidcIdToken({
+          idToken: 'not-a-jwt',
+          issuer: 'https://accounts.google.com',
+          audience: 'google-client-id'
+        })
+      )
+    ).resolves.toMatchInlineSnapshot(`
           {
             "code": "OMS_VALIDATION_ERROR",
             "message": "OIDC ID token must contain header and payload sections",
@@ -818,33 +907,46 @@ describe("public API error contracts", () => {
             "upstreamError": null,
           }
         `);
-    });
+  });
 
-    it("snapshots signature validation backend failures with upstream details", async () => {
-        vi.stubGlobal("fetch", vi.fn(async () => {
-            throw new TypeError("fetch failed");
-        }));
+  it('snapshots signature validation backend failures with upstream details', async () => {
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async () => {
+        throw new TypeError('fetch failed');
+      })
+    );
 
-        const oms = createOmsClientWithSession();
+    const oms = createOmsClientWithSession();
 
-        await expect(publicErrors([
-            ["wallet.isValidMessageSignature", () => oms.wallet.isValidMessageSignature({
-                network: Networks.polygon,
-                message: "hello",
-                signature: "0xmessage",
-            })],
-            ["wallet.isValidTypedDataSignature", () => oms.wallet.isValidTypedDataSignature({
-                network: Networks.polygon,
-                walletAddress: "0x9999999999999999999999999999999999999999",
-                typedData: {
-                    domain: {name: "Test", chainId: 137n},
-                    types: {Message: [{name: "contents", type: "string"}]},
-                    message: {contents: "hello"},
-                    primaryType: "Message",
-                },
-                signature: "0xtyped",
-            })],
-        ])).resolves.toMatchInlineSnapshot(`
+    await expect(
+      publicErrors([
+        [
+          'wallet.isValidMessageSignature',
+          () =>
+            oms.wallet.isValidMessageSignature({
+              network: Networks.polygon,
+              message: 'hello',
+              signature: '0xmessage'
+            })
+        ],
+        [
+          'wallet.isValidTypedDataSignature',
+          () =>
+            oms.wallet.isValidTypedDataSignature({
+              network: Networks.polygon,
+              walletAddress: '0x9999999999999999999999999999999999999999',
+              typedData: {
+                domain: { name: 'Test', chainId: 137n },
+                types: { Message: [{ name: 'contents', type: 'string' }] },
+                message: { contents: 'hello' },
+                primaryType: 'Message'
+              },
+              signature: '0xtyped'
+            })
+        ]
+      ])
+    ).resolves.toMatchInlineSnapshot(`
           [
             {
               "error": {
@@ -886,28 +988,33 @@ describe("public API error contracts", () => {
             },
           ]
         `);
-    });
+  });
 
-    it("snapshots direct transaction status backend errors with upstream details", async () => {
-        vi.stubGlobal("fetch", vi.fn(async (input: RequestInfo | URL) => {
-            const url = input.toString();
-            if (url.endsWith("/TransactionStatus")) {
-                return jsonResponse({
-                    code: 7308,
-                    name: "TransactionNotFound",
-                    message: "Transaction not found",
-                    status: 404,
-                }, 404);
-            }
+  it('snapshots direct transaction status backend errors with upstream details', async () => {
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async (input: RequestInfo | URL) => {
+        const url = input.toString();
+        if (url.endsWith('/TransactionStatus')) {
+          return jsonResponse(
+            {
+              code: 7308,
+              name: 'TransactionNotFound',
+              message: 'Transaction not found',
+              status: 404
+            },
+            404
+          );
+        }
 
-            throw new Error(`Unexpected request: ${url}`);
-        }));
+        throw new Error(`Unexpected request: ${url}`);
+      })
+    );
 
-        const oms = createOmsClient();
+    const oms = createOmsClient();
 
-        await expect(publicError(() =>
-            oms.wallet.getTransactionStatus({txnId: "txn-missing"}),
-        )).resolves.toMatchInlineSnapshot(`
+    await expect(publicError(() => oms.wallet.getTransactionStatus({ txnId: 'txn-missing' })))
+      .resolves.toMatchInlineSnapshot(`
           {
             "code": "OMS_REQUEST_FAILED",
             "message": "Transaction not found",
@@ -925,34 +1032,39 @@ describe("public API error contracts", () => {
             },
           }
         `);
-    });
+  });
 
-    it("snapshots transaction local validation errors without upstream details", async () => {
-        vi.stubGlobal("fetch", vi.fn(async (input: RequestInfo | URL) => {
-            const url = input.toString();
-            if (url.endsWith("/PrepareEthereumTransaction")) {
-                return jsonResponse({
-                    txnId: "txn-no-fee-options",
-                    status: "quoted",
-                    feeOptions: [],
-                    sponsored: false,
-                    expiresAt: "2099-01-01T00:00:00Z",
-                });
-            }
+  it('snapshots transaction local validation errors without upstream details', async () => {
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async (input: RequestInfo | URL) => {
+        const url = input.toString();
+        if (url.endsWith('/PrepareEthereumTransaction')) {
+          return jsonResponse({
+            txnId: 'txn-no-fee-options',
+            status: 'quoted',
+            feeOptions: [],
+            sponsored: false,
+            expiresAt: '2099-01-01T00:00:00Z'
+          });
+        }
 
-            throw new Error(`Unexpected request: ${url}`);
-        }));
+        throw new Error(`Unexpected request: ${url}`);
+      })
+    );
 
-        const oms = createOmsClientWithSession();
+    const oms = createOmsClientWithSession();
 
-        await expect(publicError(() =>
-            oms.wallet.sendTransaction({
-                network: Networks.polygon,
-                to: "0x1111111111111111111111111111111111111111",
-                value: 0n,
-                waitForStatus: false,
-            }),
-        )).resolves.toMatchInlineSnapshot(`
+    await expect(
+      publicError(() =>
+        oms.wallet.sendTransaction({
+          network: Networks.polygon,
+          to: '0x1111111111111111111111111111111111111111',
+          value: 0n,
+          waitForStatus: false
+        })
+      )
+    ).resolves.toMatchInlineSnapshot(`
           {
             "code": "OMS_VALIDATION_ERROR",
             "message": "No fee options available for unsponsored transaction",
@@ -964,36 +1076,41 @@ describe("public API error contracts", () => {
             "upstreamError": null,
           }
         `);
-    });
+  });
 
-    it("snapshots transaction execute failures as unconfirmed writes", async () => {
-        vi.stubGlobal("fetch", vi.fn(async (input: RequestInfo | URL) => {
-            const url = input.toString();
-            if (url.endsWith("/PrepareEthereumTransaction")) {
-                return jsonResponse({
-                    txnId: "txn-execute",
-                    status: "quoted",
-                    feeOptions: [],
-                    sponsored: true,
-                    expiresAt: "2099-01-01T00:00:00Z",
-                });
-            }
-            if (url.endsWith("/Execute")) {
-                throw new TypeError("fetch failed");
-            }
+  it('snapshots transaction execute failures as unconfirmed writes', async () => {
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async (input: RequestInfo | URL) => {
+        const url = input.toString();
+        if (url.endsWith('/PrepareEthereumTransaction')) {
+          return jsonResponse({
+            txnId: 'txn-execute',
+            status: 'quoted',
+            feeOptions: [],
+            sponsored: true,
+            expiresAt: '2099-01-01T00:00:00Z'
+          });
+        }
+        if (url.endsWith('/Execute')) {
+          throw new TypeError('fetch failed');
+        }
 
-            throw new Error(`Unexpected request: ${url}`);
-        }));
+        throw new Error(`Unexpected request: ${url}`);
+      })
+    );
 
-        const oms = createOmsClientWithSession();
+    const oms = createOmsClientWithSession();
 
-        await expect(publicError(() =>
-            oms.wallet.sendTransaction({
-                network: Networks.polygon,
-                to: "0x1111111111111111111111111111111111111111",
-                value: 0n,
-            }),
-        )).resolves.toMatchInlineSnapshot(`
+    await expect(
+      publicError(() =>
+        oms.wallet.sendTransaction({
+          network: Networks.polygon,
+          to: '0x1111111111111111111111111111111111111111',
+          value: 0n
+        })
+      )
+    ).resolves.toMatchInlineSnapshot(`
           {
             "code": "OMS_TRANSACTION_EXECUTION_UNCONFIRMED",
             "message": "Transaction execution failed before status could be confirmed",
@@ -1011,39 +1128,44 @@ describe("public API error contracts", () => {
             },
           }
         `);
-    });
+  });
 
-    it("snapshots transaction status polling failures with txn and upstream details", async () => {
-        vi.stubGlobal("fetch", vi.fn(async (input: RequestInfo | URL) => {
-            const url = input.toString();
-            if (url.endsWith("/PrepareEthereumTransaction")) {
-                return jsonResponse({
-                    txnId: "txn-1",
-                    status: "quoted",
-                    feeOptions: [],
-                    sponsored: true,
-                    expiresAt: "2099-01-01T00:00:00Z",
-                });
-            }
-            if (url.endsWith("/Execute")) {
-                return jsonResponse({status: "pending"});
-            }
-            if (url.endsWith("/TransactionStatus")) {
-                throw new TypeError("fetch failed");
-            }
+  it('snapshots transaction status polling failures with txn and upstream details', async () => {
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async (input: RequestInfo | URL) => {
+        const url = input.toString();
+        if (url.endsWith('/PrepareEthereumTransaction')) {
+          return jsonResponse({
+            txnId: 'txn-1',
+            status: 'quoted',
+            feeOptions: [],
+            sponsored: true,
+            expiresAt: '2099-01-01T00:00:00Z'
+          });
+        }
+        if (url.endsWith('/Execute')) {
+          return jsonResponse({ status: 'pending' });
+        }
+        if (url.endsWith('/TransactionStatus')) {
+          throw new TypeError('fetch failed');
+        }
 
-            throw new Error(`Unexpected request: ${url}`);
-        }));
+        throw new Error(`Unexpected request: ${url}`);
+      })
+    );
 
-        const oms = createOmsClientWithSession();
+    const oms = createOmsClientWithSession();
 
-        await expect(publicError(() =>
-            oms.wallet.sendTransaction({
-                network: Networks.polygon,
-                to: "0x1111111111111111111111111111111111111111",
-                value: 0n,
-            }),
-        )).resolves.toMatchInlineSnapshot(`
+    await expect(
+      publicError(() =>
+        oms.wallet.sendTransaction({
+          network: Networks.polygon,
+          to: '0x1111111111111111111111111111111111111111',
+          value: 0n
+        })
+      )
+    ).resolves.toMatchInlineSnapshot(`
           {
             "code": "OMS_TRANSACTION_STATUS_LOOKUP_FAILED",
             "message": "Transaction was submitted, but status polling failed",
@@ -1061,44 +1183,52 @@ describe("public API error contracts", () => {
             },
           }
         `);
-    });
+  });
 
-    it("snapshots transaction status polling backend errors as retryable", async () => {
-        vi.stubGlobal("fetch", vi.fn(async (input: RequestInfo | URL) => {
-            const url = input.toString();
-            if (url.endsWith("/PrepareEthereumTransaction")) {
-                return jsonResponse({
-                    txnId: "txn-404",
-                    status: "quoted",
-                    feeOptions: [],
-                    sponsored: true,
-                    expiresAt: "2099-01-01T00:00:00Z",
-                });
-            }
-            if (url.endsWith("/Execute")) {
-                return jsonResponse({status: "pending"});
-            }
-            if (url.endsWith("/TransactionStatus")) {
-                return jsonResponse({
-                    code: 7308,
-                    name: "TransactionNotFound",
-                    message: "Transaction not found",
-                    status: 404,
-                }, 404);
-            }
+  it('snapshots transaction status polling backend errors as retryable', async () => {
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async (input: RequestInfo | URL) => {
+        const url = input.toString();
+        if (url.endsWith('/PrepareEthereumTransaction')) {
+          return jsonResponse({
+            txnId: 'txn-404',
+            status: 'quoted',
+            feeOptions: [],
+            sponsored: true,
+            expiresAt: '2099-01-01T00:00:00Z'
+          });
+        }
+        if (url.endsWith('/Execute')) {
+          return jsonResponse({ status: 'pending' });
+        }
+        if (url.endsWith('/TransactionStatus')) {
+          return jsonResponse(
+            {
+              code: 7308,
+              name: 'TransactionNotFound',
+              message: 'Transaction not found',
+              status: 404
+            },
+            404
+          );
+        }
 
-            throw new Error(`Unexpected request: ${url}`);
-        }));
+        throw new Error(`Unexpected request: ${url}`);
+      })
+    );
 
-        const oms = createOmsClientWithSession();
+    const oms = createOmsClientWithSession();
 
-        await expect(publicError(() =>
-            oms.wallet.sendTransaction({
-                network: Networks.polygon,
-                to: "0x1111111111111111111111111111111111111111",
-                value: 0n,
-            }),
-        )).resolves.toMatchInlineSnapshot(`
+    await expect(
+      publicError(() =>
+        oms.wallet.sendTransaction({
+          network: Networks.polygon,
+          to: '0x1111111111111111111111111111111111111111',
+          value: 0n
+        })
+      )
+    ).resolves.toMatchInlineSnapshot(`
           {
             "code": "OMS_TRANSACTION_STATUS_LOOKUP_FAILED",
             "message": "Transaction was submitted, but status polling failed",
@@ -1116,30 +1246,41 @@ describe("public API error contracts", () => {
             },
           }
         `);
-    });
+  });
 
-    it("snapshots access backend errors with upstream details", async () => {
-        vi.stubGlobal("fetch", vi.fn(async (input: RequestInfo | URL) => {
-            const url = input.toString();
-            if (url.endsWith("/ListAccess") || url.endsWith("/RevokeAccess")) {
-                return jsonResponse({
-                    code: 7207,
-                    name: "Unauthorized",
-                    message: "Unauthorized",
-                    status: 401,
-                }, 401);
-            }
+  it('snapshots access backend errors with upstream details', async () => {
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async (input: RequestInfo | URL) => {
+        const url = input.toString();
+        if (url.endsWith('/ListAccess') || url.endsWith('/RevokeAccess')) {
+          return jsonResponse(
+            {
+              code: 7207,
+              name: 'Unauthorized',
+              message: 'Unauthorized',
+              status: 401
+            },
+            401
+          );
+        }
 
-            throw new Error(`Unexpected request: ${url}`);
-        }));
+        throw new Error(`Unexpected request: ${url}`);
+      })
+    );
 
-        const oms = createOmsClientWithSession();
+    const oms = createOmsClientWithSession();
 
-        await expect(publicErrors([
-            ["wallet.listAccess", () => oms.wallet.listAccess()],
-            ["wallet.listAccessPages", () => iterateAccessPages(oms.wallet.listAccessPages())],
-            ["wallet.revokeAccess", () => oms.wallet.revokeAccess({targetCredentialId: "credential-1"})],
-        ])).resolves.toMatchInlineSnapshot(`
+    await expect(
+      publicErrors([
+        ['wallet.listAccess', () => oms.wallet.listAccess()],
+        ['wallet.listAccessPages', () => iterateAccessPages(oms.wallet.listAccessPages())],
+        [
+          'wallet.revokeAccess',
+          () => oms.wallet.revokeAccess({ targetCredentialId: 'credential-1' })
+        ]
+      ])
+    ).resolves.toMatchInlineSnapshot(`
           [
             {
               "error": {
@@ -1200,24 +1341,34 @@ describe("public API error contracts", () => {
             },
           ]
         `);
-    });
+  });
 
-    it("snapshots indexer backend errors with upstream details", async () => {
-        vi.stubGlobal("fetch", vi.fn(async () => jsonResponse({
-            error: "Unavailable",
-            code: "INDEXER_UNAVAILABLE",
-            message: "Indexer is unavailable",
-        }, 503)));
+  it('snapshots indexer backend errors with upstream details', async () => {
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async () =>
+        jsonResponse(
+          {
+            error: 'Unavailable',
+            code: 'INDEXER_UNAVAILABLE',
+            message: 'Indexer is unavailable'
+          },
+          503
+        )
+      )
+    );
 
-        const oms = createOmsClient();
+    const oms = createOmsClient();
 
-        await expect(publicError(() =>
-            oms.indexer.getBalances({
-                networks: [Networks.polygon],
-                walletAddress: "0x9999999999999999999999999999999999999999",
-                includeMetadata: false,
-            }),
-        )).resolves.toMatchInlineSnapshot(`
+    await expect(
+      publicError(() =>
+        oms.indexer.getBalances({
+          networks: [Networks.polygon],
+          walletAddress: '0x9999999999999999999999999999999999999999',
+          includeMetadata: false
+        })
+      )
+    ).resolves.toMatchInlineSnapshot(`
           {
             "code": "OMS_HTTP_ERROR",
             "message": "Indexer is unavailable",
@@ -1235,25 +1386,31 @@ describe("public API error contracts", () => {
             },
           }
         `);
-    });
+  });
 
-    it("snapshots indexer non-JSON HTTP errors without raw upstream bodies", async () => {
-        vi.stubGlobal("fetch", vi.fn(async () =>
-            new Response("<html>Bad Gateway</html>", {
-                status: 502,
-                headers: {"Content-Type": "text/html"},
-            }),
-        ));
+  it('snapshots indexer non-JSON HTTP errors without raw upstream bodies', async () => {
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(
+        async () =>
+          new Response('<html>Bad Gateway</html>', {
+            status: 502,
+            headers: { 'Content-Type': 'text/html' }
+          })
+      )
+    );
 
-        const oms = createOmsClient();
+    const oms = createOmsClient();
 
-        await expect(publicError(() =>
-            oms.indexer.getBalances({
-                networks: [Networks.polygon],
-                walletAddress: "0x9999999999999999999999999999999999999999",
-                includeMetadata: false,
-            }),
-        )).resolves.toMatchInlineSnapshot(`
+    await expect(
+      publicError(() =>
+        oms.indexer.getBalances({
+          networks: [Networks.polygon],
+          walletAddress: '0x9999999999999999999999999999999999999999',
+          includeMetadata: false
+        })
+      )
+    ).resolves.toMatchInlineSnapshot(`
           {
             "code": "OMS_HTTP_ERROR",
             "message": "indexer.getBalances failed with HTTP 502",
@@ -1271,41 +1428,61 @@ describe("public API error contracts", () => {
             },
           }
         `);
-    });
+  });
 
-    it("snapshots transaction history indexer errors with upstream details", async () => {
-        let callCount = 0;
-        vi.stubGlobal("fetch", vi.fn(async () => {
-            callCount += 1;
-            if (callCount === 1) {
-                return jsonResponse({
-                    error: "Unavailable",
-                    code: "INDEXER_UNAVAILABLE",
-                    message: "Indexer is unavailable",
-                }, 503);
-            }
-            if (callCount === 2) {
-                throw new TypeError("fetch failed");
-            }
-            return new Response("not-json", {status: 200});
-        }));
+  it('snapshots transaction history indexer errors with upstream details', async () => {
+    let callCount = 0;
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async () => {
+        callCount += 1;
+        if (callCount === 1) {
+          return jsonResponse(
+            {
+              error: 'Unavailable',
+              code: 'INDEXER_UNAVAILABLE',
+              message: 'Indexer is unavailable'
+            },
+            503
+          );
+        }
+        if (callCount === 2) {
+          throw new TypeError('fetch failed');
+        }
+        return new Response('not-json', { status: 200 });
+      })
+    );
 
-        const oms = createOmsClient();
+    const oms = createOmsClient();
 
-        await expect(publicErrors([
-            ["indexer.getTransactionHistory.http", () => oms.indexer.getTransactionHistory({
-                networks: [Networks.polygon],
-                walletAddress: "0x9999999999999999999999999999999999999999",
-            })],
-            ["indexer.getTransactionHistory.transport", () => oms.indexer.getTransactionHistory({
-                networks: [Networks.polygon],
-                walletAddress: "0x9999999999999999999999999999999999999999",
-            })],
-            ["indexer.getTransactionHistory.malformed", () => oms.indexer.getTransactionHistory({
-                networks: [Networks.polygon],
-                walletAddress: "0x9999999999999999999999999999999999999999",
-            })],
-        ])).resolves.toMatchInlineSnapshot(`
+    await expect(
+      publicErrors([
+        [
+          'indexer.getTransactionHistory.http',
+          () =>
+            oms.indexer.getTransactionHistory({
+              networks: [Networks.polygon],
+              walletAddress: '0x9999999999999999999999999999999999999999'
+            })
+        ],
+        [
+          'indexer.getTransactionHistory.transport',
+          () =>
+            oms.indexer.getTransactionHistory({
+              networks: [Networks.polygon],
+              walletAddress: '0x9999999999999999999999999999999999999999'
+            })
+        ],
+        [
+          'indexer.getTransactionHistory.malformed',
+          () =>
+            oms.indexer.getTransactionHistory({
+              networks: [Networks.polygon],
+              walletAddress: '0x9999999999999999999999999999999999999999'
+            })
+        ]
+      ])
+    ).resolves.toMatchInlineSnapshot(`
           [
             {
               "error": {
@@ -1366,22 +1543,27 @@ describe("public API error contracts", () => {
             },
           ]
         `);
-    });
+  });
 
-    it("snapshots indexer transport failures with upstream details", async () => {
-        vi.stubGlobal("fetch", vi.fn(async () => {
-            throw new TypeError("fetch failed");
-        }));
+  it('snapshots indexer transport failures with upstream details', async () => {
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async () => {
+        throw new TypeError('fetch failed');
+      })
+    );
 
-        const oms = createOmsClient();
+    const oms = createOmsClient();
 
-        await expect(publicError(() =>
-            oms.indexer.getBalances({
-                networks: [Networks.polygon],
-                walletAddress: "0x9999999999999999999999999999999999999999",
-                includeMetadata: false,
-            }),
-        )).resolves.toMatchInlineSnapshot(`
+    await expect(
+      publicError(() =>
+        oms.indexer.getBalances({
+          networks: [Networks.polygon],
+          walletAddress: '0x9999999999999999999999999999999999999999',
+          includeMetadata: false
+        })
+      )
+    ).resolves.toMatchInlineSnapshot(`
           {
             "code": "OMS_REQUEST_FAILED",
             "message": "fetch failed",
@@ -1399,20 +1581,25 @@ describe("public API error contracts", () => {
             },
           }
         `);
-    });
+  });
 
-    it("snapshots indexer malformed response errors with upstream details", async () => {
-        vi.stubGlobal("fetch", vi.fn(async () => new Response("not-json", {status: 200})));
+  it('snapshots indexer malformed response errors with upstream details', async () => {
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async () => new Response('not-json', { status: 200 }))
+    );
 
-        const oms = createOmsClient();
+    const oms = createOmsClient();
 
-        await expect(publicError(() =>
-            oms.indexer.getBalances({
-                networks: [Networks.polygon],
-                walletAddress: "0x9999999999999999999999999999999999999999",
-                includeMetadata: false,
-            }),
-        )).resolves.toMatchInlineSnapshot(`
+    await expect(
+      publicError(() =>
+        oms.indexer.getBalances({
+          networks: [Networks.polygon],
+          walletAddress: '0x9999999999999999999999999999999999999999',
+          includeMetadata: false
+        })
+      )
+    ).resolves.toMatchInlineSnapshot(`
           {
             "code": "OMS_INVALID_RESPONSE",
             "message": "Invalid JSON response from indexer.getBalances",
@@ -1430,16 +1617,18 @@ describe("public API error contracts", () => {
             },
           }
         `);
-    });
+  });
 
-    it("snapshots exported storage and signer runtime errors", async () => {
-        vi.stubGlobal("localStorage", undefined);
-        vi.stubGlobal("sessionStorage", undefined);
+  it('snapshots exported storage and signer runtime errors', async () => {
+    vi.stubGlobal('localStorage', undefined);
+    vi.stubGlobal('sessionStorage', undefined);
 
-        await expect(publicErrors([
-            ["LocalStorageManager.get", () => Promise.resolve(new LocalStorageManager().get("key"))],
-            ["SessionStorageManager.get", () => Promise.resolve(new SessionStorageManager().get("key"))],
-        ])).resolves.toMatchInlineSnapshot(`
+    await expect(
+      publicErrors([
+        ['LocalStorageManager.get', () => Promise.resolve(new LocalStorageManager().get('key'))],
+        ['SessionStorageManager.get', () => Promise.resolve(new SessionStorageManager().get('key'))]
+      ])
+    ).resolves.toMatchInlineSnapshot(`
           [
             {
               "error": {
@@ -1470,10 +1659,9 @@ describe("public API error contracts", () => {
           ]
         `);
 
-        vi.stubGlobal("crypto", undefined);
-        await expect(publicError(() =>
-            new WebCryptoP256CredentialSigner().credentialId(),
-        )).resolves.toMatchInlineSnapshot(`
+    vi.stubGlobal('crypto', undefined);
+    await expect(publicError(() => new WebCryptoP256CredentialSigner().credentialId())).resolves
+      .toMatchInlineSnapshot(`
           {
             "code": null,
             "message": "WebCrypto SubtleCrypto is required for the default OMS credential signer",
@@ -1485,28 +1673,28 @@ describe("public API error contracts", () => {
             "upstreamError": null,
           }
         `);
+  });
+
+  it('snapshots exported error helper and subclass fields', () => {
+    const error = new OMSWalletRequestError({
+      code: 'OMS_HTTP_ERROR',
+      operation: 'wallet.startEmailAuth',
+      message: 'bad gateway',
+      status: 502,
+      retryable: true,
+      upstreamError: {
+        service: 'waas',
+        name: 'WebrpcBadResponse',
+        code: -5,
+        message: 'bad response',
+        status: 502
+      }
     });
 
-    it("snapshots exported error helper and subclass fields", () => {
-        const error = new OMSWalletRequestError({
-            code: "OMS_HTTP_ERROR",
-            operation: "wallet.startEmailAuth",
-            message: "bad gateway",
-            status: 502,
-            retryable: true,
-            upstreamError: {
-                service: "waas",
-                name: "WebrpcBadResponse",
-                code: -5,
-                message: "bad response",
-                status: 502,
-            },
-        });
-
-        expect(isOMSWalletError(error)).toBe(true);
-        expect(isOMSWalletError(new Error("plain"))).toBe(false);
-        expect(error).toBeInstanceOf(OMSWalletError);
-        expect(serializeError(error)).toMatchInlineSnapshot(`
+    expect(isOMSWalletError(error)).toBe(true);
+    expect(isOMSWalletError(new Error('plain'))).toBe(false);
+    expect(error).toBeInstanceOf(OMSWalletError);
+    expect(serializeError(error)).toMatchInlineSnapshot(`
           {
             "code": "OMS_HTTP_ERROR",
             "message": "bad gateway",
@@ -1524,224 +1712,226 @@ describe("public API error contracts", () => {
             },
           }
         `);
-    });
+  });
 });
 
 async function publicError(action: () => Promise<unknown>): Promise<SerializedError> {
-    try {
-        await action();
-    } catch (error) {
-        return serializeError(error);
-    }
+  try {
+    await action();
+  } catch (error) {
+    return serializeError(error);
+  }
 
-    throw new Error("Expected public API call to reject");
+  throw new Error('Expected public API call to reject');
 }
 
 async function publicErrors(
-    cases: Array<[label: string, action: () => Promise<unknown>]>,
-): Promise<Array<{label: string; error: SerializedError}>> {
-    const errors: Array<{label: string; error: SerializedError}> = [];
-    for (const [label, action] of cases) {
-        errors.push({
-            label,
-            error: await publicError(action),
-        });
-    }
-    return errors;
+  cases: Array<[label: string, action: () => Promise<unknown>]>
+): Promise<Array<{ label: string; error: SerializedError }>> {
+  const errors: Array<{ label: string; error: SerializedError }> = [];
+  for (const [label, action] of cases) {
+    errors.push({
+      label,
+      error: await publicError(action)
+    });
+  }
+  return errors;
 }
 
 async function iterateAccessPages(pages: AsyncIterable<unknown>): Promise<void> {
-    for await (const _page of pages) {
-        return;
-    }
+  for await (const _page of pages) {
+    return;
+  }
 }
 
 async function waitForValue<T>(read: () => T | undefined): Promise<T> {
-    for (let attempt = 0; attempt < 20; attempt++) {
-        const value = read();
-        if (value !== undefined) {
-            return value;
-        }
-        await new Promise(resolve => setTimeout(resolve, 0));
+  for (let attempt = 0; attempt < 20; attempt++) {
+    const value = read();
+    if (value !== undefined) {
+      return value;
     }
+    await new Promise((resolve) => setTimeout(resolve, 0));
+  }
 
-    throw new Error("Timed out waiting for async test fixture");
+  throw new Error('Timed out waiting for async test fixture');
 }
 
 function serializeError(error: unknown): SerializedError {
-    const value = error as {
-        name?: unknown
-        code?: unknown
-        operation?: unknown
-        status?: unknown
-        retryable?: unknown
-        txnId?: unknown
-        upstreamError?: unknown
-    };
-    return {
-        name: error instanceof Error ? error.name : stringOrNull(value.name),
-        code: stringOrNull(value.code),
-        operation: stringOrNull(value.operation),
-        message: error instanceof Error ? error.message : String(error),
-        status: numberOrNull(value.status),
-        retryable: booleanOrNull(value.retryable),
-        txnId: stringOrNull(value.txnId),
-        upstreamError: serializeUpstreamError(value.upstreamError),
-    };
+  const value = error as {
+    name?: unknown;
+    code?: unknown;
+    operation?: unknown;
+    status?: unknown;
+    retryable?: unknown;
+    txnId?: unknown;
+    upstreamError?: unknown;
+  };
+  return {
+    name: error instanceof Error ? error.name : stringOrNull(value.name),
+    code: stringOrNull(value.code),
+    operation: stringOrNull(value.operation),
+    message: error instanceof Error ? error.message : String(error),
+    status: numberOrNull(value.status),
+    retryable: booleanOrNull(value.retryable),
+    txnId: stringOrNull(value.txnId),
+    upstreamError: serializeUpstreamError(value.upstreamError)
+  };
 }
 
 function serializeUpstreamError(error: unknown): SerializedUpstreamError | null {
-    if (!error || typeof error !== "object") {
-        return null;
-    }
+  if (!error || typeof error !== 'object') {
+    return null;
+  }
 
-    const value = error as {
-        service?: unknown
-        name?: unknown
-        code?: unknown
-        message?: unknown
-        status?: unknown
-    };
-    return {
-        service: stringOrNull(value.service),
-        name: stringOrNull(value.name),
-        code: numberOrStringOrNull(value.code),
-        message: stringOrNull(value.message),
-        status: numberOrNull(value.status),
-    };
+  const value = error as {
+    service?: unknown;
+    name?: unknown;
+    code?: unknown;
+    message?: unknown;
+    status?: unknown;
+  };
+  return {
+    service: stringOrNull(value.service),
+    name: stringOrNull(value.name),
+    code: numberOrStringOrNull(value.code),
+    message: stringOrNull(value.message),
+    status: numberOrNull(value.status)
+  };
 }
 
-function createOmsClient(params: {
-    credentialSigner?: CredentialSigner
-    redirectAuthStorage?: StorageManager | null
-} = {}): OMSWallet {
-    const clientParams: ConstructorParameters<typeof OMSWallet>[0] = {
-        publishableKey: "pk_dev_sdbx_project_key",
-        storage: new MemoryStorageManager(),
-        credentialSigner: params.credentialSigner ?? new MockSigner(),
-    };
+function createOmsClient(
+  params: {
+    credentialSigner?: CredentialSigner;
+    redirectAuthStorage?: StorageManager | null;
+  } = {}
+): OMSWallet {
+  const clientParams: ConstructorParameters<typeof OMSWallet>[0] = {
+    publishableKey: 'pk_dev_sdbx_project_key',
+    storage: new MemoryStorageManager(),
+    credentialSigner: params.credentialSigner ?? new MockSigner()
+  };
 
-    if (params.redirectAuthStorage !== null) {
-        clientParams.redirectAuthStorage = params.redirectAuthStorage ?? new MemoryStorageManager();
-    }
+  if (params.redirectAuthStorage !== null) {
+    clientParams.redirectAuthStorage = params.redirectAuthStorage ?? new MemoryStorageManager();
+  }
 
-    return new OMSWallet(clientParams);
+  return new OMSWallet(clientParams);
 }
 
 class ThrowingSetStorage implements StorageManager {
-    get(): string | null {
-        return null;
-    }
+  get(): string | null {
+    return null;
+  }
 
-    set(): void {
-        throw new Error("OIDC redirect state save failed");
-    }
+  set(): void {
+    throw new Error('OIDC redirect state save failed');
+  }
 
-    delete(): void {}
+  delete(): void {}
 }
 
 function createOmsClientWithSession(): OMSWallet {
-    const oms = createOmsClient();
-    (oms.wallet as any).persistSession(
-        "wallet-id",
-        "0x9999999999999999999999999999999999999999",
-        {
-            expiresAt: "2099-01-01T00:00:00Z",
-            auth: {type: "email", email: "user@example.com"},
-            signerCredentialId: "0x04" + "11".repeat(64),
-            signerKeyType: "ecdsa-p256-sha256",
-        },
-    );
-    return oms;
+  const oms = createOmsClient();
+  (oms.wallet as any).persistSession('wallet-id', '0x9999999999999999999999999999999999999999', {
+    expiresAt: '2099-01-01T00:00:00Z',
+    auth: { type: 'email', email: 'user@example.com' },
+    signerCredentialId: '0x04' + '11'.repeat(64),
+    signerKeyType: 'ecdsa-p256-sha256'
+  });
+  return oms;
 }
 
 function testOidcProvider() {
-    return {
-        clientId: "client-id",
-        issuer: "https://issuer.example",
-        authorizationUrl: "https://issuer.example/oauth/authorize",
-        providerRedirectUri: "https://app.example/auth/callback",
-    };
+  return {
+    clientId: 'client-id',
+    issuer: 'https://issuer.example',
+    authorizationUrl: 'https://issuer.example/oauth/authorize',
+    providerRedirectUri: 'https://app.example/auth/callback'
+  };
 }
 
-function authorizationState(result: {authorizationUrl: string}): string {
-    const state = new URL(result.authorizationUrl).searchParams.get("state");
-    if (!state) throw new Error("Authorization URL is missing state");
-    return state;
+function authorizationState(result: { authorizationUrl: string }): string {
+  const state = new URL(result.authorizationUrl).searchParams.get('state');
+  if (!state) throw new Error('Authorization URL is missing state');
+  return state;
 }
 
 function completeAuthResponse() {
-    return {
-        identity: {type: "email", sub: "user@example.com"},
-        wallets: [testWallet()],
-        credential: testCredential(),
-        email: "user@example.com",
-    };
+  return {
+    identity: { type: 'email', sub: 'user@example.com' },
+    wallets: [testWallet()],
+    credential: testCredential(),
+    email: 'user@example.com'
+  };
 }
 
-function testWallet(id = "wallet-1", addressByte = "11") {
-    return {
-        id,
-        type: WalletType.Ethereum,
-        address: `0x${addressByte.repeat(20)}`,
-    };
+function testWallet(id = 'wallet-1', addressByte = '11') {
+  return {
+    id,
+    type: WalletType.Ethereum,
+    address: `0x${addressByte.repeat(20)}`
+  };
 }
 
 function testCredential() {
-    return {
-        credentialId: "0x04" + "11".repeat(64),
-        expiresAt: "2099-01-01T00:00:00Z",
-        isCaller: true,
-    };
+  return {
+    credentialId: '0x04' + '11'.repeat(64),
+    expiresAt: '2099-01-01T00:00:00Z',
+    isCaller: true
+  };
 }
 
-function encodeTestOidcState(payload: {nonce: string; scope: string; redirect_uri?: string}): string {
-    let binary = "";
-    for (const byte of new TextEncoder().encode(JSON.stringify(payload))) {
-        binary += String.fromCharCode(byte);
-    }
+function encodeTestOidcState(payload: {
+  nonce: string;
+  scope: string;
+  redirect_uri?: string;
+}): string {
+  let binary = '';
+  for (const byte of new TextEncoder().encode(JSON.stringify(payload))) {
+    binary += String.fromCharCode(byte);
+  }
 
-    return btoa(binary).replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "");
+  return btoa(binary).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
 }
 
 function jsonResponse(body: unknown, status = 200): Response {
-    return new Response(JSON.stringify(body), {
-        status,
-        headers: {"Content-Type": "application/json"},
-    });
+  return new Response(JSON.stringify(body), {
+    status,
+    headers: { 'Content-Type': 'application/json' }
+  });
 }
 
 function stringOrNull(value: unknown): string | null {
-    return typeof value === "string" ? value : null;
+  return typeof value === 'string' ? value : null;
 }
 
 function numberOrNull(value: unknown): number | null {
-    return typeof value === "number" ? value : null;
+  return typeof value === 'number' ? value : null;
 }
 
 function booleanOrNull(value: unknown): boolean | null {
-    return typeof value === "boolean" ? value : null;
+  return typeof value === 'boolean' ? value : null;
 }
 
 function numberOrStringOrNull(value: unknown): number | string | null {
-    return typeof value === "number" || typeof value === "string" ? value : null;
+  return typeof value === 'number' || typeof value === 'string' ? value : null;
 }
 
 interface SerializedError {
-    name: string | null
-    code: string | null
-    operation: string | null
-    message: string
-    status: number | null
-    retryable: boolean | null
-    txnId: string | null
-    upstreamError: SerializedUpstreamError | null
+  name: string | null;
+  code: string | null;
+  operation: string | null;
+  message: string;
+  status: number | null;
+  retryable: boolean | null;
+  txnId: string | null;
+  upstreamError: SerializedUpstreamError | null;
 }
 
 interface SerializedUpstreamError {
-    service: string | null
-    name: string | null
-    code: number | string | null
-    message: string | null
-    status: number | null
+  service: string | null;
+  name: string | null;
+  code: number | string | null;
+  message: string | null;
+  status: number | null;
 }

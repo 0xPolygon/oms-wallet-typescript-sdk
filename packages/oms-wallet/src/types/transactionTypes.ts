@@ -1,86 +1,93 @@
-import {Abi, Address, ContractFunctionName, EncodeFunctionDataParameters, Hex} from "viem";
-import type {Network} from "../networks.js";
-import type {FeeOption, FeeOptionSelection, TransactionMode, TransactionStatus} from "./waas.js";
-import type {TokenBalance} from "../clients/indexerClient.js";
+import type { Abi, Address, ContractFunctionName, EncodeFunctionDataParameters, Hex } from 'viem';
+
+import type { TokenBalance } from '../clients/indexerClient.js';
+import type { Network } from '../networks.js';
+import type { FeeOption, FeeOptionSelection, TransactionMode, TransactionStatus } from './waas.js';
 
 export type FeeOptionWithBalance = {
-    feeOption: FeeOption
-    selection: FeeOptionSelection
-    balance?: TokenBalance
-    available?: string
-    availableRaw?: string
-    decimals?: number
-}
+  feeOption: FeeOption;
+  selection: FeeOptionSelection;
+  balance?: TokenBalance;
+  available?: string;
+  availableRaw?: string;
+  decimals?: number;
+};
 
 export interface FeeOptionSelector {
-    (feeOptions: FeeOptionWithBalance[]): FeeOptionSelection | undefined | Promise<FeeOptionSelection | undefined>
+  (
+    feeOptions: FeeOptionWithBalance[]
+  ): FeeOptionSelection | undefined | Promise<FeeOptionSelection | undefined>;
 }
 
+// Intentional: merges a `firstAvailable` static onto the FeeOptionSelector function-type name
+// (public API). Kept until a non-breaking refactor; see the type+const alternative in review notes.
+// eslint-disable-next-line @typescript-eslint/no-namespace
 export namespace FeeOptionSelector {
-    export const firstAvailable: FeeOptionSelector = (feeOptions) => feeOptions.find(canPayFeeOption)?.selection
+  export const firstAvailable: FeeOptionSelector = (feeOptions) =>
+    feeOptions.find(canPayFeeOption)?.selection;
 }
 
 export function feeOptionSelection(feeOption: FeeOption): FeeOptionSelection {
-    const tokenIdentifier = feeOption.token.tokenID?.trim()
-    return {token: tokenIdentifier && tokenIdentifier.length > 0 ? tokenIdentifier : feeOption.token.symbol}
+  const tokenIdentifier = feeOption.token.tokenID?.trim();
+  return {
+    token: tokenIdentifier && tokenIdentifier.length > 0 ? tokenIdentifier : feeOption.token.symbol
+  };
 }
 
 function canPayFeeOption(option: FeeOptionWithBalance): boolean {
-    if (option.availableRaw === undefined) {
-        return false
-    }
+  if (option.availableRaw === undefined) {
+    return false;
+  }
 
-    try {
-        return BigInt(option.availableRaw) >= BigInt(option.feeOption.value)
-    } catch {
-        return false
-    }
+  try {
+    return BigInt(option.availableRaw) >= BigInt(option.feeOption.value);
+  } catch {
+    return false;
+  }
 }
 
 export type SendTransactionResponse = {
-    txnId: string
-    status: TransactionStatus
-    txnHash?: string
-    statusResolution: "not-requested" | "resolved" | "timed-out"
-}
+  txnId: string;
+  status: TransactionStatus;
+  txnHash?: string;
+  statusResolution: 'not-requested' | 'resolved' | 'timed-out';
+};
 
 export type TransactionStatusPollingOptions = {
-    timeoutMs?: number
-    intervalMs?: number
-    fastIntervalMs?: number
-    fastPollCount?: number
-}
+  timeoutMs?: number;
+  intervalMs?: number;
+  fastIntervalMs?: number;
+  fastPollCount?: number;
+};
 
 export type SendTransactionBase = {
-    network: Network
-    to: Address
-    value?: bigint
-    mode?: TransactionMode
-    selectFeeOption?: FeeOptionSelector
-    waitForStatus?: boolean
-    statusPolling?: TransactionStatusPollingOptions
-}
+  network: Network;
+  to: Address;
+  value?: bigint;
+  mode?: TransactionMode;
+  selectFeeOption?: FeeOptionSelector;
+  waitForStatus?: boolean;
+  statusPolling?: TransactionStatusPollingOptions;
+};
 
 export type SendNativeTransactionParams = SendTransactionBase & {
-    value: bigint
-    data?: never
-    abi?: never
-}
+  value: bigint;
+  data?: never;
+  abi?: never;
+};
 
 export type SendDataTransactionParams = SendTransactionBase & {
-    data: Hex
-    abi?: never
-}
+  data: Hex;
+  abi?: never;
+};
 
 export type SendContractTransactionParams<
-    abi extends Abi | readonly unknown[] = Abi,
-    functionName extends ContractFunctionName<abi> | undefined = ContractFunctionName<abi>,
+  abi extends Abi | readonly unknown[] = Abi,
+  functionName extends ContractFunctionName<abi> | undefined = ContractFunctionName<abi>
 > = SendTransactionBase &
-    EncodeFunctionDataParameters<abi, functionName> & {
-    data?: never
-}
+  EncodeFunctionDataParameters<abi, functionName> & {
+    data?: never;
+  };
 
 export type SendTransactionParams =
-    | SendNativeTransactionParams
-    | SendDataTransactionParams
-    | SendContractTransactionParams
+  SendNativeTransactionParams | SendDataTransactionParams | SendContractTransactionParams;

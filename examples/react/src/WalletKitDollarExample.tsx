@@ -1,65 +1,70 @@
-import { useEffect, useMemo, useState } from 'react'
-import { Networks } from '@polygonlabs/oms-wallet'
-import { createPublicClient, formatUnits, http, isAddress, parseUnits } from 'viem'
-import type { Address } from 'viem'
-import { omsWallet } from './omsWallet'
-import { walletKitDollarAbi } from './walletKitDollarContract'
+import { useEffect, useMemo, useState } from 'react';
+import { Networks } from '@polygonlabs/oms-wallet';
+import { createPublicClient, formatUnits, http, isAddress, parseUnits } from 'viem';
+import type { Address } from 'viem';
+import { omsWallet } from './omsWallet';
+import { walletKitDollarAbi } from './walletKitDollarContract';
 
-const AMOY_RPC_URL = 'https://rpc-amoy.polygon.technology'
-const WKUSD_CONTRACT_ADDRESS = '0x4Ef29925C9C72b860447A6DA628cc78f785b27b5' as const satisfies Address
-const BURN_ADDRESS = '0x000000000000000000000000000000000000dEaD' as const satisfies Address
+const AMOY_RPC_URL = 'https://rpc-amoy.polygon.technology';
+const WKUSD_CONTRACT_ADDRESS =
+  '0x4Ef29925C9C72b860447A6DA628cc78f785b27b5' as const satisfies Address;
+const BURN_ADDRESS = '0x000000000000000000000000000000000000dEaD' as const satisfies Address;
 const WALLET_KIT_DOLLAR = {
   name: 'WalletKit Dollar',
   symbol: 'WKUSD',
-  decimals: 6,
-} as const
-const MINT_AMOUNT = 10n * 10n ** BigInt(WALLET_KIT_DOLLAR.decimals)
+  decimals: 6
+} as const;
+const MINT_AMOUNT = 10n * 10n ** BigInt(WALLET_KIT_DOLLAR.decimals);
 
 export function WalletKitDollarExample() {
-  const [walletAddress, setWalletAddress] = useState('')
-  const [balance, setBalance] = useState<bigint | null>(null)
-  const [to, setTo] = useState('')
-  const [amount, setAmount] = useState('1')
-  const [sendToBurn, setSendToBurn] = useState(false)
-  const [lastHash, setLastHash] = useState('')
-  const [lastExplorerUrl, setLastExplorerUrl] = useState('')
-  const [status, setStatus] = useState('')
-  const [isBusy, setIsBusy] = useState(false)
+  const [walletAddress, setWalletAddress] = useState('');
+  const [balance, setBalance] = useState<bigint | null>(null);
+  const [to, setTo] = useState('');
+  const [amount, setAmount] = useState('1');
+  const [sendToBurn, setSendToBurn] = useState(false);
+  const [lastHash, setLastHash] = useState('');
+  const [lastExplorerUrl, setLastExplorerUrl] = useState('');
+  const [status, setStatus] = useState('');
+  const [isBusy, setIsBusy] = useState(false);
 
-  const publicClient = useMemo(() => createPublicClient({
-    transport: http(AMOY_RPC_URL),
-  }), [])
+  const publicClient = useMemo(
+    () =>
+      createPublicClient({
+        transport: http(AMOY_RPC_URL)
+      }),
+    []
+  );
 
   useEffect(() => {
-    const restoredAddress = omsWallet.wallet.walletAddress ?? ''
-    setWalletAddress(restoredAddress)
+    const restoredAddress = omsWallet.wallet.walletAddress ?? '';
+    setWalletAddress(restoredAddress);
     if (isAddress(restoredAddress)) {
-      void refreshBalance(restoredAddress)
+      void refreshBalance(restoredAddress);
     }
-  }, [])
+  }, []);
 
   useEffect(() => {
     if (sendToBurn) {
-      setTo(BURN_ADDRESS)
+      setTo(BURN_ADDRESS);
     }
-  }, [sendToBurn])
+  }, [sendToBurn]);
 
   async function run(label: string, action: () => Promise<void>) {
-    setIsBusy(true)
-    setStatus(label)
+    setIsBusy(true);
+    setStatus(label);
     try {
-      await action()
+      await action();
     } catch (error) {
-      setStatus(error instanceof Error ? error.message : String(error))
+      setStatus(error instanceof Error ? error.message : String(error));
     } finally {
-      setIsBusy(false)
+      setIsBusy(false);
     }
   }
 
   async function mint() {
     await run('Minting WKUSD...', async () => {
-      const activeWallet = requireWalletAddress()
-      clearLastTransaction()
+      const activeWallet = requireWalletAddress();
+      clearLastTransaction();
 
       const tx = await omsWallet.wallet.sendTransaction({
         network: Networks.amoy,
@@ -68,31 +73,31 @@ export function WalletKitDollarExample() {
         functionName: 'mint',
         args: [activeWallet, MINT_AMOUNT],
         statusPolling: {
-          timeoutMs: 120_000,
-        },
-      })
+          timeoutMs: 120_000
+        }
+      });
 
-      setLastHash(tx.txnHash ?? tx.txnId)
-      setLastExplorerUrl(tx.txnHash ? transactionExplorerUrl(tx.txnHash) : '')
-      await refreshBalance(activeWallet)
-      setStatus(`Minted 10 ${WALLET_KIT_DOLLAR.name}.`)
-    })
+      setLastHash(tx.txnHash ?? tx.txnId);
+      setLastExplorerUrl(tx.txnHash ? transactionExplorerUrl(tx.txnHash) : '');
+      await refreshBalance(activeWallet);
+      setStatus(`Minted 10 ${WALLET_KIT_DOLLAR.name}.`);
+    });
   }
 
   async function send() {
     await run('Sending WKUSD...', async () => {
-      const activeWallet = requireWalletAddress()
-      const recipient = to.trim()
+      const activeWallet = requireWalletAddress();
+      const recipient = to.trim();
       if (!isAddress(recipient)) {
-        throw new Error('Enter a valid recipient address.')
+        throw new Error('Enter a valid recipient address.');
       }
 
-      const transferAmount = parseUnits(amount || '0', WALLET_KIT_DOLLAR.decimals)
+      const transferAmount = parseUnits(amount || '0', WALLET_KIT_DOLLAR.decimals);
       if (transferAmount <= 0n) {
-        throw new Error('Send amount must be greater than zero.')
+        throw new Error('Send amount must be greater than zero.');
       }
 
-      clearLastTransaction()
+      clearLastTransaction();
 
       const tx = await omsWallet.wallet.sendTransaction({
         network: Networks.amoy,
@@ -101,15 +106,15 @@ export function WalletKitDollarExample() {
         functionName: 'transfer',
         args: [recipient as Address, transferAmount],
         statusPolling: {
-          timeoutMs: 120_000,
-        },
-      })
+          timeoutMs: 120_000
+        }
+      });
 
-      setLastHash(tx.txnHash ?? tx.txnId)
-      setLastExplorerUrl(tx.txnHash ? transactionExplorerUrl(tx.txnHash) : '')
-      await refreshBalance(activeWallet)
-      setStatus(`Sent ${amount} ${WALLET_KIT_DOLLAR.symbol}.`)
-    })
+      setLastHash(tx.txnHash ?? tx.txnId);
+      setLastExplorerUrl(tx.txnHash ? transactionExplorerUrl(tx.txnHash) : '');
+      await refreshBalance(activeWallet);
+      setStatus(`Sent ${amount} ${WALLET_KIT_DOLLAR.symbol}.`);
+    });
   }
 
   async function refreshBalance(address: Address) {
@@ -117,22 +122,22 @@ export function WalletKitDollarExample() {
       address: WKUSD_CONTRACT_ADDRESS,
       abi: walletKitDollarAbi,
       functionName: 'balanceOf',
-      args: [address],
-    })
-    setBalance(nextBalance)
+      args: [address]
+    });
+    setBalance(nextBalance);
   }
 
   function requireWalletAddress(): Address {
-    const activeWallet = omsWallet.wallet.walletAddress ?? walletAddress
+    const activeWallet = omsWallet.wallet.walletAddress ?? walletAddress;
     if (!isAddress(activeWallet)) {
-      throw new Error('Active wallet address is not a valid EVM address.')
+      throw new Error('Active wallet address is not a valid EVM address.');
     }
-    return activeWallet
+    return activeWallet;
   }
 
   function clearLastTransaction() {
-    setLastHash('')
-    setLastExplorerUrl('')
+    setLastHash('');
+    setLastExplorerUrl('');
   }
 
   return (
@@ -154,8 +159,8 @@ export function WalletKitDollarExample() {
           <input
             value={to}
             onChange={(event) => {
-              setTo(event.target.value)
-              setSendToBurn(event.target.value === BURN_ADDRESS)
+              setTo(event.target.value);
+              setSendToBurn(event.target.value === BURN_ADDRESS);
             }}
             disabled={sendToBurn}
           />
@@ -188,15 +193,13 @@ export function WalletKitDollarExample() {
       {lastHash && (
         <div className="result-block">
           <p className="result labeled-result">
-            <span className="result-label">{lastExplorerUrl ? 'Transaction hash' : 'Transaction ID'}</span>
+            <span className="result-label">
+              {lastExplorerUrl ? 'Transaction hash' : 'Transaction ID'}
+            </span>
             <code className="result-value">{lastHash}</code>
           </p>
           {lastExplorerUrl && (
-            <a
-              href={lastExplorerUrl}
-              target="_blank"
-              rel="noreferrer"
-            >
+            <a href={lastExplorerUrl} target="_blank" rel="noreferrer">
               View on explorer
             </a>
           )}
@@ -204,14 +207,14 @@ export function WalletKitDollarExample() {
       )}
       {status && <output>{status}</output>}
     </section>
-  )
+  );
 }
 
 function transactionExplorerUrl(txnHash: string): string {
-  return `${Networks.amoy.explorerUrl}/tx/${txnHash}`
+  return `${Networks.amoy.explorerUrl}/tx/${txnHash}`;
 }
 
 function formatTokenBalance(value: bigint | null): string {
-  if (value === null) return 'Loading...'
-  return `${formatUnits(value, WALLET_KIT_DOLLAR.decimals)} ${WALLET_KIT_DOLLAR.symbol}`
+  if (value === null) return 'Loading...';
+  return `${formatUnits(value, WALLET_KIT_DOLLAR.decimals)} ${WALLET_KIT_DOLLAR.symbol}`;
 }

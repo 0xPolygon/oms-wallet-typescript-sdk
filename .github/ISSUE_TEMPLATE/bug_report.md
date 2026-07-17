@@ -21,7 +21,7 @@ labels: bug
 
 ## Error output
 
-```
+```text
 paste error / stack trace here
 ```
 

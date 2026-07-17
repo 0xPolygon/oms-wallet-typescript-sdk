@@ -1,7 +1,7 @@
 ## clients/indexerClient.d.ts
-import type { Network } from "../networks.js";
-export type IndexerNetworkType = "MAINNETS" | "TESTNETS" | "ALL";
-export type ContractVerificationStatus = "VERIFIED" | "UNVERIFIED" | "ALL";
+import type { Network } from '../networks.js';
+export type IndexerNetworkType = 'MAINNETS' | 'TESTNETS' | 'ALL';
+export type ContractVerificationStatus = 'VERIFIED' | 'UNVERIFIED' | 'ALL';
 export interface TokenBalancesPage {
     page: number;
     column?: string;
@@ -21,7 +21,7 @@ export interface TokenBalancesPageRequest {
 }
 export interface SortBy {
     column: string;
-    order: "DESC" | "ASC";
+    order: 'DESC' | 'ASC';
 }
 export interface TokenContractInfo {
     chainId: number;
@@ -85,7 +85,7 @@ interface TokenBalanceBase {
     priceUpdatedAt?: string;
 }
 export interface NativeTokenBalance extends TokenBalanceBase {
-    contractType: "NATIVE";
+    contractType: 'NATIVE';
     name: string;
     symbol: string;
     contractAddress?: undefined;
@@ -195,7 +195,7 @@ export declare class IndexerClient implements OMSWalletIndexerClient {
 export {};
 
 ## credentialSigner.d.ts
-export type CredentialSigningAlgorithm = "ecdsa-p256-sha256" | "ecdsa-p256k-eip191";
+export type CredentialSigningAlgorithm = 'ecdsa-p256-sha256' | 'ecdsa-p256k-eip191';
 export interface CredentialSigner {
     readonly signingAlgorithm: CredentialSigningAlgorithm;
     credentialId(): Promise<string>;
@@ -235,10 +235,10 @@ export declare class EthereumPrivateKeyCredentialSigner implements CredentialSig
 }
 
 ## errors.d.ts
-import type { OMSWalletOperation } from "./operations.js";
-export type OMSWalletErrorCode = "OMS_HTTP_ERROR" | "OMS_INVALID_RESPONSE" | "OMS_REQUEST_FAILED" | "OMS_AUTH_COMMITMENT_CONSUMED" | "OMS_SESSION_MISSING" | "OMS_SESSION_EXPIRED" | "OMS_WALLET_SELECTION_STALE" | "OMS_WALLET_SELECTION_UNAVAILABLE" | "OMS_WALLET_SELECTION_IN_FLIGHT" | "OMS_TRANSACTION_EXECUTION_UNCONFIRMED" | "OMS_TRANSACTION_STATUS_LOOKUP_FAILED" | "OMS_VALIDATION_ERROR" | "OMS_STORAGE_ERROR";
+import type { OMSWalletOperation } from './operations.js';
+export type OMSWalletErrorCode = 'OMS_HTTP_ERROR' | 'OMS_INVALID_RESPONSE' | 'OMS_REQUEST_FAILED' | 'OMS_AUTH_COMMITMENT_CONSUMED' | 'OMS_SESSION_MISSING' | 'OMS_SESSION_EXPIRED' | 'OMS_WALLET_SELECTION_STALE' | 'OMS_WALLET_SELECTION_UNAVAILABLE' | 'OMS_WALLET_SELECTION_IN_FLIGHT' | 'OMS_TRANSACTION_EXECUTION_UNCONFIRMED' | 'OMS_TRANSACTION_STATUS_LOOKUP_FAILED' | 'OMS_VALIDATION_ERROR' | 'OMS_STORAGE_ERROR';
 export interface OMSWalletUpstreamError {
-    service: "waas" | "indexer";
+    service: 'waas' | 'indexer';
     name?: string;
     code?: number | string;
     message?: string;
@@ -263,30 +263,30 @@ export declare abstract class OMSWalletError extends Error {
     readonly upstreamError?: OMSWalletUpstreamError;
     protected constructor(params: OMSWalletErrorParams);
 }
-type OMSWalletSessionErrorCode = "OMS_SESSION_MISSING" | "OMS_SESSION_EXPIRED";
-type OMSWalletRequestErrorCode = "OMS_HTTP_ERROR" | "OMS_REQUEST_FAILED" | "OMS_AUTH_COMMITMENT_CONSUMED";
-type OMSWalletResponseErrorCode = "OMS_INVALID_RESPONSE";
-type OMSWalletTransactionErrorCode = "OMS_TRANSACTION_EXECUTION_UNCONFIRMED" | "OMS_TRANSACTION_STATUS_LOOKUP_FAILED";
-type OMSWalletSelectionErrorCode = "OMS_WALLET_SELECTION_STALE" | "OMS_WALLET_SELECTION_UNAVAILABLE" | "OMS_WALLET_SELECTION_IN_FLIGHT";
-type OMSWalletValidationErrorCode = "OMS_VALIDATION_ERROR";
-type OMSWalletStorageErrorCode = "OMS_STORAGE_ERROR";
+type OMSWalletSessionErrorCode = 'OMS_SESSION_MISSING' | 'OMS_SESSION_EXPIRED';
+type OMSWalletRequestErrorCode = 'OMS_HTTP_ERROR' | 'OMS_REQUEST_FAILED' | 'OMS_AUTH_COMMITMENT_CONSUMED';
+type OMSWalletResponseErrorCode = 'OMS_INVALID_RESPONSE';
+type OMSWalletTransactionErrorCode = 'OMS_TRANSACTION_EXECUTION_UNCONFIRMED' | 'OMS_TRANSACTION_STATUS_LOOKUP_FAILED';
+type OMSWalletSelectionErrorCode = 'OMS_WALLET_SELECTION_STALE' | 'OMS_WALLET_SELECTION_UNAVAILABLE' | 'OMS_WALLET_SELECTION_IN_FLIGHT';
+type OMSWalletValidationErrorCode = 'OMS_VALIDATION_ERROR';
+type OMSWalletStorageErrorCode = 'OMS_STORAGE_ERROR';
 export declare class OMSWalletSessionError extends OMSWalletError {
-    constructor(params: Omit<OMSWalletErrorParams<OMSWalletSessionErrorCode>, "code"> & {
+    constructor(params: Omit<OMSWalletErrorParams<OMSWalletSessionErrorCode>, 'code'> & {
         code?: OMSWalletSessionErrorCode;
     });
 }
 export declare class OMSWalletRequestError extends OMSWalletError {
-    constructor(params: Omit<OMSWalletErrorParams<OMSWalletRequestErrorCode>, "code"> & {
+    constructor(params: Omit<OMSWalletErrorParams<OMSWalletRequestErrorCode>, 'code'> & {
         code?: OMSWalletRequestErrorCode;
     });
 }
 export declare class OMSWalletResponseError extends OMSWalletError {
-    constructor(params: Omit<OMSWalletErrorParams<OMSWalletResponseErrorCode>, "code"> & {
+    constructor(params: Omit<OMSWalletErrorParams<OMSWalletResponseErrorCode>, 'code'> & {
         code?: OMSWalletResponseErrorCode;
     });
 }
 export declare class OMSWalletTransactionError extends OMSWalletError {
-    constructor(params: Omit<OMSWalletErrorParams<OMSWalletTransactionErrorCode>, "code"> & {
+    constructor(params: Omit<OMSWalletErrorParams<OMSWalletTransactionErrorCode>, 'code'> & {
         code?: OMSWalletTransactionErrorCode;
     });
 }
@@ -294,34 +294,34 @@ export declare class OMSWalletSelectionError extends OMSWalletError {
     constructor(params: OMSWalletErrorParams<OMSWalletSelectionErrorCode>);
 }
 export declare class OMSWalletValidationError extends OMSWalletError {
-    constructor(params: Omit<OMSWalletErrorParams<OMSWalletValidationErrorCode>, "code"> & {
+    constructor(params: Omit<OMSWalletErrorParams<OMSWalletValidationErrorCode>, 'code'> & {
         code?: OMSWalletValidationErrorCode;
     });
 }
 export declare class OMSWalletStorageError extends OMSWalletError {
-    constructor(params: Omit<OMSWalletErrorParams<OMSWalletStorageErrorCode>, "code"> & {
+    constructor(params: Omit<OMSWalletErrorParams<OMSWalletStorageErrorCode>, 'code'> & {
         code?: OMSWalletStorageErrorCode;
     });
 }
 export declare function isOMSWalletError(error: unknown): error is OMSWalletError;
-export declare function toOMSWalletError(error: unknown, operation: OMSWalletOperation, upstreamService?: OMSWalletUpstreamError["service"]): OMSWalletError;
+export declare function toOMSWalletError(error: unknown, operation: OMSWalletOperation, upstreamService?: OMSWalletUpstreamError['service']): OMSWalletError;
 export declare function errorMessage(error: unknown): string;
 export {};
 
 ## index.d.ts
 export { OMSWallet } from './omsWallet.js';
 export type { OMSWalletParams } from './omsWallet.js';
-export { OmsRelayOidcProviders, type CustomOidcProviderConfig, type OmsRelayOidcProvider, } from './oidc.js';
-export { EthereumPrivateKeyCredentialSigner, WebCryptoP256CredentialSigner, type CredentialSigningAlgorithm, type CredentialSigner, } from './credentialSigner.js';
-export { LocalStorageManager, MemoryStorageManager, SessionStorageManager, createDefaultStorage, type StorageManager, } from './storageManager.js';
-export { Networks, findNetworkById, findNetworkByName, type Network, } from './networks.js';
-export { AuthMode, TransactionMode, TransactionStatus, WalletType, type OidcAuthMode, type AbiArg, type FeeOption, type FeeOptionSelection, type TransactionStatusResponse, } from './types/waas.js';
-export { OMSWalletRequestError, OMSWalletResponseError, OMSWalletError, OMSWalletSessionError, OMSWalletTransactionError, OMSWalletSelectionError, OMSWalletValidationError, OMSWalletStorageError, isOMSWalletError, type OMSWalletErrorCode, type OMSWalletUpstreamError, } from './errors.js';
-export type { CompleteEmailAuthParams, CompleteEmailAuthResult, CompleteOidcIdTokenAuthResult, CompleteOidcRedirectAuthParams, CompleteOidcRedirectAuthResult, GetIdTokenParams, IsValidMessageSignatureParams, IsValidTypedDataSignatureParams, OMSWalletEmailSessionAuth, OMSWalletOidcSessionAuth, OMSWalletOidcSessionAuthFlow, OMSWalletSessionAuth, OMSWalletSessionExpiredEvent, OMSWalletSessionExpiredListener, OMSWalletSessionState, WalletAccount, PendingWalletSelection, SignInWithOidcIdTokenParams, SignMessageParams, SignInWithOidcRedirectParams, SignTypedDataParams, StartEmailAuthParams, StartOidcRedirectAuthParams, StartOidcRedirectAuthResult, WalletActivationResult, WalletSelectionBehavior, OMSWalletClient, } from './wallet.js';
-export type { BalancesResult, ContractVerificationStatus, ContractTokenBalance, GetBalancesParams, GetTransactionHistoryParams, IndexerNetworkType, MetadataOptions, NativeTokenBalance, OMSWalletIndexerClient, SortBy, TokenContractInfo, TokenBalance, TokenBalancesPage, TokenBalancesPageRequest, TokenMetadata, TokenMetadataAsset, Transaction, TransactionHistoryResult, TransactionTransfer, } from './clients/indexerClient.js';
-export type { AccessGrant, AccessGrantPage, ListAccessParams, WalletCredential, } from './types/accessGrant.js';
-export type { FeeOptionWithBalance, SendContractTransactionParams, SendDataTransactionParams, SendNativeTransactionParams, SendTransactionBase, SendTransactionParams, SendTransactionResponse, TransactionStatusPollingOptions, } from './types/transactionTypes.js';
-export { FeeOptionSelector, } from './types/transactionTypes.js';
+export { OmsRelayOidcProviders, type CustomOidcProviderConfig, type OmsRelayOidcProvider } from './oidc.js';
+export { EthereumPrivateKeyCredentialSigner, WebCryptoP256CredentialSigner, type CredentialSigningAlgorithm, type CredentialSigner } from './credentialSigner.js';
+export { LocalStorageManager, MemoryStorageManager, SessionStorageManager, createDefaultStorage, type StorageManager } from './storageManager.js';
+export { Networks, findNetworkById, findNetworkByName, type Network } from './networks.js';
+export { AuthMode, TransactionMode, TransactionStatus, WalletType, type OidcAuthMode, type AbiArg, type FeeOption, type FeeOptionSelection, type TransactionStatusResponse } from './types/waas.js';
+export { OMSWalletRequestError, OMSWalletResponseError, OMSWalletError, OMSWalletSessionError, OMSWalletTransactionError, OMSWalletSelectionError, OMSWalletValidationError, OMSWalletStorageError, isOMSWalletError, type OMSWalletErrorCode, type OMSWalletUpstreamError } from './errors.js';
+export type { CompleteEmailAuthParams, CompleteEmailAuthResult, CompleteOidcIdTokenAuthResult, CompleteOidcRedirectAuthParams, CompleteOidcRedirectAuthResult, GetIdTokenParams, IsValidMessageSignatureParams, IsValidTypedDataSignatureParams, OMSWalletEmailSessionAuth, OMSWalletOidcSessionAuth, OMSWalletOidcSessionAuthFlow, OMSWalletSessionAuth, OMSWalletSessionExpiredEvent, OMSWalletSessionExpiredListener, OMSWalletSessionState, WalletAccount, PendingWalletSelection, SignInWithOidcIdTokenParams, SignMessageParams, SignInWithOidcRedirectParams, SignTypedDataParams, StartEmailAuthParams, StartOidcRedirectAuthParams, StartOidcRedirectAuthResult, WalletActivationResult, WalletSelectionBehavior, OMSWalletClient } from './wallet.js';
+export type { BalancesResult, ContractVerificationStatus, ContractTokenBalance, GetBalancesParams, GetTransactionHistoryParams, IndexerNetworkType, MetadataOptions, NativeTokenBalance, OMSWalletIndexerClient, SortBy, TokenContractInfo, TokenBalance, TokenBalancesPage, TokenBalancesPageRequest, TokenMetadata, TokenMetadataAsset, Transaction, TransactionHistoryResult, TransactionTransfer } from './clients/indexerClient.js';
+export type { AccessGrant, AccessGrantPage, ListAccessParams, WalletCredential } from './types/accessGrant.js';
+export type { FeeOptionWithBalance, SendContractTransactionParams, SendDataTransactionParams, SendNativeTransactionParams, SendTransactionBase, SendTransactionParams, SendTransactionResponse, TransactionStatusPollingOptions } from './types/transactionTypes.js';
+export { FeeOptionSelector } from './types/transactionTypes.js';
 
 ## networks.d.ts
 declare const networkBrand: unique symbol;
@@ -452,7 +452,7 @@ export declare function findNetworkByName(name: string): Network | undefined;
 export {};
 
 ## oidc.d.ts
-import { type OidcAuthMode } from './types/waas.js';
+import type { OidcAuthMode } from './types/waas.js';
 declare const omsRelayOidcProviderBrand: unique symbol;
 /**
  * An opaque SDK-owned OMS relay provider value.
@@ -495,9 +495,9 @@ export declare function resolveOidcProviderConfig(provider: OidcProviderConfig):
 export {};
 
 ## omsWallet.d.ts
-import { type OMSWalletIndexerClient } from './clients/indexerClient.js';
+import type { OMSWalletIndexerClient } from './clients/indexerClient.js';
 import type { CredentialSigner } from './credentialSigner.js';
-import { type StorageManager } from './storageManager.js';
+import type { StorageManager } from './storageManager.js';
 import type { OMSWalletClient } from './wallet.js';
 export interface OMSWalletParams {
     publishableKey: string;
@@ -539,12 +539,12 @@ export declare const WalletOperation: {
     readonly revokeAccess: "wallet.revokeAccess";
     readonly transactionStatus: "wallet.transactionStatus";
 };
-export type WalletOperation = typeof WalletOperation[keyof typeof WalletOperation];
+export type WalletOperation = (typeof WalletOperation)[keyof typeof WalletOperation];
 export declare const IndexerOperation: {
     readonly getBalances: "indexer.getBalances";
     readonly getTransactionHistory: "indexer.getTransactionHistory";
 };
-export type IndexerOperation = typeof IndexerOperation[keyof typeof IndexerOperation];
+export type IndexerOperation = (typeof IndexerOperation)[keyof typeof IndexerOperation];
 export type OMSWalletOperation = WalletOperation | IndexerOperation;
 
 ## storageManager.d.ts
@@ -594,10 +594,10 @@ export interface AccessGrantPage {
 }
 
 ## types/transactionTypes.d.ts
-import { Abi, Address, ContractFunctionName, EncodeFunctionDataParameters, Hex } from "viem";
-import type { Network } from "../networks.js";
-import type { FeeOption, FeeOptionSelection, TransactionMode, TransactionStatus } from "./waas.js";
-import type { TokenBalance } from "../clients/indexerClient.js";
+import type { Abi, Address, ContractFunctionName, EncodeFunctionDataParameters, Hex } from 'viem';
+import type { TokenBalance } from '../clients/indexerClient.js';
+import type { Network } from '../networks.js';
+import type { FeeOption, FeeOptionSelection, TransactionMode, TransactionStatus } from './waas.js';
 export type FeeOptionWithBalance = {
     feeOption: FeeOption;
     selection: FeeOptionSelection;
@@ -617,7 +617,7 @@ export type SendTransactionResponse = {
     txnId: string;
     status: TransactionStatus;
     txnHash?: string;
-    statusResolution: "not-requested" | "resolved" | "timed-out";
+    statusResolution: 'not-requested' | 'resolved' | 'timed-out';
 };
 export type TransactionStatusPollingOptions = {
     timeoutMs?: number;
@@ -655,17 +655,17 @@ export declare const AuthMode: Readonly<{
     readonly AuthCode: "auth-code";
     readonly AuthCodePKCE: "auth-code-pkce";
 }>;
-export type AuthMode = typeof AuthMode[keyof typeof AuthMode];
+export type AuthMode = (typeof AuthMode)[keyof typeof AuthMode];
 export type OidcAuthMode = typeof AuthMode.AuthCode | typeof AuthMode.AuthCodePKCE;
 export declare const WalletType: Readonly<{
     readonly Ethereum: "ethereum";
 }>;
-export type WalletType = typeof WalletType[keyof typeof WalletType];
+export type WalletType = (typeof WalletType)[keyof typeof WalletType];
 export declare const TransactionMode: Readonly<{
     readonly Native: "native";
     readonly Relayer: "relayer";
 }>;
-export type TransactionMode = typeof TransactionMode[keyof typeof TransactionMode];
+export type TransactionMode = (typeof TransactionMode)[keyof typeof TransactionMode];
 export declare const TransactionStatus: Readonly<{
     readonly Quoted: "quoted";
     readonly Pending: "pending";
@@ -673,7 +673,7 @@ export declare const TransactionStatus: Readonly<{
     readonly Failed: "failed";
     readonly Unknown: "unknown";
 }>;
-export type TransactionStatus = typeof TransactionStatus[keyof typeof TransactionStatus];
+export type TransactionStatus = (typeof TransactionStatus)[keyof typeof TransactionStatus];
 export interface AbiArg {
     type: string;
     value: unknown;
@@ -703,8 +703,8 @@ export interface FeeOptionSelection {
 
 ## wallet.d.ts
 import type { Abi, Address, ContractFunctionName } from 'viem';
-import type { CustomOidcProviderConfig, OmsRelayOidcProvider } from './oidc.js';
 import type { Network } from './networks.js';
+import type { CustomOidcProviderConfig, OmsRelayOidcProvider } from './oidc.js';
 import type { AccessGrant, AccessGrantPage, ListAccessParams, WalletCredential } from './types/accessGrant.js';
 import type { FeeOptionSelector, SendContractTransactionParams, SendDataTransactionParams, SendNativeTransactionParams, SendTransactionParams, SendTransactionResponse, TransactionStatusPollingOptions } from './types/transactionTypes.js';
 import type { AbiArg, TransactionMode, TransactionStatusResponse, WalletType } from './types/waas.js';
@@ -779,12 +779,9 @@ export interface CompleteWalletAuthResult {
     readonly wallets: ReadonlyArray<WalletAccount>;
     readonly credential: Readonly<WalletCredential>;
 }
-export interface CompleteEmailAuthResult extends CompleteWalletAuthResult {
-}
-export interface CompleteOidcIdTokenAuthResult extends CompleteWalletAuthResult {
-}
-export interface CompleteOidcRedirectAuthResult extends CompleteWalletAuthResult {
-}
+export type CompleteEmailAuthResult = CompleteWalletAuthResult;
+export type CompleteOidcIdTokenAuthResult = CompleteWalletAuthResult;
+export type CompleteOidcRedirectAuthResult = CompleteWalletAuthResult;
 export interface PendingWalletSelection {
     readonly walletType: WalletType;
     readonly wallets: ReadonlyArray<WalletAccount>;

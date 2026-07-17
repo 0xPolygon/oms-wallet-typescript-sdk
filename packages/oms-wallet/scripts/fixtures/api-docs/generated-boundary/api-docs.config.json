@@ -2,9 +2,7 @@
   "groups": [
     {
       "label": "Fixture API",
-      "symbols": [
-        "PublicApi"
-      ]
+      "symbols": ["PublicApi"]
     }
   ]
 }

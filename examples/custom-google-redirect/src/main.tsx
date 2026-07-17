@@ -1,117 +1,126 @@
-import { useEffect, useRef, useState } from 'react'
-import { createRoot } from 'react-dom/client'
-import { Networks, type TokenBalance } from '@polygonlabs/oms-wallet'
-import './styles.css'
-import { formatSessionAuth, formatSessionExpiry, hasOidcCallbackParams, isPendingWalletSelection } from '../../shared/example-utils'
-import { CUSTOM_GOOGLE_CLIENT_ID, CUSTOM_GOOGLE_ISSUER, CUSTOM_GOOGLE_REDIRECT_URI } from './config'
-import { customGoogleOidcProvider, omsWallet } from './omsWallet'
+import { useEffect, useRef, useState } from 'react';
+import { createRoot } from 'react-dom/client';
+import { Networks, type TokenBalance } from '@polygonlabs/oms-wallet';
+import './styles.css';
+import {
+  formatSessionAuth,
+  formatSessionExpiry,
+  hasOidcCallbackParams,
+  isPendingWalletSelection
+} from '../../shared/example-utils';
+import {
+  CUSTOM_GOOGLE_CLIENT_ID,
+  CUSTOM_GOOGLE_ISSUER,
+  CUSTOM_GOOGLE_REDIRECT_URI
+} from './config';
+import { customGoogleOidcProvider, omsWallet } from './omsWallet';
 
-const DEFAULT_MESSAGE = 'hello from OMS Wallet'
-const BALANCE_NETWORKS = [Networks.polygon, Networks.base, Networks.arbitrum]
+const DEFAULT_MESSAGE = 'hello from OMS Wallet';
+const BALANCE_NETWORKS = [Networks.polygon, Networks.base, Networks.arbitrum];
 
 function App() {
-  const restoredWalletAddress = omsWallet.wallet.walletAddress ?? ''
-  const [walletAddress, setWalletAddress] = useState(restoredWalletAddress)
+  const restoredWalletAddress = omsWallet.wallet.walletAddress ?? '';
+  const [walletAddress, setWalletAddress] = useState(restoredWalletAddress);
   const [status, setStatus] = useState(
     restoredWalletAddress
       ? 'Wallet session restored.'
-      : 'Ready to sign in with the custom Google provider.',
-  )
-  const [message, setMessage] = useState(DEFAULT_MESSAGE)
-  const [lastSignature, setLastSignature] = useState('')
-  const [lastIdToken, setLastIdToken] = useState('')
-  const [balances, setBalances] = useState<TokenBalance[] | null>(null)
-  const [isBusy, setIsBusy] = useState(false)
-  const callbackStarted = useRef(false)
+      : 'Ready to sign in with the custom Google provider.'
+  );
+  const [message, setMessage] = useState(DEFAULT_MESSAGE);
+  const [lastSignature, setLastSignature] = useState('');
+  const [lastIdToken, setLastIdToken] = useState('');
+  const [balances, setBalances] = useState<TokenBalance[] | null>(null);
+  const [isBusy, setIsBusy] = useState(false);
+  const callbackStarted = useRef(false);
 
   useEffect(() => {
-    if (!hasOidcCallbackParams()) return
-    if (callbackStarted.current) return
-    callbackStarted.current = true
-    void completeRedirect()
-  }, [])
+    if (!hasOidcCallbackParams()) return;
+    if (callbackStarted.current) return;
+    callbackStarted.current = true;
+    void completeRedirect();
+  }, []);
 
   async function run(label: string, action: () => Promise<void>) {
-    setIsBusy(true)
-    setStatus(label)
+    setIsBusy(true);
+    setStatus(label);
     try {
-      await action()
+      await action();
     } catch (error) {
-      setStatus(error instanceof Error ? error.message : String(error))
+      setStatus(error instanceof Error ? error.message : String(error));
     } finally {
-      setIsBusy(false)
+      setIsBusy(false);
     }
   }
 
   async function startRedirect() {
     await run('Opening Google sign-in...', async () => {
       await omsWallet.wallet.signInWithOidcRedirect({
-        provider: customGoogleOidcProvider,
-      })
-    })
+        provider: customGoogleOidcProvider
+      });
+    });
   }
 
   async function completeRedirect() {
     await run('Finishing Google sign-in...', async () => {
-      const result = await omsWallet.wallet.completeOidcRedirectAuth()
+      const result = await omsWallet.wallet.completeOidcRedirectAuth();
 
       if (!result) {
-        setStatus('No matching Google callback found for this session.')
-        return
+        setStatus('No matching Google callback found for this session.');
+        return;
       }
 
       if (isPendingWalletSelection(result)) {
-        setStatus('Choose automatic wallet selection for this example.')
-        return
+        setStatus('Choose automatic wallet selection for this example.');
+        return;
       }
 
-      setWalletAddress(result.walletAddress)
-      setStatus('Google sign-in complete.')
-    })
+      setWalletAddress(result.walletAddress);
+      setStatus('Google sign-in complete.');
+    });
   }
 
   async function signMessage() {
     await run('Signing message...', async () => {
       const signature = await omsWallet.wallet.signMessage({
         network: Networks.amoy,
-        message,
-      })
-      setLastSignature(signature)
-      setStatus('Message signed.')
-    })
+        message
+      });
+      setLastSignature(signature);
+      setStatus('Message signed.');
+    });
   }
 
   async function loadBalances() {
-    if (!walletAddress) return
+    if (!walletAddress) return;
 
     await run('Loading balances...', async () => {
       const result = await omsWallet.indexer.getBalances({
         walletAddress,
         networks: BALANCE_NETWORKS,
-        includeMetadata: true,
-      })
-      setBalances([...result.nativeBalances, ...result.balances])
-      setStatus(`Loaded ${result.nativeBalances.length + result.balances.length} balances.`)
-    })
+        includeMetadata: true
+      });
+      setBalances([...result.nativeBalances, ...result.balances]);
+      setStatus(`Loaded ${result.nativeBalances.length + result.balances.length} balances.`);
+    });
   }
 
   async function getIdToken() {
     await run('Getting ID token...', async () => {
-      const idToken = await omsWallet.wallet.getIdToken()
-      setLastIdToken(idToken)
-      setStatus('ID token issued.')
-    })
+      const idToken = await omsWallet.wallet.getIdToken();
+      setLastIdToken(idToken);
+      setStatus('ID token issued.');
+    });
   }
 
   async function signOut() {
     await run('Signing out...', async () => {
-      await omsWallet.wallet.signOut()
-      setWalletAddress('')
-      setLastSignature('')
-      setLastIdToken('')
-      setBalances(null)
-      setStatus('Signed out. You can start again.')
-    })
+      await omsWallet.wallet.signOut();
+      setWalletAddress('');
+      setLastSignature('');
+      setLastIdToken('');
+      setBalances(null);
+      setStatus('Signed out. You can start again.');
+    });
   }
 
   return (
@@ -214,7 +223,9 @@ function App() {
                 </div>
               ) : (
                 <p className="field-hint compact-hint">
-                  {balances ? 'No balances found for the active wallet.' : 'Load balances for the active wallet.'}
+                  {balances
+                    ? 'No balances found for the active wallet.'
+                    : 'Load balances for the active wallet.'}
                 </p>
               )}
             </section>
@@ -239,7 +250,7 @@ function App() {
         ) : null}
       </section>
     </main>
-  )
+  );
 }
 
-createRoot(document.getElementById('root')!).render(<App />)
+createRoot(document.getElementById('root')!).render(<App />);
