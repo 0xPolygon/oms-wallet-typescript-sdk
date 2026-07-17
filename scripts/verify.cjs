@@ -25,7 +25,8 @@ const connectorPackage = '@polygonlabs/oms-wallet-wagmi-connector'
 
 process.chdir(rootDir)
 
-run('Typecheck SDK', ['--filter', sdkPackage, 'exec', 'tsc', '--noEmit'])
+run('Typecheck SDK', ['--filter', sdkPackage, 'typecheck'])
+run('Typecheck wagmi connector', ['--filter', connectorPackage, 'typecheck'])
 run('Test SDK', ['--filter', sdkPackage, 'test'])
 verifyPackages()
 run('Check generated API reference', ['--filter', sdkPackage, 'check:api:built'])

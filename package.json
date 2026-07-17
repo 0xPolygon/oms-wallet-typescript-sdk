@@ -15,6 +15,7 @@
   "scripts": {
     "build": "pnpm --filter @polygonlabs/oms-wallet build",
     "test": "pnpm --filter @polygonlabs/oms-wallet test",
+    "typecheck": "tsc -b",
     "verify": "node scripts/verify.cjs",
     "release": "changeset publish",
     "ci:publish": "changeset publish",
@@ -26,8 +27,8 @@
     "build:custom-auth0-id-token-example": "pnpm --filter custom-auth0-id-token-example build",
     "dev:trails-actions-example": "pnpm --filter trails-actions-example dev",
     "build:trails-actions-example": "pnpm --filter trails-actions-example build",
-    "dev:wagmi-example": "pnpm --filter @polygonlabs/oms-wallet-wagmi-connector build && pnpm --filter wagmi-example dev",
-    "build:wagmi-example": "pnpm --filter @polygonlabs/oms-wallet-wagmi-connector build && pnpm --filter wagmi-example build",
+    "dev:wagmi-example": "pnpm --filter wagmi-example dev",
+    "build:wagmi-example": "pnpm --filter wagmi-example build",
     "dev:node-example": "pnpm --filter node-example dev",
     "build:node-example": "pnpm --filter node-example build",
     "dev:node-contract-deploy-example": "pnpm --filter node-contract-deploy-example dev",
@@ -35,6 +36,7 @@
   },
   "devDependencies": {
     "@changesets/changelog-github": "^0.7.0",
-    "@changesets/cli": "^2.30.0"
+    "@changesets/cli": "^2.30.0",
+    "typescript": "^5.9.3"
   }
 }

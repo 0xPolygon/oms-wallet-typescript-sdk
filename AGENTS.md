@@ -70,7 +70,7 @@ This repository is a pnpm workspace for the OMS Wallet TypeScript SDK. The works
 - `pnpm exec changeset`: Add a changeset describing a change. Any PR that changes files inside a workspace package needs one (use `pnpm exec changeset add --empty` for changes with no consumer impact). The `fixed` group versions both publishable packages together.
 - `pnpm --filter @polygonlabs/oms-wallet check:public-api`: Compare built declarations with the committed baseline and reject generated WaaS type leaks.
 - `pnpm verify`: Run the full SDK verification suite, including package, test, example, and publishable-artifact checks.
-- `pnpm --filter @polygonlabs/oms-wallet exec tsc --noEmit`: Typecheck SDK source.
+- `pnpm run typecheck` (or `pnpm --filter <pkg> typecheck`): Typecheck via `tsc -b` (source + SDK type-tests).
 - `pnpm test`: Run the SDK Vitest suite and type tests (delegates to `@polygonlabs/oms-wallet`).
 - `pnpm --filter @polygonlabs/oms-wallet test:types`: Compile `type-tests/oidcProviderTypes.ts`; useful for public type/API changes.
 - `pnpm build`: Build CJS and ESM SDK output under `packages/oms-wallet/dist/` (delegates to `@polygonlabs/oms-wallet`).
@@ -100,7 +100,7 @@ example code.
 
 1. Run the smallest relevant Vitest file or type check for the changed behavior.
 2. Run `pnpm test` for SDK behavior changes.
-3. Run `pnpm --filter @polygonlabs/oms-wallet exec tsc --noEmit` before handing off source or public type changes.
+3. Run `pnpm run typecheck` (`tsc -b`) before handing off source or public type changes.
 4. Run `pnpm --filter @polygonlabs/oms-wallet test:types` directly when changing public generics, overloads, exported types, OIDC provider typing, or `packages/oms-wallet/src/index.ts`.
 5. Run `pnpm --filter @polygonlabs/oms-wallet-wagmi-connector test` and `pnpm --filter @polygonlabs/oms-wallet-wagmi-connector build` when changing the wagmi connector package.
 6. Run `pnpm build:node-example` when SDK exports, module resolution, or Node example usage changes.
@@ -122,7 +122,12 @@ example code.
 - Preserve typed SDK error classes and `toOMSWalletError` behavior when wrapping network, generated-client, validation, session, and transaction-status failures.
 - Keep supported network metadata and chain ID lookup going through `packages/oms-wallet/src/networks.ts`, `Networks`, `findNetworkById`, and `findNetworkByName` instead of ad hoc conversion.
 - The TypeScript compiler is the enforced style gate. There is no separate lint or formatter command in the root scripts, so avoid broad formatting churn and match the local file style.
-- **Build-free workspace consumption.** `@polygonlabs/oms-wallet` exposes its TypeScript source through the `@polygonlabs/source` export condition (alongside the compiled `dist/` targets). Workspace consumers resolve the SDK from source rather than a built `dist/`: the wagmi connector's `tsconfig.json` sets `customConditions: ["@polygonlabs/source"]` for typecheck/build, and its `vitest.config.ts` sets `ssr.resolve.conditions: ["@polygonlabs/source"]` for tests. This is why the connector no longer rebuilds the SDK before building itself — do not reintroduce a `pnpm --dir ../oms-wallet build` prefix. The SDK's `publishConfig.exports` omits the source condition so the published npm package exposes only `dist/`.
+- **Build-free workspace consumption.** Both `@polygonlabs/oms-wallet` and `@polygonlabs/oms-wallet-wagmi-connector` expose their TypeScript source through the `@polygonlabs/source` export condition (alongside the compiled `dist/` targets), and each package's `publishConfig.exports` omits that condition so published npm packages expose only `dist/`. Workspace consumers resolve dependencies from source, not a built `dist/`:
+  - **tsc** — the consumer's `tsconfig.lib.json` (connector) or `tsconfig.json` (examples) sets `customConditions: ["@polygonlabs/source"]`. This is why the connector no longer rebuilds the SDK first, and the examples no longer rebuild the connector — **do not reintroduce a `pnpm --dir ../oms-wallet build` / `pnpm --filter …connector build &&` prefix.**
+  - **Vitest** — `ssr.resolve.conditions: ["@polygonlabs/source"]`.
+  - **Vite (browser examples)** — `resolve.conditions: ["@polygonlabs/source", "module", "browser", "import", "default"]` (the defaults must be listed alongside the source condition; rolldown-vite replaces, not appends, so omitting them breaks third-party resolution).
+  - Consumers compile the SDK's source, so their `lib` must satisfy the SDK's needs (the generated WaaS client uses `Error.cause` → `lib` must include `ES2022`). External npm consumers are unaffected (they use `dist`).
+- **TypeScript is configured as the Nx three-tier `tsconfig` pattern**, adapted for this repo: `tsconfig.base.json` at the root owns the shared `compilerOptions`; the root `tsconfig.json` is a solution hub; each package has a hub `tsconfig.json` plus `tsconfig.lib.json` (build/typecheck). The SDK keeps its dual CJS + ESM emit (`tsconfig.lib.json` = CJS, `tsconfig.esm.json` = ESM) and a `tsconfig.spec.json` for its compile-time type-tests. **Deviations from the team template, driven by this repo:** the base does **not** extend `@tsconfig/node-ts` (its `erasableSyntaxOnly` rejects the enums in the generated Webrpc client, which can't be regenerated here) and does **not** set `declarationMap`; `customConditions` lives in the consumer configs, not the base (a CJS/`node10` config can't carry it). The vitest test files are run by Vitest (esbuild) and are **not** yet `tsc`-clean, so they are excluded from the `tsc` typecheck surface — `pnpm run typecheck` (`tsc -b`) covers source + the SDK type-tests. Bringing the tests to `tsc`-clean is a tracked follow-up.
 
 ## Example App Styling
 

@@ -56,7 +56,8 @@
   },
   "scripts": {
     "clean": "rm -rf dist",
-    "build": "pnpm clean && tsc && tsc -p tsconfig.esm.json && node scripts/write-esm-package.cjs",
+    "typecheck": "tsc -b",
+    "build": "pnpm clean && tsc -b tsconfig.lib.json tsconfig.esm.json && node scripts/write-esm-package.cjs",
     "prepack": "pnpm build && pnpm check:public-api && pnpm check:api:built",
     "prepublishOnly": "pnpm exec tsc --noEmit && pnpm test",
     "check:public-api": "node scripts/check-public-api.cjs",

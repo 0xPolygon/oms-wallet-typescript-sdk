@@ -9,6 +9,7 @@ export default defineConfig({
       : '/',
   plugins: [react()],
   resolve: {
+    conditions: ['@polygonlabs/source', 'module', 'browser', 'import', 'default'],
     alias: reactAliasesForExample(import.meta.url),
   },
   server: {
