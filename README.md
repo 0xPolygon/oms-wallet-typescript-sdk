@@ -59,8 +59,23 @@ The flow, end to end:
 3. Merging that PR triggers CI to **publish to npm via OIDC trusted publishing**, tag the release,
    and create a GitHub Release — no human runs a publish command.
 
-Full details, including prerelease/snapshot publishing via `workflow_dispatch`, are in
-[`PUBLISHING.md`](PUBLISHING.md). Changeset authoring guidance lives in the
+### Snapshot / prerelease publishes
+
+To ship a **throwaway prerelease** under a non-`latest` npm dist-tag — e.g. so a downstream app can
+install a build ahead of the real release — trigger the same **Release** workflow manually
+(still CI, still no local publish):
+
+1. GitHub → **Actions** → **Release** → **Run workflow**.
+2. Set **`snapshot_tag`** to a **non-semver** dist-tag (e.g. `canary`, `pre-0.3.0`). A semver-shaped
+   value like `0.3.0` is rejected — the snapshot path skips the git tag and GitHub Release, so a real
+   version string must never be used here.
+3. CI runs `changeset version --snapshot <tag>` on the runner (never committed) and publishes under
+   that dist-tag via OIDC. Consumers install it with `pnpm add @polygonlabs/oms-wallet@<tag>`.
+
+This never creates a git tag or GitHub Release; the normal `master` flow above stays the only way to
+cut a real version.
+
+Full details are in [`PUBLISHING.md`](PUBLISHING.md). Changeset authoring guidance lives in the
 [`changeset-commit`](.agents/skills/changeset-commit/SKILL.md) agent skill.
 
 ## Contributing

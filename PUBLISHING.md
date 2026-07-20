@@ -67,7 +67,15 @@ publishable packages, and asserts their contents contain no unrewritten `workspa
 ## Prerelease / snapshot builds
 
 To publish a throwaway prerelease under a non-`latest` npm dist-tag (e.g. for a downstream service
-to consume ahead of a real release), run the release workflow with a `snapshot_tag` input via
-`workflow_dispatch` on the shared `apps-npm-release.yml`. The snapshot path bumps versions on the
-runner (never committed), publishes under the given dist-tag, and skips git tags and GitHub
-Releases. The `snapshot_tag` must not be a semver-shaped value.
+to consume ahead of a real release), manually dispatch the repo's **Release** workflow — this is
+still CI, not a local publish:
+
+1. GitHub → **Actions** → **Release** → **Run workflow**.
+2. Set the **`snapshot_tag`** input to a non-semver dist-tag (e.g. `canary`, `pre-0.3.0`).
+
+The `Release` trigger (`.github/workflows/npm-release-trigger.yml`) forwards `snapshot_tag` to the
+shared `apps-npm-release.yml`, which runs `changeset version --snapshot <tag>` on the runner (never
+committed) and `changeset publish --tag <tag> --no-git-tag` via OIDC. The snapshot path skips the
+git tag and GitHub Release, so **`snapshot_tag` must not be a semver-shaped value** (`0.3.0`,
+`v0.3.0`, `0.3.0-beta.1`, …) — the workflow validates the input and aborts on a semver-shaped value.
+Consumers install the result with `pnpm add @polygonlabs/oms-wallet@<tag>`.
