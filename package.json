@@ -14,16 +14,16 @@
   },
   "packageManager": "pnpm@11.1.3",
   "scripts": {
-    "build": "pnpm --filter @polygonlabs/oms-wallet build",
-    "test": "pnpm --filter @polygonlabs/oms-wallet test",
+    "build": "pnpm -r --if-present run build",
+    "test": "pnpm -r --if-present run test",
     "typecheck": "tsc -b",
+    "check:exports": "pnpm --filter @polygonlabs/oms-wallet exec publint && pnpm --filter @polygonlabs/oms-wallet-wagmi-connector exec publint",
     "lint": "concurrently --group --prefix-colors auto 'pnpm:lint:md' 'pnpm:lint:ts' 'pnpm:typecheck' 'prettier --check .'",
     "lint:ts": "eslint .",
     "lint:md": "markdownlint-cli2 \"**/*.md\"",
     "format": "pnpm run format:md && pnpm run format:ts && prettier --write .",
     "format:md": "markdownlint-cli2 --fix \"**/*.md\"",
     "format:ts": "eslint . --fix",
-    "verify": "node scripts/verify.cjs",
     "dev:example": "pnpm --filter react-example dev",
     "build:example": "pnpm --filter react-example build",
     "dev:custom-google-redirect-example": "pnpm --filter custom-google-redirect-example dev",
@@ -48,6 +48,7 @@
     "eslint-import-resolver-typescript": "^4.4.4",
     "markdownlint-cli2": "^0.21.0",
     "prettier": "^3.0.0",
+    "publint": "^0.3.0",
     "typescript": "^5.9.3"
   }
 }

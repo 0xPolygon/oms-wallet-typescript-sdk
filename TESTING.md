@@ -39,7 +39,7 @@ How testing works in this repo. `AGENTS.md` points here so agents know how to ve
 | Scenario | Command |
 |---|---|
 | Any change inside a workspace package | `pnpm exec changeset` (or `--empty` if non-shippable) |
-| Verifying a release-affecting change | `pnpm verify` |
+| Verifying a release-affecting change | `pnpm lint && pnpm test && pnpm build && pnpm check:exports` |
 | Changed SDK behavior | `pnpm --filter @polygonlabs/oms-wallet exec vitest run` |
 | Changed wagmi connector behavior | `pnpm --filter @polygonlabs/oms-wallet-wagmi-connector test` |
 | Changed wagmi connector types/build | `pnpm --filter @polygonlabs/oms-wallet-wagmi-connector build` |

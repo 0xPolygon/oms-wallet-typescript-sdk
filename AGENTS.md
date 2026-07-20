@@ -67,7 +67,7 @@ Repo-local agent skills live under `.agents/skills/` (agent-neutral); `.claude/s
 - `packages/oms-wallet/docs/session-expiry-flow.md`: Session expiry, reauthentication, and related wallet behavior notes.
 - `packages/oms-wallet/scripts/write-esm-package.cjs`: Writes `dist/esm/package.json` during the SDK build.
 - `packages/oms-wallet/scripts/check-public-api.cjs`: Compares built public declarations with the committed baseline and rejects generated WaaS type leaks.
-- `scripts/verify.cjs`: Workspace-level verification gate (typecheck, tests, publishable-artifact pack checks, example builds) run by CI and locally.
+- `.github/workflows/ci-trigger.yml`: CI on PRs — the shared `ci` composite (lint/typecheck/test), a build job (`pnpm build` + `pnpm check:exports`/publint), and a drift-check job (`codegen-drift-check`). Verification runs through standard named scripts, not a bespoke script.
 - `.changeset/`: changesets config. The `fixed` group keeps `@polygonlabs/oms-wallet` and `@polygonlabs/oms-wallet-wagmi-connector` on the same version; releases are automated by the changesets release workflow.
 
 ## Commands
@@ -75,7 +75,8 @@ Repo-local agent skills live under `.agents/skills/` (agent-neutral); `.claude/s
 - `pnpm install --frozen-lockfile`: Install dependencies in CI-compatible mode.
 - `pnpm exec changeset`: Add a changeset describing a change. Any PR that changes files inside a workspace package needs one (use `pnpm exec changeset add --empty` for changes with no consumer impact). The `fixed` group versions both publishable packages together.
 - `pnpm --filter @polygonlabs/oms-wallet check:public-api`: Compare built declarations with the committed baseline and reject generated WaaS type leaks.
-- `pnpm verify`: Run the full SDK verification suite, including package, test, example, and publishable-artifact checks.
+- `pnpm build`: Build both packages (dual CJS+ESM) and every example — the consumer-compatibility gate (examples resolve the workspace from source). Delegates via `pnpm -r --if-present run build`.
+- `pnpm check:exports`: Run `publint` against both publishable packages to validate their `exports`/`main`/`module`/`types` resolve and are correctly formatted for npm consumers.
 - `pnpm run typecheck` (or `pnpm --filter <pkg> typecheck`): Typecheck via `tsc -b` (source + SDK type-tests).
 - `pnpm test`: Run the SDK Vitest suite and type tests (delegates to `@polygonlabs/oms-wallet`).
 - `pnpm --filter @polygonlabs/oms-wallet test:types`: Compile `type-tests/oidcProviderTypes.ts`; useful for public type/API changes.
@@ -201,7 +202,7 @@ execution commands.
 | When this changes… | Also update… |
 |---|---|
 | Public API exported through `packages/oms-wallet/src/index.ts` or exported public types | `packages/oms-wallet/API.md`, `packages/oms-wallet/README.md`, `packages/oms-wallet/type-tests/oidcProviderTypes.ts` |
-| Test commands (`package.json` scripts) | `TESTING.md`, `.github/workflows/tests.yml`, `AGENTS.md` Commands section |
+| Test commands (`package.json` scripts) | `TESTING.md`, `.github/workflows/ci-trigger.yml`, `AGENTS.md` Commands section |
 | Node or pnpm version | `.nvmrc`, `package.json#packageManager`, `.github/workflows/*.yml` |
 | New third-party dependency | `package.json`, `pnpm-lock.yaml`, third-party docs guidance in `AGENTS.md` |
 | Publishable package versioning or workspace peer protocol | `PUBLISHING.md`, `.changeset/config.json`, `pnpm-lock.yaml` |

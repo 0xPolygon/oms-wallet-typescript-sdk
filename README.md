@@ -24,24 +24,24 @@ Both packages release **in lockstep** (a changesets `fixed` group), so they alwa
 
 ```bash
 pnpm install --frozen-lockfile
-pnpm verify   # typecheck + tests + publishable-artifact checks + example builds
+pnpm lint && pnpm test && pnpm build   # the same checks CI runs
 ```
 
 Common workspace commands (run from the repo root):
 
 ```bash
-pnpm build                    # build the SDK (CJS + ESM)
-pnpm test                     # SDK test suite
-pnpm typecheck                # tsc -b across the workspace
 pnpm lint                     # eslint + markdownlint + prettier + typecheck
-pnpm --filter @polygonlabs/oms-wallet-wagmi-connector test
+pnpm typecheck                # tsc -b across the packages
+pnpm test                     # SDK + connector test suites (pnpm -r)
+pnpm build                    # build packages (dual CJS+ESM) + all examples (pnpm -r)
+pnpm check:exports            # publint on the publishable packages
 pnpm dev:example              # run a browser example
 ```
 
 Workspace packages resolve each other from **source** (via the `@polygonlabs/source` export
-condition), so no package needs to be built before its consumers — `pnpm verify` works from a clean
-checkout with no prior build. See [`AGENTS.md`](AGENTS.md) for the full architecture, TypeScript
-setup, and conventions.
+condition), so no package needs to be built before its consumers — `pnpm test` and `pnpm build` run
+from a clean checkout with no prior build. See [`AGENTS.md`](AGENTS.md) for the full architecture,
+TypeScript setup, and conventions.
 
 ## Releases & publishing — CI only
 

@@ -54,15 +54,21 @@ job.
 
 ## Local verification
 
-Run the same gate CI runs before handing off release-affecting changes:
+Run the same gates CI runs before handing off release-affecting changes:
 
 ```bash
 pnpm install --frozen-lockfile
-pnpm verify
+pnpm lint      # eslint + markdownlint + prettier + typecheck
+pnpm test      # SDK + connector test suites
+pnpm build     # build packages (dual CJS+ESM) + all examples
+pnpm check:exports   # publint — validates the publishable packages' exports/types
 ```
 
-`pnpm verify` typechecks and tests the SDK and connector, builds every example, packs both
-publishable packages, and asserts their contents contain no unrewritten `workspace:` dependency.
+These are the same standard scripts the CI workflow runs (`.github/workflows/ci-trigger.yml`): the
+shared `ci` composite runs lint/typecheck/test, a build job runs `build` + `check:exports`, and a
+drift-check job runs each package's `codegen-drift-check`. The `workspace:` → semver rewrite at
+publish is guaranteed by pnpm + changesets (`bumpVersionsWithWorkspaceProtocolOnly: false`), so it
+no longer needs a bespoke check.
 
 ## Prerelease / snapshot builds
 
