@@ -102,9 +102,13 @@ export interface CompleteWalletAuthResult {
   readonly credential: Readonly<WalletCredential>;
 }
 
-export type CompleteEmailAuthResult = CompleteWalletAuthResult;
-export type CompleteOidcIdTokenAuthResult = CompleteWalletAuthResult;
-export type CompleteOidcRedirectAuthResult = CompleteWalletAuthResult;
+// Intentional named result types kept as interfaces for declaration-merging compatibility.
+// eslint-disable-next-line @typescript-eslint/no-empty-object-type
+export interface CompleteEmailAuthResult extends CompleteWalletAuthResult {}
+// eslint-disable-next-line @typescript-eslint/no-empty-object-type
+export interface CompleteOidcIdTokenAuthResult extends CompleteWalletAuthResult {}
+// eslint-disable-next-line @typescript-eslint/no-empty-object-type
+export interface CompleteOidcRedirectAuthResult extends CompleteWalletAuthResult {}
 
 export interface PendingWalletSelection {
   readonly walletType: WalletType;

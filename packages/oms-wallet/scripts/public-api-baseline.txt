@@ -779,9 +779,12 @@ export interface CompleteWalletAuthResult {
     readonly wallets: ReadonlyArray<WalletAccount>;
     readonly credential: Readonly<WalletCredential>;
 }
-export type CompleteEmailAuthResult = CompleteWalletAuthResult;
-export type CompleteOidcIdTokenAuthResult = CompleteWalletAuthResult;
-export type CompleteOidcRedirectAuthResult = CompleteWalletAuthResult;
+export interface CompleteEmailAuthResult extends CompleteWalletAuthResult {
+}
+export interface CompleteOidcIdTokenAuthResult extends CompleteWalletAuthResult {
+}
+export interface CompleteOidcRedirectAuthResult extends CompleteWalletAuthResult {
+}
 export interface PendingWalletSelection {
     readonly walletType: WalletType;
     readonly wallets: ReadonlyArray<WalletAccount>;
