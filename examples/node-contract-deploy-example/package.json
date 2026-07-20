@@ -4,7 +4,7 @@
   "private": true,
   "type": "module",
   "scripts": {
-    "dev": "tsx deployErc20.ts",
+    "dev": "NODE_OPTIONS='--conditions=@polygonlabs/source' tsx deployErc20.ts",
     "build": "tsc --noEmit"
   },
   "dependencies": {
