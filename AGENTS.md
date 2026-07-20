@@ -28,6 +28,12 @@ to install extra tooling.
 
 This repository is a pnpm workspace for the OMS Wallet TypeScript SDK. The workspace root is a private, non-published package that only orchestrates the workspace; the publishable `@polygonlabs/oms-wallet` library lives in `packages/oms-wallet` and is used by the React and Node examples. The SDK covers wallet authentication, OIDC redirect auth, signed WaaS requests, wallet/session storage, transaction submission, signing, access management, and indexer balance queries.
 
+## Skills
+
+Repo-local agent skills live under `.agents/skills/` (agent-neutral); `.claude/skills` is a symlink to it so Claude Code auto-registers them. Codex and other agents that read this file should consult them directly:
+
+- **[`.agents/skills/changeset-commit/SKILL.md`](.agents/skills/changeset-commit/SKILL.md)** — decide whether a change needs a changeset, compose it as a user-facing changelog entry, and land it in the same commit as the code. Consult it before running `git commit`; the release flow itself is in `PUBLISHING.md`.
+
 ## Setup and Tooling
 
 - Use Node `22`. `.nvmrc` and GitHub Actions target that major version.
