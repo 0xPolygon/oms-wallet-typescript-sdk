@@ -1,5 +1,11 @@
 # Publishing
 
+> **Publishing is CI-only. Never publish from a local machine.** Do not run `changeset version`,
+> `changeset publish`, `npm publish`, or `pnpm publish` yourself — a local publish bypasses CI, the
+> signed release commit, and npm OIDC trusted-publishing provenance. This repo deliberately exposes
+> **no** `release` / `ci:publish` package scripts; the only supported path is the automated flow
+> below. Your job as a contributor is to land a changeset (see "Day-to-day") and let CI do the rest.
+
 Releases are driven by [changesets](https://github.com/changesets/changesets). The SDK
 (`@polygonlabs/oms-wallet`) and the wagmi connector (`@polygonlabs/oms-wallet-wagmi-connector`)
 release **in lockstep**: they are declared as a `fixed` group in `.changeset/config.json`, so any

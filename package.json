@@ -24,8 +24,6 @@
     "format:md": "markdownlint-cli2 --fix \"**/*.md\"",
     "format:ts": "eslint . --fix",
     "verify": "node scripts/verify.cjs",
-    "release": "changeset publish",
-    "ci:publish": "changeset publish",
     "dev:example": "pnpm --filter react-example dev",
     "build:example": "pnpm --filter react-example build",
     "dev:custom-google-redirect-example": "pnpm --filter custom-google-redirect-example dev",
