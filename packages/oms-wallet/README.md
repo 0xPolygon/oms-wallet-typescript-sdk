@@ -629,7 +629,7 @@ pnpm --filter @polygonlabs/oms-wallet-wagmi-connector build
 pnpm --filter @polygonlabs/oms-wallet-wagmi-connector test
 ```
 
-See [packages/oms-wallet-wagmi-connector/README.md](./packages/oms-wallet-wagmi-connector/README.md) for usage.
+See [packages/oms-wallet-wagmi-connector/README.md](https://github.com/0xPolygon/oms-wallet-typescript-sdk/blob/master/packages/oms-wallet-wagmi-connector/README.md) for usage.
 
 ## Wagmi React Example
 
@@ -683,17 +683,17 @@ See [API.md](./API.md) for the full method and type reference.
 
 ## Publishing
 
-See [PUBLISHING.md](./PUBLISHING.md) for release and npm publishing steps.
+See [PUBLISHING.md](https://github.com/0xPolygon/oms-wallet-typescript-sdk/blob/master/PUBLISHING.md) for release and npm publishing steps.
 
 ## Contributing
 
-1. **Read [`AGENTS.md`](./AGENTS.md)** — covers repo layout, coding rules, and the agent workflow.
+1. **Read [`AGENTS.md`](https://github.com/0xPolygon/oms-wallet-typescript-sdk/blob/master/AGENTS.md)** — covers repo layout, coding rules, and the agent workflow.
 2. **Install dependencies:** `pnpm install`
 3. **Verify your change:** `pnpm exec tsc --noEmit && pnpm test`
 4. **Branch naming:** use plain descriptive names like `fix-login-timeout` (no `codex/` prefix).
 5. **Open a PR** — the PR template will walk you through the checklist.
 
-See [`TESTING.md`](./TESTING.md) for full testing conventions and commands.
+See [`TESTING.md`](https://github.com/0xPolygon/oms-wallet-typescript-sdk/blob/master/TESTING.md) for full testing conventions and commands.
 
 ## License
 
