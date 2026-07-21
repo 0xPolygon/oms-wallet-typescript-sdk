@@ -17,7 +17,7 @@ pnpm dev:trails-actions-example
 
 The dev server runs at `http://localhost:5173`.
 
-The deployed example is available at `https://0xsequence.github.io/typescript-sdk/trails-actions-example`.
+The deployed example is available at `https://0xpolygon.github.io/oms-wallet-typescript-sdk/trails-actions-example/`.
 
 The OMS project used by the environment values must support Polygon.
 Google and Apple redirect login use the SDK's default provider helpers.

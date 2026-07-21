@@ -3,7 +3,7 @@ import react from '@vitejs/plugin-react'
 import { reactAliasesForExample } from '../shared/vite-react-aliases'
 
 export default defineConfig({
-  base: process.env.GITHUB_PAGES === 'true' ? '/typescript-sdk/react-example/' : '/',
+  base: process.env.GITHUB_PAGES === 'true' ? '/oms-wallet-typescript-sdk/react-example/' : '/',
   plugins: [react()],
   resolve: {
     alias: reactAliasesForExample(import.meta.url),

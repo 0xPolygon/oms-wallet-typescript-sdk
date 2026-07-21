@@ -584,7 +584,7 @@ await omsWallet.wallet.revokeAccess({ targetCredentialId: grants[0].credentialId
 
 ## React Example
 
-A deployed React example is available at [https://0xsequence.github.io/typescript-sdk/react-example/](https://0xsequence.github.io/typescript-sdk/react-example/).
+A deployed React example is available at [https://0xpolygon.github.io/oms-wallet-typescript-sdk/react-example/](https://0xpolygon.github.io/oms-wallet-typescript-sdk/react-example/).
 
 To run it locally from the repository root:
 
@@ -620,7 +620,7 @@ See [packages/oms-wallet-wagmi-connector/README.md](./packages/oms-wallet-wagmi-
 
 The Wagmi example uses `@polygonlabs/oms-wallet-wagmi-connector`, wagmi's MetaMask connector, and the Trails widget.
 
-The deployed Wagmi example is available at [https://0xsequence.github.io/typescript-sdk/wagmi-example/](https://0xsequence.github.io/typescript-sdk/wagmi-example/).
+The deployed Wagmi example is available at [https://0xpolygon.github.io/oms-wallet-typescript-sdk/wagmi-example/](https://0xpolygon.github.io/oms-wallet-typescript-sdk/wagmi-example/).
 
 To run it locally from the repository root:
 
@@ -632,7 +632,7 @@ pnpm dev:wagmi-example
 
 The Trails Actions example prepares and sends Polygon swap, Earn deposit, swap plus Earn deposit, and Earn withdrawal flows with `0xtrails/actions`.
 
-The deployed Trails Actions example is available at [https://0xsequence.github.io/typescript-sdk/trails-actions-example/](https://0xsequence.github.io/typescript-sdk/trails-actions-example/).
+The deployed Trails Actions example is available at [https://0xpolygon.github.io/oms-wallet-typescript-sdk/trails-actions-example/](https://0xpolygon.github.io/oms-wallet-typescript-sdk/trails-actions-example/).
 
 To run it locally from the repository root:
 
