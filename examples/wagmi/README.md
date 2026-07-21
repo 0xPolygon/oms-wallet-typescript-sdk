@@ -14,7 +14,7 @@ The example uses the Development sandbox OMS project and its configured Trails p
 
 The dev server runs at `http://localhost:5173`.
 
-The deployed example is available at `https://0xsequence.github.io/typescript-sdk/wagmi-example`.
+The deployed example is available at `https://0xpolygon.github.io/oms-wallet-typescript-sdk/wagmi-example/`.
 
 The example authenticates OMS Wallet with the SDK, then connects through wagmi. Account state,
 balance reads, chain switching, message signing, typed-data signing, transaction sending, fee-option

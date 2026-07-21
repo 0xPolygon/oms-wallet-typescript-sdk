@@ -16,7 +16,7 @@ pnpm dev:example
 
 The dev server runs at `http://localhost:5173`.
 
-The deployed example is available at `https://0xsequence.github.io/typescript-sdk/react-example`.
+The deployed example is available at `https://0xpolygon.github.io/oms-wallet-typescript-sdk/react-example/`.
 
 The Amoy-only "ERC20 example" panel includes a WalletKit Dollar example using
 the demo WKUSD contract deployed on Polygon Amoy.
