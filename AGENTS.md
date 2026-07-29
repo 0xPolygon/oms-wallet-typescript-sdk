@@ -111,13 +111,13 @@ example code.
 4. Run `pnpm --filter @polygonlabs/oms-wallet test:types` directly when changing public generics, overloads, exported types, OIDC provider typing, or `packages/oms-wallet/src/index.ts`.
 5. Run `pnpm --filter @polygonlabs/oms-wallet-wagmi-connector test` and `pnpm --filter @polygonlabs/oms-wallet-wagmi-connector build` when changing the wagmi connector package.
 6. Run `pnpm build:node-example` when SDK exports, module resolution, or Node example usage changes.
-7. Run `pnpm build` before release/build-output work, package entrypoint changes, or React example builds from a clean tree.
+7. Run `pnpm build` before release/build-output work or package entrypoint changes, and `pnpm check:exports` (publint) after it when entrypoints, `exports`, or the `files` set change. Example builds do not require a prior `pnpm build` — examples resolve the SDK from source via the `@polygonlabs/source` condition.
 8. Run `pnpm --filter @polygonlabs/oms-wallet check:public-api` after `pnpm build` when changing SDK exports or public declarations.
-9. Run `pnpm build:example` after `pnpm build` when changing the React example, Vite config, public browser API shape, or Pages deployment assumptions.
+9. Run `pnpm build:example` when changing the React example, Vite config, public browser API shape, or Pages deployment assumptions.
 10. Run `pnpm build:custom-google-redirect-example` when changing the custom Google redirect example, OIDC redirect provider configuration, or browser callback assumptions.
 11. Run `pnpm build:custom-auth0-id-token-example` when changing the Auth0 ID-token example, OIDC ID-token parameters, or Auth0 browser callback assumptions.
-12. Run `pnpm build:trails-actions-example` after `pnpm build` when changing the Trails Actions example, shared browser example utilities, or Pages deployment assumptions.
-13. Run `pnpm build:wagmi-example` after `pnpm build` when changing the wagmi example, connector browser usage, or Pages deployment assumptions.
+12. Run `pnpm build:trails-actions-example` when changing the Trails Actions example, shared browser example utilities, or Pages deployment assumptions.
+13. Run `pnpm build:wagmi-example` when changing the wagmi example, connector browser usage, or Pages deployment assumptions.
 14. Run `pnpm build:node-contract-deploy-example` when SDK exports, transaction APIs, module resolution, or the Node contract deploy example changes.
 
 ## Coding and Architecture Rules
