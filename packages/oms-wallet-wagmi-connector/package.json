@@ -58,7 +58,7 @@
     "@polygonlabs/oms-wallet": "workspace:*",
     "@wagmi/core": "^3.5.0",
     "typescript": "^5.9.3",
-    "viem": "^2.48.4",
+    "viem": "^2.55.10",
     "vitest": "^4.1.5"
   }
 }
