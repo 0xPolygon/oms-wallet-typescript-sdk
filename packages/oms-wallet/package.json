@@ -1,0 +1,82 @@
+{
+  "name": "@polygonlabs/oms-wallet",
+  "version": "0.2.0",
+  "description": "TypeScript SDK for OMS Wallet.",
+  "license": "Apache-2.0",
+  "main": "dist/index.js",
+  "module": "dist/esm/index.js",
+  "types": "dist/esm/index.d.ts",
+  "files": [
+    "dist",
+    "README.md",
+    "API.md",
+    "CHANGELOG.md",
+    "MIGRATION.md"
+  ],
+  "exports": {
+    ".": {
+      "@polygonlabs/source": "./src/index.ts",
+      "import": {
+        "types": "./dist/esm/index.d.ts",
+        "default": "./dist/esm/index.js"
+      },
+      "require": {
+        "types": "./dist/index.d.ts",
+        "default": "./dist/index.js"
+      }
+    }
+  },
+  "engines": {
+    "node": ">=22"
+  },
+  "sideEffects": false,
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/0xPolygon/oms-wallet-typescript-sdk.git",
+    "directory": "packages/oms-wallet"
+  },
+  "bugs": {
+    "url": "https://github.com/0xPolygon/oms-wallet-typescript-sdk/issues"
+  },
+  "homepage": "https://github.com/0xPolygon/oms-wallet-typescript-sdk#readme",
+  "publishConfig": {
+    "access": "public",
+    "exports": {
+      ".": {
+        "import": {
+          "types": "./dist/esm/index.d.ts",
+          "default": "./dist/esm/index.js"
+        },
+        "require": {
+          "types": "./dist/index.d.ts",
+          "default": "./dist/index.js"
+        }
+      }
+    }
+  },
+  "scripts": {
+    "clean": "rm -rf dist out-tsc *.tsbuildinfo",
+    "typecheck": "tsc -b",
+    "build": "pnpm clean && tsc -b tsconfig.lib.json tsconfig.esm.json && node scripts/write-esm-package.cjs",
+    "prepack": "pnpm build && pnpm check:public-api && pnpm check:api:built",
+    "prepublishOnly": "pnpm typecheck && pnpm test",
+    "check:public-api": "node scripts/check-public-api.cjs",
+    "codegen-drift-check": "pnpm run build && pnpm run check:public-api && pnpm run check:api:built",
+    "generate:api": "pnpm build && pnpm generate:api:built",
+    "generate:api:built": "node scripts/generate-api-docs.cjs",
+    "test:api-generator": "node --test scripts/generate-api-docs.test.cjs",
+    "check:api": "pnpm build && pnpm check:public-api && pnpm check:api:built",
+    "check:api:built": "pnpm test:api-generator && node scripts/generate-api-docs.cjs --check",
+    "test": "vitest run && pnpm test:types",
+    "test:types": "tsc --noEmit --target es2020 --lib es2022,dom --module ES2020 --moduleResolution bundler --strict --esModuleInterop --skipLibCheck type-tests/oidcProviderTypes.ts",
+    "test:watch": "vitest"
+  },
+  "dependencies": {
+    "viem": "^2.48.4"
+  },
+  "devDependencies": {
+    "dotenv": "^17.4.2",
+    "typescript": "^5.9.3",
+    "vitest": "^4.1.5"
+  }
+}

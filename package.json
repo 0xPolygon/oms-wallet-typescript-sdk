@@ -1,60 +1,29 @@
 {
-  "name": "@polygonlabs/oms-wallet",
-  "version": "0.2.0",
-  "description": "TypeScript SDK for OMS Wallet.",
+  "name": "oms-wallet-monorepo",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "description": "Workspace root for the OMS Wallet TypeScript SDK and its packages.",
   "license": "Apache-2.0",
-  "main": "dist/index.js",
-  "module": "dist/esm/index.js",
-  "types": "dist/esm/index.d.ts",
-  "files": [
-    "dist",
-    "README.md",
-    "API.md"
-  ],
-  "exports": {
-    ".": {
-      "import": {
-        "types": "./dist/esm/index.d.ts",
-        "default": "./dist/esm/index.js"
-      },
-      "require": {
-        "types": "./dist/index.d.ts",
-        "default": "./dist/index.js"
-      }
-    }
-  },
   "engines": {
     "node": ">=22"
   },
-  "sideEffects": false,
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/0xsequence/typescript-sdk.git"
-  },
-  "bugs": {
-    "url": "https://github.com/0xsequence/typescript-sdk/issues"
-  },
-  "homepage": "https://github.com/0xsequence/typescript-sdk#readme",
-  "publishConfig": {
-    "access": "public"
+    "url": "git+https://github.com/0xPolygon/oms-wallet-typescript-sdk.git"
   },
   "packageManager": "pnpm@11.1.3",
   "scripts": {
-    "clean": "rm -rf dist",
-    "build": "pnpm clean && tsc && tsc -p tsconfig.esm.json && node scripts/write-esm-package.cjs",
-    "prepack": "pnpm build && pnpm check:public-api && pnpm check:api:built",
-    "prepublishOnly": "pnpm check:package-versions && pnpm exec tsc --noEmit && pnpm test",
-    "check:package-versions": "node scripts/check-package-versions.cjs",
-    "check:stable-package-versions": "node scripts/check-package-versions.cjs --stable",
-    "check:public-api": "node scripts/check-public-api.cjs",
-    "generate:api": "pnpm build && pnpm generate:api:built",
-    "generate:api:built": "node scripts/generate-api-docs.cjs",
-    "test:api-generator": "node --test scripts/generate-api-docs.test.cjs",
-    "check:api": "pnpm build && pnpm check:public-api && pnpm check:api:built",
-    "check:api:built": "pnpm test:api-generator && node scripts/generate-api-docs.cjs --check",
-    "verify": "node scripts/verify.cjs",
-    "release:dry-run": "pnpm --filter @polygonlabs/oms-wallet publish --dry-run --no-git-checks --access public && pnpm --filter @polygonlabs/oms-wallet-wagmi-connector publish --dry-run --no-git-checks --access public",
-    "release:publish": "pnpm --filter @polygonlabs/oms-wallet publish --access public && pnpm --filter @polygonlabs/oms-wallet-wagmi-connector publish --access public",
+    "build": "pnpm -r --if-present run build",
+    "test": "pnpm -r --if-present run test",
+    "typecheck": "tsc -b",
+    "check:exports": "pnpm --filter @polygonlabs/oms-wallet exec publint && pnpm --filter @polygonlabs/oms-wallet-wagmi-connector exec publint",
+    "lint": "concurrently --group --prefix-colors auto 'pnpm:lint:md' 'pnpm:lint:ts' 'pnpm:typecheck' 'prettier --check .'",
+    "lint:ts": "eslint .",
+    "lint:md": "markdownlint-cli2 \"**/*.md\"",
+    "format": "pnpm run format:md && pnpm run format:ts && prettier --write .",
+    "format:md": "markdownlint-cli2 --fix \"**/*.md\"",
+    "format:ts": "eslint . --fix",
     "dev:example": "pnpm --filter react-example dev",
     "build:example": "pnpm --filter react-example build",
     "dev:custom-google-redirect-example": "pnpm --filter custom-google-redirect-example dev",
@@ -63,22 +32,28 @@
     "build:custom-auth0-id-token-example": "pnpm --filter custom-auth0-id-token-example build",
     "dev:trails-actions-example": "pnpm --filter trails-actions-example dev",
     "build:trails-actions-example": "pnpm --filter trails-actions-example build",
-    "dev:wagmi-example": "pnpm --filter @polygonlabs/oms-wallet-wagmi-connector build && pnpm --filter wagmi-example dev",
-    "build:wagmi-example": "pnpm --filter @polygonlabs/oms-wallet-wagmi-connector build && pnpm --filter wagmi-example build",
+    "dev:wagmi-example": "pnpm --filter wagmi-example dev",
+    "build:wagmi-example": "pnpm --filter wagmi-example build",
     "dev:node-example": "pnpm --filter node-example dev",
     "build:node-example": "pnpm --filter node-example build",
     "dev:node-contract-deploy-example": "pnpm --filter node-contract-deploy-example dev",
     "build:node-contract-deploy-example": "pnpm --filter node-contract-deploy-example build",
-    "test": "vitest run && pnpm test:types",
-    "test:types": "tsc --noEmit --target es2020 --lib es2022,dom --module ES2020 --moduleResolution bundler --strict --esModuleInterop --skipLibCheck type-tests/oidcProviderTypes.ts",
-    "test:watch": "vitest"
-  },
-  "dependencies": {
-    "viem": "^2.48.4"
+    "prepare": "husky"
   },
   "devDependencies": {
-    "dotenv": "^17.4.2",
-    "typescript": "^5.5.3",
-    "vitest": "^4.1.5"
+    "@changesets/changelog-github": "^0.7.0",
+    "@changesets/cli": "^2.30.0",
+    "@commitlint/cli": "^19.0.0",
+    "@commitlint/config-conventional": "^19.0.0",
+    "@polygonlabs/apps-team-lint": "^2.1.0",
+    "concurrently": "^9.2.1",
+    "eslint": "^10.0.0",
+    "eslint-import-resolver-typescript": "^4.4.4",
+    "husky": "^9.0.0",
+    "lint-staged": "^16.2.7",
+    "markdownlint-cli2": "^0.21.0",
+    "prettier": "^3.0.0",
+    "publint": "^0.3.0",
+    "typescript": "^5.9.3"
   }
 }

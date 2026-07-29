@@ -1,5 +1,5 @@
 /* Shared example structure and tokens live in examples/shared. */
-@import url("../../shared/oms-example-base.css");
+@import url('../../shared/oms-example-base.css');
 
 .environment-option {
   margin-top: 14px;
@@ -31,7 +31,7 @@
 }
 
 .select-control::after {
-  content: "";
+  content: '';
   position: absolute;
   top: 50%;
   right: 16px;
@@ -76,7 +76,7 @@ button.danger:active:not(:disabled) {
 }
 
 .burn-button::before {
-  content: "";
+  content: '';
   position: absolute;
   inset: 0;
   z-index: 0;
@@ -89,11 +89,16 @@ button.danger:active:not(:disabled) {
 }
 
 .burn-button::after {
-  content: "";
+  content: '';
   position: absolute;
   inset: 0;
   z-index: 0;
-  background: linear-gradient(105deg, transparent 0 38%, rgb(255 255 255 / 24%) 48%, transparent 60% 100%);
+  background: linear-gradient(
+    105deg,
+    transparent 0 38%,
+    rgb(255 255 255 / 24%) 48%,
+    transparent 60% 100%
+  );
   opacity: 0;
   transform: translateX(-120%);
   transition:

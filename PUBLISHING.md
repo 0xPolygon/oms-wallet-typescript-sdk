@@ -1,136 +1,87 @@
 # Publishing
 
-The SDK and wagmi connector release in lockstep. The connector source manifest keeps
-`@polygonlabs/oms-wallet` as `workspace:^` in `peerDependencies` and `workspace:*` in
-`devDependencies`. This gives local development a workspace link, and `pnpm pack` / `pnpm publish`
-rewrites the published peer dependency to a semver range for the release version.
+> **Publishing is CI-only. Never publish from a local machine.** Do not run `changeset version`,
+> `changeset publish`, `npm publish`, or `pnpm publish` yourself — a local publish bypasses CI, the
+> signed release commit, and npm OIDC trusted-publishing provenance. This repo deliberately exposes
+> **no** `release` / `ci:publish` package scripts; the only supported path is the automated flow
+> below. Your job as a contributor is to land a changeset (see "Day-to-day") and let CI do the rest.
 
-Do not replace the connector's SDK peer with a literal version in source, and do not publish with
-`npm publish`. Use pnpm from the workspace root so the `workspace:` protocol is rewritten before
-the package reaches npm.
+Releases are driven by [changesets](https://github.com/changesets/changesets). The SDK
+(`@polygonlabs/oms-wallet`) and the wagmi connector (`@polygonlabs/oms-wallet-wagmi-connector`)
+release **in lockstep**: they are declared as a `fixed` group in `.changeset/config.json`, so any
+release bumps both to the same new version regardless of which one changed.
 
-## Before Merging The Release PR
+The connector source manifest keeps `@polygonlabs/oms-wallet` as `workspace:^` in
+`peerDependencies` and `workspace:*` in `devDependencies`. Do not replace those with literal
+versions in source — changesets rewrites them to the published semver range at release time
+(`bumpVersionsWithWorkspaceProtocolOnly: false`).
 
-Before publishing a new stable version, update these values to the same exact version:
+## Day-to-day: add a changeset
 
-- `package.json` `version`
-- `packages/oms-wallet-wagmi-connector/package.json` `version`
-
-Leave these values as workspace protocols:
-
-- `packages/oms-wallet-wagmi-connector/package.json` `peerDependencies["@polygonlabs/oms-wallet"]`: `workspace:^`
-- `packages/oms-wallet-wagmi-connector/package.json` `devDependencies["@polygonlabs/oms-wallet"]`: `workspace:*`
-
-## After The Release PR Is Merged
-
-1. Switch to the latest `master`:
+Every PR that changes files inside a workspace package must include a changeset. From the repo
+root:
 
 ```bash
-git checkout master
-git pull
+pnpm exec changeset
+```
+
+Pick the bump type and write a user-facing changelog entry. Because both packages are a `fixed`
+group, selecting either one bumps both. For changes with no consumer impact (internal refactors,
+chores), record an empty changeset instead:
+
+```bash
+pnpm exec changeset add --empty
+```
+
+Commit the changeset in the same commit as the code. The `Changeset check` CI job fails a PR that
+touches a package without one.
+
+## Release flow (automated)
+
+1. Merging PRs with changesets into `master` triggers the `Release` workflow
+   (`.github/workflows/npm-release-trigger.yml` → `0xPolygon/pipelines`
+   `apps-npm-release.yml`), which opens or updates a **`changesets: Release / Deploy`** PR that
+   applies the pending changesets: it bumps both package versions, rewrites the connector's
+   `workspace:` ranges to the new semver, and updates each `CHANGELOG.md`.
+2. Review and merge that Release PR.
+3. On merge, the same workflow publishes both packages to npm via **OIDC trusted publishing** (no
+   `NPM_TOKEN`), pushes the git tags, and creates a GitHub Release per tag with the body extracted
+   from each package's `CHANGELOG.md`.
+
+Version-bump commits are signed by GitHub's GPG key (`commitMode: github-api`) to satisfy branch
+protection. There is no manual `npm publish` / `pnpm publish` step — publishing is the workflow's
+job.
+
+## Local verification
+
+Run the same gates CI runs before handing off release-affecting changes:
+
+```bash
 pnpm install --frozen-lockfile
+pnpm lint      # eslint + markdownlint + prettier + typecheck
+pnpm test      # SDK + connector test suites
+pnpm build     # build packages (dual CJS+ESM) + all examples
+pnpm check:exports   # publint — validates the publishable packages' exports/types
 ```
 
-2. Capture the release version and verify the SDK:
+These are the same standard scripts the CI workflow runs (`.github/workflows/ci-trigger.yml`): the
+shared `ci` composite runs lint/typecheck/test, a build job runs `build` + `check:exports`, and a
+drift-check job runs each package's `codegen-drift-check`. The `workspace:` → semver rewrite at
+publish is guaranteed by pnpm + changesets (`bumpVersionsWithWorkspaceProtocolOnly: false`), so it
+no longer needs a bespoke check.
 
-```bash
-VERSION=$(node -p "require('./package.json').version")
-pnpm verify --stable
-```
+## Prerelease / snapshot builds
 
-This is the same command CI runs, with the additional stable-version check. It typechecks and tests
-the SDK and connector, builds every example, packs both publishable packages, checks their contents,
-and verifies that pnpm rewrites the connector's `workspace:` dependencies to the release version.
+To publish a throwaway prerelease under a non-`latest` npm dist-tag (e.g. for a downstream service
+to consume ahead of a real release), manually dispatch the repo's **Release** workflow — this is
+still CI, not a local publish:
 
-3. Dry-run the release:
+1. GitHub → **Actions** → **Release** → **Run workflow**.
+2. Set the **`snapshot_tag`** input to a non-semver dist-tag (e.g. `canary`, `pre-0.3.0`).
 
-```bash
-pnpm release:dry-run
-```
-
-If the dry run reports no new packages, the version is already published. Stop and verify the
-intended release version before continuing.
-
-4. Log in to npm if needed:
-
-```bash
-pnpm npm login
-pnpm npm whoami
-```
-
-5. Publish both workspace packages from the root:
-
-```bash
-pnpm release:publish
-```
-
-If the filtered publish is interrupted after the SDK is published, rerun the connector publish with
-pnpm:
-
-```bash
-pnpm --filter @polygonlabs/oms-wallet-wagmi-connector publish --access public
-```
-
-6. Verify published versions and latest dist tags:
-
-```bash
-pnpm view @polygonlabs/oms-wallet@$VERSION version
-pnpm view @polygonlabs/oms-wallet-wagmi-connector@$VERSION version
-pnpm view @polygonlabs/oms-wallet@latest version
-pnpm view @polygonlabs/oms-wallet-wagmi-connector@latest version
-```
-
-7. Create a git tag and GitHub release for `v$VERSION`.
-
-## Alpha, Beta, And Snapshot Releases
-
-Use the stable flow above for normal releases. Use this section only when you intentionally want a
-non-`latest` npm dist tag.
-
-1. Set both publishable package versions to the same prerelease version:
-
-```bash
-# Examples:
-# 0.2.1-alpha.0
-# 0.2.1-beta.0
-# 0.2.1-snapshot.20260703.0
-```
-
-Update:
-
-- `package.json` `version`
-- `packages/oms-wallet-wagmi-connector/package.json` `version`
-
-Then capture and verify the prerelease:
-
-```bash
-VERSION=$(node -p "require('./package.json').version")
-pnpm verify
-```
-
-2. Dry-run with the matching npm tag:
-
-```bash
-pnpm release:dry-run --tag alpha
-```
-
-Use `--tag beta` for beta builds and `--tag snapshot` for snapshot builds.
-
-3. Publish with the same tag used in the dry run:
-
-```bash
-pnpm release:publish --tag alpha
-```
-
-4. Verify the exact version and dist tag:
-
-```bash
-pnpm view @polygonlabs/oms-wallet@$VERSION version
-pnpm view @polygonlabs/oms-wallet-wagmi-connector@$VERSION version
-pnpm view @polygonlabs/oms-wallet@alpha version
-pnpm view @polygonlabs/oms-wallet-wagmi-connector@alpha version
-```
-
-Replace `alpha` with `beta` or `snapshot` for those release types.
-
-Do not leave prerelease versions or prerelease npm tags in source when preparing a stable release.
+The `Release` trigger (`.github/workflows/npm-release-trigger.yml`) forwards `snapshot_tag` to the
+shared `apps-npm-release.yml`, which runs `changeset version --snapshot <tag>` on the runner (never
+committed) and `changeset publish --tag <tag> --no-git-tag` via OIDC. The snapshot path skips the
+git tag and GitHub Release, so **`snapshot_tag` must not be a semver-shaped value** (`0.3.0`,
+`v0.3.0`, `0.3.0-beta.1`, …) — the workflow validates the input and aborts on a semver-shaped value.
+Consumers install the result with `pnpm add @polygonlabs/oms-wallet@<tag>`.

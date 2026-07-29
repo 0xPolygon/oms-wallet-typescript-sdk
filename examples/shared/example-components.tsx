@@ -2,28 +2,28 @@ import type {
   FeeOptionWithBalance,
   OMSWalletSessionExpiredEvent,
   WalletAccount,
-  PendingWalletSelection,
-} from '@polygonlabs/oms-wallet'
+  PendingWalletSelection
+} from '@polygonlabs/oms-wallet';
 import {
   canAffordFeeOption,
   formatSessionAuth,
   formatOidcProvider,
   formatWalletType,
-  type OidcRedirectProvider,
-} from './example-utils'
+  type OidcRedirectProvider
+} from './example-utils';
 
 export function SessionOptions({
   useManualWalletSelection,
   sessionLifetimeSeconds,
   disabled,
   onManualWalletSelectionChange,
-  onSessionLifetimeChange,
+  onSessionLifetimeChange
 }: {
-  useManualWalletSelection: boolean
-  sessionLifetimeSeconds: number
-  disabled: boolean
-  onManualWalletSelectionChange: (value: boolean) => void
-  onSessionLifetimeChange: (value: string) => void
+  useManualWalletSelection: boolean;
+  sessionLifetimeSeconds: number;
+  disabled: boolean;
+  onManualWalletSelectionChange: (value: boolean) => void;
+  onSessionLifetimeChange: (value: string) => void;
 }) {
   return (
     <div className="header-options">
@@ -54,7 +54,7 @@ export function SessionOptions({
         </span>
       </label>
     </div>
-  )
+  );
 }
 
 export function OidcButtons({
@@ -63,16 +63,16 @@ export function OidcButtons({
   status,
   statusId = 'redirect-status',
   buttonClassName = 'secondary',
-  onStart,
+  onStart
 }: {
-  providers: OidcRedirectProvider[]
-  disabled: boolean
-  status?: string
-  statusId?: string
-  buttonClassName?: string
-  onStart: (provider: OidcRedirectProvider) => void
+  providers: OidcRedirectProvider[];
+  disabled: boolean;
+  status?: string;
+  statusId?: string;
+  buttonClassName?: string;
+  onStart: (provider: OidcRedirectProvider) => void;
 }) {
-  if (providers.length === 0) return null
+  if (providers.length === 0) return null;
 
   return (
     <div className="field-stack">
@@ -88,9 +88,13 @@ export function OidcButtons({
           Continue with {formatOidcProvider(provider)}
         </button>
       ))}
-      {status ? <p id={statusId} className="field-hint">{status}</p> : null}
+      {status ? (
+        <p id={statusId} className="field-hint">
+          {status}
+        </p>
+      ) : null}
     </div>
-  )
+  );
 }
 
 export function EmailLoginForm({
@@ -98,19 +102,22 @@ export function EmailLoginForm({
   disabled,
   status,
   onEmailChange,
-  onSubmit,
+  onSubmit
 }: {
-  email: string
-  disabled: boolean
-  status?: string
-  onEmailChange: (value: string) => void
-  onSubmit: () => void
+  email: string;
+  disabled: boolean;
+  status?: string;
+  onEmailChange: (value: string) => void;
+  onSubmit: () => void;
 }) {
   return (
-    <form className="stack" onSubmit={(event) => {
-      event.preventDefault()
-      onSubmit()
-    }}>
+    <form
+      className="stack"
+      onSubmit={(event) => {
+        event.preventDefault();
+        onSubmit();
+      }}
+    >
       <div className="field-stack">
         <label>
           Email
@@ -126,13 +133,17 @@ export function EmailLoginForm({
             spellCheck={false}
           />
         </label>
-        {status !== undefined ? <p id="email-status" className="field-hint">{status}</p> : null}
+        {status !== undefined ? (
+          <p id="email-status" className="field-hint">
+            {status}
+          </p>
+        ) : null}
       </div>
       <button type="submit" disabled={disabled || !email.trim()}>
         Send code
       </button>
     </form>
-  )
+  );
 }
 
 export function EmailCodeForm({
@@ -141,20 +152,23 @@ export function EmailCodeForm({
   status,
   onCodeChange,
   onSubmit,
-  onBack,
+  onBack
 }: {
-  code: string
-  disabled: boolean
-  status?: string
-  onCodeChange: (value: string) => void
-  onSubmit: () => void
-  onBack: () => void
+  code: string;
+  disabled: boolean;
+  status?: string;
+  onCodeChange: (value: string) => void;
+  onSubmit: () => void;
+  onBack: () => void;
 }) {
   return (
-    <form className="stack" onSubmit={(event) => {
-      event.preventDefault()
-      onSubmit()
-    }}>
+    <form
+      className="stack"
+      onSubmit={(event) => {
+        event.preventDefault();
+        onSubmit();
+      }}
+    >
       <div className="field-stack">
         <label>
           Code
@@ -171,7 +185,11 @@ export function EmailCodeForm({
             disabled={disabled}
           />
         </label>
-        {status !== undefined ? <p id="code-status" className="field-hint">{status}</p> : null}
+        {status !== undefined ? (
+          <p id="code-status" className="field-hint">
+            {status}
+          </p>
+        ) : null}
       </div>
       <div className="actions">
         <button type="submit" disabled={disabled || !code.trim()}>
@@ -182,7 +200,7 @@ export function EmailCodeForm({
         </button>
       </div>
     </form>
-  )
+  );
 }
 
 export function WalletSelectionPanel({
@@ -191,21 +209,23 @@ export function WalletSelectionPanel({
   disabled,
   onSelectWallet,
   onCreateWallet,
-  onCancel,
+  onCancel
 }: {
-  pendingWalletSelection: PendingWalletSelection
-  authStatus?: string
-  disabled: boolean
-  onSelectWallet: (wallet: WalletAccount) => void
-  onCreateWallet: () => void
-  onCancel: () => void
+  pendingWalletSelection: PendingWalletSelection;
+  authStatus?: string;
+  disabled: boolean;
+  onSelectWallet: (wallet: WalletAccount) => void;
+  onCreateWallet: () => void;
+  onCancel: () => void;
 }) {
   return (
     <div className="stack">
       <section className="tool wallet-selection">
         <div className="tool-header">
           <h2>Choose wallet</h2>
-          <span className="metadata-pill">{formatWalletType(pendingWalletSelection.walletType)}</span>
+          <span className="metadata-pill">
+            {formatWalletType(pendingWalletSelection.walletType)}
+          </span>
         </div>
         <h3>Existing wallets</h3>
         {pendingWalletSelection.wallets.length > 0 ? (
@@ -228,7 +248,9 @@ export function WalletSelectionPanel({
             ))}
           </div>
         ) : (
-          <p className="field-hint">No existing {formatWalletType(pendingWalletSelection.walletType)} wallets.</p>
+          <p className="field-hint">
+            No existing {formatWalletType(pendingWalletSelection.walletType)} wallets.
+          </p>
         )}
 
         <h3>Create new wallet</h3>
@@ -242,27 +264,32 @@ export function WalletSelectionPanel({
       </section>
       {authStatus ? <output>{authStatus}</output> : null}
     </div>
-  )
+  );
 }
 
 export function FeeOptionsPanel({
   feeOptions,
   panelClassName = 'fee-options',
   onCancel,
-  onChoose,
+  onChoose
 }: {
-  feeOptions: FeeOptionWithBalance[]
-  panelClassName?: string
-  onCancel: () => void
-  onChoose: (option: FeeOptionWithBalance) => void
+  feeOptions: FeeOptionWithBalance[];
+  panelClassName?: string;
+  onCancel: () => void;
+  onChoose: (option: FeeOptionWithBalance) => void;
 }) {
   return (
     <div className="fee-modal-backdrop">
-      <section className={panelClassName} role="dialog" aria-modal="true" aria-labelledby="fee-options-title">
+      <section
+        className={panelClassName}
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby="fee-options-title"
+      >
         <h2 id="fee-options-title">Fee option</h2>
         <div className="fee-option-list">
           {feeOptions.map((option) => {
-            const canAfford = canAffordFeeOption(option)
+            const canAfford = canAffordFeeOption(option);
 
             return (
               <button
@@ -276,9 +303,11 @@ export function FeeOptionsPanel({
                   <strong>{option.feeOption.token.symbol}</strong>
                   <small>{option.feeOption.displayValue || option.feeOption.value}</small>
                 </span>
-                <span>{canAfford ? option.available ?? 'Balance unavailable' : 'Insufficient balance'}</span>
+                <span>
+                  {canAfford ? (option.available ?? 'Balance unavailable') : 'Insufficient balance'}
+                </span>
               </button>
-            )
+            );
           })}
         </div>
         <button type="button" className="secondary" onClick={onCancel}>
@@ -286,19 +315,19 @@ export function FeeOptionsPanel({
         </button>
       </section>
     </div>
-  )
+  );
 }
 
 export function SessionExpiredDialog({
   event,
   disabled,
   onReauthenticate,
-  onDismiss,
+  onDismiss
 }: {
-  event: OMSWalletSessionExpiredEvent
-  disabled: boolean
-  onReauthenticate: () => void
-  onDismiss: () => void
+  event: OMSWalletSessionExpiredEvent;
+  disabled: boolean;
+  onReauthenticate: () => void;
+  onDismiss: () => void;
 }) {
   return (
     <div className="modal-backdrop">
@@ -309,9 +338,7 @@ export function SessionExpiredDialog({
         aria-labelledby="session-expired-title"
       >
         <h2 id="session-expired-title">Session expired</h2>
-        <p>
-          Your wallet session has expired. Reauthenticate to continue using this wallet.
-        </p>
+        <p>Your wallet session has expired. Reauthenticate to continue using this wallet.</p>
         {event.session.auth?.email && (
           <p className="modal-detail">
             Account <strong>{event.session.auth.email}</strong>
@@ -334,5 +361,5 @@ export function SessionExpiredDialog({
         </div>
       </section>
     </div>
-  )
+  );
 }

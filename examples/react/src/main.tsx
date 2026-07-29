@@ -1,5 +1,5 @@
-import React, { useEffect, useRef, useState } from 'react'
-import { createRoot } from 'react-dom/client'
+import React, { useEffect, useRef, useState } from 'react';
+import { createRoot } from 'react-dom/client';
 import {
   Networks,
   OmsRelayOidcProviders,
@@ -10,9 +10,9 @@ import {
   type OMSWalletSessionExpiredEvent,
   type WalletAccount,
   type PendingWalletSelection,
-  type WalletActivationResult,
-} from '@polygonlabs/oms-wallet'
-import './styles.css'
+  type WalletActivationResult
+} from '@polygonlabs/oms-wallet';
+import './styles.css';
 import {
   EmailCodeForm,
   EmailLoginForm,
@@ -20,8 +20,8 @@ import {
   OidcButtons,
   SessionExpiredDialog,
   SessionOptions,
-  WalletSelectionPanel,
-} from '../../shared/example-components'
+  WalletSelectionPanel
+} from '../../shared/example-components';
 import {
   formatCount,
   formatOidcProvider,
@@ -31,466 +31,478 @@ import {
   hasOidcCallbackParams,
   isPendingWalletSelection,
   sameAddress,
-  type OidcRedirectProvider,
-} from '../../shared/example-utils'
-import { useSessionPreferences } from '../../shared/use-session-preferences'
+  type OidcRedirectProvider
+} from '../../shared/example-utils';
+import { useSessionPreferences } from '../../shared/use-session-preferences';
 import {
   DEMO_ENVIRONMENTS,
   SELECTED_DEMO_ENVIRONMENT,
   selectDemoEnvironment,
-  type DemoEnvironmentId,
-} from './config'
-import { TEST_SESSION_LIFETIME_SECONDS, omsWallet } from './omsWallet'
-import { WalletKitDollarExample } from './WalletKitDollarExample'
+  type DemoEnvironmentId
+} from './config';
+import { TEST_SESSION_LIFETIME_SECONDS, omsWallet } from './omsWallet';
+import { WalletKitDollarExample } from './WalletKitDollarExample';
 
-type Step = 'email' | 'code' | 'wallet-selection' | 'wallet'
+type Step = 'email' | 'code' | 'wallet-selection' | 'wallet';
 type FeeSelectionController = {
-  resolve: (selection: FeeOptionSelection) => void
-  reject: (error: Error) => void
-}
+  resolve: (selection: FeeOptionSelection) => void;
+  reject: (error: Error) => void;
+};
 
-const DEFAULT_MESSAGE = 'test'
-const DEFAULT_TX_TO = '0xE5E8B483FfC05967FcFed58cc98D053265af6D99'
-const MANUAL_WALLET_SELECTION_KEY = 'oms-demo-manual-wallet-selection'
-const SESSION_LIFETIME_SECONDS_KEY = 'oms-demo-session-lifetime-seconds-v2'
-const supportedNetworks = Object.values(Networks)
+const DEFAULT_MESSAGE = 'test';
+const DEFAULT_TX_TO = '0xE5E8B483FfC05967FcFed58cc98D053265af6D99';
+const MANUAL_WALLET_SELECTION_KEY = 'oms-demo-manual-wallet-selection';
+const SESSION_LIFETIME_SECONDS_KEY = 'oms-demo-session-lifetime-seconds-v2';
+const supportedNetworks = Object.values(Networks);
 
 function App() {
-  const [step, setStep] = useState<Step>('email')
-  const [email, setEmail] = useState('')
-  const [code, setCode] = useState('')
-  const [message, setMessage] = useState(DEFAULT_MESSAGE)
-  const [selectedNetworkId, setSelectedNetworkId] = useState<number>(Networks.amoy.id)
-  const [transactionTo, setTransactionTo] = useState(DEFAULT_TX_TO)
-  const [transactionValue, setTransactionValue] = useState('0')
-  const [walletAddress, setWalletAddress] = useState('')
-  const [lastSignature, setLastSignature] = useState('')
-  const [lastIdToken, setLastIdToken] = useState('')
-  const [lastTransactionHash, setLastTransactionHash] = useState('')
-  const [lastTransactionExplorerUrl, setLastTransactionExplorerUrl] = useState('')
-  const [feeOptions, setFeeOptions] = useState<FeeOptionWithBalance[]>([])
-  const [managedWallets, setManagedWallets] = useState<WalletAccount[]>([])
-  const [newWalletReference, setNewWalletReference] = useState('')
-  const [accessGrants, setAccessGrants] = useState<AccessGrant[]>([])
-  const [pendingWalletSelection, setPendingWalletSelection] = useState<PendingWalletSelection | null>(null)
-  const [emailAuthStatus, setEmailAuthStatus] = useState('Enter an email to start.')
-  const [redirectStatus, setRedirectStatus] = useState('')
-  const [walletStatus, setWalletStatus] = useState('')
-  const [activeWalletStatus, setActiveWalletStatus] = useState('')
-  const [accessStatus, setAccessStatus] = useState('')
-  const [sessionExpiredPrompt, setSessionExpiredPrompt] = useState<OMSWalletSessionExpiredEvent | null>(null)
-  const [isBusy, setIsBusy] = useState(false)
-  const oidcCallbackStarted = useRef(false)
-  const feeSelection = useRef<FeeSelectionController | null>(null)
+  const [step, setStep] = useState<Step>('email');
+  const [email, setEmail] = useState('');
+  const [code, setCode] = useState('');
+  const [message, setMessage] = useState(DEFAULT_MESSAGE);
+  const [selectedNetworkId, setSelectedNetworkId] = useState<number>(Networks.amoy.id);
+  const [transactionTo, setTransactionTo] = useState(DEFAULT_TX_TO);
+  const [transactionValue, setTransactionValue] = useState('0');
+  const [walletAddress, setWalletAddress] = useState('');
+  const [lastSignature, setLastSignature] = useState('');
+  const [lastIdToken, setLastIdToken] = useState('');
+  const [lastTransactionHash, setLastTransactionHash] = useState('');
+  const [lastTransactionExplorerUrl, setLastTransactionExplorerUrl] = useState('');
+  const [feeOptions, setFeeOptions] = useState<FeeOptionWithBalance[]>([]);
+  const [managedWallets, setManagedWallets] = useState<WalletAccount[]>([]);
+  const [newWalletReference, setNewWalletReference] = useState('');
+  const [accessGrants, setAccessGrants] = useState<AccessGrant[]>([]);
+  const [pendingWalletSelection, setPendingWalletSelection] =
+    useState<PendingWalletSelection | null>(null);
+  const [emailAuthStatus, setEmailAuthStatus] = useState('Enter an email to start.');
+  const [redirectStatus, setRedirectStatus] = useState('');
+  const [walletStatus, setWalletStatus] = useState('');
+  const [activeWalletStatus, setActiveWalletStatus] = useState('');
+  const [accessStatus, setAccessStatus] = useState('');
+  const [sessionExpiredPrompt, setSessionExpiredPrompt] =
+    useState<OMSWalletSessionExpiredEvent | null>(null);
+  const [isBusy, setIsBusy] = useState(false);
+  const oidcCallbackStarted = useRef(false);
+  const feeSelection = useRef<FeeSelectionController | null>(null);
 
-  const selectedNetwork = supportedNetworks.find(network => network.id === selectedNetworkId) ?? Networks.amoy
-  const session = omsWallet.wallet.session
+  const selectedNetwork =
+    supportedNetworks.find((network) => network.id === selectedNetworkId) ?? Networks.amoy;
+  const session = omsWallet.wallet.session;
   const {
     useManualWalletSelection,
     setUseManualWalletSelection,
     sessionLifetimeSeconds,
     updateSessionLifetime,
     saveSessionPreferences,
-    walletSelection,
+    walletSelection
   } = useSessionPreferences({
     manualWalletSelectionKey: MANUAL_WALLET_SELECTION_KEY,
     sessionLifetimeSecondsKey: SESSION_LIFETIME_SECONDS_KEY,
-    defaultSessionLifetimeSeconds: TEST_SESSION_LIFETIME_SECONDS,
-  })
+    defaultSessionLifetimeSeconds: TEST_SESSION_LIFETIME_SECONDS
+  });
 
   useEffect(() => {
-    return omsWallet.wallet.onSessionExpired(showSessionExpired)
-  }, [])
+    return omsWallet.wallet.onSessionExpired(showSessionExpired);
+  }, []);
 
   useEffect(() => {
     if (omsWallet.wallet.walletAddress) {
-      setWalletAddress(omsWallet.wallet.walletAddress)
-      setStep('wallet')
-      setWalletStatus('Wallet session restored.')
-      return
+      setWalletAddress(omsWallet.wallet.walletAddress);
+      setStep('wallet');
+      setWalletStatus('Wallet session restored.');
+      return;
     }
 
     if (hasOidcCallbackParams()) {
-      if (oidcCallbackStarted.current) return
-      oidcCallbackStarted.current = true
-      void completeOidcRedirect()
+      if (oidcCallbackStarted.current) return;
+      oidcCallbackStarted.current = true;
+      void completeOidcRedirect();
     }
-  }, [omsWallet])
+  }, [omsWallet]);
 
   useEffect(() => {
-    feeSelection.current?.reject(new Error('Network changed'))
-    feeSelection.current = null
-    setFeeOptions([])
-    setLastSignature('')
-    setLastIdToken('')
-    setLastTransactionHash('')
-    setLastTransactionExplorerUrl('')
+    feeSelection.current?.reject(new Error('Network changed'));
+    feeSelection.current = null;
+    setFeeOptions([]);
+    setLastSignature('');
+    setLastIdToken('');
+    setLastTransactionHash('');
+    setLastTransactionExplorerUrl('');
     if (step === 'wallet') {
-      setWalletStatus('')
+      setWalletStatus('');
     }
-  }, [selectedNetworkId, step])
+  }, [selectedNetworkId, step]);
 
   async function run(
     label: string,
     setActiveStatus: (message: string) => void,
-    action: () => Promise<void>,
+    action: () => Promise<void>
   ) {
-    setIsBusy(true)
-    setActiveStatus(label)
+    setIsBusy(true);
+    setActiveStatus(label);
     try {
-      await action()
+      await action();
     } catch (error) {
-      setActiveStatus(error instanceof Error ? error.message : String(error))
+      setActiveStatus(error instanceof Error ? error.message : String(error));
     } finally {
-      setIsBusy(false)
+      setIsBusy(false);
     }
   }
 
   async function startEmailAuth() {
-    if (!email.trim()) return
+    if (!email.trim()) return;
     await run('Sending code...', setEmailAuthStatus, async () => {
-      setPendingWalletSelection(null)
+      setPendingWalletSelection(null);
       await omsWallet.wallet.startEmailAuth({
         email: email.trim(),
-        sessionLifetimeSeconds,
-      })
-      setStep('code')
-      setEmailAuthStatus('Code sent. Check your email.')
-    })
+        sessionLifetimeSeconds
+      });
+      setStep('code');
+      setEmailAuthStatus('Code sent. Check your email.');
+    });
   }
 
   async function completeEmailAuth() {
-    if (!code.trim()) return
+    if (!code.trim()) return;
     await run('Completing sign-in...', setEmailAuthStatus, async () => {
       const result = await omsWallet.wallet.completeEmailAuth({
         code: code.trim(),
-        walletSelection,
-      })
-      handleAuthCompletion(result, 'Email login complete.')
-    })
+        walletSelection
+      });
+      handleAuthCompletion(result, 'Email login complete.');
+    });
   }
 
   async function startOidcRedirect(provider: OidcRedirectProvider) {
-    const label = formatOidcProvider(provider)
+    const label = formatOidcProvider(provider);
     await run(`Redirecting to ${label}...`, setRedirectStatus, async () => {
-      saveSessionPreferences()
-      setPendingWalletSelection(null)
+      saveSessionPreferences();
+      setPendingWalletSelection(null);
       await omsWallet.wallet.signInWithOidcRedirect({
-        provider: provider === 'google' ? OmsRelayOidcProviders.google : OmsRelayOidcProviders.apple,
+        provider:
+          provider === 'google' ? OmsRelayOidcProviders.google : OmsRelayOidcProviders.apple,
         walletSelection,
-        sessionLifetimeSeconds,
-      })
-    })
+        sessionLifetimeSeconds
+      });
+    });
   }
 
   async function completeOidcRedirect() {
     await run('Completing redirect sign-in...', setRedirectStatus, async () => {
-      const result = await omsWallet.wallet.completeOidcRedirectAuth()
+      const result = await omsWallet.wallet.completeOidcRedirectAuth();
       if (result) {
-        handleAuthCompletion(result, 'Redirect login complete.')
-        return
+        handleAuthCompletion(result, 'Redirect login complete.');
+        return;
       }
 
-      const restoredAddress = omsWallet.wallet.walletAddress ?? ''
-      setWalletAddress(restoredAddress)
-      setStep(restoredAddress ? 'wallet' : 'email')
-      setWalletStatus(restoredAddress ? 'Wallet ready.' : '')
-    })
+      const restoredAddress = omsWallet.wallet.walletAddress ?? '';
+      setWalletAddress(restoredAddress);
+      setStep(restoredAddress ? 'wallet' : 'email');
+      setWalletStatus(restoredAddress ? 'Wallet ready.' : '');
+    });
   }
 
   function handleAuthCompletion(
     result: PendingWalletSelection | WalletActivationResult,
-    status: string,
+    status: string
   ) {
     if (isPendingWalletSelection(result)) {
-      setPendingWalletSelection(result)
-      setStep('wallet-selection')
-      setEmailAuthStatus('')
-      setRedirectStatus('')
-      return
+      setPendingWalletSelection(result);
+      setStep('wallet-selection');
+      setEmailAuthStatus('');
+      setRedirectStatus('');
+      return;
     }
 
-    setPendingWalletSelection(null)
-    setLastIdToken('')
-    clearManagementState()
-    setWalletAddress(result.walletAddress)
-    setStep('wallet')
-    setWalletStatus(status)
+    setPendingWalletSelection(null);
+    setLastIdToken('');
+    clearManagementState();
+    setWalletAddress(result.walletAddress);
+    setStep('wallet');
+    setWalletStatus(status);
   }
 
   function showSessionExpired(event: OMSWalletSessionExpiredEvent) {
-    feeSelection.current?.reject(new Error('Session expired'))
-    feeSelection.current = null
-    setFeeOptions([])
-    setPendingWalletSelection(null)
-    setWalletAddress('')
-    setLastSignature('')
-    setLastIdToken('')
-    setLastTransactionHash('')
-    setLastTransactionExplorerUrl('')
-    clearManagementState()
-    setCode('')
-    setStep('email')
+    feeSelection.current?.reject(new Error('Session expired'));
+    feeSelection.current = null;
+    setFeeOptions([]);
+    setPendingWalletSelection(null);
+    setWalletAddress('');
+    setLastSignature('');
+    setLastIdToken('');
+    setLastTransactionHash('');
+    setLastTransactionExplorerUrl('');
+    clearManagementState();
+    setCode('');
+    setStep('email');
     setEmailAuthStatus(
       event.session.auth?.email
         ? `Session expired for ${event.session.auth.email}.`
-        : 'Session expired. Enter an email to continue.',
-    )
-    setRedirectStatus('')
-    setWalletStatus('')
+        : 'Session expired. Enter an email to continue.'
+    );
+    setRedirectStatus('');
+    setWalletStatus('');
     if (event.session.auth?.email) {
-      setEmail(event.session.auth.email)
+      setEmail(event.session.auth.email);
     }
-    setSessionExpiredPrompt(event)
+    setSessionExpiredPrompt(event);
   }
 
   async function reauthenticateExpiredSession() {
-    if (!sessionExpiredPrompt) return
+    if (!sessionExpiredPrompt) return;
 
-    const expiredSession = sessionExpiredPrompt.session
-    const auth = expiredSession.auth
+    const expiredSession = sessionExpiredPrompt.session;
+    const auth = expiredSession.auth;
     if (auth?.type === 'oidc' && auth.provider === 'google') {
       await run('Redirecting to Google...', setRedirectStatus, async () => {
-        setSessionExpiredPrompt(null)
-        saveSessionPreferences()
-        setPendingWalletSelection(null)
+        setSessionExpiredPrompt(null);
+        saveSessionPreferences();
+        setPendingWalletSelection(null);
         await omsWallet.wallet.signInWithOidcRedirect({
           provider: OmsRelayOidcProviders.google,
           walletSelection,
-          sessionLifetimeSeconds,
-        })
-      })
-      return
+          sessionLifetimeSeconds
+        });
+      });
+      return;
     }
 
     if (auth?.type === 'oidc' && auth.provider === 'apple') {
       await run('Redirecting to Apple...', setRedirectStatus, async () => {
-        setSessionExpiredPrompt(null)
-        saveSessionPreferences()
-        setPendingWalletSelection(null)
+        setSessionExpiredPrompt(null);
+        saveSessionPreferences();
+        setPendingWalletSelection(null);
         await omsWallet.wallet.signInWithOidcRedirect({
           provider: OmsRelayOidcProviders.apple,
           walletSelection,
-          sessionLifetimeSeconds,
-        })
-      })
-      return
+          sessionLifetimeSeconds
+        });
+      });
+      return;
     }
 
     if (auth?.type === 'email' && auth.email) {
-      const email = auth.email
+      const email = auth.email;
       await run('Sending code...', setEmailAuthStatus, async () => {
-        setSessionExpiredPrompt(null)
-        setPendingWalletSelection(null)
-        setEmail(email)
-        await omsWallet.wallet.startEmailAuth({ email })
-        setStep('code')
-        setEmailAuthStatus('Code sent. Check your email.')
-      })
-      return
+        setSessionExpiredPrompt(null);
+        setPendingWalletSelection(null);
+        setEmail(email);
+        await omsWallet.wallet.startEmailAuth({ email });
+        setStep('code');
+        setEmailAuthStatus('Code sent. Check your email.');
+      });
+      return;
     }
 
-    setSessionExpiredPrompt(null)
-    setStep('email')
-    setEmailAuthStatus('Enter an email to start.')
+    setSessionExpiredPrompt(null);
+    setStep('email');
+    setEmailAuthStatus('Enter an email to start.');
   }
 
   function dismissSessionExpiredPrompt() {
-    setSessionExpiredPrompt(null)
-    setStep('email')
+    setSessionExpiredPrompt(null);
+    setStep('email');
   }
 
   function changeDemoEnvironment(id: DemoEnvironmentId) {
-    if (id === SELECTED_DEMO_ENVIRONMENT.id) return
-    selectDemoEnvironment(id)
-    window.location.reload()
+    if (id === SELECTED_DEMO_ENVIRONMENT.id) return;
+    selectDemoEnvironment(id);
+    window.location.reload();
   }
 
   async function selectPendingWallet(wallet: WalletAccount) {
-    if (!pendingWalletSelection) return
+    if (!pendingWalletSelection) return;
     await run('Selecting wallet...', setEmailAuthStatus, async () => {
-      const result = await pendingWalletSelection.selectWallet({ walletId: wallet.id })
-      handleAuthCompletion(result, 'Wallet selected.')
-    })
+      const result = await pendingWalletSelection.selectWallet({ walletId: wallet.id });
+      handleAuthCompletion(result, 'Wallet selected.');
+    });
   }
 
   async function createPendingWallet() {
-    if (!pendingWalletSelection) return
+    if (!pendingWalletSelection) return;
     await run('Creating wallet...', setEmailAuthStatus, async () => {
-      const result = await pendingWalletSelection.createAndSelectWallet({ reference: 'main' })
-      handleAuthCompletion(result, 'Wallet created.')
-    })
+      const result = await pendingWalletSelection.createAndSelectWallet({ reference: 'main' });
+      handleAuthCompletion(result, 'Wallet created.');
+    });
   }
 
   async function cancelPendingWalletSelection() {
     await run('Cancelling wallet selection...', setEmailAuthStatus, async () => {
-      await omsWallet.wallet.signOut()
-      setPendingWalletSelection(null)
-      setWalletAddress('')
-      setCode('')
-      setStep('email')
-      setEmailAuthStatus('Enter an email to start.')
-    })
+      await omsWallet.wallet.signOut();
+      setPendingWalletSelection(null);
+      setWalletAddress('');
+      setCode('');
+      setStep('email');
+      setEmailAuthStatus('Enter an email to start.');
+    });
   }
 
   async function signMessage() {
     await run('Signing message...', setWalletStatus, async () => {
       const signature = await omsWallet.wallet.signMessage({
         network: selectedNetwork,
-        message,
-      })
-      setLastSignature(signature)
-      setWalletStatus('Message signed.')
-    })
+        message
+      });
+      setLastSignature(signature);
+      setWalletStatus('Message signed.');
+    });
   }
 
   async function sendTransaction() {
     await run('Sending transaction...', setWalletStatus, async () => {
-      setFeeOptions([])
-      setLastTransactionExplorerUrl('')
+      setFeeOptions([]);
+      setLastTransactionExplorerUrl('');
       try {
         const tx = await omsWallet.wallet.sendTransaction({
           network: selectedNetwork,
           to: transactionTo as `0x${string}`,
           value: BigInt(transactionValue || '0'),
-          selectFeeOption: waitForFeeOptionSelection,
-        })
-        setLastTransactionHash(tx.txnHash ?? tx.txnId)
-        setLastTransactionExplorerUrl(tx.txnHash ? transactionExplorerUrl(selectedNetwork, tx.txnHash) : '')
-        setWalletStatus('Transaction sent.')
+          selectFeeOption: waitForFeeOptionSelection
+        });
+        setLastTransactionHash(tx.txnHash ?? tx.txnId);
+        setLastTransactionExplorerUrl(
+          tx.txnHash ? transactionExplorerUrl(selectedNetwork, tx.txnHash) : ''
+        );
+        setWalletStatus('Transaction sent.');
       } finally {
-        feeSelection.current = null
-        setFeeOptions([])
+        feeSelection.current = null;
+        setFeeOptions([]);
       }
-    })
+    });
   }
 
   async function loadManagedWallets() {
     await run('Loading wallets...', setActiveWalletStatus, async () => {
-      const wallets = await omsWallet.wallet.listWallets()
-      setManagedWallets(wallets)
-      setActiveWalletStatus(`Loaded ${formatCount(wallets.length, 'wallet')}.`)
-    })
+      const wallets = await omsWallet.wallet.listWallets();
+      setManagedWallets(wallets);
+      setActiveWalletStatus(`Loaded ${formatCount(wallets.length, 'wallet')}.`);
+    });
   }
 
   async function useManagedWallet(wallet: WalletAccount) {
     await run('Switching wallet...', setActiveWalletStatus, async () => {
-      const result = await omsWallet.wallet.useWallet({ walletId: wallet.id })
-      setWalletAddress(result.walletAddress)
-      clearWalletOperationResults()
-      setAccessGrants([])
-      setAccessStatus('')
-      setManagedWallets(current =>
-        current.map(item => item.id === result.wallet.id ? result.wallet : item),
-      )
-      setActiveWalletStatus(`Using ${result.wallet.reference ?? formatWalletType(result.wallet.type)}.`)
-    })
+      const result = await omsWallet.wallet.useWallet({ walletId: wallet.id });
+      setWalletAddress(result.walletAddress);
+      clearWalletOperationResults();
+      setAccessGrants([]);
+      setAccessStatus('');
+      setManagedWallets((current) =>
+        current.map((item) => (item.id === result.wallet.id ? result.wallet : item))
+      );
+      setActiveWalletStatus(
+        `Using ${result.wallet.reference ?? formatWalletType(result.wallet.type)}.`
+      );
+    });
   }
 
   async function createManagedWallet() {
     await run('Creating wallet...', setActiveWalletStatus, async () => {
-      const reference = newWalletReference.trim()
+      const reference = newWalletReference.trim();
       const result = await omsWallet.wallet.createWallet({
-        reference: reference || undefined,
-      })
-      setWalletAddress(result.walletAddress)
-      clearWalletOperationResults()
-      setAccessGrants([])
-      setAccessStatus('')
-      setManagedWallets(current => {
-        const withoutCreated = current.filter(wallet => wallet.id !== result.wallet.id)
-        return [...withoutCreated, result.wallet]
-      })
-      setNewWalletReference('')
-      setActiveWalletStatus(`Created and activated ${result.wallet.reference ?? formatWalletType(result.wallet.type)}.`)
-    })
+        reference: reference || undefined
+      });
+      setWalletAddress(result.walletAddress);
+      clearWalletOperationResults();
+      setAccessGrants([]);
+      setAccessStatus('');
+      setManagedWallets((current) => {
+        const withoutCreated = current.filter((wallet) => wallet.id !== result.wallet.id);
+        return [...withoutCreated, result.wallet];
+      });
+      setNewWalletReference('');
+      setActiveWalletStatus(
+        `Created and activated ${result.wallet.reference ?? formatWalletType(result.wallet.type)}.`
+      );
+    });
   }
 
   async function loadAccess() {
     await run('Loading access...', setAccessStatus, async () => {
-      const grants = await omsWallet.wallet.listAccess()
-      setAccessGrants(grants)
-      setAccessStatus(`Loaded ${formatCount(grants.length, 'access grant')}.`)
-    })
+      const grants = await omsWallet.wallet.listAccess();
+      setAccessGrants(grants);
+      setAccessStatus(`Loaded ${formatCount(grants.length, 'access grant')}.`);
+    });
   }
 
   async function revokeAccess(grant: AccessGrant) {
     if (grant.isCaller) {
-      setAccessStatus('The current session access grant cannot be revoked here.')
-      return
+      setAccessStatus('The current session access grant cannot be revoked here.');
+      return;
     }
 
     await run('Revoking access...', setAccessStatus, async () => {
-      await omsWallet.wallet.revokeAccess({ targetCredentialId: grant.credentialId })
-      setAccessGrants(current => current.filter(item => item.credentialId !== grant.credentialId))
-      setAccessStatus('Access grant revoked.')
-    })
+      await omsWallet.wallet.revokeAccess({ targetCredentialId: grant.credentialId });
+      setAccessGrants((current) =>
+        current.filter((item) => item.credentialId !== grant.credentialId)
+      );
+      setAccessStatus('Access grant revoked.');
+    });
   }
 
   async function getIdToken() {
     await run('Getting ID token...', setWalletStatus, async () => {
-      const idToken = await omsWallet.wallet.getIdToken()
-      setLastIdToken(idToken)
-      setWalletStatus('ID token issued.')
-    })
+      const idToken = await omsWallet.wallet.getIdToken();
+      setLastIdToken(idToken);
+      setWalletStatus('ID token issued.');
+    });
   }
 
   function waitForFeeOptionSelection(options: FeeOptionWithBalance[]): Promise<FeeOptionSelection> {
-    setFeeOptions(options)
-    setWalletStatus('Choose a fee token to continue.')
+    setFeeOptions(options);
+    setWalletStatus('Choose a fee token to continue.');
     return new Promise((resolve, reject) => {
-      feeSelection.current = { resolve, reject }
-    })
+      feeSelection.current = { resolve, reject };
+    });
   }
 
   function chooseFeeOption(option: FeeOptionWithBalance) {
-    feeSelection.current?.resolve(option.selection)
-    feeSelection.current = null
-    setFeeOptions([])
-    setWalletStatus(`Selected ${option.feeOption.token.symbol}. Sending transaction...`)
+    feeSelection.current?.resolve(option.selection);
+    feeSelection.current = null;
+    setFeeOptions([]);
+    setWalletStatus(`Selected ${option.feeOption.token.symbol}. Sending transaction...`);
   }
 
   function cancelFeeSelection() {
-    feeSelection.current?.reject(new Error('Fee option selection cancelled'))
-    feeSelection.current = null
-    setFeeOptions([])
+    feeSelection.current?.reject(new Error('Fee option selection cancelled'));
+    feeSelection.current = null;
+    setFeeOptions([]);
   }
 
   async function signOut() {
     await run('Signing out...', setWalletStatus, async () => {
-      await omsWallet.wallet.signOut()
-      setCode('')
-      setPendingWalletSelection(null)
-      setWalletAddress('')
-      setLastSignature('')
-      setLastIdToken('')
-      setLastTransactionHash('')
-      setLastTransactionExplorerUrl('')
-      setFeeOptions([])
-      clearManagementState()
-      setStep('email')
-      setEmailAuthStatus('Enter an email to start.')
-      setRedirectStatus('')
-      setWalletStatus('')
-    })
+      await omsWallet.wallet.signOut();
+      setCode('');
+      setPendingWalletSelection(null);
+      setWalletAddress('');
+      setLastSignature('');
+      setLastIdToken('');
+      setLastTransactionHash('');
+      setLastTransactionExplorerUrl('');
+      setFeeOptions([]);
+      clearManagementState();
+      setStep('email');
+      setEmailAuthStatus('Enter an email to start.');
+      setRedirectStatus('');
+      setWalletStatus('');
+    });
   }
 
   function clearWalletOperationResults() {
-    feeSelection.current?.reject(new Error('Active wallet changed'))
-    feeSelection.current = null
-    setFeeOptions([])
-    setLastSignature('')
-    setLastIdToken('')
-    setLastTransactionHash('')
-    setLastTransactionExplorerUrl('')
-    setWalletStatus('')
+    feeSelection.current?.reject(new Error('Active wallet changed'));
+    feeSelection.current = null;
+    setFeeOptions([]);
+    setLastSignature('');
+    setLastIdToken('');
+    setLastTransactionHash('');
+    setLastTransactionExplorerUrl('');
+    setWalletStatus('');
   }
 
   function clearManagementState() {
-    setManagedWallets([])
-    setAccessGrants([])
-    setActiveWalletStatus('')
-    setAccessStatus('')
+    setManagedWallets([]);
+    setAccessGrants([]);
+    setActiveWalletStatus('');
+    setAccessStatus('');
   }
 
   return (
@@ -510,10 +522,12 @@ function App() {
                   <select
                     aria-label="Environment"
                     value={SELECTED_DEMO_ENVIRONMENT.id}
-                    onChange={(event) => changeDemoEnvironment(event.target.value as DemoEnvironmentId)}
+                    onChange={(event) =>
+                      changeDemoEnvironment(event.target.value as DemoEnvironmentId)
+                    }
                     disabled={isBusy}
                   >
-                    {DEMO_ENVIRONMENTS.map(environment => (
+                    {DEMO_ENVIRONMENTS.map((environment) => (
                       <option key={environment.id} value={environment.id}>
                         {environment.label}
                       </option>
@@ -607,7 +621,7 @@ function App() {
                 onChange={(event) => setSelectedNetworkId(Number(event.target.value))}
                 disabled={isBusy}
               >
-                {supportedNetworks.map(network => (
+                {supportedNetworks.map((network) => (
                   <option key={network.id} value={network.id}>
                     {network.displayName} ({network.id})
                   </option>
@@ -619,10 +633,7 @@ function App() {
               <h2>Sign message</h2>
               <label>
                 Message
-                <input
-                  value={message}
-                  onChange={(event) => setMessage(event.target.value)}
-                />
+                <input value={message} onChange={(event) => setMessage(event.target.value)} />
               </label>
               <button type="button" onClick={signMessage} disabled={isBusy || !message.trim()}>
                 Sign message
@@ -652,7 +663,11 @@ function App() {
                   onChange={(event) => setTransactionValue(event.target.value)}
                 />
               </label>
-              <button type="button" onClick={sendTransaction} disabled={isBusy || !transactionTo.trim()}>
+              <button
+                type="button"
+                onClick={sendTransaction}
+                disabled={isBusy || !transactionTo.trim()}
+              >
                 Send transaction
               </button>
               {lastTransactionHash && (
@@ -664,11 +679,7 @@ function App() {
                     <code className="result-value">{lastTransactionHash}</code>
                   </p>
                   {lastTransactionExplorerUrl && (
-                    <a
-                      href={lastTransactionExplorerUrl}
-                      target="_blank"
-                      rel="noreferrer"
-                    >
+                    <a href={lastTransactionExplorerUrl} target="_blank" rel="noreferrer">
                       View on explorer
                     </a>
                   )}
@@ -702,41 +713,58 @@ function App() {
                       placeholder="Optional label"
                     />
                   </label>
-                  <button type="button" className="secondary" onClick={createManagedWallet} disabled={isBusy}>
+                  <button
+                    type="button"
+                    className="secondary"
+                    onClick={createManagedWallet}
+                    disabled={isBusy}
+                  >
                     Create wallet
                   </button>
                 </div>
 
                 {managedWallets.length > 0 ? (
                   <div className="management-list">
-                    {managedWallets.map(wallet => {
-                      const isActiveWallet = sameAddress(wallet.address, walletAddress)
+                    {managedWallets.map((wallet) => {
+                      const isActiveWallet = sameAddress(wallet.address, walletAddress);
 
                       return (
                         <article
                           key={wallet.id}
-                          className={isActiveWallet ? 'management-card management-card-active' : 'management-card'}
+                          className={
+                            isActiveWallet
+                              ? 'management-card management-card-active'
+                              : 'management-card'
+                          }
                         >
                           <div className="management-card-header">
                             <span>
-                              <strong>{wallet.reference ?? `${formatWalletType(wallet.type)} wallet`}</strong>
+                              <strong>
+                                {wallet.reference ?? `${formatWalletType(wallet.type)} wallet`}
+                              </strong>
                               <small>{wallet.id}</small>
                             </span>
                             {isActiveWallet ? (
                               <span className="metadata-pill">Active</span>
                             ) : (
-                              <button type="button" onClick={() => void useManagedWallet(wallet)} disabled={isBusy}>
+                              <button
+                                type="button"
+                                onClick={() => void useManagedWallet(wallet)}
+                                disabled={isBusy}
+                              >
                                 Use
                               </button>
                             )}
                           </div>
                           <code>{wallet.address}</code>
                         </article>
-                      )
+                      );
                     })}
                   </div>
                 ) : (
-                  <p className="field-hint">Load wallets to switch or create another wallet for this account.</p>
+                  <p className="field-hint">
+                    Load wallets to switch or create another wallet for this account.
+                  </p>
                 )}
                 {activeWalletStatus && <output>{activeWalletStatus}</output>}
               </div>
@@ -753,14 +781,20 @@ function App() {
 
                 {accessGrants.length > 0 ? (
                   <div className="management-list">
-                    {accessGrants.map(grant => (
+                    {accessGrants.map((grant) => (
                       <article
                         key={grant.credentialId}
-                        className={grant.isCaller ? 'management-card management-card-active' : 'management-card'}
+                        className={
+                          grant.isCaller
+                            ? 'management-card management-card-active'
+                            : 'management-card'
+                        }
                       >
                         <div className="management-card-header">
                           <span>
-                            <strong>{grant.isCaller ? 'Current session grant' : 'Access grant'}</strong>
+                            <strong>
+                              {grant.isCaller ? 'Current session grant' : 'Access grant'}
+                            </strong>
                             <small>Credential ID: {grant.credentialId}</small>
                           </span>
                           {grant.isCaller ? (
@@ -786,7 +820,9 @@ function App() {
                     ))}
                   </div>
                 ) : (
-                  <p className="field-hint">Show access grants to review or revoke grants for other credentials.</p>
+                  <p className="field-hint">
+                    Show access grants to review or revoke grants for other credentials.
+                  </p>
                 )}
                 {accessStatus && <output>{accessStatus}</output>}
               </div>
@@ -808,7 +844,7 @@ function App() {
           </div>
         )}
 
-            {step === 'wallet' && walletStatus && <output>{walletStatus}</output>}
+        {step === 'wallet' && walletStatus && <output>{walletStatus}</output>}
       </section>
 
       {feeOptions.length > 0 && (
@@ -828,15 +864,15 @@ function App() {
         />
       )}
     </main>
-  )
+  );
 }
 
 createRoot(document.getElementById('root')!).render(
   <React.StrictMode>
     <App />
-  </React.StrictMode>,
-)
+  </React.StrictMode>
+);
 
 function transactionExplorerUrl(network: Network, txnHash: string): string {
-  return `${network.explorerUrl.replace(/\/+$/, '')}/tx/${txnHash}`
+  return `${network.explorerUrl.replace(/\/+$/, '')}/tx/${txnHash}`;
 }

@@ -4,7 +4,7 @@
   "private": true,
   "type": "module",
   "scripts": {
-    "dev": "tsx signInFlow.ts",
+    "dev": "NODE_OPTIONS='--conditions=@polygonlabs/source' tsx signInFlow.ts",
     "build": "tsc --noEmit"
   },
   "dependencies": {

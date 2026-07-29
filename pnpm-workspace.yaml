@@ -1,7 +1,6 @@
 packages:
-  - "."
-  - "packages/*"
-  - "examples/*"
+  - 'packages/*'
+  - 'examples/*'
 
 allowBuilds:
   '@reown/appkit': false
@@ -9,11 +8,32 @@ allowBuilds:
   bufferutil: false
   esbuild: true
   protobufjs: false
+  unrs-resolver: false
   utf-8-validate: false
 
-minimumReleaseAge: 10080
+# Supply chain security (team standard). blockExoticSubdeps refuses
+# non-registry transitive deps; minimumReleaseAge refuses packages
+# published in the last 24h; trustPolicy refuses trust-level downgrades.
+blockExoticSubdeps: true
+minimumReleaseAge: 1440
+trustPolicy: no-downgrade
 
+# Known-good pins flagged as trust downgrades by the no-downgrade policy
+# (transitive deps whose current pinned version tripped the heuristic).
+# Pin the exact versions present in the lockfile; re-check on updates.
+trustPolicyExclude:
+  - '@noble/curves@1.8.0'
+  - '@noble/hashes@1.7.0'
+  - 'semver@5.7.2'
+  - 'slow-redact@0.3.2'
+  - 'undici-types@6.21.0'
+
+# Internal scopes are exempt from the release-age gate so freshly published
+# first-party packages install immediately. Must match the ESLint
+# internalPattern in @polygonlabs/apps-team-lint.
 minimumReleaseAgeExclude:
-  - '@0xtrails/api@0.16.0'
-  - '@0xtrails/wallet@0.16.0'
-  - '0xtrails@0.16.0'
+  - '@polygonlabs/*'
+  - '@maticnetwork/*'
+  - '@agglayer/*'
+  - '@0xsequence/*'
+  - '@0xtrails/*'

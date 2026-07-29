@@ -1,7 +1,7 @@
-import { Networks } from '@polygonlabs/oms-wallet'
-import { omsWalletConnector } from '@polygonlabs/oms-wallet-wagmi-connector'
-import { wagmiAdapter } from '@0xtrails/adapter-wagmi'
-import { createConfig, http } from 'wagmi'
+import { Networks } from '@polygonlabs/oms-wallet';
+import { omsWalletConnector } from '@polygonlabs/oms-wallet-wagmi-connector';
+import { wagmiAdapter } from '@0xtrails/adapter-wagmi';
+import { createConfig, http } from 'wagmi';
 import {
   arbitrum,
   arbitrumNova,
@@ -18,11 +18,11 @@ import {
   optimismSepolia,
   polygon,
   polygonAmoy,
-  sepolia,
-} from 'wagmi/chains'
-import { metaMask } from 'wagmi/connectors'
-import { selectFeeOptionWithAppUi } from './feeOptionSelectionBridge'
-import { omsWallet } from './omsWallet'
+  sepolia
+} from 'wagmi/chains';
+import { metaMask } from 'wagmi/connectors';
+import { selectFeeOptionWithAppUi } from './feeOptionSelectionBridge';
+import { omsWallet } from './omsWallet';
 
 export const omsWalletChains = [
   mainnet,
@@ -40,11 +40,11 @@ export const omsWalletChains = [
   arbitrumNova,
   avalanche,
   avalancheFuji,
-  katana,
-] as const
+  katana
+] as const;
 
-export const omsWalletNetworks = Object.values(Networks)
-export const defaultChain = polygonAmoy
+export const omsWalletNetworks = Object.values(Networks);
+export const defaultChain = polygonAmoy;
 
 export const wagmiConfig = createConfig({
   chains: omsWalletChains,
@@ -53,14 +53,14 @@ export const wagmiConfig = createConfig({
       omsWallet,
       initialChainId: defaultChain.id,
       transactionOptions: {
-        selectFeeOption: selectFeeOptionWithAppUi,
-      },
+        selectFeeOption: selectFeeOptionWithAppUi
+      }
     }),
     metaMask({
       dapp: {
-        name: 'OMS Wallet Wagmi Example',
-      },
-    }),
+        name: 'OMS Wallet Wagmi Example'
+      }
+    })
   ],
   transports: {
     [mainnet.id]: http(),
@@ -78,14 +78,14 @@ export const wagmiConfig = createConfig({
     [arbitrumNova.id]: http(),
     [avalanche.id]: http(),
     [avalancheFuji.id]: http(),
-    [katana.id]: http(),
-  },
-})
+    [katana.id]: http()
+  }
+});
 
-export const trailsAdapters = [wagmiAdapter({ wagmiConfig })]
+export const trailsAdapters = [wagmiAdapter({ wagmiConfig })];
 
 declare module 'wagmi' {
   interface Register {
-    config: typeof wagmiConfig
+    config: typeof wagmiConfig;
   }
 }

@@ -8,10 +8,13 @@
   "types": "dist/index.d.ts",
   "files": [
     "dist",
-    "README.md"
+    "README.md",
+    "CHANGELOG.md",
+    "MIGRATION.md"
   ],
   "exports": {
     ".": {
+      "@polygonlabs/source": "./src/index.ts",
       "types": "./dist/index.d.ts",
       "default": "./dist/index.js"
     }
@@ -22,20 +25,27 @@
   },
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/0xsequence/typescript-sdk.git"
+    "url": "https://github.com/0xPolygon/oms-wallet-typescript-sdk.git"
   },
   "bugs": {
-    "url": "https://github.com/0xsequence/typescript-sdk/issues"
+    "url": "https://github.com/0xPolygon/oms-wallet-typescript-sdk/issues"
   },
-  "homepage": "https://github.com/0xsequence/typescript-sdk#readme",
+  "homepage": "https://github.com/0xPolygon/oms-wallet-typescript-sdk#readme",
   "publishConfig": {
-    "access": "public"
+    "access": "public",
+    "exports": {
+      ".": {
+        "types": "./dist/index.d.ts",
+        "default": "./dist/index.js"
+      }
+    }
   },
   "scripts": {
-    "clean": "rm -rf dist",
-    "build": "pnpm --dir ../.. build && pnpm clean && tsc -p tsconfig.json",
+    "clean": "rm -rf dist out-tsc *.tsbuildinfo",
+    "typecheck": "tsc -b",
+    "build": "pnpm clean && tsc -b tsconfig.lib.json",
     "prepack": "pnpm build",
-    "prepublishOnly": "pnpm --dir ../.. check:package-versions && pnpm build && pnpm test",
+    "prepublishOnly": "pnpm build && pnpm test",
     "test": "vitest run",
     "test:watch": "vitest"
   },

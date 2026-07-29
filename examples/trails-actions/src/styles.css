@@ -1,5 +1,5 @@
 /* Shared example structure and tokens live in examples/shared. */
-@import url("../../shared/oms-example-base.css");
+@import url('../../shared/oms-example-base.css');
 
 .collapsible-tool {
   gap: 0;

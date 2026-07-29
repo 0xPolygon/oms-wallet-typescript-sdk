@@ -1,0 +1,39 @@
+name: CI
+
+on:
+  pull_request:
+    branches: [master]
+
+permissions:
+  contents: read
+
+jobs:
+  # Lint + typecheck + test via the shared composite (runs `pnpm run lint`,
+  # `pnpm run --if-present typecheck`, `pnpm run --if-present test`).
+  ci:
+    name: CI - lint / typecheck / test
+    runs-on: ubuntu-latest
+    steps:
+      - uses: 0xPolygon/pipelines/.github/actions/ci@main
+
+  # Publish-readiness: build both packages (dual CJS+ESM) and every example
+  # (the consumer-compatibility gate — examples resolve the workspace from
+  # source), then run publint against the built packages.
+  build:
+    name: Build & package checks
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+      - uses: pnpm/action-setup@41ff72655975bd51cab0327fa583b6e92b6d3061 # v4
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version-file: .nvmrc
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm run build
+      - run: pnpm run check:exports
+
+  # Generated-artifact drift (API.md + public-API baseline) via the shared
+  # workflow, driven by each package's `codegen-drift-check` script.
+  drift-check:
+    uses: 0xPolygon/pipelines/.github/workflows/apps-codegen-drift-check.yml@main
