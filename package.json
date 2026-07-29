@@ -37,15 +37,20 @@
     "dev:node-example": "pnpm --filter node-example dev",
     "build:node-example": "pnpm --filter node-example build",
     "dev:node-contract-deploy-example": "pnpm --filter node-contract-deploy-example dev",
-    "build:node-contract-deploy-example": "pnpm --filter node-contract-deploy-example build"
+    "build:node-contract-deploy-example": "pnpm --filter node-contract-deploy-example build",
+    "prepare": "husky"
   },
   "devDependencies": {
     "@changesets/changelog-github": "^0.7.0",
     "@changesets/cli": "^2.30.0",
+    "@commitlint/cli": "^19.0.0",
+    "@commitlint/config-conventional": "^19.0.0",
     "@polygonlabs/apps-team-lint": "^2.1.0",
     "concurrently": "^9.2.1",
     "eslint": "^10.0.0",
     "eslint-import-resolver-typescript": "^4.4.4",
+    "husky": "^9.0.0",
+    "lint-staged": "^16.2.7",
     "markdownlint-cli2": "^0.21.0",
     "prettier": "^3.0.0",
     "publint": "^0.3.0",
