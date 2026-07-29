@@ -1,15 +1,15 @@
-import { useEffect, useRef, useState } from 'react'
-import { createRoot } from 'react-dom/client'
-import { Auth0Provider, useAuth0 } from '@auth0/auth0-react'
-import { Networks, type TokenBalance } from '@polygonlabs/oms-wallet'
-import './styles.css'
-import { formatSessionAuth, formatSessionExpiry } from '../../shared/example-utils'
-import { AUTH0_CLIENT_ID, AUTH0_DOMAIN, AUTH0_ISSUER, AUTH0_REDIRECT_URI } from './config'
-import { omsWallet } from './omsWallet'
+import { useEffect, useRef, useState } from 'react';
+import { createRoot } from 'react-dom/client';
+import { Auth0Provider, useAuth0 } from '@auth0/auth0-react';
+import { Networks, type TokenBalance } from '@polygonlabs/oms-wallet';
+import './styles.css';
+import { formatSessionAuth, formatSessionExpiry } from '../../shared/example-utils';
+import { AUTH0_CLIENT_ID, AUTH0_DOMAIN, AUTH0_ISSUER, AUTH0_REDIRECT_URI } from './config';
+import { omsWallet } from './omsWallet';
 
-const DEFAULT_MESSAGE = 'hello from OMS Wallet'
-const DEFAULT_TX_TO = '0xE5E8B483FfC05967FcFed58cc98D053265af6D99'
-const BALANCE_NETWORKS = [Networks.polygon, Networks.base, Networks.arbitrum]
+const DEFAULT_MESSAGE = 'hello from OMS Wallet';
+const DEFAULT_TX_TO = '0xE5E8B483FfC05967FcFed58cc98D053265af6D99';
+const BALANCE_NETWORKS = [Networks.polygon, Networks.base, Networks.arbitrum];
 
 function App() {
   const {
@@ -19,74 +19,75 @@ function App() {
     isLoading: isAuth0Loading,
     loginWithRedirect,
     logout: logoutFromAuth0,
-    user: auth0User,
-  } = useAuth0()
-  const restoredWalletAddress = omsWallet.wallet.walletAddress ?? ''
-  const [walletAddress, setWalletAddress] = useState(restoredWalletAddress)
+    user: auth0User
+  } = useAuth0();
+  const restoredWalletAddress = omsWallet.wallet.walletAddress ?? '';
+  const [walletAddress, setWalletAddress] = useState(restoredWalletAddress);
   const [status, setStatus] = useState(
     restoredWalletAddress
       ? 'Wallet session restored.'
-      : 'Ready to authenticate with Auth0 and pass its ID token to OMS Wallet.',
-  )
-  const [message, setMessage] = useState(DEFAULT_MESSAGE)
-  const [lastSignature, setLastSignature] = useState('')
-  const [lastAuth0IdToken, setLastAuth0IdToken] = useState('')
-  const [transactionTo, setTransactionTo] = useState(DEFAULT_TX_TO)
-  const [transactionValue, setTransactionValue] = useState('0')
-  const [lastTransactionHash, setLastTransactionHash] = useState('')
-  const [lastTransactionExplorerUrl, setLastTransactionExplorerUrl] = useState('')
-  const [balances, setBalances] = useState<TokenBalance[] | null>(null)
-  const [isBusy, setIsBusy] = useState(false)
-  const omsSignInStarted = useRef(false)
+      : 'Ready to authenticate with Auth0 and pass its ID token to OMS Wallet.'
+  );
+  const [message, setMessage] = useState(DEFAULT_MESSAGE);
+  const [lastSignature, setLastSignature] = useState('');
+  const [lastAuth0IdToken, setLastAuth0IdToken] = useState('');
+  const [transactionTo, setTransactionTo] = useState(DEFAULT_TX_TO);
+  const [transactionValue, setTransactionValue] = useState('0');
+  const [lastTransactionHash, setLastTransactionHash] = useState('');
+  const [lastTransactionExplorerUrl, setLastTransactionExplorerUrl] = useState('');
+  const [balances, setBalances] = useState<TokenBalance[] | null>(null);
+  const [isBusy, setIsBusy] = useState(false);
+  const omsSignInStarted = useRef(false);
 
   useEffect(() => {
-    if (isAuth0Loading || !isAuth0Authenticated || walletAddress || omsSignInStarted.current) return
-    omsSignInStarted.current = true
-    void signInToOmsWithAuth0IdToken()
-  }, [isAuth0Authenticated, isAuth0Loading, walletAddress])
+    if (isAuth0Loading || !isAuth0Authenticated || walletAddress || omsSignInStarted.current)
+      return;
+    omsSignInStarted.current = true;
+    void signInToOmsWithAuth0IdToken();
+  }, [isAuth0Authenticated, isAuth0Loading, walletAddress]);
 
   async function run(label: string, action: () => Promise<void>) {
-    setIsBusy(true)
-    setStatus(label)
+    setIsBusy(true);
+    setStatus(label);
     try {
-      await action()
+      await action();
     } catch (error) {
-      setStatus(error instanceof Error ? error.message : String(error))
+      setStatus(error instanceof Error ? error.message : String(error));
     } finally {
-      setIsBusy(false)
+      setIsBusy(false);
     }
   }
 
   async function startAuth0Login() {
-    setStatus('Opening Auth0 sign-in...')
-    await loginWithRedirect()
+    setStatus('Opening Auth0 sign-in...');
+    await loginWithRedirect();
   }
 
   async function signInToOmsWithAuth0IdToken() {
-    setIsBusy(true)
-    setStatus('Signing in to OMS Wallet with the Auth0-issued ID token...')
+    setIsBusy(true);
+    setStatus('Signing in to OMS Wallet with the Auth0-issued ID token...');
     try {
-      const claims = await getIdTokenClaims()
+      const claims = await getIdTokenClaims();
       if (!claims?.__raw) {
-        throw new Error('Auth0 did not return a raw ID token')
+        throw new Error('Auth0 did not return a raw ID token');
       }
 
-      setLastAuth0IdToken(claims.__raw)
+      setLastAuth0IdToken(claims.__raw);
       const result = await omsWallet.wallet.signInWithOidcIdToken({
         idToken: claims.__raw,
         issuer: AUTH0_ISSUER,
         audience: AUTH0_CLIENT_ID,
         provider: 'auth0',
-        providerLabel: 'Auth0',
-      })
+        providerLabel: 'Auth0'
+      });
 
-      setWalletAddress(result.walletAddress)
-      setStatus('OMS Wallet sign-in with the Auth0-issued ID token is complete.')
+      setWalletAddress(result.walletAddress);
+      setStatus('OMS Wallet sign-in with the Auth0-issued ID token is complete.');
     } catch (error) {
-      omsSignInStarted.current = false
-      setStatus(error instanceof Error ? error.message : String(error))
+      omsSignInStarted.current = false;
+      setStatus(error instanceof Error ? error.message : String(error));
     } finally {
-      setIsBusy(false)
+      setIsBusy(false);
     }
   }
 
@@ -94,93 +95,93 @@ function App() {
     await run('Signing message...', async () => {
       const signature = await omsWallet.wallet.signMessage({
         network: Networks.amoy,
-        message,
-      })
-      setLastSignature(signature)
-      setStatus('Message signed.')
-    })
+        message
+      });
+      setLastSignature(signature);
+      setStatus('Message signed.');
+    });
   }
 
   async function loadBalances() {
-    if (!walletAddress) return
+    if (!walletAddress) return;
 
     await run('Loading balances...', async () => {
       const result = await omsWallet.indexer.getBalances({
         walletAddress,
         networks: BALANCE_NETWORKS,
-        includeMetadata: true,
-      })
-      setBalances([...result.nativeBalances, ...result.balances])
-      setStatus(`Loaded ${result.nativeBalances.length + result.balances.length} balances.`)
-    })
+        includeMetadata: true
+      });
+      setBalances([...result.nativeBalances, ...result.balances]);
+      setStatus(`Loaded ${result.nativeBalances.length + result.balances.length} balances.`);
+    });
   }
 
   async function sendTransaction() {
     await run('Sending Polygon Amoy transaction...', async () => {
-      const to = transactionTo.trim()
+      const to = transactionTo.trim();
       if (!/^0x[0-9a-fA-F]{40}$/.test(to)) {
-        throw new Error('Enter a valid EVM recipient address')
+        throw new Error('Enter a valid EVM recipient address');
       }
 
-      let value: bigint
+      let value: bigint;
       try {
-        value = BigInt(transactionValue.trim() || '0')
+        value = BigInt(transactionValue.trim() || '0');
       } catch {
-        throw new Error('Transaction value must be an integer number of wei')
+        throw new Error('Transaction value must be an integer number of wei');
       }
       if (value < 0n) {
-        throw new Error('Transaction value cannot be negative')
+        throw new Error('Transaction value cannot be negative');
       }
 
-      setLastTransactionHash('')
-      setLastTransactionExplorerUrl('')
+      setLastTransactionHash('');
+      setLastTransactionExplorerUrl('');
       const transaction = await omsWallet.wallet.sendTransaction({
         network: Networks.amoy,
         to: to as `0x${string}`,
-        value,
-      })
-      setLastTransactionHash(transaction.txnHash ?? transaction.txnId)
+        value
+      });
+      setLastTransactionHash(transaction.txnHash ?? transaction.txnId);
       setLastTransactionExplorerUrl(
         transaction.txnHash
           ? `${Networks.amoy.explorerUrl.replace(/\/+$/, '')}/tx/${transaction.txnHash}`
-          : '',
-      )
-      setStatus('Polygon Amoy transaction sent.')
-    })
+          : ''
+      );
+      setStatus('Polygon Amoy transaction sent.');
+    });
   }
 
   async function refreshAuth0IdToken() {
     await run('Getting the current Auth0-issued ID token...', async () => {
-      const claims = await getIdTokenClaims()
+      const claims = await getIdTokenClaims();
       if (!claims?.__raw) {
-        throw new Error('Auth0 did not return a raw ID token')
+        throw new Error('Auth0 did not return a raw ID token');
       }
-      setLastAuth0IdToken(claims.__raw)
-      setStatus('Auth0-issued ID token loaded.')
-    })
+      setLastAuth0IdToken(claims.__raw);
+      setStatus('Auth0-issued ID token loaded.');
+    });
   }
 
   async function signOut() {
     await run('Signing out...', async () => {
-      await omsWallet.wallet.signOut()
-      setWalletAddress('')
-      setLastSignature('')
-      setLastAuth0IdToken('')
-      setTransactionTo(DEFAULT_TX_TO)
-      setTransactionValue('0')
-      setLastTransactionHash('')
-      setLastTransactionExplorerUrl('')
-      setBalances(null)
-      omsSignInStarted.current = false
+      await omsWallet.wallet.signOut();
+      setWalletAddress('');
+      setLastSignature('');
+      setLastAuth0IdToken('');
+      setTransactionTo(DEFAULT_TX_TO);
+      setTransactionValue('0');
+      setLastTransactionHash('');
+      setLastTransactionExplorerUrl('');
+      setBalances(null);
+      omsSignInStarted.current = false;
       await logoutFromAuth0({
         logoutParams: {
-          returnTo: AUTH0_REDIRECT_URI,
-        },
-      })
-    })
+          returnTo: AUTH0_REDIRECT_URI
+        }
+      });
+    });
   }
 
-  const displayedStatus = auth0Error ? `Auth0 error: ${auth0Error.message}` : status
+  const displayedStatus = auth0Error ? `Auth0 error: ${auth0Error.message}` : status;
 
   return (
     <main className="shell">
@@ -272,7 +273,8 @@ function App() {
                 <span className="metadata-pill">Polygon Amoy</span>
               </div>
               <p className="field-hint compact-hint">
-                Sponsored testnet transaction. The recipient and zero-value amount are prefilled for one-click testing.
+                Sponsored testnet transaction. The recipient and zero-value amount are prefilled for
+                one-click testing.
               </p>
               <label>
                 Recipient
@@ -292,7 +294,11 @@ function App() {
                   disabled={isBusy}
                 />
               </label>
-              <button type="button" onClick={sendTransaction} disabled={isBusy || !transactionTo.trim()}>
+              <button
+                type="button"
+                onClick={sendTransaction}
+                disabled={isBusy || !transactionTo.trim()}
+              >
                 Send Amoy transaction
               </button>
               {lastTransactionHash ? (
@@ -338,7 +344,9 @@ function App() {
                 </div>
               ) : (
                 <p className="field-hint compact-hint">
-                  {balances ? 'No balances found for the active wallet.' : 'Load balances for the active wallet.'}
+                  {balances
+                    ? 'No balances found for the active wallet.'
+                    : 'Load balances for the active wallet.'}
                 </p>
               )}
             </section>
@@ -363,7 +371,7 @@ function App() {
         ) : null}
       </section>
     </main>
-  )
+  );
 }
 
 createRoot(document.getElementById('root')!).render(
@@ -372,9 +380,9 @@ createRoot(document.getElementById('root')!).render(
     clientId={AUTH0_CLIENT_ID}
     authorizationParams={{
       redirect_uri: AUTH0_REDIRECT_URI,
-      scope: 'openid profile email',
+      scope: 'openid profile email'
     }}
   >
     <App />
-  </Auth0Provider>,
-)
+  </Auth0Provider>
+);
