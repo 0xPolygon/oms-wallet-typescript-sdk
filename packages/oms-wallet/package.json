@@ -32,7 +32,7 @@
   "sideEffects": false,
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/0xPolygon/oms-wallet-typescript-sdk.git",
+    "url": "https://github.com/0xPolygon/oms-wallet-typescript-sdk.git",
     "directory": "packages/oms-wallet"
   },
   "bugs": {
