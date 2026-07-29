@@ -5,6 +5,7 @@ packages:
 
 allowBuilds:
   '@reown/appkit': false
+  browser-tabs-lock: false
   bufferutil: false
   esbuild: true
   protobufjs: false
