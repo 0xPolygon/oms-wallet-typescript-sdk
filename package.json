@@ -59,6 +59,8 @@
     "build:example": "pnpm --filter react-example build",
     "dev:custom-google-redirect-example": "pnpm --filter custom-google-redirect-example dev",
     "build:custom-google-redirect-example": "pnpm --filter custom-google-redirect-example build",
+    "dev:custom-auth0-id-token-example": "pnpm --filter custom-auth0-id-token-example dev",
+    "build:custom-auth0-id-token-example": "pnpm --filter custom-auth0-id-token-example build",
     "dev:trails-actions-example": "pnpm --filter trails-actions-example dev",
     "build:trails-actions-example": "pnpm --filter trails-actions-example build",
     "dev:wagmi-example": "pnpm --filter @polygonlabs/oms-wallet-wagmi-connector build && pnpm --filter wagmi-example dev",

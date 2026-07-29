@@ -604,6 +604,21 @@ To run it locally from the repository root:
 pnpm dev:custom-google-redirect-example
 ```
 
+## Auth0-issued ID Token Example
+
+The Auth0-issued ID-token example uses `@auth0/auth0-react` to authenticate the user,
+reads the raw Auth0 ID token, and passes it to `signInWithOidcIdToken` with the
+Auth0 issuer and client ID as audience. The authenticated wallet can also submit
+a sponsored native Polygon Amoy transaction using prefilled test values.
+
+Add `http://localhost:5173` to the Auth0 application's Allowed Callback URLs,
+Allowed Logout URLs, and Allowed Web Origins,
+then run it locally from the repository root:
+
+```bash
+pnpm dev:custom-auth0-id-token-example
+```
+
 ## Wagmi Connector
 
 This workspace also includes `@polygonlabs/oms-wallet-wagmi-connector`, an ESM-only package that adapts an

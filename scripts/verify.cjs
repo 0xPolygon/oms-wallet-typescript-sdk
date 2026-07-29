@@ -27,6 +27,7 @@ run('Build Node example', ['--filter', 'node-example', 'build'])
 run('Build Node contract deployment example', ['--filter', 'node-contract-deploy-example', 'build'])
 run('Build React example', ['--filter', 'react-example', 'build'])
 run('Build custom Google redirect example', ['--filter', 'custom-google-redirect-example', 'build'])
+run('Build Auth0 ID-token example', ['--filter', 'custom-auth0-id-token-example', 'build'])
 run('Build Trails Actions example', ['--filter', 'trails-actions-example', 'build'])
 run('Build wagmi example', ['--filter', 'wagmi-example', 'build'])
 
