@@ -9,7 +9,7 @@
     "preview": "vite preview"
   },
   "dependencies": {
-    "0xtrails": "0.16.0",
+    "0xtrails": "0.17.1",
     "@polygonlabs/oms-wallet-wagmi-connector": "workspace:*",
     "@polygonlabs/oms-wallet": "workspace:*",
     "@0xtrails/adapter-wagmi": "0.16.0",
