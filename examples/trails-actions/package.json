@@ -9,7 +9,7 @@
     "preview": "vite preview"
   },
   "dependencies": {
-    "0xtrails": "0.16.0",
+    "0xtrails": "0.17.1",
     "@polygonlabs/oms-wallet": "workspace:*",
     "@0xtrails/api": "0.16.0",
     "react": "19.2.7",
