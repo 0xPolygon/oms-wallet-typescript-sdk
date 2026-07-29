@@ -11,7 +11,7 @@
   "dependencies": {
     "0xtrails": "0.16.0",
     "@polygonlabs/oms-wallet": "workspace:*",
-    "@0xtrails/api": "0.16.0",
+    "@0xtrails/api": "0.17.1",
     "react": "19.2.7",
     "react-dom": "19.2.7",
     "viem": "^2.48.4"
