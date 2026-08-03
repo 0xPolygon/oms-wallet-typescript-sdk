@@ -13,7 +13,7 @@
     "@polygonlabs/oms-wallet-wagmi-connector": "workspace:*",
     "@polygonlabs/oms-wallet": "workspace:*",
     "@0xtrails/adapter-wagmi": "0.17.1",
-    "@metamask/connect-evm": "^1.4.0",
+    "@metamask/connect-evm": "^2.1.1",
     "@tanstack/react-query": "5.101.0",
     "react": "19.2.7",
     "react-dom": "19.2.7",
