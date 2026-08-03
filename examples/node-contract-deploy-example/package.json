@@ -11,7 +11,7 @@
     "@polygonlabs/oms-wallet": "workspace:*",
     "dotenv": "^17.4.2",
     "solc": "^0.8.35",
-    "viem": "^2.48.4"
+    "viem": "^2.55.10"
   },
   "devDependencies": {
     "@types/node": "^22.19.19",
