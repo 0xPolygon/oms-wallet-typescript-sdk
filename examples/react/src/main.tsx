@@ -431,7 +431,7 @@ function App() {
     }
 
     await run('Revoking access...', setAccessStatus, async () => {
-      await omsWallet.wallet.revokeAccess({ targetCredentialId: grant.credentialId });
+      await omsWallet.wallet.revokeAccess({ credentialId: grant.credentialId });
       setAccessGrants((current) =>
         current.filter((item) => item.credentialId !== grant.credentialId)
       );

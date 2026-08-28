@@ -161,6 +161,7 @@ describe('WalletClient signing', () => {
       if (url.endsWith('/IsValidMessageSignature')) {
         expect(body).toEqual({
           network: '137',
+          networkFamily: 'evm',
           walletId: 'wallet-id',
           message: 'hello',
           signature: '0xmessage'
@@ -200,6 +201,41 @@ describe('WalletClient signing', () => {
         signature: '0xtyped'
       })
     ).resolves.toBe(false);
+  });
+
+  it('validates Solana message signatures through the generated wallet public client', async () => {
+    const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = input.toString();
+      const body = JSON.parse(init?.body as string);
+      const headers = init?.headers as Record<string, string>;
+
+      expect(headers['Api-Key']).toBe('publishable-key');
+      expect(headers['OMS-Wallet-Signature']).toBeUndefined();
+      expect(headers.Authorization).toBeUndefined();
+
+      if (url.endsWith('/IsValidMessageSignature')) {
+        expect(body).toEqual({
+          networkFamily: 'solana',
+          walletAddress: '9xQeWvG816bUx9EPjHmaT23yvVMuZwHngkQF5JC9YjCy',
+          message: 'hello solana',
+          signature: 'base58-signature'
+        });
+        return jsonResponse({ isValid: true });
+      }
+
+      throw new Error(`Unexpected request: ${url}`);
+    });
+    vi.stubGlobal('fetch', fetchMock);
+
+    const wallet = createWalletWithSession('9xQeWvG816bUx9EPjHmaT23yvVMuZwHngkQF5JC9YjCy');
+
+    await expect(
+      wallet.isValidSolanaMessageSignature({
+        walletAddress: '9xQeWvG816bUx9EPjHmaT23yvVMuZwHngkQF5JC9YjCy',
+        message: 'hello solana',
+        signature: 'base58-signature'
+      })
+    ).resolves.toBe(true);
   });
 });
 

@@ -1,6 +1,6 @@
 import type { ContractFunctionName, Abi, Address, EncodeFunctionDataParameters } from 'viem';
 
-import { encodeFunctionData } from 'viem';
+import { encodeFunctionData, isAddress } from 'viem';
 
 import type { CredentialSigner, CredentialSigningAlgorithm } from '../credentialSigner.js';
 import type {
@@ -12,6 +12,7 @@ import type {
   ListAccessRequest,
   ListWalletsRequest,
   RevokeAccessRequest,
+  AuthorizeRemoteAccessRequest,
   SignMessageRequest,
   SignTypedDataRequest,
   GetIDTokenRequest,
@@ -19,13 +20,15 @@ import type {
   IsValidTypedDataSignatureRequest,
   PrepareEthereumTransactionRequest,
   PrepareEthereumContractCallRequest,
+  PrepareSolanaTransferRequest,
   ExecuteRequest,
   ExecuteResponse,
   TransactionStatusRequest,
   PrepareResponse,
   Fetch,
   CredentialInfo,
-  WalletType as GeneratedWalletType,
+  CredentialMetadata,
+  Grant,
   FeeOption as GeneratedFeeOption
 } from '../generated/waas.gen.js';
 import type { Network } from '../networks.js';
@@ -35,7 +38,12 @@ import type { StorageManager } from '../storageManager.js';
 import type {
   AccessGrant,
   AccessGrantPage,
+  AuthorizeRemoteAccessParams,
+  AuthorizedRemoteAccess,
   ListAccessParams,
+  RemoteCredentialMetadata,
+  RevokeAccessParams,
+  SmartSessionGrant,
   WalletCredential
 } from '../types/accessGrant.js';
 import type {
@@ -44,6 +52,7 @@ import type {
   SendContractTransactionParams,
   SendDataTransactionParams,
   SendNativeTransactionParams,
+  SendSolanaTransferParams,
   SendTransactionParams,
   SendTransactionResponse,
   TransactionStatusPollingOptions
@@ -65,6 +74,7 @@ import type {
   CompleteWalletAuthResult,
   GetIdTokenParams,
   IsValidMessageSignatureParams,
+  IsValidSolanaMessageSignatureParams,
   IsValidTypedDataSignatureParams,
   ManualWalletSelectionParams,
   OMSWalletClient,
@@ -79,6 +89,7 @@ import type {
   SignInWithOidcIdTokenParams,
   SignInWithOidcRedirectParams,
   SignMessageParams,
+  SignSolanaMessageParams,
   SignTypedDataParams,
   StartEmailAuthParams,
   StartOidcRedirectAuthParams,
@@ -101,7 +112,10 @@ import {
   Waas as WaasClient,
   WaasPublic as WaasPublicClient,
   IdentityType,
-  AuthMode as GeneratedAuthMode
+  AuthMode as GeneratedAuthMode,
+  NetworkFamily as GeneratedNetworkFamily,
+  CredentialType,
+  GrantKind
 } from '../generated/waas.gen.js';
 import { isOmsRelayOidcProvider, resolveOidcProviderConfig } from '../oidc.js';
 import { WalletOperation } from '../operations.js';
@@ -124,13 +138,13 @@ import {
 import { RequestUtils } from '../utils/requestUtils.js';
 import {
   fromGeneratedFeeOption,
+  fromGeneratedNetworkFamily,
   fromGeneratedTransactionStatus,
   fromGeneratedTransactionStatusResponse,
-  fromGeneratedWalletType,
   toGeneratedAuthMode,
   toGeneratedFeeOptionSelection,
-  toGeneratedTransactionMode,
-  toGeneratedWalletType
+  toGeneratedNetworkFamily,
+  toGeneratedTransactionMode
 } from '../utils/waasTypes.js';
 import { IndexerClient } from './indexerClient.js';
 
@@ -171,7 +185,7 @@ interface StoredSessionRecord {
     indexerGatewayUrl: string;
   };
   walletId: string;
-  walletAddress: Address;
+  walletAddress: string;
   expiresAt: string;
   auth: OMSWalletSessionAuth;
   signerCredentialId: string;
@@ -294,7 +308,7 @@ export class WalletClient implements OMSWalletClient {
   private readonly transactionStatusPollIntervalMs = 2_000;
   private readonly transactionStatusPollTimeoutMs = 60_000;
 
-  private activeWalletAddress: Address | undefined;
+  private activeWalletAddress: string | undefined;
   private sessionExpiresAt: string | undefined;
   private sessionAuth: OMSWalletSessionAuth | undefined;
   private sessionSignerCredentialId: string | undefined;
@@ -377,7 +391,7 @@ export class WalletClient implements OMSWalletClient {
   }
 
   /** The on-chain address of this wallet. Undefined until auth completes or a session is restored. */
-  get walletAddress(): Address | undefined {
+  get walletAddress(): string | undefined {
     return this.activeWalletAddress;
   }
 
@@ -935,7 +949,7 @@ export class WalletClient implements OMSWalletClient {
 
   async signMessage(params: SignMessageParams): Promise<string> {
     return this.runOperation(WalletOperation.signMessage, async () => {
-      await this.requireActiveSession(WalletOperation.signMessage);
+      await this.requireActiveEthereumSession(WalletOperation.signMessage);
       const request: SignMessageRequest = {
         network: params.network.id.toString(),
         walletId: this.walletId,
@@ -946,9 +960,22 @@ export class WalletClient implements OMSWalletClient {
     });
   }
 
+  async signSolanaMessage(params: SignSolanaMessageParams): Promise<string> {
+    return this.runOperation(WalletOperation.signSolanaMessage, async () => {
+      await this.requireActiveSolanaSession(WalletOperation.signSolanaMessage);
+      const request: SignMessageRequest = {
+        network: '',
+        walletId: this.walletId,
+        message: params.message
+      };
+      const response = await this.client.signMessage(request);
+      return response.signature;
+    });
+  }
+
   async signTypedData(params: SignTypedDataParams): Promise<string> {
     return this.runOperation(WalletOperation.signTypedData, async () => {
-      await this.requireActiveSession(WalletOperation.signTypedData);
+      await this.requireActiveEthereumSession(WalletOperation.signTypedData);
       const request: SignTypedDataRequest = {
         network: params.network.id.toString(),
         walletId: this.walletId,
@@ -963,6 +990,23 @@ export class WalletClient implements OMSWalletClient {
     return this.runOperation(WalletOperation.isValidMessageSignature, async () => {
       const request: IsValidMessageSignatureRequest = {
         network: params.network?.id.toString(),
+        networkFamily: GeneratedNetworkFamily.EVM,
+        walletAddress: params.walletAddress,
+        walletId: params.walletId ?? (params.walletAddress ? undefined : this.activeWalletId()),
+        message: params.message,
+        signature: params.signature
+      };
+      const response = await this.publicClient.isValidMessageSignature(request);
+      return response.isValid;
+    });
+  }
+
+  async isValidSolanaMessageSignature(
+    params: IsValidSolanaMessageSignatureParams
+  ): Promise<boolean> {
+    return this.runOperation(WalletOperation.isValidSolanaMessageSignature, async () => {
+      const request: IsValidMessageSignatureRequest = {
+        networkFamily: GeneratedNetworkFamily.Solana,
         walletAddress: params.walletAddress,
         walletId: params.walletId ?? (params.walletAddress ? undefined : this.activeWalletId()),
         message: params.message,
@@ -995,7 +1039,7 @@ export class WalletClient implements OMSWalletClient {
   >(params: SendContractTransactionParams<abi, functionName>): Promise<SendTransactionResponse>;
   async sendTransaction(params: SendTransactionParams): Promise<SendTransactionResponse> {
     return this.runOperation(WalletOperation.sendTransaction, async () => {
-      await this.requireActiveSession(WalletOperation.sendTransaction);
+      await this.requireActiveEthereumSession(WalletOperation.sendTransaction);
       const data =
         'abi' in params ? encodeFunctionData(params as EncodeFunctionDataParameters) : params.data;
 
@@ -1019,6 +1063,28 @@ export class WalletClient implements OMSWalletClient {
     });
   }
 
+  async sendSolanaTransfer(params: SendSolanaTransferParams): Promise<SendTransactionResponse> {
+    return this.runOperation(WalletOperation.sendSolanaTransfer, async () => {
+      await this.requireActiveSolanaSession(WalletOperation.sendSolanaTransfer);
+      const request: PrepareSolanaTransferRequest = {
+        network: params.network,
+        walletId: this.walletId,
+        asset: params.asset,
+        recipient: { address: params.to },
+        amount: params.amount.toString(),
+        mode: toGeneratedTransactionMode(params.mode ?? TransactionMode.Relayer)
+      };
+
+      const prepared = await this.client.prepareSolanaTransfer(request);
+      return this.executePreparedTransaction({
+        prepared,
+        selectFeeOption: params.selectFeeOption,
+        waitForStatus: params.waitForStatus,
+        statusPolling: params.statusPolling
+      });
+    });
+  }
+
   async callContract(params: {
     network: Network;
     contractAddress: Address;
@@ -1030,7 +1096,7 @@ export class WalletClient implements OMSWalletClient {
     statusPolling?: TransactionStatusPollingOptions;
   }): Promise<SendTransactionResponse> {
     return this.runOperation(WalletOperation.callContract, async () => {
-      await this.requireActiveSession(WalletOperation.callContract);
+      await this.requireActiveEthereumSession(WalletOperation.callContract);
       const request: PrepareEthereumContractCallRequest = {
         network: params.network.id.toString(),
         walletId: this.walletId,
@@ -1059,6 +1125,42 @@ export class WalletClient implements OMSWalletClient {
     );
   }
 
+  async inspectRemoteCredential(params: {
+    credentialId: string;
+  }): Promise<RemoteCredentialMetadata> {
+    return this.runOperation(WalletOperation.inspectRemoteCredential, async () => {
+      const response = await this.publicClient.inspectCredential({
+        scope: this.projectId,
+        credentialId: params.credentialId
+      });
+      return this.toRemoteCredentialMetadata(response.metadata);
+    });
+  }
+
+  async authorizeRemoteAccess(
+    params: AuthorizeRemoteAccessParams
+  ): Promise<AuthorizedRemoteAccess> {
+    return this.runOperation(WalletOperation.authorizeRemoteAccess, async () => {
+      await this.requireActiveEthereumSession(WalletOperation.authorizeRemoteAccess);
+      const walletId = this.walletId;
+      const request: AuthorizeRemoteAccessRequest = {
+        credentialId: params.credentialId,
+        walletId,
+        grants: { entries: params.grants.map((grant) => this.toGeneratedGrant(grant)) },
+        expiry: params.expiresAt,
+        chainId: params.network.id.toString(),
+        sessionId: params.sessionId
+      };
+      const response = await this.client.authorizeRemoteAccess(request);
+      await this.requireSameActiveWalletSession(walletId, WalletOperation.authorizeRemoteAccess);
+      return {
+        walletId,
+        sessionId: response.sessionId,
+        expiresAt: response.expiry
+      };
+    });
+  }
+
   async listAccess(params: ListAccessParams = {}): Promise<AccessGrant[]> {
     return this.runOperation(WalletOperation.listAccess, async () => {
       const grants: AccessGrant[] = [];
@@ -1077,12 +1179,13 @@ export class WalletClient implements OMSWalletClient {
     }
   }
 
-  async revokeAccess(params: { targetCredentialId: string }): Promise<void> {
+  async revokeAccess(params: RevokeAccessParams): Promise<void> {
     return this.runOperation(WalletOperation.revokeAccess, async () => {
       await this.requireActiveSession(WalletOperation.revokeAccess);
       const request: RevokeAccessRequest = {
-        targetCredentialId: params.targetCredentialId,
-        walletId: this.walletId
+        targetCredentialId: params.credentialId,
+        walletId: this.walletId,
+        sessionId: params.sessionId
       };
 
       await this.client.revokeAccess(request);
@@ -1096,7 +1199,10 @@ export class WalletClient implements OMSWalletClient {
    * restored when the configured credential signer is also available.
    */
   private async requestCreateWallet(type: WalletType, reference?: string): Promise<WalletAccount> {
-    const params: CreateWalletRequest = { type: toGeneratedWalletType(type), reference };
+    const params: CreateWalletRequest = {
+      networkFamily: toGeneratedNetworkFamily(type),
+      reference
+    };
     const response = await this.client.createWallet(params);
     return this.toWalletAccount(response.wallet);
   }
@@ -1212,7 +1318,11 @@ export class WalletClient implements OMSWalletClient {
     do {
       await this.requireSameActiveWalletSession(walletId, operation);
       const page = this.buildListAccessPage(params.pageSize, cursor);
-      const request: ListAccessRequest = page ? { walletId, page } : { walletId };
+      const request: ListAccessRequest = {
+        walletId,
+        page,
+        type: this.toGeneratedCredentialType(params.type)
+      };
       const response = await this.client.listAccess(request);
       await this.requireSameActiveWalletSession(walletId, operation);
 
@@ -1265,24 +1375,117 @@ export class WalletClient implements OMSWalletClient {
 
   private toWalletAccount(wallet: {
     id: string;
-    type: GeneratedWalletType;
+    networkFamily?: GeneratedNetworkFamily;
     address: string;
     reference?: string;
   }): WalletAccount {
+    if (!wallet.networkFamily) {
+      throw new Error('Wallet response is missing networkFamily');
+    }
+    const type = fromGeneratedNetworkFamily(wallet.networkFamily);
+    if (type === WalletType.Ethereum) {
+      return {
+        id: wallet.id,
+        type,
+        address: wallet.address as Address,
+        reference: wallet.reference
+      };
+    }
     return {
       id: wallet.id,
-      type: fromGeneratedWalletType(wallet.type),
-      address: wallet.address as Address,
+      type,
+      address: wallet.address,
       reference: wallet.reference
     };
   }
 
-  private toWalletCredential(credential: CredentialInfo): WalletCredential {
+  private toWalletCredential(credential: CredentialInfo): AccessGrant {
+    if (credential.type === CredentialType.Direct) {
+      return {
+        type: 'direct',
+        credentialId: credential.credentialId,
+        expiresAt: credential.expiresAt,
+        isCaller: credential.isCaller
+      };
+    }
+
+    if (!credential.sessionId || !credential.metadata || !credential.grants) {
+      throw new Error('Remote access entry is missing session data');
+    }
+
     return {
+      type: 'remote',
       credentialId: credential.credentialId,
+      sessionId: credential.sessionId,
+      metadata: this.toRemoteCredentialMetadata(credential.metadata),
+      grants: credential.grants.entries.map((grant) => this.fromGeneratedGrant(grant)),
       expiresAt: credential.expiresAt,
       isCaller: credential.isCaller
     };
+  }
+
+  private toGeneratedCredentialType(type: ListAccessParams['type']): CredentialType | undefined {
+    if (type === undefined) {
+      return undefined;
+    }
+    return type === 'direct' ? CredentialType.Direct : CredentialType.Remote;
+  }
+
+  private toRemoteCredentialMetadata(metadata: CredentialMetadata): RemoteCredentialMetadata {
+    return {
+      appUrl: metadata.appUrl,
+      appName: metadata.appName,
+      appLogoUrl: metadata.appLogoUrl,
+      custom: { ...metadata.custom }
+    };
+  }
+
+  private toGeneratedGrant(grant: SmartSessionGrant): Grant {
+    if (grant.kind === 'nativeTransfer') {
+      return {
+        kind: GrantKind.NativeTransfer,
+        nativeTransfer: { to: grant.to, limit: grant.limit.toString() }
+      };
+    }
+    return {
+      kind: GrantKind.ERC20Transfer,
+      erc20Transfer: {
+        token: grant.token,
+        to: grant.to,
+        limit: grant.limit.toString(),
+        cumulative: grant.cumulative
+      }
+    };
+  }
+
+  private fromGeneratedGrant(grant: Grant): SmartSessionGrant {
+    if (grant.kind === GrantKind.NativeTransfer && grant.nativeTransfer) {
+      return {
+        kind: 'nativeTransfer',
+        to: this.toEthereumAddress(grant.nativeTransfer.to, 'native transfer recipient'),
+        limit: BigInt(grant.nativeTransfer.limit)
+      };
+    }
+    if (grant.kind === GrantKind.ERC20Transfer && grant.erc20Transfer) {
+      return {
+        kind: 'erc20Transfer',
+        token: this.toEthereumAddress(grant.erc20Transfer.token, 'ERC-20 token'),
+        to:
+          grant.erc20Transfer.to === undefined
+            ? undefined
+            : this.toEthereumAddress(grant.erc20Transfer.to, 'ERC-20 recipient'),
+        limit: BigInt(grant.erc20Transfer.limit),
+        cumulative: grant.erc20Transfer.cumulative
+      };
+    }
+    throw new Error('Access entry contains an invalid session grant');
+  }
+
+  private toEthereumAddress(value: string, field: string): Address {
+    if (!isAddress(value)) {
+      throw new Error(`Access entry contains an invalid ${field}`);
+    }
+    return value;
   }
 
   /** Saves wallet metadata. The non-extractable credential key is owned by the signer. */
@@ -1296,7 +1499,7 @@ export class WalletClient implements OMSWalletClient {
       version: 1,
       scope: this.sessionScope(),
       walletId,
-      walletAddress: walletAddress as Address,
+      walletAddress,
       expiresAt: metadata.expiresAt,
       auth: cloneSessionAuth(metadata.auth),
       signerCredentialId: metadata.signerCredentialId,
@@ -1314,7 +1517,7 @@ export class WalletClient implements OMSWalletClient {
 
     this.latestSessionExpiredEvent = undefined;
     this.walletId = walletId;
-    this.activeWalletAddress = walletAddress as Address;
+    this.activeWalletAddress = walletAddress;
     this.sessionExpiresAt = metadata.expiresAt;
     this.sessionAuth = cloneSessionAuth(metadata.auth);
     this.sessionSignerCredentialId = metadata.signerCredentialId;
@@ -1365,7 +1568,7 @@ export class WalletClient implements OMSWalletClient {
           version: 1,
           scope: expectedScope,
           walletId: parsed.walletId,
-          walletAddress: parsed.walletAddress as Address,
+          walletAddress: parsed.walletAddress,
           expiresAt: parsed.expiresAt,
           auth,
           signerCredentialId,
@@ -1809,7 +2012,7 @@ export class WalletClient implements OMSWalletClient {
 
   private async executePreparedTransaction(params: {
     prepared: PrepareResponse;
-    network: Network;
+    network?: Network;
     selectFeeOption?: FeeOptionSelector;
     waitForStatus?: boolean;
     statusPolling?: TransactionStatusPollingOptions;
@@ -1884,7 +2087,7 @@ export class WalletClient implements OMSWalletClient {
   private async selectFeeOption(params: {
     feeOptions: GeneratedFeeOption[];
     sponsored: boolean;
-    network: Network;
+    network?: Network;
     selectFeeOption?: FeeOptionSelector;
   }): Promise<FeeOptionSelection | undefined> {
     if (params.sponsored) {
@@ -1900,9 +2103,13 @@ export class WalletClient implements OMSWalletClient {
       return this.defaultFeeOptionSelection(feeOptions);
     }
 
-    const selected = await params.selectFeeOption(
-      await this.enrichFeeOptionsWithBalances(params.network, feeOptions)
-    );
+    const options = params.network
+      ? await this.enrichFeeOptionsWithBalances(params.network, feeOptions)
+      : feeOptions.map((feeOption, index) => ({
+          feeOption,
+          selection: feeOptionSelection(feeOption, index)
+        }));
+    const selected = await params.selectFeeOption(options);
     if (!selected) {
       throw new Error('No fee option selected for unsponsored transaction');
     }
@@ -1945,7 +2152,7 @@ export class WalletClient implements OMSWalletClient {
       ])
     );
 
-    return feeOptions.map((feeOption) => {
+    return feeOptions.map((feeOption, index) => {
       const balance = this.isNativeToken(feeOption)
         ? nativeBalance
         : tokenBalances.get(this.normalizeAddress(feeOption.token.contractAddress) ?? '');
@@ -1953,7 +2160,7 @@ export class WalletClient implements OMSWalletClient {
 
       return {
         feeOption,
-        selection: feeOptionSelection(feeOption),
+        selection: feeOptionSelection(feeOption, index),
         balance,
         available: this.formatTokenAmount(balance?.balance, decimals),
         availableRaw: balance?.balance,
@@ -1963,7 +2170,7 @@ export class WalletClient implements OMSWalletClient {
   }
 
   private defaultFeeOptionSelection(feeOptions: FeeOption[]): FeeOptionSelection {
-    return feeOptionSelection(feeOptions[0]);
+    return feeOptionSelection(feeOptions[0], 0);
   }
 
   private async waitForTransactionStatus(
@@ -2094,6 +2301,20 @@ export class WalletClient implements OMSWalletClient {
     }
   }
 
+  private async requireActiveEthereumSession(operation: WalletOperation): Promise<void> {
+    await this.requireActiveSession(operation);
+    if (!isAddress(this.activeWalletAddress!)) {
+      throw new Error('An active Ethereum wallet is required');
+    }
+  }
+
+  private async requireActiveSolanaSession(operation: WalletOperation): Promise<void> {
+    await this.requireActiveSession(operation);
+    if (isAddress(this.activeWalletAddress!)) {
+      throw new Error('An active Solana wallet is required');
+    }
+  }
+
   private activeWalletId(): string | undefined {
     return this.walletId || undefined;
   }
@@ -2143,7 +2364,7 @@ export class WalletClient implements OMSWalletClient {
   }
 
   private sessionFromMetadata(
-    walletAddress: Address | undefined,
+    walletAddress: string | undefined,
     metadata: WalletSessionMetadata
   ): OMSWalletSessionState {
     return {

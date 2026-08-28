@@ -9,7 +9,8 @@ export type AuthMode = (typeof AuthMode)[keyof typeof AuthMode];
 export type OidcAuthMode = typeof AuthMode.AuthCode | typeof AuthMode.AuthCodePKCE;
 
 export const WalletType = Object.freeze({
-  Ethereum: 'ethereum'
+  Ethereum: 'ethereum',
+  Solana: 'solana'
 } as const);
 
 export type WalletType = (typeof WalletType)[keyof typeof WalletType];
@@ -60,4 +61,5 @@ export interface FeeOption {
 
 export interface FeeOptionSelection {
   token: string;
+  index?: number;
 }

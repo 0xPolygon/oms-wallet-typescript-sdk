@@ -1,5 +1,7 @@
 export { OMSWallet } from './omsWallet.js';
 export type { OMSWalletParams } from './omsWallet.js';
+export { RemoteAccessClient } from './clients/remoteAccessClient.js';
+export type { RemoteAccessClientParams } from './clients/remoteAccessClient.js';
 export {
   OmsRelayOidcProviders,
   type CustomOidcProviderConfig,
@@ -18,7 +20,14 @@ export {
   createDefaultStorage,
   type StorageManager
 } from './storageManager.js';
-export { Networks, findNetworkById, findNetworkByName, type Network } from './networks.js';
+export {
+  Networks,
+  SolanaNetworks,
+  findNetworkById,
+  findNetworkByName,
+  type Network,
+  type SolanaNetwork
+} from './networks.js';
 export {
   AuthMode,
   TransactionMode,
@@ -44,6 +53,15 @@ export {
   type OMSWalletUpstreamError
 } from './errors.js';
 export type {
+  ExecutedRemoteTransaction,
+  ExecuteRemoteTransactionParams,
+  PreparedRemoteTransaction,
+  PrepareRemoteTransactionParams,
+  RegisteredRemoteCredential,
+  RegisterRemoteCredentialParams,
+  RevokeRemoteCredentialParams
+} from './types/remoteAccess.js';
+export type {
   CompleteEmailAuthParams,
   CompleteEmailAuthResult,
   CompleteOidcIdTokenAuthResult,
@@ -51,6 +69,7 @@ export type {
   CompleteOidcRedirectAuthResult,
   GetIdTokenParams,
   IsValidMessageSignatureParams,
+  IsValidSolanaMessageSignatureParams,
   IsValidTypedDataSignatureParams,
   OMSWalletEmailSessionAuth,
   OMSWalletOidcSessionAuth,
@@ -60,9 +79,12 @@ export type {
   OMSWalletSessionExpiredListener,
   OMSWalletSessionState,
   WalletAccount,
+  EthereumWalletAccount,
+  SolanaWalletAccount,
   PendingWalletSelection,
   SignInWithOidcIdTokenParams,
   SignMessageParams,
+  SignSolanaMessageParams,
   SignInWithOidcRedirectParams,
   SignTypedDataParams,
   StartEmailAuthParams,
@@ -96,7 +118,14 @@ export type {
 export type {
   AccessGrant,
   AccessGrantPage,
+  AuthorizeRemoteAccessParams,
+  AuthorizedRemoteAccess,
+  DirectAccessGrant,
   ListAccessParams,
+  RemoteAccessGrant,
+  RemoteCredentialMetadata,
+  RevokeAccessParams,
+  SmartSessionGrant,
   WalletCredential
 } from './types/accessGrant.js';
 export type {
@@ -104,9 +133,10 @@ export type {
   SendContractTransactionParams,
   SendDataTransactionParams,
   SendNativeTransactionParams,
+  SendSolanaTransferParams,
   SendTransactionBase,
   SendTransactionParams,
   SendTransactionResponse,
   TransactionStatusPollingOptions
 } from './types/transactionTypes.js';
-export { FeeOptionSelector } from './types/transactionTypes.js';
+export { FeeOptionSelector, feeOptionSelection } from './types/transactionTypes.js';

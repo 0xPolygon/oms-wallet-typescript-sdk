@@ -14,13 +14,18 @@ export const WalletOperation = {
   createWallet: 'wallet.createWallet',
   getIdToken: 'wallet.getIdToken',
   signMessage: 'wallet.signMessage',
+  signSolanaMessage: 'wallet.signSolanaMessage',
   signTypedData: 'wallet.signTypedData',
   isValidMessageSignature: 'wallet.isValidMessageSignature',
+  isValidSolanaMessageSignature: 'wallet.isValidSolanaMessageSignature',
   isValidTypedDataSignature: 'wallet.isValidTypedDataSignature',
   sendTransaction: 'wallet.sendTransaction',
+  sendSolanaTransfer: 'wallet.sendSolanaTransfer',
   callContract: 'wallet.callContract',
   execute: 'wallet.execute',
   getTransactionStatus: 'wallet.getTransactionStatus',
+  inspectRemoteCredential: 'wallet.inspectRemoteCredential',
+  authorizeRemoteAccess: 'wallet.authorizeRemoteAccess',
   listAccess: 'wallet.listAccess',
   listAccessPages: 'wallet.listAccessPages',
   revokeAccess: 'wallet.revokeAccess',
@@ -36,4 +41,15 @@ export const IndexerOperation = {
 
 export type IndexerOperation = (typeof IndexerOperation)[keyof typeof IndexerOperation];
 
-export type OMSWalletOperation = WalletOperation | IndexerOperation;
+export const RemoteAccessOperation = {
+  registerCredential: 'remoteAccess.registerCredential',
+  prepareTransaction: 'remoteAccess.prepareTransaction',
+  executeTransaction: 'remoteAccess.executeTransaction',
+  getTransactionStatus: 'remoteAccess.getTransactionStatus',
+  revokeCredential: 'remoteAccess.revokeCredential'
+} as const;
+
+export type RemoteAccessOperation =
+  (typeof RemoteAccessOperation)[keyof typeof RemoteAccessOperation];
+
+export type OMSWalletOperation = WalletOperation | IndexerOperation | RemoteAccessOperation;

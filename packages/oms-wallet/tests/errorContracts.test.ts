@@ -446,10 +446,7 @@ describe('public API error contracts', () => {
         ],
         ['wallet.listAccess', () => oms.wallet.listAccess()],
         ['wallet.listAccessPages', () => iterateAccessPages(oms.wallet.listAccessPages())],
-        [
-          'wallet.revokeAccess',
-          () => oms.wallet.revokeAccess({ targetCredentialId: 'credential-1' })
-        ]
+        ['wallet.revokeAccess', () => oms.wallet.revokeAccess({ credentialId: 'credential-1' })]
       ])
     ).resolves.toMatchInlineSnapshot(`
           [
@@ -931,6 +928,15 @@ describe('public API error contracts', () => {
             })
         ],
         [
+          'wallet.isValidSolanaMessageSignature',
+          () =>
+            oms.wallet.isValidSolanaMessageSignature({
+              walletAddress: '9xQeWvG816bUx9EPjHmaT23yvVMuZwHngkQF5JC9YjCy',
+              message: 'hello',
+              signature: 'base58-signature'
+            })
+        ],
+        [
           'wallet.isValidTypedDataSignature',
           () =>
             oms.wallet.isValidTypedDataSignature({
@@ -966,6 +972,25 @@ describe('public API error contracts', () => {
                 },
               },
               "label": "wallet.isValidMessageSignature",
+            },
+            {
+              "error": {
+                "code": "OMS_REQUEST_FAILED",
+                "message": "request failed",
+                "name": "OMSWalletRequestError",
+                "operation": "wallet.isValidSolanaMessageSignature",
+                "retryable": true,
+                "status": null,
+                "txnId": null,
+                "upstreamError": {
+                  "code": -1,
+                  "message": "request failed",
+                  "name": "WebrpcRequestFailed",
+                  "service": "waas",
+                  "status": null,
+                },
+              },
+              "label": "wallet.isValidSolanaMessageSignature",
             },
             {
               "error": {
@@ -1275,10 +1300,7 @@ describe('public API error contracts', () => {
       publicErrors([
         ['wallet.listAccess', () => oms.wallet.listAccess()],
         ['wallet.listAccessPages', () => iterateAccessPages(oms.wallet.listAccessPages())],
-        [
-          'wallet.revokeAccess',
-          () => oms.wallet.revokeAccess({ targetCredentialId: 'credential-1' })
-        ]
+        ['wallet.revokeAccess', () => oms.wallet.revokeAccess({ credentialId: 'credential-1' })]
       ])
     ).resolves.toMatchInlineSnapshot(`
           [
@@ -1868,13 +1890,14 @@ function completeAuthResponse() {
 function testWallet(id = 'wallet-1', addressByte = '11') {
   return {
     id,
-    type: WalletType.Ethereum,
+    networkFamily: 'evm',
     address: `0x${addressByte.repeat(20)}`
   };
 }
 
 function testCredential() {
   return {
+    type: 'direct',
     credentialId: '0x04' + '11'.repeat(64),
     expiresAt: '2099-01-01T00:00:00Z',
     isCaller: true

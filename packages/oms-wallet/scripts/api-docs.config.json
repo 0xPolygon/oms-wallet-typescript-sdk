@@ -23,6 +23,8 @@
         "OMSWalletClient.getIdToken",
         "OMSWalletClient.listAccess",
         "OMSWalletClient.listAccessPages",
+        "OMSWalletClient.inspectRemoteCredential",
+        "OMSWalletClient.authorizeRemoteAccess",
         "OMSWalletClient.revokeAccess",
         "StartEmailAuthParams",
         "CompleteEmailAuthParams",
@@ -42,6 +44,8 @@
         "WalletType",
         "WalletSelectionBehavior",
         "WalletAccount",
+        "EthereumWalletAccount",
+        "SolanaWalletAccount",
         "WalletActivationResult",
         "PendingWalletSelection",
         "OMSWalletEmailSessionAuth",
@@ -54,8 +58,15 @@
         "GetIdTokenParams",
         "WalletCredential",
         "AccessGrant",
+        "DirectAccessGrant",
+        "RemoteAccessGrant",
+        "RemoteCredentialMetadata",
+        "SmartSessionGrant",
         "ListAccessParams",
         "AccessGrantPage",
+        "AuthorizeRemoteAccessParams",
+        "AuthorizedRemoteAccess",
+        "RevokeAccessParams",
         "StorageManager",
         "LocalStorageManager",
         "SessionStorageManager",
@@ -68,18 +79,37 @@
       ]
     },
     {
+      "label": "Remote applications",
+      "symbols": [
+        "RemoteAccessClient",
+        "RemoteAccessClientParams",
+        "RegisterRemoteCredentialParams",
+        "RegisteredRemoteCredential",
+        "RevokeRemoteCredentialParams",
+        "PrepareRemoteTransactionParams",
+        "PreparedRemoteTransaction",
+        "ExecuteRemoteTransactionParams",
+        "ExecutedRemoteTransaction"
+      ]
+    },
+    {
       "label": "Transactions and signing",
       "symbols": [
         "OMSWalletClient.signMessage",
+        "OMSWalletClient.signSolanaMessage",
         "OMSWalletClient.signTypedData",
         "OMSWalletClient.isValidMessageSignature",
+        "OMSWalletClient.isValidSolanaMessageSignature",
         "OMSWalletClient.isValidTypedDataSignature",
         "OMSWalletClient.sendTransaction",
+        "OMSWalletClient.sendSolanaTransfer",
         "OMSWalletClient.callContract",
         "OMSWalletClient.getTransactionStatus",
         "SignMessageParams",
+        "SignSolanaMessageParams",
         "SignTypedDataParams",
         "IsValidMessageSignatureParams",
+        "IsValidSolanaMessageSignatureParams",
         "IsValidTypedDataSignatureParams",
         "AbiArg",
         "SendTransactionBase",
@@ -87,6 +117,7 @@
         "SendDataTransactionParams",
         "SendContractTransactionParams",
         "SendTransactionParams",
+        "SendSolanaTransferParams",
         "SendTransactionResponse",
         "TransactionMode",
         "TransactionStatus",
@@ -95,7 +126,8 @@
         "FeeOption",
         "FeeOptionSelection",
         "FeeOptionWithBalance",
-        "FeeOptionSelector"
+        "FeeOptionSelector",
+        "feeOptionSelection"
       ]
     },
     {
@@ -127,6 +159,8 @@
       "symbols": [
         "Network",
         "Networks",
+        "SolanaNetwork",
+        "SolanaNetworks",
         "findNetworkById",
         "findNetworkByName",
         "OMSWalletErrorCode",

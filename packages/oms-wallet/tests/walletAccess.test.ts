@@ -2,7 +2,9 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import { WalletClient } from '../src/clients/walletClient';
 import type { CredentialSigner } from '../src/credentialSigner';
+import { Networks } from '../src/networks';
 import { MemoryStorageManager } from '../src/storageManager';
+import { WalletType } from '../src/types/waas';
 
 class MockSigner implements CredentialSigner {
   readonly signingAlgorithm = 'ecdsa-p256-sha256';
@@ -90,6 +92,271 @@ describe('WalletClient access management', () => {
     expect(pages).toEqual([{ grants: [testCredential()] }]);
   });
 
+  it('maps remote session access entries and filters them by type', async () => {
+    const requests: unknown[] = [];
+    const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = input.toString();
+      if (url.endsWith('/ListAccess')) {
+        requests.push(JSON.parse(init?.body as string));
+        return jsonResponse({
+          credentials: [
+            {
+              credentialId: '0x' + '44'.repeat(32),
+              type: 'remote',
+              sessionId: 'sess_01',
+              metadata: {
+                appUrl: 'https://app.example',
+                appName: 'Example App',
+                appLogoUrl: 'https://app.example/logo.png',
+                custom: { environment: 'test' }
+              },
+              grants: {
+                entries: [
+                  {
+                    kind: 'nativeTransfer',
+                    nativeTransfer: {
+                      to: '0x1111111111111111111111111111111111111111',
+                      limit: '1000000000000000000'
+                    }
+                  }
+                ]
+              },
+              expiresAt: '2099-01-01T00:00:00Z',
+              isCaller: false
+            }
+          ],
+          page: {}
+        });
+      }
+      throw new Error(`Unexpected request: ${url}`);
+    });
+    vi.stubGlobal('fetch', fetchMock);
+
+    const wallet = createWalletWithSession();
+
+    await expect(wallet.listAccess({ type: 'remote' })).resolves.toEqual([
+      {
+        type: 'remote',
+        credentialId: '0x' + '44'.repeat(32),
+        sessionId: 'sess_01',
+        metadata: {
+          appUrl: 'https://app.example',
+          appName: 'Example App',
+          appLogoUrl: 'https://app.example/logo.png',
+          custom: { environment: 'test' }
+        },
+        grants: [
+          {
+            kind: 'nativeTransfer',
+            to: '0x1111111111111111111111111111111111111111',
+            limit: 1000000000000000000n
+          }
+        ],
+        expiresAt: '2099-01-01T00:00:00Z',
+        isCaller: false
+      }
+    ]);
+    expect(requests).toEqual([{ walletId: 'wallet-id', type: 'remote' }]);
+  });
+
+  it('inspects and authorizes a remote credential for the active wallet', async () => {
+    const requests: Array<{ url: string; body: unknown }> = [];
+    const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = input.toString();
+      const body = JSON.parse(init?.body as string);
+      requests.push({ url, body });
+      if (url.endsWith('/InspectCredential')) {
+        return jsonResponse({
+          metadata: {
+            appUrl: 'https://app.example',
+            appName: 'Example App',
+            appLogoUrl: 'https://app.example/logo.png',
+            custom: { environment: 'test' }
+          }
+        });
+      }
+      if (url.endsWith('/AuthorizeRemoteAccess')) {
+        return jsonResponse({ sessionId: 'sess_01', expiry: '2099-01-01T00:00:00Z' });
+      }
+      throw new Error(`Unexpected request: ${url}`);
+    });
+    vi.stubGlobal('fetch', fetchMock);
+
+    const wallet = createWalletWithSession();
+
+    await expect(
+      wallet.inspectRemoteCredential({ credentialId: 'credential-id' })
+    ).resolves.toEqual({
+      appUrl: 'https://app.example',
+      appName: 'Example App',
+      appLogoUrl: 'https://app.example/logo.png',
+      custom: { environment: 'test' }
+    });
+    await expect(
+      wallet.authorizeRemoteAccess({
+        credentialId: 'credential-id',
+        network: Networks.polygon,
+        grants: [
+          {
+            kind: 'erc20Transfer',
+            token: '0x2222222222222222222222222222222222222222',
+            limit: 42n,
+            cumulative: true
+          }
+        ],
+        expiresAt: '2099-01-01T00:00:00Z'
+      })
+    ).resolves.toEqual({
+      walletId: 'wallet-id',
+      sessionId: 'sess_01',
+      expiresAt: '2099-01-01T00:00:00Z'
+    });
+    expect(requests).toEqual([
+      {
+        url: 'https://wallet.example/v1/WaasPublic/InspectCredential',
+        body: { scope: 'project-id', credentialId: 'credential-id' }
+      },
+      {
+        url: 'https://wallet.example/v1/Waas/AuthorizeRemoteAccess',
+        body: {
+          credentialId: 'credential-id',
+          walletId: 'wallet-id',
+          grants: {
+            entries: [
+              {
+                kind: 'erc20Transfer',
+                erc20Transfer: {
+                  token: '0x2222222222222222222222222222222222222222',
+                  limit: '42',
+                  cumulative: true
+                }
+              }
+            ]
+          },
+          expiry: '2099-01-01T00:00:00Z',
+          chainId: '137'
+        }
+      }
+    ]);
+  });
+
+  it('creates, activates, and signs a message with a Solana wallet', async () => {
+    const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = input.toString();
+      if (url.endsWith('/CreateWallet')) {
+        expect(JSON.parse(init?.body as string)).toEqual({ networkFamily: 'solana' });
+        return jsonResponse({
+          wallet: {
+            id: 'solana-wallet-id',
+            networkFamily: 'solana',
+            address: '9xQeWvG816bUx9EPjHmaT23yvVMuZwHngkQF5JC9YjCy'
+          }
+        });
+      }
+      if (url.endsWith('/SignMessage')) {
+        expect(JSON.parse(init?.body as string)).toEqual({
+          network: '',
+          walletId: 'solana-wallet-id',
+          message: 'hello solana'
+        });
+        return jsonResponse({ signature: 'solana-signature' });
+      }
+      throw new Error(`Unexpected request: ${url}`);
+    });
+    vi.stubGlobal('fetch', fetchMock);
+
+    const wallet = createWalletWithSession();
+
+    await expect(wallet.createWallet({ type: WalletType.Solana })).resolves.toEqual({
+      walletAddress: '9xQeWvG816bUx9EPjHmaT23yvVMuZwHngkQF5JC9YjCy',
+      wallet: {
+        id: 'solana-wallet-id',
+        type: 'solana',
+        address: '9xQeWvG816bUx9EPjHmaT23yvVMuZwHngkQF5JC9YjCy'
+      }
+    });
+    await expect(wallet.signSolanaMessage({ message: 'hello solana' })).resolves.toBe(
+      'solana-signature'
+    );
+    await expect(
+      wallet.signMessage({ network: Networks.polygon, message: 'hello ethereum' })
+    ).rejects.toMatchObject({
+      code: 'OMS_VALIDATION_ERROR',
+      operation: 'wallet.signMessage'
+    });
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+  });
+
+  it('rejects Solana message signing for an active Ethereum wallet', async () => {
+    const fetchMock = vi.fn();
+    vi.stubGlobal('fetch', fetchMock);
+
+    const wallet = createWalletWithSession();
+    await expect(wallet.signSolanaMessage({ message: 'hello solana' })).rejects.toMatchObject({
+      code: 'OMS_VALIDATION_ERROR',
+      operation: 'wallet.signSolanaMessage'
+    });
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
+  it('rejects a remote authorization result after the active wallet session changes', async () => {
+    let resolveAuthorize!: (response: Response) => void;
+    const fetchMock = vi.fn(async (input: RequestInfo | URL) => {
+      const url = input.toString();
+      if (url.endsWith('/AuthorizeRemoteAccess')) {
+        return new Promise<Response>((resolve) => {
+          resolveAuthorize = resolve;
+        });
+      }
+      throw new Error(`Unexpected request: ${url}`);
+    });
+    vi.stubGlobal('fetch', fetchMock);
+
+    const wallet = createWalletWithSession();
+    const authorization = wallet.authorizeRemoteAccess({
+      credentialId: 'credential-id',
+      network: Networks.polygon,
+      grants: [
+        {
+          kind: 'nativeTransfer',
+          to: '0x1111111111111111111111111111111111111111',
+          limit: 1n
+        }
+      ],
+      expiresAt: '2099-01-01T00:00:00Z'
+    });
+
+    await waitForRequest(fetchMock, '/AuthorizeRemoteAccess');
+    await wallet.signOut();
+    resolveAuthorize(jsonResponse({ sessionId: 'sess_01', expiry: '2099-01-01T00:00:00Z' }));
+
+    await expect(authorization).rejects.toMatchObject({
+      code: 'OMS_SESSION_MISSING',
+      operation: 'wallet.authorizeRemoteAccess'
+    });
+  });
+
+  it('revokes one remote session for a credential', async () => {
+    const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = input.toString();
+      if (url.endsWith('/RevokeAccess')) {
+        expect(JSON.parse(init?.body as string)).toEqual({
+          targetCredentialId: 'credential-id',
+          walletId: 'wallet-id',
+          sessionId: 'sess_01'
+        });
+        return jsonResponse({ ok: true });
+      }
+      throw new Error(`Unexpected request: ${url}`);
+    });
+    vi.stubGlobal('fetch', fetchMock);
+
+    const wallet = createWalletWithSession();
+    await expect(
+      wallet.revokeAccess({ credentialId: 'credential-id', sessionId: 'sess_01' })
+    ).resolves.toBeUndefined();
+  });
+
   it('rejects access page iteration when the active session changes mid-page', async () => {
     let resolveSecondPage!: (response: Response) => void;
     const fetchMock = vi.fn(async (input: RequestInfo | URL) => {
@@ -163,6 +430,7 @@ function jsonResponse(body: unknown): Response {
 
 function testCredential(seed = '11', isCaller = true) {
   return {
+    type: 'direct',
     credentialId: '0x' + seed.repeat(32),
     expiresAt: '2099-01-01T00:00:00Z',
     isCaller

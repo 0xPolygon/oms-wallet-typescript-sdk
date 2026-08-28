@@ -1,5 +1,4 @@
 import type {
-  WalletType as GeneratedWalletType,
   FeeOption as GeneratedFeeOption,
   FeeOptionSelection as GeneratedFeeOptionSelection,
   TransactionStatusResponse as GeneratedTransactionStatusResponse
@@ -14,6 +13,7 @@ import type {
 
 import {
   AuthMode as GeneratedAuthMode,
+  NetworkFamily as GeneratedNetworkFamily,
   TransactionMode as GeneratedTransactionMode,
   TransactionStatus as GeneratedTransactionStatus
 } from '../generated/waas.gen.js';
@@ -28,12 +28,24 @@ export function toGeneratedAuthMode(authMode: OidcAuthMode): GeneratedAuthMode {
   }
 }
 
-export function toGeneratedWalletType(walletType: PublicWalletType): GeneratedWalletType {
-  return walletType as GeneratedWalletType;
+export function toGeneratedNetworkFamily(walletType: PublicWalletType): GeneratedNetworkFamily {
+  switch (walletType) {
+    case 'ethereum':
+      return GeneratedNetworkFamily.EVM;
+    case 'solana':
+      return GeneratedNetworkFamily.Solana;
+  }
 }
 
-export function fromGeneratedWalletType(walletType: GeneratedWalletType): PublicWalletType {
-  return walletType as PublicWalletType;
+export function fromGeneratedNetworkFamily(
+  networkFamily: GeneratedNetworkFamily
+): PublicWalletType {
+  switch (networkFamily) {
+    case GeneratedNetworkFamily.EVM:
+      return 'ethereum';
+    case GeneratedNetworkFamily.Solana:
+      return 'solana';
+  }
 }
 
 export function toGeneratedTransactionMode(mode: TransactionMode): GeneratedTransactionMode {
@@ -82,5 +94,5 @@ export function fromGeneratedFeeOption(feeOption: GeneratedFeeOption): FeeOption
 export function toGeneratedFeeOptionSelection(
   selection: FeeOptionSelection
 ): GeneratedFeeOptionSelection {
-  return { token: selection.token };
+  return { token: selection.token, index: selection.index };
 }

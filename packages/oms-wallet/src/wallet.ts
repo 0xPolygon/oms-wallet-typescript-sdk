@@ -5,7 +5,11 @@ import type { CustomOidcProviderConfig, OmsRelayOidcProvider } from './oidc.js';
 import type {
   AccessGrant,
   AccessGrantPage,
+  AuthorizeRemoteAccessParams,
+  AuthorizedRemoteAccess,
   ListAccessParams,
+  RemoteCredentialMetadata,
+  RevokeAccessParams,
   WalletCredential
 } from './types/accessGrant.js';
 import type {
@@ -13,6 +17,7 @@ import type {
   SendContractTransactionParams,
   SendDataTransactionParams,
   SendNativeTransactionParams,
+  SendSolanaTransferParams,
   SendTransactionParams,
   SendTransactionResponse,
   TransactionStatusPollingOptions
@@ -83,20 +88,29 @@ export type AutomaticWalletSelectionParams<
 export type ManualWalletSelectionParams<T extends { walletSelection?: WalletSelectionBehavior }> =
   Omit<T, 'walletSelection'> & { walletSelection: 'manual' };
 
-export interface WalletAccount {
+export interface EthereumWalletAccount {
   readonly id: string;
-  readonly type: WalletType;
+  readonly type: 'ethereum';
   readonly address: Address;
   readonly reference?: string;
 }
 
+export interface SolanaWalletAccount {
+  readonly id: string;
+  readonly type: 'solana';
+  readonly address: string;
+  readonly reference?: string;
+}
+
+export type WalletAccount = EthereumWalletAccount | SolanaWalletAccount;
+
 export interface WalletActivationResult {
-  readonly walletAddress: Address;
+  readonly walletAddress: string;
   readonly wallet: WalletAccount;
 }
 
 export interface CompleteWalletAuthResult {
-  readonly walletAddress: Address;
+  readonly walletAddress: string;
   readonly wallet: WalletAccount;
   readonly wallets: ReadonlyArray<WalletAccount>;
   readonly credential: Readonly<WalletCredential>;
@@ -138,7 +152,7 @@ export interface OMSWalletOidcSessionAuth {
 export type OMSWalletSessionAuth = OMSWalletEmailSessionAuth | OMSWalletOidcSessionAuth;
 
 export interface OMSWalletSessionState {
-  readonly walletAddress: Address | undefined;
+  readonly walletAddress: string | undefined;
   readonly expiresAt: string | undefined;
   readonly auth: OMSWalletSessionAuth | undefined;
 }
@@ -157,6 +171,10 @@ export interface SignMessageParams {
   message: string;
 }
 
+export interface SignSolanaMessageParams {
+  message: string;
+}
+
 export interface SignTypedDataParams {
   network: Network;
   typedData: unknown;
@@ -170,6 +188,13 @@ export interface GetIdTokenParams {
 export interface IsValidMessageSignatureParams {
   network?: Network;
   walletAddress?: Address;
+  walletId?: string;
+  message: string;
+  signature: string;
+}
+
+export interface IsValidSolanaMessageSignatureParams {
+  walletAddress?: string;
   walletId?: string;
   message: string;
   signature: string;
@@ -196,7 +221,7 @@ export type SignInWithOidcRedirectParams = OidcRedirectAuthParamsBase & {
   );
 
 export interface OMSWalletClient {
-  readonly walletAddress: Address | undefined;
+  readonly walletAddress: string | undefined;
   readonly session: OMSWalletSessionState;
 
   onSessionExpired(listener: OMSWalletSessionExpiredListener): () => void;
@@ -239,8 +264,10 @@ export interface OMSWalletClient {
   createWallet(params?: { type?: WalletType; reference?: string }): Promise<WalletActivationResult>;
   getIdToken(params?: GetIdTokenParams): Promise<string>;
   signMessage(params: SignMessageParams): Promise<string>;
+  signSolanaMessage(params: SignSolanaMessageParams): Promise<string>;
   signTypedData(params: SignTypedDataParams): Promise<string>;
   isValidMessageSignature(params: IsValidMessageSignatureParams): Promise<boolean>;
+  isValidSolanaMessageSignature(params: IsValidSolanaMessageSignatureParams): Promise<boolean>;
   isValidTypedDataSignature(params: IsValidTypedDataSignatureParams): Promise<boolean>;
   sendTransaction(params: SendNativeTransactionParams): Promise<SendTransactionResponse>;
   sendTransaction(params: SendDataTransactionParams): Promise<SendTransactionResponse>;
@@ -251,6 +278,7 @@ export interface OMSWalletClient {
     params: SendContractTransactionParams<abi, functionName>
   ): Promise<SendTransactionResponse>;
   sendTransaction(params: SendTransactionParams): Promise<SendTransactionResponse>;
+  sendSolanaTransfer(params: SendSolanaTransferParams): Promise<SendTransactionResponse>;
   callContract(params: {
     network: Network;
     contractAddress: Address;
@@ -262,7 +290,9 @@ export interface OMSWalletClient {
     statusPolling?: TransactionStatusPollingOptions;
   }): Promise<SendTransactionResponse>;
   getTransactionStatus(params: { txnId: string }): Promise<TransactionStatusResponse>;
+  inspectRemoteCredential(params: { credentialId: string }): Promise<RemoteCredentialMetadata>;
+  authorizeRemoteAccess(params: AuthorizeRemoteAccessParams): Promise<AuthorizedRemoteAccess>;
   listAccess(params?: ListAccessParams): Promise<AccessGrant[]>;
   listAccessPages(params?: ListAccessParams): AsyncIterable<AccessGrantPage>;
-  revokeAccess(params: { targetCredentialId: string }): Promise<void>;
+  revokeAccess(params: RevokeAccessParams): Promise<void>;
 }

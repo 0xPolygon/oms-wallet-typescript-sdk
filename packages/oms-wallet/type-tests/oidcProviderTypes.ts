@@ -1,13 +1,18 @@
 import {
   AuthMode,
   Networks,
+  SolanaNetworks,
+  RemoteAccessClient,
+  WalletType,
   OMSWallet,
   OMSWalletRequestError,
   OMSWalletError,
   OMSWalletSessionError,
   OMSWalletTransactionError,
   OmsRelayOidcProviders,
+  TransactionMode,
   TransactionStatus,
+  feeOptionSelection,
   findNetworkById,
   findNetworkByName,
   type CompleteOidcIdTokenAuthResult,
@@ -30,6 +35,7 @@ import {
   type OmsRelayOidcProvider,
   type SendDataTransactionParams,
   type SendNativeTransactionParams,
+  type SendSolanaTransferParams,
   type SendTransactionBase,
   type SendTransactionParams,
   type SendTransactionResponse,
@@ -41,12 +47,59 @@ import {
   type TokenContractInfo,
   type TokenMetadata,
   type TransactionHistoryResult,
-  type SignInWithOidcIdTokenParams
+  type SignInWithOidcIdTokenParams,
+  type AuthorizeRemoteAccessParams,
+  type CredentialSigner,
+  type PreparedRemoteTransaction,
+  type RemoteAccessGrant,
+  type SmartSessionGrant
 } from '../src/index';
 
 const configuredOmsWallet = new OMSWallet({
   publishableKey: 'pk_dev_sdbx_project_key'
 });
+
+declare const backendCredentialSigner: CredentialSigner;
+const remoteAccessClient = new RemoteAccessClient({
+  publishableKey: 'pk_dev_sdbx_project_key',
+  credentialSigner: backendCredentialSigner
+});
+
+if (false) {
+  void (async () => {
+    const registered = await remoteAccessClient.registerCredential({
+      lifetimeSeconds: 604800,
+      metadata: {
+        appUrl: 'https://admin.example',
+        appName: 'Admin example',
+        appLogoUrl: '',
+        custom: { network: 'amoy' }
+      }
+    });
+    void registered.credentialId;
+
+    const prepared: PreparedRemoteTransaction = await remoteAccessClient.prepareTransaction({
+      walletId: 'wallet-id',
+      sessionId: 'session-id',
+      network: Networks.amoy,
+      to: '0x1111111111111111111111111111111111111111',
+      value: 1n
+    });
+    void remoteAccessClient.executeTransaction({
+      txnId: prepared.txnId,
+      feeOption: prepared.feeOptions[0] ? feeOptionSelection(prepared.feeOptions[0], 0) : undefined
+    });
+    void remoteAccessClient.getTransactionStatus({ txnId: prepared.txnId });
+    void remoteAccessClient.revokeCredential({ credentialId: registered.credentialId });
+
+    // @ts-expect-error remote transactions require an owner-authorized session id.
+    void remoteAccessClient.prepareTransaction({
+      walletId: 'wallet-id',
+      network: Networks.amoy,
+      to: '0x1111111111111111111111111111111111111111'
+    });
+  })();
+}
 
 const customOidcProvider: CustomOidcProviderConfig = {
   clientId: 'custom-client',
@@ -143,8 +196,66 @@ if (false) {
       audience: 'google-client-id'
     });
     void activatedOidcIdTokenAuth.walletAddress;
+
+    const solanaWallet = await wallet.createWallet({ type: WalletType.Solana });
+    if (solanaWallet.wallet.type === WalletType.Solana) {
+      const address: string = solanaWallet.wallet.address;
+      void address;
+      void wallet.isValidSolanaMessageSignature({
+        walletAddress: address,
+        message: 'Sign in to Example',
+        signature: 'solana-signature'
+      });
+    }
+    void wallet.signSolanaMessage({ message: 'Sign in to Example' });
+    const solanaTransfer: SendSolanaTransferParams = {
+      network: SolanaNetworks.devnet,
+      asset: 'SOL',
+      to: '3gFktQX6vki5M2DzN8Y1ESPUJ4fJ8o6hVQWf8vYvPypD',
+      amount: 1_000_000n,
+      mode: TransactionMode.Relayer
+    };
+    void wallet.sendSolanaTransfer(solanaTransfer);
+
+    const authorization = await wallet.authorizeRemoteAccess({
+      credentialId: 'credential-id',
+      network: Networks.polygon,
+      grants: [
+        {
+          kind: 'nativeTransfer',
+          to: '0x1111111111111111111111111111111111111111',
+          limit: 1n
+        }
+      ],
+      expiresAt: '2099-01-01T00:00:00Z'
+    });
+    void authorization.walletId;
+    void authorization.sessionId;
+    void wallet.revokeAccess({
+      credentialId: 'credential-id',
+      sessionId: authorization.sessionId
+    });
   });
 }
+
+const smartSessionGrant: SmartSessionGrant = {
+  kind: 'erc20Transfer',
+  token: '0x2222222222222222222222222222222222222222',
+  limit: 1n
+};
+void smartSessionGrant;
+
+const authorizeRemoteAccess: AuthorizeRemoteAccessParams = {
+  credentialId: 'credential-id',
+  network: Networks.polygon,
+  grants: [smartSessionGrant],
+  expiresAt: '2099-01-01T00:00:00Z'
+};
+void authorizeRemoteAccess;
+
+declare const remoteAccess: RemoteAccessGrant;
+const remoteSessionId: string = remoteAccess.sessionId;
+void remoteSessionId;
 
 const defaultClient = new OMSWallet({
   publishableKey: 'pk_dev_sdbx_project_key'
