@@ -20,6 +20,7 @@ export interface ParsedPublishableKey {
   projectId: string;
   walletApiUrl: string;
   indexerGatewayUrl: string;
+  solanaIndexerGatewayUrl: string;
 }
 
 export function parsePublishableKey(publishableKey: string): ParsedPublishableKey {
@@ -36,7 +37,8 @@ export function parsePublishableKey(publishableKey: string): ParsedPublishableKe
   return {
     projectId: `prj_${keyParts[0]}`,
     walletApiUrl: route.apiUrl,
-    indexerGatewayUrl: `${route.apiUrl}/v1/IndexerGateway/`
+    indexerGatewayUrl: `${route.apiUrl}/v1/IndexerGateway/`,
+    solanaIndexerGatewayUrl: `${route.apiUrl}/v1/SolanaIndexerGateway/`
   };
 }
 

@@ -28,6 +28,7 @@ import {
   type BalancesResult,
   type AbiArg,
   type GetBalancesParams,
+  type GetSolanaBalancesParams,
   type GetTransactionHistoryParams,
   type IndexerNetworkType,
   type OMSWalletParams,
@@ -44,6 +45,13 @@ import {
   type SendContractTransactionParams,
   type ContractTokenBalance,
   type NativeTokenBalance,
+  type SolanaBalance,
+  type SolanaBalancesResult,
+  type SolanaFungibleTokenBalance,
+  type SolanaNativeBalance,
+  type SolanaNetworkError,
+  type SolanaVerificationSource,
+  type SolanaVerificationStatus,
   type TokenBalance,
   type TokenBalancesPage,
   type TokenContractInfo,
@@ -431,6 +439,44 @@ const tokenBalancesResult: BalancesResult = {
   nativeBalances: [nativeTokenBalance],
   balances: [contractTokenBalance]
 };
+const solanaFungibleTokenBalance: SolanaFungibleTokenBalance = {
+  network: SolanaNetworks.mainnet,
+  accountAddress: 'solana-wallet',
+  assetType: 'fungible-token',
+  tokenProgram: 'spl-token',
+  mintAddress: 'usdc-mint',
+  name: 'USD Coin',
+  symbol: 'USDC',
+  decimals: 6,
+  balance: '1000000',
+  formattedBalance: '1',
+  verificationStatus: 'verified',
+  verificationSource: 'jupiter'
+};
+const solanaNativeBalance: SolanaNativeBalance = {
+  network: SolanaNetworks.devnet,
+  accountAddress: 'solana-wallet',
+  assetType: 'native',
+  name: 'Solana',
+  symbol: 'SOL',
+  decimals: 9,
+  balance: '1000000000',
+  formattedBalance: '1',
+  verificationStatus: 'unknown',
+  verificationSource: 'none'
+};
+const solanaBalance: SolanaBalance = solanaFungibleTokenBalance;
+const solanaNetworkError: SolanaNetworkError = {
+  network: SolanaNetworks.devnet,
+  reason: 'RPC unavailable'
+};
+const solanaBalancesResult: SolanaBalancesResult = {
+  status: 200,
+  balances: [solanaNativeBalance, solanaBalance],
+  errors: [solanaNetworkError]
+};
+const solanaVerificationStatus: SolanaVerificationStatus = 'unknown';
+const solanaVerificationSource: SolanaVerificationSource = 'none';
 const indexerNetworkType: IndexerNetworkType = 'MAINNETS';
 const transactionHistoryResult: TransactionHistoryResult = {
   status: 200,
@@ -468,6 +514,9 @@ void unsupportedNetwork;
 void tokenContractInfo;
 void tokenMetadata;
 void tokenBalancesResult;
+void solanaBalancesResult;
+void solanaVerificationStatus;
+void solanaVerificationSource;
 void indexerNetworkType;
 void transactionHistoryResult;
 void upstreamError;
@@ -509,6 +558,18 @@ const getBalancesParams: GetBalancesParams = {
   networkType: 'TESTNETS'
 };
 void defaultClient.indexer.getBalances(getBalancesParams);
+const getSolanaBalancesParams: GetSolanaBalancesParams = {
+  walletAddress: 'solana-wallet',
+  networks: [SolanaNetworks.mainnet, SolanaNetworks.devnet],
+  includeMetadata: true,
+  mintAddresses: ['usdc-mint']
+};
+void defaultClient.indexer.getSolanaBalances(getSolanaBalancesParams);
+void defaultClient.indexer.getSolanaBalances({
+  walletAddress: 'solana-wallet',
+  // @ts-expect-error Solana indexer queries use the SDK-supported Solana networks.
+  networks: ['solana:testnet']
+});
 const indexerClient: OMSWalletIndexerClient = defaultClient.indexer;
 void indexerClient;
 const transactionHistoryParams: GetTransactionHistoryParams = {

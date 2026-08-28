@@ -41,6 +41,7 @@ export type WalletOperation = (typeof WalletOperation)[keyof typeof WalletOperat
 
 export const IndexerOperation = {
   getBalances: 'indexer.getBalances',
+  getSolanaBalances: 'indexer.getSolanaBalances',
   getTransactionHistory: 'indexer.getTransactionHistory'
 } as const;
 

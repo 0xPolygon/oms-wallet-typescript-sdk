@@ -192,7 +192,8 @@ describe('wallet import', () => {
       projectId: 'project-id',
       environment: {
         walletApiUrl: 'https://wallet.example',
-        indexerGatewayUrl: 'https://indexer.example'
+        indexerGatewayUrl: 'https://indexer.example',
+        solanaIndexerGatewayUrl: 'https://solana-indexer.example'
       },
       storage: new MemoryStorageManager(),
       credentialSigner: new MockSigner(),
@@ -240,7 +241,8 @@ function createWalletWithSession(): WalletClient {
     projectId: 'project-id',
     environment: {
       walletApiUrl: 'https://wallet.example',
-      indexerGatewayUrl: 'https://indexer.example'
+      indexerGatewayUrl: 'https://indexer.example',
+      solanaIndexerGatewayUrl: 'https://solana-indexer.example'
     },
     storage: new MemoryStorageManager(),
     credentialSigner: new MockSigner()

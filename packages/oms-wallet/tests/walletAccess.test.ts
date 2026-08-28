@@ -515,7 +515,8 @@ function testCredential(seed = '11', isCaller = true) {
 function testEnvironment() {
   return {
     walletApiUrl: 'https://wallet.example',
-    indexerGatewayUrl: 'https://indexer.example'
+    indexerGatewayUrl: 'https://indexer.example',
+    solanaIndexerGatewayUrl: 'https://solana-indexer.example'
   };
 }
 

@@ -1280,6 +1280,7 @@ export declare function feeOptionSelection(feeOption: FeeOption, index?: number)
 ```typescript
 export interface OMSWalletIndexerClient {
     getBalances(params: GetBalancesParams): Promise<BalancesResult>;
+    getSolanaBalances(params: GetSolanaBalancesParams): Promise<SolanaBalancesResult>;
     getTransactionHistory(params: GetTransactionHistoryParams): Promise<TransactionHistoryResult>;
 }
 ```
@@ -1309,6 +1310,102 @@ export interface BalancesResult {
     nativeBalances: NativeTokenBalance[];
     balances: ContractTokenBalance[];
 }
+```
+
+### `GetSolanaBalancesParams`
+
+```typescript
+export interface GetSolanaBalancesParams {
+    walletAddress: string;
+    networks?: SolanaNetwork[];
+    includeMetadata?: boolean;
+    omitNativeBalances?: boolean;
+    mintAddresses?: string[];
+    excludedMintAddresses?: string[];
+}
+```
+
+### `SolanaBalancesResult`
+
+```typescript
+export interface SolanaBalancesResult {
+    status: number;
+    balances: SolanaBalance[];
+    errors: SolanaNetworkError[];
+}
+```
+
+### `SolanaBalance`
+
+```typescript
+export type SolanaBalance = SolanaNativeBalance | SolanaFungibleTokenBalance;
+```
+
+### `SolanaNativeBalance`
+
+```typescript
+export interface SolanaNativeBalance {
+    network: SolanaNetwork;
+    accountAddress: string;
+    name: string;
+    symbol: string;
+    decimals: number;
+    balance: string;
+    formattedBalance: string;
+    imageUrl?: string;
+    metadataUri?: string;
+    verificationStatus: SolanaVerificationStatus;
+    verificationSource: SolanaVerificationSource;
+    priceUSD?: string;
+    balanceUSD?: string;
+    assetType: "native";
+    tokenProgram?: undefined;
+    mintAddress?: undefined;
+}
+```
+
+### `SolanaFungibleTokenBalance`
+
+```typescript
+export interface SolanaFungibleTokenBalance {
+    network: SolanaNetwork;
+    accountAddress: string;
+    name: string;
+    symbol: string;
+    decimals: number;
+    balance: string;
+    formattedBalance: string;
+    imageUrl?: string;
+    metadataUri?: string;
+    verificationStatus: SolanaVerificationStatus;
+    verificationSource: SolanaVerificationSource;
+    priceUSD?: string;
+    balanceUSD?: string;
+    assetType: "fungible-token";
+    tokenProgram: "spl-token" | "token-2022";
+    mintAddress: string;
+}
+```
+
+### `SolanaNetworkError`
+
+```typescript
+export interface SolanaNetworkError {
+    network: SolanaNetwork;
+    reason: string;
+}
+```
+
+### `SolanaVerificationStatus`
+
+```typescript
+export type SolanaVerificationStatus = "verified" | "unverified" | "unknown";
+```
+
+### `SolanaVerificationSource`
+
+```typescript
+export type SolanaVerificationSource = "jupiter" | "solflare-utl" | "none";
 ```
 
 ### `GetTransactionHistoryParams`

@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
-import { Networks, OMSWallet } from '../src';
+import { Networks, OMSWallet, SolanaNetworks } from '../src';
 import { parsePublishableKey } from '../src/publishableKey';
 import { MemoryStorageManager } from '../src/storageManager';
 
@@ -24,11 +24,12 @@ describe('OMSWallet publishable key routing', () => {
     expect(parsePublishableKey(publishableKey)).toEqual({
       projectId: 'prj_project',
       walletApiUrl: apiUrl,
-      indexerGatewayUrl: `${apiUrl}/v1/IndexerGateway/`
+      indexerGatewayUrl: `${apiUrl}/v1/IndexerGateway/`,
+      solanaIndexerGatewayUrl: `${apiUrl}/v1/SolanaIndexerGateway/`
     });
   });
 
-  it('uses the derived URLs for WaaS and IndexerGateway requests', async () => {
+  it('uses the derived URLs for WaaS and indexer requests', async () => {
     const fetchMock = vi.fn(async (input: RequestInfo | URL) => {
       const url = input.toString();
 
@@ -42,6 +43,10 @@ describe('OMSWallet publishable key routing', () => {
           nativeBalances: [],
           balances: []
         });
+      }
+
+      if (url.endsWith('/v1/SolanaIndexerGateway/GetTokenBalancesDetails')) {
+        return jsonResponse({ balances: [], errors: [] });
       }
 
       throw new Error(`Unexpected request: ${url}`);
@@ -72,12 +77,21 @@ describe('OMSWallet publishable key routing', () => {
       nativeBalances: [],
       balances: []
     });
+    await expect(
+      oms.indexer.getSolanaBalances({
+        networks: [SolanaNetworks.mainnet],
+        walletAddress: 'solana-wallet'
+      })
+    ).resolves.toEqual({ status: 200, balances: [], errors: [] });
 
     expect(fetchMock.mock.calls[0][0].toString()).toBe(
       'https://api.stg.polygon-dev.technology/v1/WaasPublic/IsValidMessageSignature'
     );
     expect(fetchMock.mock.calls[1][0].toString()).toBe(
       'https://api.stg.polygon-dev.technology/v1/IndexerGateway/GetTokenBalancesDetails'
+    );
+    expect(fetchMock.mock.calls[2][0].toString()).toBe(
+      'https://api.stg.polygon-dev.technology/v1/SolanaIndexerGateway/GetTokenBalancesDetails'
     );
   });
 

@@ -397,6 +397,31 @@ for (const b of result.balances) {
 }
 ```
 
+### Query Solana Balances
+
+Use `getSolanaBalances` for native SOL and fungible SPL-token balances. Solana balance queries use
+the SDK's supported Mainnet and Devnet network identifiers and return precision-safe raw and
+formatted balance strings. Individual network failures are reported in `errors` without discarding
+balances returned by the other requested network.
+
+```typescript
+import { SolanaNetworks } from '@polygonlabs/oms-wallet'
+
+const result = await omsWallet.indexer.getSolanaBalances({
+  walletAddress: 'vn3YnndV3gGu7DrHSQAPfywmba7QPq18SvA7PSiytAV',
+  networks: [SolanaNetworks.mainnet, SolanaNetworks.devnet],
+  includeMetadata: true,
+})
+
+for (const balance of result.balances) {
+  console.log(balance.network, balance.symbol, balance.formattedBalance)
+}
+
+for (const error of result.errors) {
+  console.warn(error.network, error.reason)
+}
+```
+
 Solana wallets support off-chain message signing and verification without a network argument because
 off-chain messages are not cluster-specific. Solana verification has a separate method from EVM
 message verification:

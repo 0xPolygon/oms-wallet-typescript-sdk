@@ -1260,6 +1260,7 @@ function jsonResponse(body: unknown, status = 200): Response {
 function testEnvironment() {
   return {
     walletApiUrl: 'https://wallet.example',
-    indexerGatewayUrl: 'https://indexer.example'
+    indexerGatewayUrl: 'https://indexer.example',
+    solanaIndexerGatewayUrl: 'https://solana-indexer.example'
   };
 }

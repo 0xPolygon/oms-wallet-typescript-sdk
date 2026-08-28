@@ -1,5 +1,5 @@
 ## clients/indexerClient.d.ts
-import type { Network } from '../networks.js';
+import type { Network, SolanaNetwork } from '../networks.js';
 export type IndexerNetworkType = 'MAINNETS' | 'TESTNETS' | 'ALL';
 export type ContractVerificationStatus = 'VERIFIED' | 'UNVERIFIED' | 'ALL';
 export interface TokenBalancesPage {
@@ -125,6 +125,51 @@ export interface BalancesResult {
     nativeBalances: NativeTokenBalance[];
     balances: ContractTokenBalance[];
 }
+export interface GetSolanaBalancesParams {
+    walletAddress: string;
+    networks?: SolanaNetwork[];
+    includeMetadata?: boolean;
+    omitNativeBalances?: boolean;
+    mintAddresses?: string[];
+    excludedMintAddresses?: string[];
+}
+export type SolanaVerificationStatus = 'verified' | 'unverified' | 'unknown';
+export type SolanaVerificationSource = 'jupiter' | 'solflare-utl' | 'none';
+export interface SolanaBalanceBase {
+    network: SolanaNetwork;
+    accountAddress: string;
+    name: string;
+    symbol: string;
+    decimals: number;
+    balance: string;
+    formattedBalance: string;
+    imageUrl?: string;
+    metadataUri?: string;
+    verificationStatus: SolanaVerificationStatus;
+    verificationSource: SolanaVerificationSource;
+    priceUSD?: string;
+    balanceUSD?: string;
+}
+export interface SolanaNativeBalance extends SolanaBalanceBase {
+    assetType: 'native';
+    tokenProgram?: undefined;
+    mintAddress?: undefined;
+}
+export interface SolanaFungibleTokenBalance extends SolanaBalanceBase {
+    assetType: 'fungible-token';
+    tokenProgram: 'spl-token' | 'token-2022';
+    mintAddress: string;
+}
+export type SolanaBalance = SolanaNativeBalance | SolanaFungibleTokenBalance;
+export interface SolanaNetworkError {
+    network: SolanaNetwork;
+    reason: string;
+}
+export interface SolanaBalancesResult {
+    status: number;
+    balances: SolanaBalance[];
+    errors: SolanaNetworkError[];
+}
 export interface TransactionTransfer {
     transferType: string;
     contractAddress: string;
@@ -170,9 +215,11 @@ export interface TransactionHistoryResult {
 }
 interface IndexerClientEnvironment {
     indexerGatewayUrl: string;
+    solanaIndexerGatewayUrl: string;
 }
 export interface OMSWalletIndexerClient {
     getBalances(params: GetBalancesParams): Promise<BalancesResult>;
+    getSolanaBalances(params: GetSolanaBalancesParams): Promise<SolanaBalancesResult>;
     getTransactionHistory(params: GetTransactionHistoryParams): Promise<TransactionHistoryResult>;
 }
 export declare class IndexerClient implements OMSWalletIndexerClient {
@@ -184,6 +231,7 @@ export declare class IndexerClient implements OMSWalletIndexerClient {
         environment: IndexerClientEnvironment;
     });
     getBalances(params: GetBalancesParams): Promise<BalancesResult>;
+    getSolanaBalances(params: GetSolanaBalancesParams): Promise<SolanaBalancesResult>;
     getTransactionHistory(params: GetTransactionHistoryParams): Promise<TransactionHistoryResult>;
     private postJson;
     private chainScope;
@@ -363,7 +411,7 @@ export { AuthMode, TransactionMode, TransactionStatus, WalletImportCipherSuite, 
 export { OMSWalletRequestError, OMSWalletResponseError, OMSWalletError, OMSWalletSessionError, OMSWalletTransactionError, OMSWalletSelectionError, OMSWalletValidationError, OMSWalletStorageError, isOMSWalletError, type OMSWalletErrorCode, type OMSWalletUpstreamError } from './errors.js';
 export type { ExecutedRemoteTransaction, ExecuteRemoteTransactionParams, ListRemoteAccessSessionsParams, PreparedRemoteTransaction, PrepareRemoteTransactionParams, RegisteredRemoteCredential, RegisterRemoteCredentialParams, RemoteAccessSessionPage, RevokeRemoteCredentialParams } from './types/remoteAccess.js';
 export type { CompleteEmailAuthParams, CompleteEmailAuthResult, CompleteOidcIdTokenAuthResult, CompleteOidcRedirectAuthParams, CompleteOidcRedirectAuthResult, EncryptedWalletImportKeyMaterial, GetIdTokenParams, ImportEncryptedWalletParams, ImportWalletParams, IsValidMessageSignatureParams, IsValidSolanaMessageSignatureParams, IsValidTypedDataSignatureParams, OMSWalletEmailSessionAuth, OMSWalletOidcSessionAuth, OMSWalletOidcSessionAuthFlow, OMSWalletSessionAuth, OMSWalletSessionExpiredEvent, OMSWalletSessionExpiredListener, OMSWalletSessionState, WalletAccount, EthereumWalletAccount, SolanaWalletAccount, PendingWalletSelection, SignInWithOidcIdTokenParams, SignMessageParams, SignSolanaMessageParams, SignInWithOidcRedirectParams, SignTypedDataParams, StartEmailAuthParams, StartOidcRedirectAuthParams, StartOidcRedirectAuthResult, WalletActivationResult, WalletImportRecipientKey, WalletSelectionBehavior, OMSWalletClient } from './wallet.js';
-export type { BalancesResult, ContractVerificationStatus, ContractTokenBalance, GetBalancesParams, GetTransactionHistoryParams, IndexerNetworkType, MetadataOptions, NativeTokenBalance, OMSWalletIndexerClient, SortBy, TokenContractInfo, TokenBalance, TokenBalancesPage, TokenBalancesPageRequest, TokenMetadata, TokenMetadataAsset, Transaction, TransactionHistoryResult, TransactionTransfer } from './clients/indexerClient.js';
+export type { BalancesResult, ContractVerificationStatus, ContractTokenBalance, GetBalancesParams, GetSolanaBalancesParams, GetTransactionHistoryParams, IndexerNetworkType, MetadataOptions, NativeTokenBalance, OMSWalletIndexerClient, SolanaBalance, SolanaBalancesResult, SolanaFungibleTokenBalance, SolanaNativeBalance, SolanaNetworkError, SolanaVerificationSource, SolanaVerificationStatus, SortBy, TokenContractInfo, TokenBalance, TokenBalancesPage, TokenBalancesPageRequest, TokenMetadata, TokenMetadataAsset, Transaction, TransactionHistoryResult, TransactionTransfer } from './clients/indexerClient.js';
 export type { AccessGrant, AccessGrantPage, AuthorizeRemoteAccessParams, AuthorizedRemoteAccess, DirectAccessGrant, ListAccessParams, RemoteAccessGrant, RemoteAccessSession, RemoteCredentialMetadata, RevokeAccessParams, SmartSessionGrant, SmartSessionGrantUsage, WalletCredential } from './types/accessGrant.js';
 export type { FeeOptionWithBalance, SendContractTransactionParams, SendDataTransactionParams, SendNativeTransactionParams, SendSolanaTransferParams, SendTransactionBase, SendTransactionParams, SendTransactionResponse, TransactionStatusPollingOptions } from './types/transactionTypes.js';
 export { FeeOptionSelector, feeOptionSelection } from './types/transactionTypes.js';
@@ -606,6 +654,7 @@ export declare const WalletOperation: {
 export type WalletOperation = (typeof WalletOperation)[keyof typeof WalletOperation];
 export declare const IndexerOperation: {
     readonly getBalances: "indexer.getBalances";
+    readonly getSolanaBalances: "indexer.getSolanaBalances";
     readonly getTransactionHistory: "indexer.getTransactionHistory";
 };
 export type IndexerOperation = (typeof IndexerOperation)[keyof typeof IndexerOperation];

@@ -1445,6 +1445,49 @@ describe('public API error contracts', () => {
         `);
   });
 
+  it('snapshots Solana indexer backend errors with upstream details', async () => {
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async () =>
+        jsonResponse(
+          {
+            error: 'Unavailable',
+            code: 'SOLANA_INDEXER_UNAVAILABLE',
+            message: 'Solana indexer is unavailable'
+          },
+          503
+        )
+      )
+    );
+
+    const oms = createOmsClient();
+
+    await expect(
+      publicError(() =>
+        oms.indexer.getSolanaBalances({
+          walletAddress: 'solana-wallet'
+        })
+      )
+    ).resolves.toMatchInlineSnapshot(`
+          {
+            "code": "OMS_HTTP_ERROR",
+            "message": "Solana indexer is unavailable",
+            "name": "OMSWalletRequestError",
+            "operation": "indexer.getSolanaBalances",
+            "retryable": true,
+            "status": 503,
+            "txnId": null,
+            "upstreamError": {
+              "code": "SOLANA_INDEXER_UNAVAILABLE",
+              "message": "Solana indexer is unavailable",
+              "name": "Unavailable",
+              "service": "indexer",
+              "status": 503,
+            },
+          }
+        `);
+  });
+
   it('snapshots indexer non-JSON HTTP errors without raw upstream bodies', async () => {
     vi.stubGlobal(
       'fetch',
