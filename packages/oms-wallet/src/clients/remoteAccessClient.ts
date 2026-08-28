@@ -1,13 +1,17 @@
 import { isAddress } from 'viem';
 
 import type { CredentialSigner } from '../credentialSigner.js';
+import type { Network } from '../networks.js';
+import type { RemoteAccessSession, SmartSessionGrantUsage } from '../types/accessGrant.js';
 import type {
   ExecuteRemoteTransactionParams,
   ExecutedRemoteTransaction,
+  ListRemoteAccessSessionsParams,
   PreparedRemoteTransaction,
   PrepareRemoteTransactionParams,
   RegisteredRemoteCredential,
   RegisterRemoteCredentialParams,
+  RemoteAccessSessionPage,
   RevokeRemoteCredentialParams
 } from '../types/remoteAccess.js';
 import type { TransactionStatusResponse } from '../types/waas.js';
@@ -19,6 +23,11 @@ import { RemoteAccessOperation } from '../operations.js';
 import { parsePublishableKey } from '../publishableKey.js';
 import { createSignedFetch } from '../signedFetch.js';
 import { TransactionMode } from '../types/waas.js';
+import {
+  fromGeneratedRemoteAccessSession,
+  fromGeneratedRemoteAccessSessions,
+  fromGeneratedSmartSessionGrantUsages
+} from '../utils/accessGrant.js';
 import {
   fromGeneratedFeeOption,
   fromGeneratedTransactionStatus,
@@ -127,8 +136,80 @@ export class RemoteAccessClient {
     });
   }
 
+  /** Lists every smart session authorized for this remote credential. */
+  async listSessions(params: ListRemoteAccessSessionsParams = {}): Promise<RemoteAccessSession[]> {
+    return this.#run(RemoteAccessOperation.listSessions, async () => {
+      const sessions: RemoteAccessSession[] = [];
+      for await (const page of this.#listSessionPagesUnchecked(params)) {
+        sessions.push(...page.sessions);
+      }
+      return sessions;
+    });
+  }
+
+  /** Streams smart sessions page by page. */
+  async *listSessionPages(
+    params: ListRemoteAccessSessionsParams = {}
+  ): AsyncIterable<RemoteAccessSessionPage> {
+    try {
+      yield* this.#listSessionPagesUnchecked(params);
+    } catch (error) {
+      throw toOMSWalletError(error, RemoteAccessOperation.listSessionPages);
+    }
+  }
+
+  /** Reads one smart session authorized for this remote credential. */
+  async getSession(params: { sessionId: string }): Promise<RemoteAccessSession> {
+    return this.#run(RemoteAccessOperation.getSession, async () => {
+      this.#requireSessionId(params.sessionId);
+      const response = await this.#client.getSession({ sessionId: params.sessionId });
+      return fromGeneratedRemoteAccessSession(response.session);
+    });
+  }
+
+  /** Reads grant usage for one smart session on a network. */
+  async getSessionUsage(params: {
+    sessionId: string;
+    network: Network;
+  }): Promise<SmartSessionGrantUsage[]> {
+    return this.#run(RemoteAccessOperation.getSessionUsage, async () => {
+      this.#requireSessionId(params.sessionId);
+      const response = await this.#client.getSessionUsage({
+        sessionId: params.sessionId,
+        network: params.network.id.toString()
+      });
+      return fromGeneratedSmartSessionGrantUsages(response.entries);
+    });
+  }
+
+  async *#listSessionPagesUnchecked(
+    params: ListRemoteAccessSessionsParams
+  ): AsyncIterable<RemoteAccessSessionPage> {
+    if (
+      params.pageSize !== undefined &&
+      (!Number.isSafeInteger(params.pageSize) || params.pageSize <= 0)
+    ) {
+      throw new Error('pageSize must be a positive safe integer');
+    }
+
+    let cursor: string | undefined;
+    do {
+      const page =
+        params.pageSize === undefined && cursor === undefined
+          ? undefined
+          : { limit: params.pageSize, cursor };
+      const response = await this.#client.listSessions({ page });
+      cursor = response.page?.cursor || undefined;
+      yield { sessions: fromGeneratedRemoteAccessSessions(response.sessions) };
+    } while (cursor);
+  }
+
   #requireSession(walletId: string, sessionId: string): void {
     if (!walletId.trim()) throw new Error('walletId is required');
+    if (!sessionId.trim()) throw new Error('sessionId is required');
+  }
+
+  #requireSessionId(sessionId: string): void {
     if (!sessionId.trim()) throw new Error('sessionId is required');
   }
 

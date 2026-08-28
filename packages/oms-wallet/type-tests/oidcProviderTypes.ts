@@ -3,6 +3,8 @@ import {
   Networks,
   SolanaNetworks,
   RemoteAccessClient,
+  WalletImportCipherSuite,
+  WalletKeyOrigin,
   WalletType,
   OMSWallet,
   OMSWalletRequestError,
@@ -51,12 +53,19 @@ import {
   type AuthorizeRemoteAccessParams,
   type CredentialSigner,
   type PreparedRemoteTransaction,
+  type EncryptedWalletImportKeyMaterial,
   type RemoteAccessGrant,
-  type SmartSessionGrant
+  type RemoteAccessSession,
+  type SmartSessionGrant,
+  type SmartSessionGrantUsage
 } from '../src/index';
 
 const configuredOmsWallet = new OMSWallet({
   publishableKey: 'pk_dev_sdbx_project_key'
+});
+const importConfiguredOmsWallet = new OMSWallet({
+  publishableKey: 'pk_dev_sdbx_project_key',
+  walletImport: { trustedPcr0s: ['00'.repeat(48)] }
 });
 
 declare const backendCredentialSigner: CredentialSigner;
@@ -91,6 +100,14 @@ if (false) {
     });
     void remoteAccessClient.getTransactionStatus({ txnId: prepared.txnId });
     void remoteAccessClient.revokeCredential({ credentialId: registered.credentialId });
+    const sessions: RemoteAccessSession[] = await remoteAccessClient.listSessions({ pageSize: 10 });
+    for await (const page of remoteAccessClient.listSessionPages()) void page.sessions;
+    const remoteSession = await remoteAccessClient.getSession({ sessionId: sessions[0].sessionId });
+    const remoteUsage: SmartSessionGrantUsage[] = await remoteAccessClient.getSessionUsage({
+      sessionId: remoteSession.sessionId,
+      network: Networks.amoy
+    });
+    void remoteUsage;
 
     // @ts-expect-error remote transactions require an owner-authorized session id.
     void remoteAccessClient.prepareTransaction({
@@ -198,6 +215,8 @@ if (false) {
     void activatedOidcIdTokenAuth.walletAddress;
 
     const solanaWallet = await wallet.createWallet({ type: WalletType.Solana });
+    const origin: WalletKeyOrigin = solanaWallet.wallet.keyOrigin;
+    void origin;
     if (solanaWallet.wallet.type === WalletType.Solana) {
       const address: string = solanaWallet.wallet.address;
       void address;
@@ -235,6 +254,36 @@ if (false) {
       credentialId: 'credential-id',
       sessionId: authorization.sessionId
     });
+    const ownerSession = await wallet.getRemoteAccessSession({
+      sessionId: authorization.sessionId
+    });
+    void wallet.getRemoteAccessSessionUsage({
+      sessionId: ownerSession.sessionId,
+      network: Networks.polygon
+    });
+
+    const imported = await importConfiguredOmsWallet.wallet.importWallet({
+      type: WalletType.Ethereum,
+      privateKey: `0x${'01'.repeat(32)}`,
+      reference: 'imported'
+    });
+    const importedOrigin: WalletKeyOrigin = imported.wallet.keyOrigin;
+    void importedOrigin;
+    const recipient = await importConfiguredOmsWallet.wallet.getWalletImportRecipientKey({
+      cipherSuite: WalletImportCipherSuite.P256Sha256Aes256Gcm
+    });
+    const encryptedKey: EncryptedWalletImportKeyMaterial = {
+      keyId: recipient.keyId,
+      cipherSuite: recipient.cipherSuite,
+      encapsulatedKey: 'base64',
+      ciphertext: 'base64'
+    };
+    void importConfiguredOmsWallet.wallet.importEncryptedWallet({
+      type: WalletType.Solana,
+      keyMaterial: encryptedKey
+    });
+    // @ts-expect-error privateKey is required for the high-level import method.
+    void importConfiguredOmsWallet.wallet.importWallet({ type: WalletType.Ethereum });
   });
 }
 

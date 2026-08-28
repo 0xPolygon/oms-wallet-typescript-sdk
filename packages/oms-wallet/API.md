@@ -22,6 +22,15 @@ export interface OMSWalletParams {
     storage?: StorageManager;
     redirectAuthStorage?: StorageManager;
     credentialSigner?: CredentialSigner;
+    walletImport?: WalletImportConfig;
+}
+```
+
+### `WalletImportConfig`
+
+```typescript
+export interface WalletImportConfig {
+    readonly trustedPcr0s: ReadonlyArray<string>;
 }
 ```
 
@@ -129,6 +138,26 @@ createWallet(params?: {
 }): Promise<WalletActivationResult>;
 ```
 
+### `OMSWalletClient.importWallet`
+
+```typescript
+importWallet(params: ImportWalletParams): Promise<WalletActivationResult>;
+```
+
+### `OMSWalletClient.getWalletImportRecipientKey`
+
+```typescript
+getWalletImportRecipientKey(params: {
+    cipherSuite: WalletImportCipherSuite;
+}): Promise<WalletImportRecipientKey>;
+```
+
+### `OMSWalletClient.importEncryptedWallet`
+
+```typescript
+importEncryptedWallet(params: ImportEncryptedWalletParams): Promise<WalletActivationResult>;
+```
+
 ### `OMSWalletClient.getIdToken`
 
 ```typescript
@@ -159,6 +188,23 @@ inspectRemoteCredential(params: {
 
 ```typescript
 authorizeRemoteAccess(params: AuthorizeRemoteAccessParams): Promise<AuthorizedRemoteAccess>;
+```
+
+### `OMSWalletClient.getRemoteAccessSession`
+
+```typescript
+getRemoteAccessSession(params: {
+    sessionId: string;
+}): Promise<RemoteAccessSession>;
+```
+
+### `OMSWalletClient.getRemoteAccessSessionUsage`
+
+```typescript
+getRemoteAccessSessionUsage(params: {
+    sessionId: string;
+    network: Network;
+}): Promise<SmartSessionGrantUsage[]>;
 ```
 
 ### `OMSWalletClient.revokeAccess`
@@ -363,6 +409,28 @@ export declare const WalletType: Readonly<{
 export type WalletType = (typeof WalletType)[keyof typeof WalletType];
 ```
 
+### `WalletKeyOrigin`
+
+```typescript
+export declare const WalletKeyOrigin: Readonly<{
+    readonly Enclave: "enclave";
+    readonly Imported: "imported";
+}>;
+export type WalletKeyOrigin = (typeof WalletKeyOrigin)[keyof typeof WalletKeyOrigin];
+```
+
+### `WalletImportCipherSuite`
+
+```typescript
+export declare const WalletImportCipherSuite: Readonly<{
+    readonly X25519Sha256Aes256Gcm: "x25519-sha256-aes256gcm";
+    readonly X25519Sha256ChaCha20Poly1305: "x25519-sha256-chacha20poly1305";
+    readonly P256Sha256Aes256Gcm: "p256-sha256-aes256gcm";
+    readonly P256Sha256ChaCha20Poly1305: "p256-sha256-chacha20poly1305";
+}>;
+export type WalletImportCipherSuite = (typeof WalletImportCipherSuite)[keyof typeof WalletImportCipherSuite];
+```
+
 ### `WalletSelectionBehavior`
 
 ```typescript
@@ -383,6 +451,7 @@ export interface EthereumWalletAccount {
     readonly type: "ethereum";
     readonly address: Address;
     readonly reference?: string;
+    readonly keyOrigin: WalletKeyOrigin;
 }
 ```
 
@@ -394,6 +463,7 @@ export interface SolanaWalletAccount {
     readonly type: "solana";
     readonly address: string;
     readonly reference?: string;
+    readonly keyOrigin: WalletKeyOrigin;
 }
 ```
 
@@ -403,6 +473,51 @@ export interface SolanaWalletAccount {
 export interface WalletActivationResult {
     readonly walletAddress: string;
     readonly wallet: WalletAccount;
+}
+```
+
+### `ImportWalletParams`
+
+```typescript
+export type ImportWalletParams = {
+    type: "ethereum";
+    privateKey: string | Uint8Array;
+    reference?: string;
+} | {
+    type: "solana";
+    privateKey: string | Uint8Array;
+    reference?: string;
+};
+```
+
+### `WalletImportRecipientKey`
+
+```typescript
+export interface WalletImportRecipientKey {
+    readonly keyId: string;
+    readonly cipherSuite: WalletImportCipherSuite;
+    readonly publicKey: string;
+}
+```
+
+### `EncryptedWalletImportKeyMaterial`
+
+```typescript
+export interface EncryptedWalletImportKeyMaterial {
+    readonly keyId: string;
+    readonly cipherSuite: WalletImportCipherSuite;
+    readonly encapsulatedKey: string;
+    readonly ciphertext: string;
+}
+```
+
+### `ImportEncryptedWalletParams`
+
+```typescript
+export interface ImportEncryptedWalletParams {
+    type: WalletType;
+    keyMaterial: EncryptedWalletImportKeyMaterial;
+    reference?: string;
 }
 ```
 
@@ -591,6 +706,28 @@ export interface AuthorizedRemoteAccess {
 }
 ```
 
+### `RemoteAccessSession`
+
+```typescript
+export interface RemoteAccessSession {
+    sessionId: string;
+    walletId: string;
+    signerAddress: Address;
+    grants: ReadonlyArray<SmartSessionGrant>;
+    chainId: number;
+    expiresAt: string;
+}
+```
+
+### `SmartSessionGrantUsage`
+
+```typescript
+export interface SmartSessionGrantUsage {
+    grant: SmartSessionGrant;
+    used?: bigint;
+}
+```
+
 ### `RevokeAccessParams`
 
 ```typescript
@@ -712,6 +849,15 @@ export declare class RemoteAccessClient {
         txnId: string;
     }): Promise<TransactionStatusResponse>;
     revokeCredential(params: RevokeRemoteCredentialParams): Promise<void>;
+    listSessions(params?: ListRemoteAccessSessionsParams): Promise<RemoteAccessSession[]>;
+    listSessionPages(params?: ListRemoteAccessSessionsParams): AsyncIterable<RemoteAccessSessionPage>;
+    getSession(params: {
+        sessionId: string;
+    }): Promise<RemoteAccessSession>;
+    getSessionUsage(params: {
+        sessionId: string;
+        network: Network;
+    }): Promise<SmartSessionGrantUsage[]>;
 }
 ```
 
@@ -746,6 +892,22 @@ export interface RegisteredRemoteCredential {
 ```typescript
 export interface RevokeRemoteCredentialParams {
     credentialId: string;
+}
+```
+
+### `ListRemoteAccessSessionsParams`
+
+```typescript
+export interface ListRemoteAccessSessionsParams {
+    pageSize?: number;
+}
+```
+
+### `RemoteAccessSessionPage`
+
+```typescript
+export interface RemoteAccessSessionPage {
+    sessions: RemoteAccessSession[];
 }
 ```
 
@@ -1546,7 +1708,7 @@ export declare function findNetworkByName(name: string): Network | undefined;
 ### `OMSWalletErrorCode`
 
 ```typescript
-export type OMSWalletErrorCode = "OMS_HTTP_ERROR" | "OMS_INVALID_RESPONSE" | "OMS_REQUEST_FAILED" | "OMS_AUTH_COMMITMENT_CONSUMED" | "OMS_SESSION_MISSING" | "OMS_SESSION_EXPIRED" | "OMS_WALLET_SELECTION_STALE" | "OMS_WALLET_SELECTION_UNAVAILABLE" | "OMS_WALLET_SELECTION_IN_FLIGHT" | "OMS_TRANSACTION_EXECUTION_UNCONFIRMED" | "OMS_TRANSACTION_STATUS_LOOKUP_FAILED" | "OMS_VALIDATION_ERROR" | "OMS_STORAGE_ERROR";
+export type OMSWalletErrorCode = "OMS_HTTP_ERROR" | "OMS_INVALID_RESPONSE" | "OMS_REQUEST_FAILED" | "OMS_AUTH_COMMITMENT_CONSUMED" | "OMS_WALLET_ADDRESS_ALREADY_IMPORTED" | "OMS_ATTESTATION_VERIFICATION_FAILED" | "OMS_SESSION_MISSING" | "OMS_SESSION_EXPIRED" | "OMS_WALLET_SELECTION_STALE" | "OMS_WALLET_SELECTION_UNAVAILABLE" | "OMS_WALLET_SELECTION_IN_FLIGHT" | "OMS_TRANSACTION_EXECUTION_UNCONFIRMED" | "OMS_TRANSACTION_STATUS_LOOKUP_FAILED" | "OMS_VALIDATION_ERROR" | "OMS_STORAGE_ERROR";
 ```
 
 ### `OMSWalletUpstreamError`
@@ -1589,7 +1751,7 @@ export declare abstract class OMSWalletError extends Error {
 ```typescript
 export declare class OMSWalletRequestError extends OMSWalletError {
     constructor(params: Omit<{
-        code: "OMS_HTTP_ERROR" | "OMS_REQUEST_FAILED" | "OMS_AUTH_COMMITMENT_CONSUMED";
+        code: "OMS_HTTP_ERROR" | "OMS_REQUEST_FAILED" | "OMS_AUTH_COMMITMENT_CONSUMED" | "OMS_WALLET_ADDRESS_ALREADY_IMPORTED";
         message: string;
         operation?: string;
         status?: number;
@@ -1598,7 +1760,7 @@ export declare class OMSWalletRequestError extends OMSWalletError {
         upstreamError?: OMSWalletUpstreamError;
         cause?: unknown;
     }, "code"> & {
-        code?: "OMS_HTTP_ERROR" | "OMS_REQUEST_FAILED" | "OMS_AUTH_COMMITMENT_CONSUMED";
+        code?: "OMS_HTTP_ERROR" | "OMS_REQUEST_FAILED" | "OMS_AUTH_COMMITMENT_CONSUMED" | "OMS_WALLET_ADDRESS_ALREADY_IMPORTED";
     });
 }
 ```
@@ -1608,7 +1770,7 @@ export declare class OMSWalletRequestError extends OMSWalletError {
 ```typescript
 export declare class OMSWalletResponseError extends OMSWalletError {
     constructor(params: Omit<{
-        code: "OMS_INVALID_RESPONSE";
+        code: "OMS_INVALID_RESPONSE" | "OMS_ATTESTATION_VERIFICATION_FAILED";
         message: string;
         operation?: string;
         status?: number;
@@ -1617,7 +1779,7 @@ export declare class OMSWalletResponseError extends OMSWalletError {
         upstreamError?: OMSWalletUpstreamError;
         cause?: unknown;
     }, "code"> & {
-        code?: "OMS_INVALID_RESPONSE";
+        code?: "OMS_INVALID_RESPONSE" | "OMS_ATTESTATION_VERIFICATION_FAILED";
     });
 }
 ```

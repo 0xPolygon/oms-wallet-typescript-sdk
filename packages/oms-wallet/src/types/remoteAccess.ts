@@ -1,7 +1,7 @@
 import type { Address, Hex } from 'viem';
 
 import type { Network } from '../networks.js';
-import type { RemoteCredentialMetadata } from './accessGrant.js';
+import type { RemoteAccessSession, RemoteCredentialMetadata } from './accessGrant.js';
 import type { FeeOption, FeeOptionSelection, TransactionStatus } from './waas.js';
 
 export interface RegisterRemoteCredentialParams {
@@ -15,6 +15,14 @@ export interface RegisteredRemoteCredential {
 
 export interface RevokeRemoteCredentialParams {
   credentialId: string;
+}
+
+export interface ListRemoteAccessSessionsParams {
+  pageSize?: number;
+}
+
+export interface RemoteAccessSessionPage {
+  sessions: RemoteAccessSession[];
 }
 
 export interface PrepareRemoteTransactionParams {

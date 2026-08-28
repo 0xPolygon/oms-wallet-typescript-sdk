@@ -863,6 +863,7 @@ describe('WalletClient session storage', () => {
             {
               id: 'wallet-id',
               networkFamily: 'evm',
+              keyOrigin: 'enclave',
               address: '0x1111111111111111111111111111111111111111'
             }
           ],
@@ -875,6 +876,7 @@ describe('WalletClient session storage', () => {
           wallet: {
             id: 'wallet-id',
             networkFamily: 'evm',
+            keyOrigin: 'enclave',
             address: '0x1111111111111111111111111111111111111111'
           }
         });
@@ -1970,6 +1972,7 @@ function testWallet(id: string, type: WalletType, seed: string, reference?: stri
   return {
     id,
     networkFamily: type === WalletType.Ethereum ? 'evm' : 'solana',
+    keyOrigin: 'enclave',
     address: testWalletAddress(type, seed),
     ...(reference ? { reference } : {})
   };
@@ -1980,7 +1983,8 @@ function expectedWallet(id: string, type: WalletType, seed: string, reference?: 
     id,
     type,
     address: testWalletAddress(type, seed),
-    reference
+    reference,
+    keyOrigin: 'enclave'
   };
 }
 

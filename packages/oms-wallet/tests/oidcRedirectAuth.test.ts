@@ -619,6 +619,7 @@ describe('WalletClient OIDC redirect auth', () => {
             {
               id: 'wallet-id',
               networkFamily: 'evm',
+              keyOrigin: 'enclave',
               address: '0x1111111111111111111111111111111111111111'
             }
           ],
@@ -632,6 +633,7 @@ describe('WalletClient OIDC redirect auth', () => {
           wallet: {
             id: 'wallet-id',
             networkFamily: 'evm',
+            keyOrigin: 'enclave',
             address: '0x1111111111111111111111111111111111111111'
           }
         });
@@ -717,6 +719,7 @@ describe('WalletClient OIDC redirect auth', () => {
             {
               id: 'wallet-id',
               networkFamily: 'evm',
+              keyOrigin: 'enclave',
               address: '0x1111111111111111111111111111111111111111'
             }
           ],
@@ -730,6 +733,7 @@ describe('WalletClient OIDC redirect auth', () => {
           wallet: {
             id: 'wallet-id',
             networkFamily: 'evm',
+            keyOrigin: 'enclave',
             address: '0x1111111111111111111111111111111111111111'
           }
         });
@@ -783,6 +787,7 @@ describe('WalletClient OIDC redirect auth', () => {
             {
               id: 'wallet-id',
               networkFamily: 'evm',
+              keyOrigin: 'enclave',
               address: '0x1111111111111111111111111111111111111111'
             }
           ],
@@ -795,6 +800,7 @@ describe('WalletClient OIDC redirect auth', () => {
           wallet: {
             id: 'wallet-id',
             networkFamily: 'evm',
+            keyOrigin: 'enclave',
             address: '0x1111111111111111111111111111111111111111'
           }
         });
@@ -858,6 +864,7 @@ describe('WalletClient OIDC redirect auth', () => {
             {
               id: 'wallet-id',
               networkFamily: 'evm',
+              keyOrigin: 'enclave',
               address: '0x1111111111111111111111111111111111111111'
             }
           ],
@@ -870,6 +877,7 @@ describe('WalletClient OIDC redirect auth', () => {
           wallet: {
             id: 'wallet-id',
             networkFamily: 'evm',
+            keyOrigin: 'enclave',
             address: '0x1111111111111111111111111111111111111111'
           }
         });
@@ -920,11 +928,13 @@ describe('WalletClient OIDC redirect auth', () => {
             {
               id: 'wallet-id',
               networkFamily: 'evm',
+              keyOrigin: 'enclave',
               address: '0x1111111111111111111111111111111111111111'
             },
             {
               id: 'wallet-other',
               networkFamily: 'solana',
+              keyOrigin: 'enclave',
               address: '3gFktQX6vki5M2DzN8Y1ESPUJ4fJ8o6hVQWf8vYvPypD'
             }
           ],
@@ -1183,6 +1193,7 @@ describe('WalletClient OIDC redirect auth', () => {
           wallet: {
             id: 'wallet-id',
             networkFamily: 'evm',
+            keyOrigin: 'enclave',
             address: '0x2222222222222222222222222222222222222222'
           }
         });

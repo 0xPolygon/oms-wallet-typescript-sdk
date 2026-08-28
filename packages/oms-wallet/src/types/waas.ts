@@ -15,6 +15,23 @@ export const WalletType = Object.freeze({
 
 export type WalletType = (typeof WalletType)[keyof typeof WalletType];
 
+export const WalletKeyOrigin = Object.freeze({
+  Enclave: 'enclave',
+  Imported: 'imported'
+} as const);
+
+export type WalletKeyOrigin = (typeof WalletKeyOrigin)[keyof typeof WalletKeyOrigin];
+
+export const WalletImportCipherSuite = Object.freeze({
+  X25519Sha256Aes256Gcm: 'x25519-sha256-aes256gcm',
+  X25519Sha256ChaCha20Poly1305: 'x25519-sha256-chacha20poly1305',
+  P256Sha256Aes256Gcm: 'p256-sha256-aes256gcm',
+  P256Sha256ChaCha20Poly1305: 'p256-sha256-chacha20poly1305'
+} as const);
+
+export type WalletImportCipherSuite =
+  (typeof WalletImportCipherSuite)[keyof typeof WalletImportCipherSuite];
+
 export const TransactionMode = Object.freeze({
   Native: 'native',
   Relayer: 'relayer'

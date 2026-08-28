@@ -12,6 +12,9 @@ export const WalletOperation = {
   listWallets: 'wallet.listWallets',
   useWallet: 'wallet.useWallet',
   createWallet: 'wallet.createWallet',
+  importWallet: 'wallet.importWallet',
+  getWalletImportRecipientKey: 'wallet.getWalletImportRecipientKey',
+  importEncryptedWallet: 'wallet.importEncryptedWallet',
   getIdToken: 'wallet.getIdToken',
   signMessage: 'wallet.signMessage',
   signSolanaMessage: 'wallet.signSolanaMessage',
@@ -28,6 +31,8 @@ export const WalletOperation = {
   authorizeRemoteAccess: 'wallet.authorizeRemoteAccess',
   listAccess: 'wallet.listAccess',
   listAccessPages: 'wallet.listAccessPages',
+  getRemoteAccessSession: 'wallet.getRemoteAccessSession',
+  getRemoteAccessSessionUsage: 'wallet.getRemoteAccessSessionUsage',
   revokeAccess: 'wallet.revokeAccess',
   transactionStatus: 'wallet.transactionStatus'
 } as const;
@@ -46,7 +51,11 @@ export const RemoteAccessOperation = {
   prepareTransaction: 'remoteAccess.prepareTransaction',
   executeTransaction: 'remoteAccess.executeTransaction',
   getTransactionStatus: 'remoteAccess.getTransactionStatus',
-  revokeCredential: 'remoteAccess.revokeCredential'
+  revokeCredential: 'remoteAccess.revokeCredential',
+  listSessions: 'remoteAccess.listSessions',
+  listSessionPages: 'remoteAccess.listSessionPages',
+  getSession: 'remoteAccess.getSession',
+  getSessionUsage: 'remoteAccess.getSessionUsage'
 } as const;
 
 export type RemoteAccessOperation =

@@ -196,7 +196,9 @@ export {};
 
 ## clients/remoteAccessClient.d.ts
 import type { CredentialSigner } from '../credentialSigner.js';
-import type { ExecuteRemoteTransactionParams, ExecutedRemoteTransaction, PreparedRemoteTransaction, PrepareRemoteTransactionParams, RegisteredRemoteCredential, RegisterRemoteCredentialParams, RevokeRemoteCredentialParams } from '../types/remoteAccess.js';
+import type { Network } from '../networks.js';
+import type { RemoteAccessSession, SmartSessionGrantUsage } from '../types/accessGrant.js';
+import type { ExecuteRemoteTransactionParams, ExecutedRemoteTransaction, ListRemoteAccessSessionsParams, PreparedRemoteTransaction, PrepareRemoteTransactionParams, RegisteredRemoteCredential, RegisterRemoteCredentialParams, RemoteAccessSessionPage, RevokeRemoteCredentialParams } from '../types/remoteAccess.js';
 import type { TransactionStatusResponse } from '../types/waas.js';
 export interface RemoteAccessClientParams {
     publishableKey: string;
@@ -218,6 +220,19 @@ export declare class RemoteAccessClient {
     }): Promise<TransactionStatusResponse>;
     /** Revokes a WaaS credential ID returned by registerCredential. */
     revokeCredential(params: RevokeRemoteCredentialParams): Promise<void>;
+    /** Lists every smart session authorized for this remote credential. */
+    listSessions(params?: ListRemoteAccessSessionsParams): Promise<RemoteAccessSession[]>;
+    /** Streams smart sessions page by page. */
+    listSessionPages(params?: ListRemoteAccessSessionsParams): AsyncIterable<RemoteAccessSessionPage>;
+    /** Reads one smart session authorized for this remote credential. */
+    getSession(params: {
+        sessionId: string;
+    }): Promise<RemoteAccessSession>;
+    /** Reads grant usage for one smart session on a network. */
+    getSessionUsage(params: {
+        sessionId: string;
+        network: Network;
+    }): Promise<SmartSessionGrantUsage[]>;
 }
 
 ## credentialSigner.d.ts
@@ -262,7 +277,8 @@ export declare class EthereumPrivateKeyCredentialSigner implements CredentialSig
 
 ## errors.d.ts
 import type { OMSWalletOperation } from './operations.js';
-export type OMSWalletErrorCode = 'OMS_HTTP_ERROR' | 'OMS_INVALID_RESPONSE' | 'OMS_REQUEST_FAILED' | 'OMS_AUTH_COMMITMENT_CONSUMED' | 'OMS_SESSION_MISSING' | 'OMS_SESSION_EXPIRED' | 'OMS_WALLET_SELECTION_STALE' | 'OMS_WALLET_SELECTION_UNAVAILABLE' | 'OMS_WALLET_SELECTION_IN_FLIGHT' | 'OMS_TRANSACTION_EXECUTION_UNCONFIRMED' | 'OMS_TRANSACTION_STATUS_LOOKUP_FAILED' | 'OMS_VALIDATION_ERROR' | 'OMS_STORAGE_ERROR';
+export declare const attestationVerificationErrorPrefix = "WaaS attestation verification failed: ";
+export type OMSWalletErrorCode = 'OMS_HTTP_ERROR' | 'OMS_INVALID_RESPONSE' | 'OMS_REQUEST_FAILED' | 'OMS_AUTH_COMMITMENT_CONSUMED' | 'OMS_WALLET_ADDRESS_ALREADY_IMPORTED' | 'OMS_ATTESTATION_VERIFICATION_FAILED' | 'OMS_SESSION_MISSING' | 'OMS_SESSION_EXPIRED' | 'OMS_WALLET_SELECTION_STALE' | 'OMS_WALLET_SELECTION_UNAVAILABLE' | 'OMS_WALLET_SELECTION_IN_FLIGHT' | 'OMS_TRANSACTION_EXECUTION_UNCONFIRMED' | 'OMS_TRANSACTION_STATUS_LOOKUP_FAILED' | 'OMS_VALIDATION_ERROR' | 'OMS_STORAGE_ERROR';
 export interface OMSWalletUpstreamError {
     service: 'waas' | 'indexer';
     name?: string;
@@ -290,8 +306,8 @@ export declare abstract class OMSWalletError extends Error {
     protected constructor(params: OMSWalletErrorParams);
 }
 type OMSWalletSessionErrorCode = 'OMS_SESSION_MISSING' | 'OMS_SESSION_EXPIRED';
-type OMSWalletRequestErrorCode = 'OMS_HTTP_ERROR' | 'OMS_REQUEST_FAILED' | 'OMS_AUTH_COMMITMENT_CONSUMED';
-type OMSWalletResponseErrorCode = 'OMS_INVALID_RESPONSE';
+type OMSWalletRequestErrorCode = 'OMS_HTTP_ERROR' | 'OMS_REQUEST_FAILED' | 'OMS_AUTH_COMMITMENT_CONSUMED' | 'OMS_WALLET_ADDRESS_ALREADY_IMPORTED';
+type OMSWalletResponseErrorCode = 'OMS_INVALID_RESPONSE' | 'OMS_ATTESTATION_VERIFICATION_FAILED';
 type OMSWalletTransactionErrorCode = 'OMS_TRANSACTION_EXECUTION_UNCONFIRMED' | 'OMS_TRANSACTION_STATUS_LOOKUP_FAILED';
 type OMSWalletSelectionErrorCode = 'OMS_WALLET_SELECTION_STALE' | 'OMS_WALLET_SELECTION_UNAVAILABLE' | 'OMS_WALLET_SELECTION_IN_FLIGHT';
 type OMSWalletValidationErrorCode = 'OMS_VALIDATION_ERROR';
@@ -336,19 +352,19 @@ export {};
 
 ## index.d.ts
 export { OMSWallet } from './omsWallet.js';
-export type { OMSWalletParams } from './omsWallet.js';
+export type { OMSWalletParams, WalletImportConfig } from './omsWallet.js';
 export { RemoteAccessClient } from './clients/remoteAccessClient.js';
 export type { RemoteAccessClientParams } from './clients/remoteAccessClient.js';
 export { OmsRelayOidcProviders, type CustomOidcProviderConfig, type OmsRelayOidcProvider } from './oidc.js';
 export { EthereumPrivateKeyCredentialSigner, WebCryptoP256CredentialSigner, type CredentialSigningAlgorithm, type CredentialSigner } from './credentialSigner.js';
 export { LocalStorageManager, MemoryStorageManager, SessionStorageManager, createDefaultStorage, type StorageManager } from './storageManager.js';
 export { Networks, SolanaNetworks, findNetworkById, findNetworkByName, type Network, type SolanaNetwork } from './networks.js';
-export { AuthMode, TransactionMode, TransactionStatus, WalletType, type OidcAuthMode, type AbiArg, type FeeOption, type FeeOptionSelection, type TransactionStatusResponse } from './types/waas.js';
+export { AuthMode, TransactionMode, TransactionStatus, WalletImportCipherSuite, WalletKeyOrigin, WalletType, type OidcAuthMode, type AbiArg, type FeeOption, type FeeOptionSelection, type TransactionStatusResponse } from './types/waas.js';
 export { OMSWalletRequestError, OMSWalletResponseError, OMSWalletError, OMSWalletSessionError, OMSWalletTransactionError, OMSWalletSelectionError, OMSWalletValidationError, OMSWalletStorageError, isOMSWalletError, type OMSWalletErrorCode, type OMSWalletUpstreamError } from './errors.js';
-export type { ExecutedRemoteTransaction, ExecuteRemoteTransactionParams, PreparedRemoteTransaction, PrepareRemoteTransactionParams, RegisteredRemoteCredential, RegisterRemoteCredentialParams, RevokeRemoteCredentialParams } from './types/remoteAccess.js';
-export type { CompleteEmailAuthParams, CompleteEmailAuthResult, CompleteOidcIdTokenAuthResult, CompleteOidcRedirectAuthParams, CompleteOidcRedirectAuthResult, GetIdTokenParams, IsValidMessageSignatureParams, IsValidSolanaMessageSignatureParams, IsValidTypedDataSignatureParams, OMSWalletEmailSessionAuth, OMSWalletOidcSessionAuth, OMSWalletOidcSessionAuthFlow, OMSWalletSessionAuth, OMSWalletSessionExpiredEvent, OMSWalletSessionExpiredListener, OMSWalletSessionState, WalletAccount, EthereumWalletAccount, SolanaWalletAccount, PendingWalletSelection, SignInWithOidcIdTokenParams, SignMessageParams, SignSolanaMessageParams, SignInWithOidcRedirectParams, SignTypedDataParams, StartEmailAuthParams, StartOidcRedirectAuthParams, StartOidcRedirectAuthResult, WalletActivationResult, WalletSelectionBehavior, OMSWalletClient } from './wallet.js';
+export type { ExecutedRemoteTransaction, ExecuteRemoteTransactionParams, ListRemoteAccessSessionsParams, PreparedRemoteTransaction, PrepareRemoteTransactionParams, RegisteredRemoteCredential, RegisterRemoteCredentialParams, RemoteAccessSessionPage, RevokeRemoteCredentialParams } from './types/remoteAccess.js';
+export type { CompleteEmailAuthParams, CompleteEmailAuthResult, CompleteOidcIdTokenAuthResult, CompleteOidcRedirectAuthParams, CompleteOidcRedirectAuthResult, EncryptedWalletImportKeyMaterial, GetIdTokenParams, ImportEncryptedWalletParams, ImportWalletParams, IsValidMessageSignatureParams, IsValidSolanaMessageSignatureParams, IsValidTypedDataSignatureParams, OMSWalletEmailSessionAuth, OMSWalletOidcSessionAuth, OMSWalletOidcSessionAuthFlow, OMSWalletSessionAuth, OMSWalletSessionExpiredEvent, OMSWalletSessionExpiredListener, OMSWalletSessionState, WalletAccount, EthereumWalletAccount, SolanaWalletAccount, PendingWalletSelection, SignInWithOidcIdTokenParams, SignMessageParams, SignSolanaMessageParams, SignInWithOidcRedirectParams, SignTypedDataParams, StartEmailAuthParams, StartOidcRedirectAuthParams, StartOidcRedirectAuthResult, WalletActivationResult, WalletImportRecipientKey, WalletSelectionBehavior, OMSWalletClient } from './wallet.js';
 export type { BalancesResult, ContractVerificationStatus, ContractTokenBalance, GetBalancesParams, GetTransactionHistoryParams, IndexerNetworkType, MetadataOptions, NativeTokenBalance, OMSWalletIndexerClient, SortBy, TokenContractInfo, TokenBalance, TokenBalancesPage, TokenBalancesPageRequest, TokenMetadata, TokenMetadataAsset, Transaction, TransactionHistoryResult, TransactionTransfer } from './clients/indexerClient.js';
-export type { AccessGrant, AccessGrantPage, AuthorizeRemoteAccessParams, AuthorizedRemoteAccess, DirectAccessGrant, ListAccessParams, RemoteAccessGrant, RemoteCredentialMetadata, RevokeAccessParams, SmartSessionGrant, WalletCredential } from './types/accessGrant.js';
+export type { AccessGrant, AccessGrantPage, AuthorizeRemoteAccessParams, AuthorizedRemoteAccess, DirectAccessGrant, ListAccessParams, RemoteAccessGrant, RemoteAccessSession, RemoteCredentialMetadata, RevokeAccessParams, SmartSessionGrant, SmartSessionGrantUsage, WalletCredential } from './types/accessGrant.js';
 export type { FeeOptionWithBalance, SendContractTransactionParams, SendDataTransactionParams, SendNativeTransactionParams, SendSolanaTransferParams, SendTransactionBase, SendTransactionParams, SendTransactionResponse, TransactionStatusPollingOptions } from './types/transactionTypes.js';
 export { FeeOptionSelector, feeOptionSelection } from './types/transactionTypes.js';
 
@@ -533,11 +549,15 @@ import type { OMSWalletIndexerClient } from './clients/indexerClient.js';
 import type { CredentialSigner } from './credentialSigner.js';
 import type { StorageManager } from './storageManager.js';
 import type { OMSWalletClient } from './wallet.js';
+export interface WalletImportConfig {
+    readonly trustedPcr0s: ReadonlyArray<string>;
+}
 export interface OMSWalletParams {
     publishableKey: string;
     storage?: StorageManager;
     redirectAuthStorage?: StorageManager;
     credentialSigner?: CredentialSigner;
+    walletImport?: WalletImportConfig;
 }
 export declare class OMSWallet {
     readonly wallet: OMSWalletClient;
@@ -559,6 +579,9 @@ export declare const WalletOperation: {
     readonly listWallets: "wallet.listWallets";
     readonly useWallet: "wallet.useWallet";
     readonly createWallet: "wallet.createWallet";
+    readonly importWallet: "wallet.importWallet";
+    readonly getWalletImportRecipientKey: "wallet.getWalletImportRecipientKey";
+    readonly importEncryptedWallet: "wallet.importEncryptedWallet";
     readonly getIdToken: "wallet.getIdToken";
     readonly signMessage: "wallet.signMessage";
     readonly signSolanaMessage: "wallet.signSolanaMessage";
@@ -575,6 +598,8 @@ export declare const WalletOperation: {
     readonly authorizeRemoteAccess: "wallet.authorizeRemoteAccess";
     readonly listAccess: "wallet.listAccess";
     readonly listAccessPages: "wallet.listAccessPages";
+    readonly getRemoteAccessSession: "wallet.getRemoteAccessSession";
+    readonly getRemoteAccessSessionUsage: "wallet.getRemoteAccessSessionUsage";
     readonly revokeAccess: "wallet.revokeAccess";
     readonly transactionStatus: "wallet.transactionStatus";
 };
@@ -590,6 +615,10 @@ export declare const RemoteAccessOperation: {
     readonly executeTransaction: "remoteAccess.executeTransaction";
     readonly getTransactionStatus: "remoteAccess.getTransactionStatus";
     readonly revokeCredential: "remoteAccess.revokeCredential";
+    readonly listSessions: "remoteAccess.listSessions";
+    readonly listSessionPages: "remoteAccess.listSessionPages";
+    readonly getSession: "remoteAccess.getSession";
+    readonly getSessionUsage: "remoteAccess.getSessionUsage";
 };
 export type RemoteAccessOperation = (typeof RemoteAccessOperation)[keyof typeof RemoteAccessOperation];
 export type OMSWalletOperation = WalletOperation | IndexerOperation | RemoteAccessOperation;
@@ -680,6 +709,18 @@ export interface AuthorizedRemoteAccess {
     sessionId: string;
     expiresAt: string;
 }
+export interface RemoteAccessSession {
+    sessionId: string;
+    walletId: string;
+    signerAddress: Address;
+    grants: ReadonlyArray<SmartSessionGrant>;
+    chainId: number;
+    expiresAt: string;
+}
+export interface SmartSessionGrantUsage {
+    grant: SmartSessionGrant;
+    used?: bigint;
+}
 export interface RevokeAccessParams {
     credentialId: string;
     sessionId?: string;
@@ -688,7 +729,7 @@ export interface RevokeAccessParams {
 ## types/remoteAccess.d.ts
 import type { Address, Hex } from 'viem';
 import type { Network } from '../networks.js';
-import type { RemoteCredentialMetadata } from './accessGrant.js';
+import type { RemoteAccessSession, RemoteCredentialMetadata } from './accessGrant.js';
 import type { FeeOption, FeeOptionSelection, TransactionStatus } from './waas.js';
 export interface RegisterRemoteCredentialParams {
     lifetimeSeconds: number;
@@ -699,6 +740,12 @@ export interface RegisteredRemoteCredential {
 }
 export interface RevokeRemoteCredentialParams {
     credentialId: string;
+}
+export interface ListRemoteAccessSessionsParams {
+    pageSize?: number;
+}
+export interface RemoteAccessSessionPage {
+    sessions: RemoteAccessSession[];
 }
 export interface PrepareRemoteTransactionParams {
     walletId: string;
@@ -802,6 +849,18 @@ export declare const WalletType: Readonly<{
     readonly Solana: "solana";
 }>;
 export type WalletType = (typeof WalletType)[keyof typeof WalletType];
+export declare const WalletKeyOrigin: Readonly<{
+    readonly Enclave: "enclave";
+    readonly Imported: "imported";
+}>;
+export type WalletKeyOrigin = (typeof WalletKeyOrigin)[keyof typeof WalletKeyOrigin];
+export declare const WalletImportCipherSuite: Readonly<{
+    readonly X25519Sha256Aes256Gcm: "x25519-sha256-aes256gcm";
+    readonly X25519Sha256ChaCha20Poly1305: "x25519-sha256-chacha20poly1305";
+    readonly P256Sha256Aes256Gcm: "p256-sha256-aes256gcm";
+    readonly P256Sha256ChaCha20Poly1305: "p256-sha256-chacha20poly1305";
+}>;
+export type WalletImportCipherSuite = (typeof WalletImportCipherSuite)[keyof typeof WalletImportCipherSuite];
 export declare const TransactionMode: Readonly<{
     readonly Native: "native";
     readonly Relayer: "relayer";
@@ -847,9 +906,9 @@ export interface FeeOptionSelection {
 import type { Abi, Address, ContractFunctionName } from 'viem';
 import type { Network } from './networks.js';
 import type { CustomOidcProviderConfig, OmsRelayOidcProvider } from './oidc.js';
-import type { AccessGrant, AccessGrantPage, AuthorizeRemoteAccessParams, AuthorizedRemoteAccess, ListAccessParams, RemoteCredentialMetadata, RevokeAccessParams, WalletCredential } from './types/accessGrant.js';
+import type { AccessGrant, AccessGrantPage, AuthorizeRemoteAccessParams, AuthorizedRemoteAccess, ListAccessParams, RemoteAccessSession, RemoteCredentialMetadata, RevokeAccessParams, SmartSessionGrantUsage, WalletCredential } from './types/accessGrant.js';
 import type { FeeOptionSelector, SendContractTransactionParams, SendDataTransactionParams, SendNativeTransactionParams, SendSolanaTransferParams, SendTransactionParams, SendTransactionResponse, TransactionStatusPollingOptions } from './types/transactionTypes.js';
-import type { AbiArg, TransactionMode, TransactionStatusResponse, WalletType } from './types/waas.js';
+import type { AbiArg, TransactionMode, TransactionStatusResponse, WalletImportCipherSuite, WalletKeyOrigin, WalletType } from './types/waas.js';
 interface OidcRedirectAuthParamsBase {
     walletType?: WalletType;
     walletSelection?: WalletSelectionBehavior;
@@ -910,17 +969,44 @@ export interface EthereumWalletAccount {
     readonly type: 'ethereum';
     readonly address: Address;
     readonly reference?: string;
+    readonly keyOrigin: WalletKeyOrigin;
 }
 export interface SolanaWalletAccount {
     readonly id: string;
     readonly type: 'solana';
     readonly address: string;
     readonly reference?: string;
+    readonly keyOrigin: WalletKeyOrigin;
 }
 export type WalletAccount = EthereumWalletAccount | SolanaWalletAccount;
 export interface WalletActivationResult {
     readonly walletAddress: string;
     readonly wallet: WalletAccount;
+}
+export type ImportWalletParams = {
+    type: 'ethereum';
+    privateKey: string | Uint8Array;
+    reference?: string;
+} | {
+    type: 'solana';
+    privateKey: string | Uint8Array;
+    reference?: string;
+};
+export interface WalletImportRecipientKey {
+    readonly keyId: string;
+    readonly cipherSuite: WalletImportCipherSuite;
+    readonly publicKey: string;
+}
+export interface EncryptedWalletImportKeyMaterial {
+    readonly keyId: string;
+    readonly cipherSuite: WalletImportCipherSuite;
+    readonly encapsulatedKey: string;
+    readonly ciphertext: string;
+}
+export interface ImportEncryptedWalletParams {
+    type: WalletType;
+    keyMaterial: EncryptedWalletImportKeyMaterial;
+    reference?: string;
 }
 export interface CompleteWalletAuthResult {
     readonly walletAddress: string;
@@ -1042,6 +1128,11 @@ export interface OMSWalletClient {
         type?: WalletType;
         reference?: string;
     }): Promise<WalletActivationResult>;
+    importWallet(params: ImportWalletParams): Promise<WalletActivationResult>;
+    getWalletImportRecipientKey(params: {
+        cipherSuite: WalletImportCipherSuite;
+    }): Promise<WalletImportRecipientKey>;
+    importEncryptedWallet(params: ImportEncryptedWalletParams): Promise<WalletActivationResult>;
     getIdToken(params?: GetIdTokenParams): Promise<string>;
     signMessage(params: SignMessageParams): Promise<string>;
     signSolanaMessage(params: SignSolanaMessageParams): Promise<string>;
@@ -1073,6 +1164,13 @@ export interface OMSWalletClient {
     authorizeRemoteAccess(params: AuthorizeRemoteAccessParams): Promise<AuthorizedRemoteAccess>;
     listAccess(params?: ListAccessParams): Promise<AccessGrant[]>;
     listAccessPages(params?: ListAccessParams): AsyncIterable<AccessGrantPage>;
+    getRemoteAccessSession(params: {
+        sessionId: string;
+    }): Promise<RemoteAccessSession>;
+    getRemoteAccessSessionUsage(params: {
+        sessionId: string;
+        network: Network;
+    }): Promise<SmartSessionGrantUsage[]>;
     revokeAccess(params: RevokeAccessParams): Promise<void>;
 }
 export {};

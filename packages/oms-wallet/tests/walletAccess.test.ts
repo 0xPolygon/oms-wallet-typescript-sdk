@@ -118,6 +118,15 @@ describe('WalletClient access management', () => {
                       to: '0x1111111111111111111111111111111111111111',
                       limit: '1000000000000000000'
                     }
+                  },
+                  {
+                    kind: 'erc20Transfer',
+                    erc20Transfer: {
+                      token: '0x2222222222222222222222222222222222222222',
+                      to: null,
+                      limit: '42',
+                      cumulative: true
+                    }
                   }
                 ]
               },
@@ -150,6 +159,12 @@ describe('WalletClient access management', () => {
             kind: 'nativeTransfer',
             to: '0x1111111111111111111111111111111111111111',
             limit: 1000000000000000000n
+          },
+          {
+            kind: 'erc20Transfer',
+            token: '0x2222222222222222222222222222222222222222',
+            limit: 42n,
+            cumulative: true
           }
         ],
         expiresAt: '2099-01-01T00:00:00Z',
@@ -249,6 +264,7 @@ describe('WalletClient access management', () => {
           wallet: {
             id: 'solana-wallet-id',
             networkFamily: 'solana',
+            keyOrigin: 'enclave',
             address: '9xQeWvG816bUx9EPjHmaT23yvVMuZwHngkQF5JC9YjCy'
           }
         });
@@ -272,7 +288,8 @@ describe('WalletClient access management', () => {
       wallet: {
         id: 'solana-wallet-id',
         type: 'solana',
-        address: '9xQeWvG816bUx9EPjHmaT23yvVMuZwHngkQF5JC9YjCy'
+        address: '9xQeWvG816bUx9EPjHmaT23yvVMuZwHngkQF5JC9YjCy',
+        keyOrigin: 'enclave'
       }
     });
     await expect(wallet.signSolanaMessage({ message: 'hello solana' })).resolves.toBe(
@@ -285,6 +302,64 @@ describe('WalletClient access management', () => {
       operation: 'wallet.signMessage'
     });
     expect(fetchMock).toHaveBeenCalledTimes(2);
+  });
+
+  it('reads an active wallet remote session and its grant usage', async () => {
+    const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = input.toString();
+      const body = JSON.parse(init?.body as string);
+      if (url.endsWith('/GetSessionUsage')) {
+        expect(body).toEqual({ sessionId: 'session-1', network: '80002' });
+        return jsonResponse({
+          entries: [
+            {
+              grant: {
+                kind: 'nativeTransfer',
+                nativeTransfer: {
+                  to: '0x2222222222222222222222222222222222222222',
+                  limit: '100'
+                }
+              },
+              used: '25'
+            }
+          ]
+        });
+      }
+      if (url.endsWith('/GetSession')) {
+        expect(body).toEqual({ sessionId: 'session-1' });
+        return jsonResponse({
+          session: {
+            sessionId: 'session-1',
+            walletId: 'wallet-id',
+            signerAddress: '0x1111111111111111111111111111111111111111',
+            grants: { entries: [] },
+            chainId: '80002',
+            expiresAt: '2099-01-01T00:00:00Z'
+          }
+        });
+      }
+      throw new Error(`Unexpected request: ${url}`);
+    });
+    vi.stubGlobal('fetch', fetchMock);
+
+    const wallet = createWalletWithSession();
+    await expect(wallet.getRemoteAccessSession({ sessionId: 'session-1' })).resolves.toMatchObject({
+      sessionId: 'session-1',
+      walletId: 'wallet-id',
+      chainId: 80002
+    });
+    await expect(
+      wallet.getRemoteAccessSessionUsage({ sessionId: 'session-1', network: Networks.amoy })
+    ).resolves.toEqual([
+      {
+        grant: {
+          kind: 'nativeTransfer',
+          to: '0x2222222222222222222222222222222222222222',
+          limit: 100n
+        },
+        used: 25n
+      }
+    ]);
   });
 
   it('rejects Solana message signing for an active Ethereum wallet', async () => {

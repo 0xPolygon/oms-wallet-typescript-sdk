@@ -1,5 +1,5 @@
 export { OMSWallet } from './omsWallet.js';
-export type { OMSWalletParams } from './omsWallet.js';
+export type { OMSWalletParams, WalletImportConfig } from './omsWallet.js';
 export { RemoteAccessClient } from './clients/remoteAccessClient.js';
 export type { RemoteAccessClientParams } from './clients/remoteAccessClient.js';
 export {
@@ -32,6 +32,8 @@ export {
   AuthMode,
   TransactionMode,
   TransactionStatus,
+  WalletImportCipherSuite,
+  WalletKeyOrigin,
   WalletType,
   type OidcAuthMode,
   type AbiArg,
@@ -55,10 +57,12 @@ export {
 export type {
   ExecutedRemoteTransaction,
   ExecuteRemoteTransactionParams,
+  ListRemoteAccessSessionsParams,
   PreparedRemoteTransaction,
   PrepareRemoteTransactionParams,
   RegisteredRemoteCredential,
   RegisterRemoteCredentialParams,
+  RemoteAccessSessionPage,
   RevokeRemoteCredentialParams
 } from './types/remoteAccess.js';
 export type {
@@ -67,7 +71,10 @@ export type {
   CompleteOidcIdTokenAuthResult,
   CompleteOidcRedirectAuthParams,
   CompleteOidcRedirectAuthResult,
+  EncryptedWalletImportKeyMaterial,
   GetIdTokenParams,
+  ImportEncryptedWalletParams,
+  ImportWalletParams,
   IsValidMessageSignatureParams,
   IsValidSolanaMessageSignatureParams,
   IsValidTypedDataSignatureParams,
@@ -91,6 +98,7 @@ export type {
   StartOidcRedirectAuthParams,
   StartOidcRedirectAuthResult,
   WalletActivationResult,
+  WalletImportRecipientKey,
   WalletSelectionBehavior,
   OMSWalletClient
 } from './wallet.js';
@@ -123,9 +131,11 @@ export type {
   DirectAccessGrant,
   ListAccessParams,
   RemoteAccessGrant,
+  RemoteAccessSession,
   RemoteCredentialMetadata,
   RevokeAccessParams,
   SmartSessionGrant,
+  SmartSessionGrantUsage,
   WalletCredential
 } from './types/accessGrant.js';
 export type {

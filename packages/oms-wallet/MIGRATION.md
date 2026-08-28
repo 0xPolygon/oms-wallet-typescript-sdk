@@ -22,3 +22,18 @@ Solana wallets can be created with `WalletType.Solana`; their addresses are base
 
 Ethereum signing, transaction, smart-session authorization, and wagmi APIs only support Ethereum
 wallets. Select an Ethereum wallet before using them.
+
+Every `WalletAccount` now has a required `keyOrigin` field. Code that constructs wallet fixtures or
+implements SDK-facing wallet account types must set it to `WalletKeyOrigin.Enclave` or
+`WalletKeyOrigin.Imported`:
+
+```typescript
+import { WalletKeyOrigin, type EthereumWalletAccount } from '@polygonlabs/oms-wallet'
+
+const wallet: EthereumWalletAccount = {
+  id: 'wallet-id',
+  type: 'ethereum',
+  address: '0x1111111111111111111111111111111111111111',
+  keyOrigin: WalletKeyOrigin.Enclave,
+}
+```

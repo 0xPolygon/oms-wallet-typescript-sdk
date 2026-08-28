@@ -1,6 +1,8 @@
 import type {
+  Ciphersuite as GeneratedCiphersuite,
   FeeOption as GeneratedFeeOption,
   FeeOptionSelection as GeneratedFeeOptionSelection,
+  KeyOrigin as GeneratedKeyOrigin,
   TransactionStatusResponse as GeneratedTransactionStatusResponse
 } from '../generated/waas.gen.js';
 import type {
@@ -8,16 +10,26 @@ import type {
   FeeOptionSelection,
   OidcAuthMode,
   TransactionStatusResponse,
+  WalletImportCipherSuite,
+  WalletKeyOrigin,
   WalletType as PublicWalletType
 } from '../types/waas.js';
 
 import {
   AuthMode as GeneratedAuthMode,
+  Ciphersuite as GeneratedCiphersuiteValues,
+  KeyOrigin as GeneratedKeyOriginValues,
   NetworkFamily as GeneratedNetworkFamily,
   TransactionMode as GeneratedTransactionMode,
   TransactionStatus as GeneratedTransactionStatus
 } from '../generated/waas.gen.js';
-import { AuthMode, TransactionMode, TransactionStatus } from '../types/waas.js';
+import {
+  AuthMode,
+  TransactionMode,
+  TransactionStatus,
+  WalletImportCipherSuite as WalletImportCipherSuiteValues,
+  WalletKeyOrigin as WalletKeyOriginValues
+} from '../types/waas.js';
 
 export function toGeneratedAuthMode(authMode: OidcAuthMode): GeneratedAuthMode {
   switch (authMode) {
@@ -45,6 +57,30 @@ export function fromGeneratedNetworkFamily(
       return 'ethereum';
     case GeneratedNetworkFamily.Solana:
       return 'solana';
+  }
+}
+
+export function fromGeneratedWalletKeyOrigin(keyOrigin: GeneratedKeyOrigin): WalletKeyOrigin {
+  switch (keyOrigin) {
+    case GeneratedKeyOriginValues.Enclave:
+      return WalletKeyOriginValues.Enclave;
+    case GeneratedKeyOriginValues.Imported:
+      return WalletKeyOriginValues.Imported;
+  }
+}
+
+export function toGeneratedWalletImportCipherSuite(
+  cipherSuite: WalletImportCipherSuite
+): GeneratedCiphersuite {
+  switch (cipherSuite) {
+    case WalletImportCipherSuiteValues.X25519Sha256Aes256Gcm:
+      return GeneratedCiphersuiteValues.X25519_SHA256_AES_256_GCM;
+    case WalletImportCipherSuiteValues.X25519Sha256ChaCha20Poly1305:
+      return GeneratedCiphersuiteValues.X25519_SHA256_ChaCha20_Poly1305;
+    case WalletImportCipherSuiteValues.P256Sha256Aes256Gcm:
+      return GeneratedCiphersuiteValues.P256_SHA256_AES_256_GCM;
+    case WalletImportCipherSuiteValues.P256Sha256ChaCha20Poly1305:
+      return GeneratedCiphersuiteValues.P256_SHA256_ChaCha20_Poly1305;
   }
 }
 

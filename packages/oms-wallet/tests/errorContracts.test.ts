@@ -9,6 +9,7 @@ import {
   OMSWalletError,
   OmsRelayOidcProviders,
   SessionStorageManager,
+  WalletImportCipherSuite,
   WalletType,
   WebCryptoP256CredentialSigner,
   isOMSWalletError,
@@ -77,6 +78,40 @@ describe('public API error contracts', () => {
             },
           }
         `);
+  });
+
+  it('snapshots wallet-import attestation failures without upstream details', async () => {
+    const fetchMock = vi.fn(async (_input: RequestInfo | URL, init?: RequestInit) => {
+      expect(new Headers(init?.headers).get('X-Attestation-Nonce')).toMatch(
+        /^[A-Za-z0-9./+_=-]{24}$/
+      );
+      return jsonResponse({ keyId: 'key-1', publicKey: 'AQID' });
+    });
+    vi.stubGlobal('fetch', fetchMock);
+
+    const oms = createOmsClientWithSession({
+      walletImport: { trustedPcr0s: ['0'.repeat(96)] }
+    });
+
+    await expect(
+      publicError(() =>
+        oms.wallet.getWalletImportRecipientKey({
+          cipherSuite: WalletImportCipherSuite.P256Sha256Aes256Gcm
+        })
+      )
+    ).resolves.toMatchInlineSnapshot(`
+          {
+            "code": "OMS_ATTESTATION_VERIFICATION_FAILED",
+            "message": "WaaS response is missing its attestation document",
+            "name": "OMSWalletResponseError",
+            "operation": "wallet.getWalletImportRecipientKey",
+            "retryable": false,
+            "status": null,
+            "txnId": null,
+            "upstreamError": null,
+          }
+        `);
+    expect(fetchMock).toHaveBeenCalledOnce();
   });
 
   it('snapshots WaaS domain errors with upstream details', async () => {
@@ -1821,16 +1856,18 @@ function serializeUpstreamError(error: unknown): SerializedUpstreamError | null 
   };
 }
 
-function createOmsClient(
-  params: {
-    credentialSigner?: CredentialSigner;
-    redirectAuthStorage?: StorageManager | null;
-  } = {}
-): OMSWallet {
+type CreateOmsClientParams = {
+  credentialSigner?: CredentialSigner;
+  redirectAuthStorage?: StorageManager | null;
+  walletImport?: ConstructorParameters<typeof OMSWallet>[0]['walletImport'];
+};
+
+function createOmsClient(params: CreateOmsClientParams = {}): OMSWallet {
   const clientParams: ConstructorParameters<typeof OMSWallet>[0] = {
     publishableKey: 'pk_dev_sdbx_project_key',
     storage: new MemoryStorageManager(),
-    credentialSigner: params.credentialSigner ?? new MockSigner()
+    credentialSigner: params.credentialSigner ?? new MockSigner(),
+    walletImport: params.walletImport
   };
 
   if (params.redirectAuthStorage !== null) {
@@ -1852,8 +1889,8 @@ class ThrowingSetStorage implements StorageManager {
   delete(): void {}
 }
 
-function createOmsClientWithSession(): OMSWallet {
-  const oms = createOmsClient();
+function createOmsClientWithSession(params: CreateOmsClientParams = {}): OMSWallet {
+  const oms = createOmsClient(params);
   (oms.wallet as any).persistSession('wallet-id', '0x9999999999999999999999999999999999999999', {
     expiresAt: '2099-01-01T00:00:00Z',
     auth: { type: 'email', email: 'user@example.com' },
@@ -1891,6 +1928,7 @@ function testWallet(id = 'wallet-1', addressByte = '11') {
   return {
     id,
     networkFamily: 'evm',
+    keyOrigin: 'enclave',
     address: `0x${addressByte.repeat(20)}`
   };
 }

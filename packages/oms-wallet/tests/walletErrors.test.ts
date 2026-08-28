@@ -2,6 +2,8 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import { WalletClient } from '../src/clients/walletClient';
 import type { CredentialSigner } from '../src/credentialSigner';
+import { toOMSWalletError } from '../src/errors';
+import { AddressAlreadyImportedError } from '../src/generated/waas.gen';
 import { MemoryStorageManager } from '../src/storageManager';
 
 class MockSigner implements CredentialSigner {
@@ -164,6 +166,29 @@ describe('WalletClient errors', () => {
         'wallet.signInWithOidcIdToken requires sessionLifetimeSeconds to be an integer between 1 and 2592000'
     });
     expect(fetchMock).not.toHaveBeenCalled();
+  });
+
+  it('maps wallet-import failures to stable public error codes', () => {
+    const duplicate = AddressAlreadyImportedError.new({
+      code: 7313,
+      name: 'AddressAlreadyImported',
+      message: 'address already imported',
+      status: 400
+    });
+    expect(toOMSWalletError(duplicate, 'wallet.importWallet')).toMatchObject({
+      code: 'OMS_WALLET_ADDRESS_ALREADY_IMPORTED',
+      operation: 'wallet.importWallet',
+      status: 409,
+      retryable: false
+    });
+
+    const attestationError = new Error('untrusted attestation');
+    attestationError.name = 'OMSWalletAttestationVerificationError';
+    expect(toOMSWalletError(attestationError, 'wallet.getWalletImportRecipientKey')).toMatchObject({
+      code: 'OMS_ATTESTATION_VERIFICATION_FAILED',
+      operation: 'wallet.getWalletImportRecipientKey',
+      retryable: false
+    });
   });
 });
 

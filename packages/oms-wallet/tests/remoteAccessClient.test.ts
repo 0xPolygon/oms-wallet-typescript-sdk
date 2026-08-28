@@ -153,6 +153,69 @@ describe('RemoteAccessClient', () => {
     ).resolves.toBeUndefined();
   });
 
+  it('lists, reads, and reports usage for its authorized sessions', async () => {
+    const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = input.toString();
+      const body = JSON.parse(init?.body as string);
+
+      if (url.endsWith('/ListSessions')) {
+        if (!body.page?.cursor) {
+          expect(body).toEqual({ page: { limit: 1 } });
+          return jsonResponse({
+            sessions: [testSession('session-1')],
+            page: { cursor: 'next' }
+          });
+        }
+        expect(body).toEqual({ page: { limit: 1, cursor: 'next' } });
+        return jsonResponse({ sessions: [testSession('session-2')] });
+      }
+
+      if (url.endsWith('/GetSessionUsage')) {
+        expect(body).toEqual({ sessionId: 'session-1', network: '80002' });
+        return jsonResponse({
+          entries: [{ grant: testSession('session-1').grants.entries[0], used: '25' }]
+        });
+      }
+
+      if (url.endsWith('/GetSession')) {
+        expect(body).toEqual({ sessionId: 'session-1' });
+        return jsonResponse({ session: testSession('session-1') });
+      }
+
+      throw new Error(`Unexpected request: ${url}`);
+    });
+    vi.stubGlobal('fetch', fetchMock);
+
+    const client = createClient();
+    await expect(client.listSessions({ pageSize: 1 })).resolves.toHaveLength(2);
+    await expect(client.getSession({ sessionId: 'session-1' })).resolves.toEqual({
+      sessionId: 'session-1',
+      walletId: 'wallet-1',
+      signerAddress: '0x1111111111111111111111111111111111111111',
+      grants: [
+        {
+          kind: 'nativeTransfer',
+          to: '0x2222222222222222222222222222222222222222',
+          limit: 100n
+        }
+      ],
+      chainId: 80002,
+      expiresAt: '2099-01-01T00:00:00Z'
+    });
+    await expect(
+      client.getSessionUsage({ sessionId: 'session-1', network: Networks.amoy })
+    ).resolves.toEqual([
+      {
+        grant: {
+          kind: 'nativeTransfer',
+          to: '0x2222222222222222222222222222222222222222',
+          limit: 100n
+        },
+        used: 25n
+      }
+    ]);
+  });
+
   it('maps invalid transaction input to a public validation error', async () => {
     const fetchMock = vi.fn();
     vi.stubGlobal('fetch', fetchMock);
@@ -171,6 +234,18 @@ describe('RemoteAccessClient', () => {
     });
     expect(fetchMock).not.toHaveBeenCalled();
   });
+
+  it('maps malformed session payloads to a public response error', async () => {
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async () => jsonResponse({ session: { ...testSession('session-1'), chainId: '8.2' } }))
+    );
+
+    await expect(createClient().getSession({ sessionId: 'session-1' })).rejects.toMatchObject({
+      code: 'OMS_INVALID_RESPONSE',
+      operation: 'remoteAccess.getSession'
+    });
+  });
 });
 
 function createClient(): RemoteAccessClient {
@@ -185,4 +260,25 @@ function jsonResponse(body: unknown): Response {
     status: 200,
     headers: { 'Content-Type': 'application/json' }
   });
+}
+
+function testSession(sessionId: string) {
+  return {
+    sessionId,
+    walletId: 'wallet-1',
+    signerAddress: '0x1111111111111111111111111111111111111111',
+    grants: {
+      entries: [
+        {
+          kind: 'nativeTransfer',
+          nativeTransfer: {
+            to: '0x2222222222222222222222222222222222222222',
+            limit: '100'
+          }
+        }
+      ]
+    },
+    chainId: '80002',
+    expiresAt: '2099-01-01T00:00:00Z'
+  };
 }

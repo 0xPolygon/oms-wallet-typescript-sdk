@@ -8,8 +8,10 @@ import type {
   AuthorizeRemoteAccessParams,
   AuthorizedRemoteAccess,
   ListAccessParams,
+  RemoteAccessSession,
   RemoteCredentialMetadata,
   RevokeAccessParams,
+  SmartSessionGrantUsage,
   WalletCredential
 } from './types/accessGrant.js';
 import type {
@@ -26,6 +28,8 @@ import type {
   AbiArg,
   TransactionMode,
   TransactionStatusResponse,
+  WalletImportCipherSuite,
+  WalletKeyOrigin,
   WalletType
 } from './types/waas.js';
 
@@ -93,6 +97,7 @@ export interface EthereumWalletAccount {
   readonly type: 'ethereum';
   readonly address: Address;
   readonly reference?: string;
+  readonly keyOrigin: WalletKeyOrigin;
 }
 
 export interface SolanaWalletAccount {
@@ -100,6 +105,7 @@ export interface SolanaWalletAccount {
   readonly type: 'solana';
   readonly address: string;
   readonly reference?: string;
+  readonly keyOrigin: WalletKeyOrigin;
 }
 
 export type WalletAccount = EthereumWalletAccount | SolanaWalletAccount;
@@ -107,6 +113,37 @@ export type WalletAccount = EthereumWalletAccount | SolanaWalletAccount;
 export interface WalletActivationResult {
   readonly walletAddress: string;
   readonly wallet: WalletAccount;
+}
+
+export type ImportWalletParams =
+  | {
+      type: 'ethereum';
+      privateKey: string | Uint8Array;
+      reference?: string;
+    }
+  | {
+      type: 'solana';
+      privateKey: string | Uint8Array;
+      reference?: string;
+    };
+
+export interface WalletImportRecipientKey {
+  readonly keyId: string;
+  readonly cipherSuite: WalletImportCipherSuite;
+  readonly publicKey: string;
+}
+
+export interface EncryptedWalletImportKeyMaterial {
+  readonly keyId: string;
+  readonly cipherSuite: WalletImportCipherSuite;
+  readonly encapsulatedKey: string;
+  readonly ciphertext: string;
+}
+
+export interface ImportEncryptedWalletParams {
+  type: WalletType;
+  keyMaterial: EncryptedWalletImportKeyMaterial;
+  reference?: string;
 }
 
 export interface CompleteWalletAuthResult {
@@ -262,6 +299,11 @@ export interface OMSWalletClient {
   listWallets(): Promise<Array<WalletAccount>>;
   useWallet(params: { walletId: string }): Promise<WalletActivationResult>;
   createWallet(params?: { type?: WalletType; reference?: string }): Promise<WalletActivationResult>;
+  importWallet(params: ImportWalletParams): Promise<WalletActivationResult>;
+  getWalletImportRecipientKey(params: {
+    cipherSuite: WalletImportCipherSuite;
+  }): Promise<WalletImportRecipientKey>;
+  importEncryptedWallet(params: ImportEncryptedWalletParams): Promise<WalletActivationResult>;
   getIdToken(params?: GetIdTokenParams): Promise<string>;
   signMessage(params: SignMessageParams): Promise<string>;
   signSolanaMessage(params: SignSolanaMessageParams): Promise<string>;
@@ -294,5 +336,10 @@ export interface OMSWalletClient {
   authorizeRemoteAccess(params: AuthorizeRemoteAccessParams): Promise<AuthorizedRemoteAccess>;
   listAccess(params?: ListAccessParams): Promise<AccessGrant[]>;
   listAccessPages(params?: ListAccessParams): AsyncIterable<AccessGrantPage>;
+  getRemoteAccessSession(params: { sessionId: string }): Promise<RemoteAccessSession>;
+  getRemoteAccessSessionUsage(params: {
+    sessionId: string;
+    network: Network;
+  }): Promise<SmartSessionGrantUsage[]>;
   revokeAccess(params: RevokeAccessParams): Promise<void>;
 }

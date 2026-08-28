@@ -28,12 +28,14 @@ import type {
   Fetch,
   CredentialInfo,
   CredentialMetadata,
-  Grant,
-  FeeOption as GeneratedFeeOption
+  HPKEPayload,
+  FeeOption as GeneratedFeeOption,
+  KeyOrigin as GeneratedKeyOrigin
 } from '../generated/waas.gen.js';
 import type { Network } from '../networks.js';
 import type { ResolvedOidcProviderConfig } from '../oidc.js';
 import type { OMSWalletEnvironment } from '../omsEnvironment.js';
+import type { WalletImportConfig } from '../omsWallet.js';
 import type { StorageManager } from '../storageManager.js';
 import type {
   AccessGrant,
@@ -43,7 +45,8 @@ import type {
   ListAccessParams,
   RemoteCredentialMetadata,
   RevokeAccessParams,
-  SmartSessionGrant,
+  RemoteAccessSession,
+  SmartSessionGrantUsage,
   WalletCredential
 } from '../types/accessGrant.js';
 import type {
@@ -62,7 +65,8 @@ import type {
   OidcAuthMode,
   FeeOption,
   FeeOptionSelection,
-  TransactionStatusResponse
+  TransactionStatusResponse,
+  WalletImportCipherSuite
 } from '../types/waas.js';
 import type {
   AutomaticWalletSelectionParams,
@@ -76,6 +80,8 @@ import type {
   IsValidMessageSignatureParams,
   IsValidSolanaMessageSignatureParams,
   IsValidTypedDataSignatureParams,
+  ImportEncryptedWalletParams,
+  ImportWalletParams,
   ManualWalletSelectionParams,
   OMSWalletClient,
   OMSWalletEmailSessionAuth,
@@ -96,16 +102,19 @@ import type {
   StartOidcRedirectAuthResult,
   WalletAccount,
   WalletActivationResult,
+  WalletImportRecipientKey,
   WalletSelectionBehavior
 } from '../wallet.js';
 import type { TokenBalance } from './indexerClient.js';
 
+import { createAttestedFetch } from '../attestation.js';
 import { WebCryptoP256CredentialSigner } from '../credentialSigner.js';
 import {
   OMSWalletSessionError,
   OMSWalletStorageError,
   OMSWalletTransactionError,
   OMSWalletSelectionError,
+  OMSWalletValidationError,
   toOMSWalletError
 } from '../errors.js';
 import {
@@ -115,14 +124,27 @@ import {
   AuthMode as GeneratedAuthMode,
   NetworkFamily as GeneratedNetworkFamily,
   CredentialType,
-  GrantKind
+  KeyFormat as GeneratedKeyFormat,
+  TransportPurpose as GeneratedTransportPurpose
 } from '../generated/waas.gen.js';
 import { isOmsRelayOidcProvider, resolveOidcProviderConfig } from '../oidc.js';
 import { WalletOperation } from '../operations.js';
 import { createSignedFetch } from '../signedFetch.js';
 import { createDefaultStorage, SessionStorageManager } from '../storageManager.js';
 import { feeOptionSelection } from '../types/transactionTypes.js';
-import { AuthMode, TransactionMode, TransactionStatus, WalletType } from '../types/waas.js';
+import {
+  AuthMode,
+  TransactionMode,
+  TransactionStatus,
+  WalletImportCipherSuite as WalletImportCipherSuiteValues,
+  WalletType
+} from '../types/waas.js';
+import {
+  fromGeneratedRemoteAccessSession,
+  fromGeneratedSmartSessionGrant,
+  fromGeneratedSmartSessionGrantUsages,
+  toGeneratedSmartSessionGrant
+} from '../utils/accessGrant.js';
 import { Constants } from '../utils/constants.js';
 import { oidcIdTokenExpiresAtEpochSeconds, oidcIdTokenHandleHash } from '../utils/oidcIdToken.js';
 import {
@@ -141,11 +163,19 @@ import {
   fromGeneratedNetworkFamily,
   fromGeneratedTransactionStatus,
   fromGeneratedTransactionStatusResponse,
+  fromGeneratedWalletKeyOrigin,
   toGeneratedAuthMode,
   toGeneratedFeeOptionSelection,
   toGeneratedNetworkFamily,
-  toGeneratedTransactionMode
+  toGeneratedTransactionMode,
+  toGeneratedWalletImportCipherSuite
 } from '../utils/waasTypes.js';
+import {
+  requireBase64,
+  sealWalletImportPrivateKey,
+  validateWalletImportReference,
+  walletImportPlaintext
+} from '../walletImport.js';
 import { IndexerClient } from './indexerClient.js';
 
 interface PendingOidcRedirectAuth {
@@ -214,6 +244,19 @@ interface ActiveWalletActivationContext {
   walletId: string;
   metadata: WalletSessionMetadata;
 }
+
+type WalletImportActivationContext =
+  | {
+      type: 'active';
+      walletId: string;
+      metadata: WalletSessionMetadata;
+    }
+  | {
+      type: 'pending';
+      selectionId: string;
+      walletType: WalletType;
+      metadata: WalletSessionMetadata;
+    };
 
 interface WalletAuthCommitGuard {
   validate(): void;
@@ -295,6 +338,7 @@ class PendingWalletSelectionImpl implements PendingWalletSelection {
 
 export class WalletClient implements OMSWalletClient {
   private readonly client: WaasClient;
+  private readonly walletImportClient?: WaasClient;
   private readonly publicClient: WaasPublicClient;
   private readonly storage: StorageManager;
   private readonly redirectAuthStorage?: StorageManager;
@@ -330,6 +374,7 @@ export class WalletClient implements OMSWalletClient {
     storage?: StorageManager;
     redirectAuthStorage?: StorageManager;
     credentialSigner?: CredentialSigner;
+    walletImport?: WalletImportConfig;
   }) {
     this.environment = params.environment;
     this.storage = params.storage ?? createDefaultStorage();
@@ -380,6 +425,19 @@ export class WalletClient implements OMSWalletClient {
       this.projectId
     );
     this.client = new WaasClient(params.environment.walletApiUrl, signedFetch);
+    try {
+      this.walletImportClient = params.walletImport
+        ? new WaasClient(
+            params.environment.walletApiUrl,
+            createAttestedFetch(signedFetch, params.walletImport.trustedPcr0s)
+          )
+        : undefined;
+    } catch (error) {
+      throw new OMSWalletValidationError({
+        message: error instanceof Error ? error.message : String(error),
+        cause: error
+      });
+    }
     this.publicClient = new WaasPublicClient(
       params.environment.walletApiUrl,
       createApiKeyFetch(params.publishableKey)
@@ -883,6 +941,69 @@ export class WalletClient implements OMSWalletClient {
     });
   }
 
+  async importWallet(params: ImportWalletParams): Promise<WalletActivationResult> {
+    return this.runOperation(WalletOperation.importWallet, async () => {
+      const context = await this.walletImportActivationContext(
+        params.type,
+        WalletOperation.importWallet
+      );
+      const privateKey = walletImportPlaintext(params);
+      const recipientKey = await this.getWalletImportRecipientKeyUnchecked(
+        WalletImportCipherSuiteValues.P256Sha256Aes256Gcm,
+        WalletOperation.importWallet
+      );
+      let encryptedKey: Awaited<ReturnType<typeof sealWalletImportPrivateKey>>;
+      try {
+        encryptedKey = await sealWalletImportPrivateKey(recipientKey.publicKey, privateKey);
+      } finally {
+        privateKey.fill(0);
+      }
+      const wallet = await this.requestImportWallet({
+        type: params.type,
+        reference: params.reference,
+        keyMaterial: {
+          keyId: recipientKey.keyId,
+          cipherSuite: recipientKey.cipherSuite,
+          ...encryptedKey
+        }
+      });
+      await this.requireWalletImportActivationContextStillActive(
+        context,
+        WalletOperation.importWallet
+      );
+      return this.activateWallet(wallet, context.metadata, WalletOperation.importWallet);
+    });
+  }
+
+  async getWalletImportRecipientKey(params: {
+    cipherSuite: WalletImportCipherSuite;
+  }): Promise<WalletImportRecipientKey> {
+    return this.runOperation(WalletOperation.getWalletImportRecipientKey, () =>
+      this.getWalletImportRecipientKeyUnchecked(
+        params.cipherSuite,
+        WalletOperation.getWalletImportRecipientKey
+      )
+    );
+  }
+
+  async importEncryptedWallet(
+    params: ImportEncryptedWalletParams
+  ): Promise<WalletActivationResult> {
+    return this.runOperation(WalletOperation.importEncryptedWallet, async () => {
+      const context = await this.walletImportActivationContext(
+        params.type,
+        WalletOperation.importEncryptedWallet
+      );
+      validateWalletImportReference(params.reference);
+      const wallet = await this.requestImportWallet(params);
+      await this.requireWalletImportActivationContextStillActive(
+        context,
+        WalletOperation.importEncryptedWallet
+      );
+      return this.activateWallet(wallet, context.metadata, WalletOperation.importEncryptedWallet);
+    });
+  }
+
   async getIdToken(params: GetIdTokenParams = {}): Promise<string> {
     return this.runOperation(WalletOperation.getIdToken, async () => {
       await this.requireActiveSession(WalletOperation.getIdToken);
@@ -1146,7 +1267,7 @@ export class WalletClient implements OMSWalletClient {
       const request: AuthorizeRemoteAccessRequest = {
         credentialId: params.credentialId,
         walletId,
-        grants: { entries: params.grants.map((grant) => this.toGeneratedGrant(grant)) },
+        grants: { entries: params.grants.map(toGeneratedSmartSessionGrant) },
         expiry: params.expiresAt,
         chainId: params.network.id.toString(),
         sessionId: params.sessionId
@@ -1179,6 +1300,41 @@ export class WalletClient implements OMSWalletClient {
     }
   }
 
+  async getRemoteAccessSession(params: { sessionId: string }): Promise<RemoteAccessSession> {
+    return this.runOperation(WalletOperation.getRemoteAccessSession, async () => {
+      await this.requireActiveSession(WalletOperation.getRemoteAccessSession);
+      if (!params.sessionId.trim()) throw new Error('sessionId is required');
+      const walletId = this.walletId;
+      const response = await this.client.getSession({ sessionId: params.sessionId });
+      await this.requireSameActiveWalletSession(walletId, WalletOperation.getRemoteAccessSession);
+      const session = fromGeneratedRemoteAccessSession(response.session);
+      if (session.walletId !== walletId) {
+        throw new Error('Session does not belong to the active wallet');
+      }
+      return session;
+    });
+  }
+
+  async getRemoteAccessSessionUsage(params: {
+    sessionId: string;
+    network: Network;
+  }): Promise<SmartSessionGrantUsage[]> {
+    return this.runOperation(WalletOperation.getRemoteAccessSessionUsage, async () => {
+      await this.requireActiveSession(WalletOperation.getRemoteAccessSessionUsage);
+      if (!params.sessionId.trim()) throw new Error('sessionId is required');
+      const walletId = this.walletId;
+      const response = await this.client.getSessionUsage({
+        sessionId: params.sessionId,
+        network: params.network.id.toString()
+      });
+      await this.requireSameActiveWalletSession(
+        walletId,
+        WalletOperation.getRemoteAccessSessionUsage
+      );
+      return fromGeneratedSmartSessionGrantUsages(response.entries);
+    });
+  }
+
   async revokeAccess(params: RevokeAccessParams): Promise<void> {
     return this.runOperation(WalletOperation.revokeAccess, async () => {
       await this.requireActiveSession(WalletOperation.revokeAccess);
@@ -1205,6 +1361,57 @@ export class WalletClient implements OMSWalletClient {
     };
     const response = await this.client.createWallet(params);
     return this.toWalletAccount(response.wallet);
+  }
+
+  private async getWalletImportRecipientKeyUnchecked(
+    cipherSuite: WalletImportCipherSuite,
+    operation: WalletOperation
+  ): Promise<WalletImportRecipientKey> {
+    await this.requireWalletSelectionOrActiveSession(operation);
+    const client = this.requireWalletImportClient();
+    const response = await client.getRecipientKey({
+      purpose: GeneratedTransportPurpose.WalletImport,
+      suite: toGeneratedWalletImportCipherSuite(cipherSuite)
+    });
+    await this.requireWalletSelectionOrActiveSession(operation);
+    if (!response.keyId.trim() || !response.publicKey.trim()) {
+      throw new Error('Wallet import recipient-key response is incomplete');
+    }
+    return {
+      keyId: response.keyId,
+      cipherSuite,
+      publicKey: requireBase64(response.publicKey, 'recipient publicKey')
+    };
+  }
+
+  private async requestImportWallet(params: ImportEncryptedWalletParams): Promise<WalletAccount> {
+    const client = this.requireWalletImportClient();
+    if (!params.keyMaterial.keyId.trim()) throw new Error('keyMaterial.keyId is required');
+    // Webrpc's TypeScript generator declares Go []byte fields as string arrays,
+    // while the JSON transport encodes them as base64 strings.
+    const keyMaterial = {
+      keyId: params.keyMaterial.keyId,
+      suite: toGeneratedWalletImportCipherSuite(params.keyMaterial.cipherSuite),
+      encapsulatedKey: requireBase64(
+        params.keyMaterial.encapsulatedKey,
+        'keyMaterial.encapsulatedKey'
+      ),
+      ciphertext: requireBase64(params.keyMaterial.ciphertext, 'keyMaterial.ciphertext')
+    } as unknown as HPKEPayload;
+    const response = await client.importWallet({
+      networkFamily: toGeneratedNetworkFamily(params.type),
+      format: GeneratedKeyFormat.PrivateKey,
+      keyMaterial,
+      reference: params.reference
+    });
+    return this.toWalletAccount(response.wallet);
+  }
+
+  private requireWalletImportClient(): WaasClient {
+    if (!this.walletImportClient) {
+      throw new Error('Wallet import requires walletImport.trustedPcr0s configuration');
+    }
+    return this.walletImportClient;
   }
 
   /**
@@ -1376,26 +1583,33 @@ export class WalletClient implements OMSWalletClient {
   private toWalletAccount(wallet: {
     id: string;
     networkFamily?: GeneratedNetworkFamily;
+    keyOrigin?: GeneratedKeyOrigin;
     address: string;
     reference?: string;
   }): WalletAccount {
     if (!wallet.networkFamily) {
       throw new Error('Wallet response is missing networkFamily');
     }
+    if (!wallet.keyOrigin) {
+      throw new Error('Wallet response is missing keyOrigin');
+    }
     const type = fromGeneratedNetworkFamily(wallet.networkFamily);
+    const keyOrigin = fromGeneratedWalletKeyOrigin(wallet.keyOrigin);
     if (type === WalletType.Ethereum) {
       return {
         id: wallet.id,
         type,
         address: wallet.address as Address,
-        reference: wallet.reference
+        reference: wallet.reference,
+        keyOrigin
       };
     }
     return {
       id: wallet.id,
       type,
       address: wallet.address,
-      reference: wallet.reference
+      reference: wallet.reference,
+      keyOrigin
     };
   }
 
@@ -1418,7 +1632,7 @@ export class WalletClient implements OMSWalletClient {
       credentialId: credential.credentialId,
       sessionId: credential.sessionId,
       metadata: this.toRemoteCredentialMetadata(credential.metadata),
-      grants: credential.grants.entries.map((grant) => this.fromGeneratedGrant(grant)),
+      grants: credential.grants.entries.map(fromGeneratedSmartSessionGrant),
       expiresAt: credential.expiresAt,
       isCaller: credential.isCaller
     };
@@ -1438,54 +1652,6 @@ export class WalletClient implements OMSWalletClient {
       appLogoUrl: metadata.appLogoUrl,
       custom: { ...metadata.custom }
     };
-  }
-
-  private toGeneratedGrant(grant: SmartSessionGrant): Grant {
-    if (grant.kind === 'nativeTransfer') {
-      return {
-        kind: GrantKind.NativeTransfer,
-        nativeTransfer: { to: grant.to, limit: grant.limit.toString() }
-      };
-    }
-    return {
-      kind: GrantKind.ERC20Transfer,
-      erc20Transfer: {
-        token: grant.token,
-        to: grant.to,
-        limit: grant.limit.toString(),
-        cumulative: grant.cumulative
-      }
-    };
-  }
-
-  private fromGeneratedGrant(grant: Grant): SmartSessionGrant {
-    if (grant.kind === GrantKind.NativeTransfer && grant.nativeTransfer) {
-      return {
-        kind: 'nativeTransfer',
-        to: this.toEthereumAddress(grant.nativeTransfer.to, 'native transfer recipient'),
-        limit: BigInt(grant.nativeTransfer.limit)
-      };
-    }
-    if (grant.kind === GrantKind.ERC20Transfer && grant.erc20Transfer) {
-      return {
-        kind: 'erc20Transfer',
-        token: this.toEthereumAddress(grant.erc20Transfer.token, 'ERC-20 token'),
-        to:
-          grant.erc20Transfer.to === undefined
-            ? undefined
-            : this.toEthereumAddress(grant.erc20Transfer.to, 'ERC-20 recipient'),
-        limit: BigInt(grant.erc20Transfer.limit),
-        cumulative: grant.erc20Transfer.cumulative
-      };
-    }
-    throw new Error('Access entry contains an invalid session grant');
-  }
-
-  private toEthereumAddress(value: string, field: string): Address {
-    if (!isAddress(value)) {
-      throw new Error(`Access entry contains an invalid ${field}`);
-    }
-    return value;
   }
 
   /** Saves wallet metadata. The non-extractable credential key is owned by the signer. */
@@ -1620,6 +1786,47 @@ export class WalletClient implements OMSWalletClient {
       walletId: this.walletId,
       metadata
     };
+  }
+
+  private async walletImportActivationContext(
+    walletType: WalletType,
+    operation: WalletOperation
+  ): Promise<WalletImportActivationContext> {
+    const pending = this.activePendingWalletSelection;
+    if (pending) {
+      await this.requireActivePendingWalletSelection(pending, operation);
+      if (pending.walletType !== walletType) {
+        throw new Error(`Pending wallet selection requires a ${pending.walletType} wallet`);
+      }
+      return {
+        type: 'pending',
+        selectionId: pending.id,
+        walletType: pending.walletType,
+        metadata: pending.metadata
+      };
+    }
+
+    const active = await this.activeWalletActivationContext(operation);
+    return { type: 'active', ...active };
+  }
+
+  private async requireWalletImportActivationContextStillActive(
+    context: WalletImportActivationContext,
+    operation: WalletOperation
+  ): Promise<void> {
+    if (context.type === 'active') {
+      await this.requireActiveWalletActivationContextStillActive(context, operation);
+      return;
+    }
+    const pending = this.activePendingWalletSelection;
+    if (!pending || pending.id !== context.selectionId) {
+      throw new OMSWalletSelectionError({
+        code: 'OMS_WALLET_SELECTION_STALE',
+        operation,
+        message: 'Pending wallet selection is no longer active'
+      });
+    }
+    await this.requireActivePendingWalletSelection(pending, operation);
   }
 
   private async requireActiveWalletActivationContextStillActive(

@@ -65,6 +65,20 @@ export interface AuthorizedRemoteAccess {
   expiresAt: string;
 }
 
+export interface RemoteAccessSession {
+  sessionId: string;
+  walletId: string;
+  signerAddress: Address;
+  grants: ReadonlyArray<SmartSessionGrant>;
+  chainId: number;
+  expiresAt: string;
+}
+
+export interface SmartSessionGrantUsage {
+  grant: SmartSessionGrant;
+  used?: bigint;
+}
+
 export interface RevokeAccessParams {
   credentialId: string;
   sessionId?: string;

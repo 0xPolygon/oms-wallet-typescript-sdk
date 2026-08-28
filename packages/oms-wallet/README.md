@@ -244,6 +244,84 @@ await omsWallet.wallet.signOut()
 
 ## Core Workflows
 
+### Manage and Import Wallets
+
+`listWallets`, `useWallet`, and `createWallet` manage the wallets attached to the authenticated
+account. Every returned wallet includes `keyOrigin`, which is `WalletKeyOrigin.Enclave` for a key
+created by WaaS and `WalletKeyOrigin.Imported` for an imported key.
+
+Wallet import must be enabled with one or more trusted AWS Nitro enclave PCR0 measurements. Source
+these measurements from an audited release channel; do not bootstrap trust from the API status
+response that the measurement is intended to verify.
+
+```typescript
+import {
+  OMSWallet,
+  WalletImportCipherSuite,
+  WalletKeyOrigin,
+  WalletType,
+} from '@polygonlabs/oms-wallet'
+
+const omsWallet = new OMSWallet({
+  publishableKey: 'your-publishable-key',
+  walletImport: {
+    trustedPcr0s: ['your-audited-48-byte-pcr0-hex'],
+  },
+})
+
+const { wallet } = await omsWallet.wallet.importWallet({
+  type: WalletType.Ethereum,
+  privateKey: process.env.TEST_EVM_PRIVATE_KEY!,
+  reference: 'Imported test wallet',
+})
+
+console.log(wallet.keyOrigin === WalletKeyOrigin.Imported)
+```
+
+The high-level method validates the key locally, fetches an attested recipient key, verifies the
+Nitro certificate chain, PCR0, freshness, nonce, signature, and request/response binding, and HPKE
+encrypts the private key before sending it. EVM keys can be 32 raw bytes or hexadecimal text;
+Solana keys can be a 32-byte seed, 64-byte keypair, or base58 text. Imported keys are never stored
+by the SDK. Import also works while a manual wallet selection is pending, provided its wallet type
+matches the pending selection.
+
+Custody systems that perform HPKE themselves can call `getWalletImportRecipientKey` followed by
+`importEncryptedWallet`. These advanced methods expose base64 key material and all WaaS-supported
+`WalletImportCipherSuite` values; the SDK still verifies attestation on both requests.
+
+For a Privy server-wallet migration, request Privy's supported suite and send the returned public
+key to an application-backend endpoint that calls Privy's wallet export API. Never call Privy with
+an app secret from browser code.
+
+```typescript
+const recipient = await omsWallet.wallet.getWalletImportRecipientKey({
+  cipherSuite: WalletImportCipherSuite.P256Sha256ChaCha20Poly1305,
+})
+
+// The application backend sends this value to Privy as `recipient_public_key`.
+const privyExport: {
+  encapsulated_key: string
+  ciphertext: string
+} = await exportPrivyWalletOnYourBackend(recipient.publicKey)
+
+await omsWallet.wallet.importEncryptedWallet({
+  type: WalletType.Ethereum,
+  keyMaterial: {
+    keyId: recipient.keyId,
+    cipherSuite: recipient.cipherSuite,
+    encapsulatedKey: privyExport.encapsulated_key,
+    ciphertext: privyExport.ciphertext,
+  },
+})
+```
+
+The backend's Privy export request uses `encryption_type: "HPKE"` and
+`recipient_public_key: recipient.publicKey`. Privy exports an individual wallet private key; derive
+the intended child key before import when migrating from a mnemonic or HD root.
+
+For cross-origin browser use, the WaaS deployment must include `X-Attestation-Document` in
+`Access-Control-Expose-Headers` so the SDK can read and verify it.
+
 ### Sign and Verify EVM Messages
 
 EVM message signing and verification require an Ethereum wallet. Signing requires a network;
@@ -677,6 +755,14 @@ const session = await omsWallet.wallet.authorizeRemoteAccess({
   ],
 })
 
+const sessionDetails = await omsWallet.wallet.getRemoteAccessSession({
+  sessionId: session.sessionId,
+})
+const usage = await omsWallet.wallet.getRemoteAccessSessionUsage({
+  sessionId: session.sessionId,
+  network: Networks.polygon,
+})
+
 await omsWallet.wallet.revokeAccess({
   credentialId,
   sessionId: session.sessionId,
@@ -716,6 +802,15 @@ const registered = await remoteAccess.registerCredential({
 
 // Send registered.credentialId to the owner, then receive and persist the
 // walletId and sessionId returned by authorizeRemoteAccess.
+// These reads are scoped by the backend credential: one RAC can only see
+// sessions that owners authorized for that RAC.
+const sessions = await remoteAccess.listSessions()
+for await (const page of remoteAccess.listSessionPages({ pageSize: 25 })) {
+  console.log(page.sessions)
+}
+const sessionDetails = await remoteAccess.getSession({ sessionId })
+const usage = await remoteAccess.getSessionUsage({ sessionId, network: Networks.amoy })
+
 const prepared = await remoteAccess.prepareTransaction({
   walletId,
   sessionId,
