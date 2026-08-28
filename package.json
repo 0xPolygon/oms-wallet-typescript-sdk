@@ -38,6 +38,8 @@
     "build:node-example": "pnpm --filter node-example build",
     "dev:node-contract-deploy-example": "pnpm --filter node-contract-deploy-example dev",
     "build:node-contract-deploy-example": "pnpm --filter node-contract-deploy-example build",
+    "dev:smart-session-example": "pnpm --filter smart-session-example dev",
+    "build:smart-session-example": "pnpm --filter smart-session-example build",
     "prepare": "husky"
   },
   "devDependencies": {
