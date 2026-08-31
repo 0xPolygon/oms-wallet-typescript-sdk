@@ -11,7 +11,7 @@ import type {
   CreateApprovalBody,
   CreatedApproval
 } from '../shared/api.js';
-import { SMART_SESSION_ASSETS } from '../shared/networks.js';
+import { BASE_USDC, getSmartSessionAsset, getSmartSessionNetwork } from '../shared/networks.js';
 import worker from '../worker/index.js';
 
 interface MockSession {
@@ -400,7 +400,7 @@ test('checks per-recipient cumulative usage and uses the authoritative wallet ID
     expect.objectContaining({
       walletId: 'authoritative-wallet',
       sessionId: created.sessionId,
-      to: SMART_SESSION_ASSETS.usdc.tokenAddress
+      to: created.asset.tokenAddress
     })
   ]);
 });
@@ -424,6 +424,31 @@ test('shares cumulative usage across an unrestricted ERC-20 grant', async () => 
     { method: 'POST', body: { recipient: recipientB, amount: '3' } },
     201
   );
+});
+
+test('prepares Base USDC transfers on Base with the configured token contract', async () => {
+  const token = 'admin-base-usdc-token-that-is-at-least-32-characters';
+  const created = await createApprovedUsdcSession(
+    token,
+    [recipientA],
+    walletA,
+    'session-base-usdc',
+    'base'
+  );
+
+  await adminRequest<AdminTransaction>(
+    token,
+    `/api/admin/sessions/${created.sessionRecordId}/transactions`,
+    { method: 'POST', body: { recipient: recipientA, amount: '1' } },
+    201
+  );
+  expect(mockedWaas.preparedTransactions).toEqual([
+    expect.objectContaining({
+      network: getSmartSessionNetwork('base').network,
+      sessionId: created.sessionId,
+      to: BASE_USDC
+    })
+  ]);
 });
 
 async function createNativeActivity(
@@ -477,12 +502,16 @@ async function createApprovedUsdcSession(
   token: string,
   recipients: string[] | 'any',
   walletAddress: string,
-  sessionId: string
+  sessionId: string,
+  networkId: 'polygon' | 'base' = 'polygon'
 ) {
+  const network = getSmartSessionNetwork(networkId);
+  const asset = getSmartSessionAsset(networkId, 'usdc');
+  if (asset.kind !== 'erc20') throw new Error(`${network.name} USDC must be an ERC-20 asset`);
   const approval = await createApproval(token, {
     recipientScope: recipients === 'any' ? { mode: 'any' } : { mode: 'specific', recipients },
     allowance: '10',
-    networkId: 'polygon',
+    networkId,
     assetId: 'usdc'
   });
   const grants =
@@ -490,14 +519,14 @@ async function createApprovedUsdcSession(
       ? [
           {
             kind: 'erc20Transfer' as const,
-            token: SMART_SESSION_ASSETS.usdc.tokenAddress,
+            token: asset.tokenAddress,
             limit: 10n,
             cumulative: true
           }
         ]
       : recipients.map((recipient) => ({
           kind: 'erc20Transfer' as const,
-          token: SMART_SESSION_ASSETS.usdc.tokenAddress,
+          token: asset.tokenAddress,
           to: recipient as `0x${string}`,
           limit: 10n,
           cumulative: true
@@ -509,7 +538,7 @@ async function createApprovedUsdcSession(
       walletId: 'authoritative-wallet',
       signerAddress: sessionSigner,
       grants,
-      chainId: 137,
+      chainId: network.network.id,
       expiresAt: approval.expiresAt
     },
     usage: [],
@@ -525,7 +554,7 @@ async function createApprovedUsdcSession(
     (candidate) => candidate.sessionId === sessionId
   );
   if (!sessionRecord) throw new Error('Approved session was not returned by the overview');
-  return { ...approval, sessionId, sessionRecordId: sessionRecord.id };
+  return { ...approval, asset, sessionId, sessionRecordId: sessionRecord.id };
 }
 
 async function createApproval(token: string, policy: Omit<CreateApprovalBody, 'expiresAt'>) {

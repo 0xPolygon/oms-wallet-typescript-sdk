@@ -195,10 +195,14 @@ function App() {
     setNetworkId(nextNetworkId);
     setApprovalLink('');
     if (!(nextNetwork.assetIds as ReadonlyArray<SmartSessionAssetId>).includes(assetId)) {
-      setAssetId('pol');
-      setAllowance(SMART_SESSION_ASSETS.pol.defaultAllowance);
-      setRecipientMode('specific');
-      setRecipients((current) => [current[0] ?? DEFAULT_RECIPIENT]);
+      const nextAssetId = nextNetwork.assetIds[0];
+      const nextAsset = getSmartSessionAsset(nextNetworkId, nextAssetId);
+      setAssetId(nextAssetId);
+      setAllowance(nextAsset.defaultAllowance);
+      if (nextAsset.kind === 'native') {
+        setRecipientMode('specific');
+        setRecipients((current) => [current[0] ?? DEFAULT_RECIPIENT]);
+      }
     }
   }
 
@@ -267,7 +271,7 @@ function App() {
       const asset = getSmartSessionAsset(session.networkId, session.assetId);
       const amount = amounts[session.id] ?? asset.defaultTransferAmount;
       const recipient = transactionRecipients[session.id] ?? defaultTransactionRecipient(session);
-      if (!isAddress(recipient)) throw new Error('Enter a valid Polygon receiver address.');
+      if (!isAddress(recipient)) throw new Error('Enter a valid Ethereum receiver address.');
       const transaction = await adminApi<AdminTransaction>(
         `/api/admin/sessions/${encodeURIComponent(session.id)}/transactions`,
         adminToken,

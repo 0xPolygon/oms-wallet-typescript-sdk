@@ -3,7 +3,7 @@
 This example demonstrates multiple independently administered backend-owned Remote Access
 Credentials (RACs), each serving smart sessions approved by multiple OMS wallets. The demo is
 configured for native POL transfers on Polygon Amoy and for POL, USDC, and USDT transfers on
-Polygon mainnet.
+Polygon mainnet, plus USDC transfers on Base.
 
 The Worker accepts only this checked-in network and asset allowlist:
 
@@ -11,9 +11,10 @@ The Worker accepts only this checked-in network and asset allowlist:
 | --- | --- |
 | Polygon Amoy | Native POL |
 | Polygon mainnet | Native POL, [USDC](https://polygonscan.com/token/0x3c499c542cef5e3811e1192ce70d8cc03d5c3359), [USDT](https://polygonscan.com/token/0xc2132d05d31c914a87c6611c10748aeb04b58e8f) |
+| Base | [USDC](https://basescan.org/token/0x833589fcd6edb6e08f4c7c32d4f71b54bdA02913) |
 
-Polygon mainnet assets have real value. Keep Polygon Amoy selected unless you intend to create and
-execute a real mainnet permission.
+Polygon and Base mainnet assets have real value. Keep Polygon Amoy selected unless you intend to
+create and execute a real mainnet permission.
 
 Native permissions allow one specific receiver. ERC-20 permissions can allow one receiver,
 multiple receivers through separate grants, or any receiver by omitting the grant's `to` field. For
@@ -95,9 +96,9 @@ Google, Apple, or an email verification code, matching the main React example.
 1. Open the dashboard and select **Initialize admin + RAC**. The browser persists its generated
    admin access while the Worker persists the generated RAC key in D1 and registers its RAC
    credential ID with WaaS.
-2. Select a network and asset, create an approval request, and copy its generated link. USDC and
-   USDT are available only on Polygon mainnet. Pending requests retain a **Copy link** action after
-   the dashboard refreshes.
+2. Select a network and asset, create an approval request, and copy its generated link. USDC is
+   available on Polygon and Base mainnet; USDT is available only on Polygon mainnet. Pending
+   requests retain a **Copy link** action after the dashboard refreshes.
 3. Open the link in the client app, sign in to an Ethereum wallet, review the exact permission, and
    approve or reject it.
 4. Return to the dashboard. While a non-expired request is pending, it refreshes the overview every
@@ -106,7 +107,8 @@ Google, Apple, or an email verification code, matching the main React example.
    balance appear under backend smart sessions.
 5. Fund that smart wallet with the selected asset if needed, then submit a transfer from the session
    card.
-6. The dashboard polls pending transactions and links executed transactions to PolygonScan.
+6. The dashboard polls pending transactions and links executed transactions to the selected
+   network's explorer.
 7. The wallet owner can revoke an active session directly through WaaS. The dashboard observes the
    revocation through the backend RAC's session APIs and preserves the local association as history
    without offering transaction controls. Revoked and expired session cards can be dismissed from

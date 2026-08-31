@@ -10,11 +10,14 @@ import {
 } from '@0xtrails/api';
 import { formatUnits, type Address, type Hex } from 'viem';
 
+import { BASE_USDC, getSmartSessionAsset } from '../../shared/networks';
+
 const TRAILS_API_URL = 'https://trails-api.sequence.app';
 const TRAILS_API_KEY = 'AQAAAAAAAMDoWz-avqIIjXGH7JJlBSormpo';
 
-export const POLYGON_USDT = '0xc2132D05D31c914a87C6611C10748AEb04B58e8F' as Address;
-export const BASE_USDC = '0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913' as Address;
+const polygonUsdt = getSmartSessionAsset('polygon', 'usdt');
+if (polygonUsdt.kind !== 'erc20') throw new Error('Polygon USDT must be an ERC-20 asset');
+export const POLYGON_USDT = polygonUsdt.tokenAddress;
 export const AUTO_CONVERT_POLL_INTERVAL_MS = 15_000;
 
 export type TrailsAutoConvertPhase =

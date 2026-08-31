@@ -29,6 +29,7 @@ import {
 } from '../../../shared/example-utils';
 import type { ApiError, ApprovalRequest, ClientConfig, RecipientScope } from '../../shared/api';
 import {
+  BASE_USDC,
   getSmartSessionAsset,
   getSmartSessionNetwork,
   SMART_SESSION_ASSETS,
@@ -40,7 +41,6 @@ import polygonUsdtIconUrl from './assets/polygon-usdt.svg';
 import { resolveBalanceUsd } from './portfolio';
 import {
   AUTO_CONVERT_POLL_INTERVAL_MS,
-  BASE_USDC,
   convertPolygonUsdtToBaseUsdc,
   getPolygonUsdtBalance,
   IDLE_AUTO_CONVERT_PROGRESS,
@@ -473,10 +473,7 @@ function App() {
       return;
     }
 
-    const networks = [
-      ...Object.values(SMART_SESSION_NETWORKS).map((network) => network.network),
-      Networks.base
-    ];
+    const networks = Object.values(SMART_SESSION_NETWORKS).map((network) => network.network);
     if (!background) {
       setPortfolio(null);
       setPortfolioStatus('Loading balances…');
@@ -1167,14 +1164,16 @@ function formatApprovedGrant(grant: SmartSessionGrant, chainId?: number): string
     return `Send up to ${allowance} on ${chain} to ${shortAddress(grant.to)}`;
   }
 
-  const asset =
-    chainId === SMART_SESSION_NETWORKS.polygon.network.id
-      ? Object.values(SMART_SESSION_ASSETS).find(
-          (candidate) =>
-            candidate.kind === 'erc20' &&
-            candidate.tokenAddress.toLowerCase() === grant.token.toLowerCase()
-        )
-      : undefined;
+  const configuredNetwork = Object.values(SMART_SESSION_NETWORKS).find(
+    (candidate) => candidate.network.id === chainId
+  );
+  const asset = configuredNetwork?.assetIds
+    .map((assetId) => getSmartSessionAsset(configuredNetwork.id, assetId))
+    .find(
+      (candidate) =>
+        candidate.kind === 'erc20' &&
+        candidate.tokenAddress.toLowerCase() === grant.token.toLowerCase()
+    );
   const recipient = grant.to ? ` to ${shortAddress(grant.to)}` : ' to any receiver';
   return asset
     ? `Transfer up to ${formatUnits(grant.limit, asset.decimals)} ${asset.symbol} on ${chain}${recipient}`
@@ -1235,9 +1234,11 @@ function networkDisplayName(chainId: number): string {
 }
 
 function indexerAssetImage(balance: ContractTokenBalance): string | undefined {
+  const polygonUsdt = getSmartSessionAsset('polygon', 'usdt');
   if (
     balance.chainId === SMART_SESSION_NETWORKS.polygon.network.id &&
-    balance.contractAddress.toLowerCase() === SMART_SESSION_ASSETS.usdt.tokenAddress.toLowerCase()
+    polygonUsdt.kind === 'erc20' &&
+    balance.contractAddress.toLowerCase() === polygonUsdt.tokenAddress.toLowerCase()
   ) {
     return polygonUsdtIconUrl;
   }

@@ -2,7 +2,7 @@ import assert from 'node:assert/strict';
 import { getAddress } from 'viem';
 import { test } from 'vitest';
 
-import { SMART_SESSION_ASSETS } from '../shared/networks.ts';
+import { BASE_USDC, getSmartSessionAsset, SMART_SESSION_ASSETS } from '../shared/networks.ts';
 import {
   createSmartSessionGrants,
   MAX_SMART_SESSION_GRANTS,
@@ -11,6 +11,11 @@ import {
 
 const receiverOne = '0x120117a430b5bf1ba6752732196cb86976701d53';
 const receiverTwo = '0xf713cf113a249e08d97932db5d2a6cc03aa2f44f';
+const polygonUsdc = getSmartSessionAsset('polygon', 'usdc');
+const polygonUsdt = getSmartSessionAsset('polygon', 'usdt');
+if (polygonUsdc.kind !== 'erc20' || polygonUsdt.kind !== 'erc20') {
+  throw new Error('Polygon stablecoins must be ERC-20 assets');
+}
 
 test('native permissions require exactly one specific receiver', () => {
   assert.deepEqual(
@@ -38,21 +43,21 @@ test('native permissions require exactly one specific receiver', () => {
 test('specific ERC-20 receivers become separate cumulative grants', () => {
   assert.deepEqual(
     createSmartSessionGrants(
-      SMART_SESSION_ASSETS.usdc,
+      polygonUsdc,
       { mode: 'specific', recipients: [receiverOne, receiverTwo] },
       1_000_000n
     ),
     [
       {
         kind: 'erc20Transfer',
-        token: SMART_SESSION_ASSETS.usdc.tokenAddress,
+        token: polygonUsdc.tokenAddress,
         to: getAddress(receiverOne),
         limit: 1_000_000n,
         cumulative: true
       },
       {
         kind: 'erc20Transfer',
-        token: SMART_SESSION_ASSETS.usdc.tokenAddress,
+        token: polygonUsdc.tokenAddress,
         to: getAddress(receiverTwo),
         limit: 1_000_000n,
         cumulative: true
@@ -62,17 +67,29 @@ test('specific ERC-20 receivers become separate cumulative grants', () => {
 });
 
 test('any-receiver ERC-20 permission omits the grant recipient', () => {
-  assert.deepEqual(
-    createSmartSessionGrants(SMART_SESSION_ASSETS.usdt, { mode: 'any' }, 2_000_000n),
-    [
-      {
-        kind: 'erc20Transfer',
-        token: SMART_SESSION_ASSETS.usdt.tokenAddress,
-        limit: 2_000_000n,
-        cumulative: true
-      }
-    ]
-  );
+  assert.deepEqual(createSmartSessionGrants(polygonUsdt, { mode: 'any' }, 2_000_000n), [
+    {
+      kind: 'erc20Transfer',
+      token: polygonUsdt.tokenAddress,
+      limit: 2_000_000n,
+      cumulative: true
+    }
+  ]);
+});
+
+test('USDC permissions use the contract configured for the selected network', () => {
+  const baseUsdc = getSmartSessionAsset('base', 'usdc');
+  assert.equal(baseUsdc.kind, 'erc20');
+  if (baseUsdc.kind !== 'erc20') return;
+
+  assert.deepEqual(createSmartSessionGrants(baseUsdc, { mode: 'any' }, 1_000_000n), [
+    {
+      kind: 'erc20Transfer',
+      token: BASE_USDC,
+      limit: 1_000_000n,
+      cumulative: true
+    }
+  ]);
 });
 
 test('specific receiver validation rejects duplicates', () => {
