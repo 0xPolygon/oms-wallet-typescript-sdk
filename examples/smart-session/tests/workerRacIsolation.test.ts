@@ -26,7 +26,8 @@ const mockedWaas = vi.hoisted(() => ({
   nextTransaction: 0,
   revokedCredentialIds: [] as string[],
   sessions: new Map<string, MockSession>(),
-  preparedTransactions: [] as Array<Record<string, unknown>>
+  preparedTransactions: [] as Array<Record<string, unknown>>,
+  registeredCredentials: [] as Array<Record<string, unknown>>
 }));
 
 vi.mock('../worker/rac.js', () => ({
@@ -44,7 +45,10 @@ vi.mock('../worker/rac.js', () => ({
     return {
       signerId: `signer-${racSuffix}`,
       client: {
-        registerCredential: async () => ({ credentialId }),
+        registerCredential: async (params: Record<string, unknown>) => {
+          mockedWaas.registeredCredentials.push(params);
+          return { credentialId };
+        },
         revokeCredential: async ({ credentialId: revokedId }: { credentialId: string }) => {
           mockedWaas.revokedCredentialIds.push(revokedId);
         },
@@ -78,11 +82,14 @@ vi.mock('../worker/rac.js', () => ({
 interface TestEnv {
   DB: D1Database;
   OMS_PUBLISHABLE_KEY: string;
+  WALLET_ORIGIN: string;
+  DASHBOARD_ORIGIN: string;
   TEST_MIGRATIONS: D1Migration[];
 }
 
 const testEnv = env as TestEnv;
-const origin = 'https://smart-session.example';
+const walletOrigin = 'https://wallet.smart-session.example';
+const dashboardOrigin = 'https://dashboard.smart-session.example';
 const recipientA = '0x1000000000000000000000000000000000000001';
 const recipientB = '0x2000000000000000000000000000000000000002';
 const walletA = '0x3000000000000000000000000000000000000003';
@@ -97,6 +104,87 @@ beforeEach(() => {
   mockedWaas.revokedCredentialIds.length = 0;
   mockedWaas.sessions.clear();
   mockedWaas.preparedTransactions.length = 0;
+  mockedWaas.registeredCredentials.length = 0;
+});
+
+test('isolates wallet and dashboard APIs by hostname', async () => {
+  const token = 'admin-host-isolation-token-at-least-32-characters';
+  await requestJson('/api/client-config', { origin: dashboardOrigin }, 404);
+  await requestJson(
+    '/api/admin/bootstrap',
+    { method: 'POST', body: { token }, origin: walletOrigin },
+    404
+  );
+  await requestJson('/api/admin/bootstrap', { method: 'POST', body: { token } }, 201);
+  await requestJson('/api/admin/overview', { origin: walletOrigin }, 404);
+  await requestJson('/health', { origin: 'https://unknown.smart-session.example' }, 404);
+});
+
+test('uses the configured wallet URL and dashboard metadata URL', async () => {
+  const token = 'admin-configured-origins-token-at-least-32-characters';
+  const created = await createApproval(token, {
+    recipientScope: { mode: 'specific', recipients: [recipientA] },
+    allowance: '10',
+    networkId: 'polygon-amoy',
+    assetId: 'pol'
+  });
+
+  expect(new URL(created.approvalUrl).origin).toBe(walletOrigin);
+  await requestJson(
+    `/api/approvals/${encodeURIComponent(created.approvalToken)}`,
+    { origin: dashboardOrigin },
+    404
+  );
+  expect(mockedWaas.registeredCredentials).toContainEqual(
+    expect.objectContaining({
+      metadata: expect.objectContaining({ appUrl: dashboardOrigin })
+    })
+  );
+});
+
+test('serves the frontend selected by hostname', async () => {
+  const assetFetch = vi.fn(async (input: RequestInfo | URL) => {
+    const requestUrl = input instanceof Request ? input.url : input.toString();
+    return new Response(new URL(requestUrl).pathname);
+  });
+  const staticEnv = {
+    DB: testEnv.DB,
+    ASSETS: { fetch: assetFetch } as unknown as Fetcher,
+    OMS_PUBLISHABLE_KEY: testEnv.OMS_PUBLISHABLE_KEY,
+    WALLET_ORIGIN: testEnv.WALLET_ORIGIN,
+    DASHBOARD_ORIGIN: testEnv.DASHBOARD_ORIGIN
+  };
+
+  const walletAsset = await worker.fetch(new Request(`${walletOrigin}/assets/app.js`), staticEnv);
+  const dashboardRoot = await worker.fetch(new Request(`${dashboardOrigin}/`), staticEnv);
+  const dashboardAsset = await worker.fetch(
+    new Request(`${dashboardOrigin}/assets/app.js`),
+    staticEnv
+  );
+  const hiddenDashboardAsset = await worker.fetch(
+    new Request(`${walletOrigin}/dashboard/assets/app.js`),
+    staticEnv
+  );
+
+  expect(await walletAsset.text()).toBe('/assets/app.js');
+  expect(await dashboardRoot.text()).toBe('/dashboard/');
+  expect(await dashboardAsset.text()).toBe('/dashboard/assets/app.js');
+  expect(hiddenDashboardAsset.status).toBe(404);
+});
+
+test('fails safely when deployment origins are invalid', async () => {
+  const response = await worker.fetch(new Request(`${walletOrigin}/health`), {
+    DB: testEnv.DB,
+    ASSETS: { fetch: vi.fn() } as unknown as Fetcher,
+    OMS_PUBLISHABLE_KEY: testEnv.OMS_PUBLISHABLE_KEY,
+    WALLET_ORIGIN: walletOrigin,
+    DASHBOARD_ORIGIN: walletOrigin
+  });
+
+  expect(response.status).toBe(500);
+  await expect(response.json()).resolves.toEqual({
+    error: 'WALLET_ORIGIN and DASHBOARD_ORIGIN must be different'
+  });
 });
 
 test('rotating one backend RAC removes only its activity', async () => {
@@ -450,13 +538,14 @@ async function createApproval(token: string, policy: Omit<CreateApprovalBody, 'e
     { method: 'POST', body: { ...policy, expiresAt } },
     201
   );
-  const approvalToken = new URL(created.approvalPath, origin).searchParams.get('request');
+  const approvalToken = new URL(created.approvalUrl).searchParams.get('request');
   if (!approvalToken) throw new Error('Approval response did not contain a request token');
   const request = await requestJson<ApprovalRequest>(
     `/api/approvals/${encodeURIComponent(approvalToken)}`
   );
   return {
     approvalId: created.id,
+    approvalUrl: created.approvalUrl,
     approvalToken,
     credentialId: request.credentialId,
     expiresAt
@@ -513,6 +602,7 @@ interface RequestOptions {
   method?: string;
   headers?: Record<string, string>;
   body?: unknown;
+  origin?: string;
 }
 
 async function requestJson<T = unknown>(
@@ -520,7 +610,7 @@ async function requestJson<T = unknown>(
   options: RequestOptions = {},
   expectedStatus = 200
 ): Promise<T> {
-  const request = new Request(`${origin}${pathname}`, {
+  const request = new Request(`${options.origin ?? requestOrigin(pathname)}${pathname}`, {
     method: options.method,
     headers: {
       ...(options.body === undefined ? {} : { 'Content-Type': 'application/json' }),
@@ -531,4 +621,8 @@ async function requestJson<T = unknown>(
   const response = await worker.fetch(request, testEnv as never);
   expect(response.status, await response.clone().text()).toBe(expectedStatus);
   return (await response.json()) as T;
+}
+
+function requestOrigin(pathname: string): string {
+  return pathname.startsWith('/api/admin/') ? dashboardOrigin : walletOrigin;
 }

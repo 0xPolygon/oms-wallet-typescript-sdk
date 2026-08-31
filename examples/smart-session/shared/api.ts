@@ -34,7 +34,7 @@ export interface CreateApprovalBody {
 
 export interface CreatedApproval {
   id: string;
-  approvalPath: string;
+  approvalUrl: string;
   expiresAt: string;
 }
 

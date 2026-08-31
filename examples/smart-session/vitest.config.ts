@@ -11,6 +11,8 @@ export default defineConfig(async () => ({
         d1Databases: ['DB'],
         bindings: {
           OMS_PUBLISHABLE_KEY: 'pk_dev_sdbx_testproject_testkey',
+          WALLET_ORIGIN: 'https://wallet.smart-session.example',
+          DASHBOARD_ORIGIN: 'https://dashboard.smart-session.example',
           TEST_MIGRATIONS: await readD1Migrations(new URL('./migrations', import.meta.url).pathname)
         }
       }

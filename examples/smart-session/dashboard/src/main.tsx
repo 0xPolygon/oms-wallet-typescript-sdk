@@ -252,7 +252,7 @@ function App() {
           expiresAt: new Date(Date.now() + lifetime * 60_000).toISOString()
         })
       });
-      setApprovalLink(new URL(created.approvalPath, clientOrigin()).toString());
+      setApprovalLink(created.approvalUrl);
       await loadOverview();
       updateTransientStatus(
         'approval-request',
@@ -356,7 +356,7 @@ function App() {
         adminToken,
         { method: 'POST' }
       );
-      const link = new URL(approval.approvalPath, clientOrigin()).toString();
+      const link = approval.approvalUrl;
       await navigator.clipboard.writeText(link);
       updateTransientStatus(statusKey, 'Owner approval link copied.');
     } catch (error) {
@@ -1113,11 +1113,6 @@ function canRefreshTransaction(transaction: AdminTransaction): boolean {
 function randomToken(): string {
   const bytes = crypto.getRandomValues(new Uint8Array(32));
   return Array.from(bytes, (byte) => byte.toString(16).padStart(2, '0')).join('');
-}
-
-function clientOrigin(): string {
-  if (!import.meta.env.DEV) return window.location.origin;
-  return `${window.location.protocol}//${window.location.hostname}:5173`;
 }
 
 async function adminApi<T = unknown>(path: string, token: string, init?: RequestInit): Promise<T> {

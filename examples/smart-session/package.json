@@ -15,8 +15,11 @@
     "build:client": "vite build --config vite.client.config.ts",
     "build:dashboard": "vite build --config vite.dashboard.config.ts",
     "db:migrate:local": "wrangler d1 migrations apply oms-smart-session-example --local",
-    "db:migrate:remote": "wrangler d1 migrations apply oms-smart-session-example --remote",
-    "deploy": "pnpm build && wrangler deploy"
+    "db:create:remote": "wrangler d1 create oms-smart-session-example",
+    "db:migrate:remote": "pnpm deploy:prepare && wrangler d1 migrations apply DB --remote --config wrangler.deploy.generated.json",
+    "deploy:prepare": "node scripts/prepare-cloudflare-deploy.mjs",
+    "deploy:dry-run": "pnpm deploy:prepare && pnpm build && wrangler deploy --dry-run --config wrangler.deploy.generated.json",
+    "deploy": "pnpm deploy:prepare && pnpm build && wrangler deploy --config wrangler.deploy.generated.json"
   },
   "dependencies": {
     "@0xtrails/api": "0.17.1",

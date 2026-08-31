@@ -26,9 +26,10 @@ The workspace contains:
 - a D1 database containing each RAC's approval workflow, minimal session associations, transaction
   records, and monotonic request nonces;
 - a wallet-owner React app at `/` that approves and revokes smart sessions; and
-- an admin React app at `/dashboard/` that creates approval links, lists the authenticated RAC's
-  active, revoked, and expired session records, dismisses terminal records from the session list,
-  and submits permitted transactions.
+- an admin React app that creates approval links, lists the authenticated RAC's active, revoked,
+  and expired session records, dismisses terminal records from the session list, and submits
+  permitted transactions. Local development serves it at `/dashboard/`; a Cloudflare deployment
+  serves it at the root of its own dashboard hostname.
 
 The owner app uses the Indexer to show the authenticated wallet's positive native and ERC-20
 balances on Polygon Amoy, Polygon mainnet, and Base, including indexed token icons and USD values
@@ -121,23 +122,62 @@ transaction records, and nonce. Other dashboard administrators and their RACs ar
 
 ## Deploy to Cloudflare
 
-Create a D1 database and copy the returned ID into the `database_id` field in `wrangler.jsonc`:
+The deployment uses one Worker and one D1 database behind two Cloudflare custom domains. The wallet
+hostname serves the public owner app and approval APIs; the dashboard hostname serves the
+RAC-scoped admin app and admin APIs. The Worker rejects each surface's APIs on the other hostname
+and does not expose a `workers.dev` or preview URL.
+
+From a checkout of the branch, install the pinned workspace dependencies and enter this example:
 
 ```bash
-pnpm exec wrangler d1 create oms-smart-session-example
+pnpm install --frozen-lockfile
+cd examples/smart-session
 ```
 
-Then migrate and deploy:
+Create the D1 database once:
 
 ```bash
+pnpm db:create:remote
+```
+
+Copy the deployment environment template. Replace the two example origins and zero database ID
+with the HTTPS custom domains and the D1 UUID returned by Wrangler:
+
+```bash
+cp .env.cloudflare.example .env.cloudflare.local
+```
+
+The local file is ignored by Git and contains no application secret. `pnpm deploy:prepare`
+validates all three values and generates an ignored Wrangler configuration containing the D1
+binding and both custom-domain routes. Placeholder domains, non-HTTPS origins, paths, duplicate
+origins, and the zero D1 ID are rejected.
+
+Build and inspect the complete Worker upload without changing Cloudflare, apply the initial schema,
+and deploy:
+
+```bash
+pnpm deploy:dry-run
 pnpm db:migrate:remote
 pnpm deploy
 ```
 
-One Worker deployment serves the API, dashboard, and client assets. Each browser profile that opens
-the dashboard can initialize its own admin access and independent RAC. Protect a deployment with
-Cloudflare Access if RAC creation should not be public. The plaintext RAC storage is appropriate
-only for this demo; a production backend must use encrypted key storage or a managed secret store.
+For subsequent manual deployments from the same machine, pull the branch, install dependencies if
+the lockfile changed, and run `pnpm deploy` again. The existing D1 data, bindings, and custom
+domains remain in place. Run `pnpm db:migrate:remote` first only when the branch adds a new D1
+migration. On a fresh machine, recreate `.env.cloudflare.local` with the same two origins and D1
+database ID before deploying.
+
+The deploy command attaches both custom domains to the same Worker, so they must belong to a zone
+available to the deployer's Cloudflare account and must not conflict with existing DNS records.
+After deployment, open the configured wallet and dashboard origins and check `/health` on either
+hostname.
+
+Each browser profile that opens the public dashboard can initialize its own admin access and
+independent RAC. It cannot access another browser's RAC without that browser's random admin token,
+but an untrusted visitor can still consume D1 storage and WaaS API quota by creating its own RAC and
+approval requests. Add Cloudflare Access later if that operational exposure becomes undesirable.
+The plaintext RAC storage is appropriate only for this demo; a production backend must use
+encrypted key storage or a managed secret store.
 See Cloudflare's official
 [static assets](https://developers.cloudflare.com/workers/static-assets/),
 [D1](https://developers.cloudflare.com/d1/), and deployment documentation for account and

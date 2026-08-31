@@ -60,7 +60,16 @@ interface Env {
   DB: D1Database;
   ASSETS: Fetcher;
   OMS_PUBLISHABLE_KEY: string;
+  WALLET_ORIGIN: string;
+  DASHBOARD_ORIGIN: string;
 }
+
+interface DeploymentConfig {
+  walletOrigin: string;
+  dashboardOrigin: string;
+}
+
+type RequestSurface = 'wallet' | 'dashboard' | 'local';
 
 interface CredentialRow {
   signer_id: string;
@@ -136,60 +145,65 @@ export default {
   async fetch(request: Request, env: Env): Promise<Response> {
     try {
       const url = new URL(request.url);
+      const config = requireConfiguration(env);
+      const surface = requestSurface(url, config);
+      if (!surface) throw new HttpError(404, 'Not found');
 
-      if (url.pathname === '/') {
-        return env.ASSETS.fetch(request);
-      }
       if (url.pathname === '/health') {
         return json({ ok: true });
       }
       if (!url.pathname.startsWith('/api/')) {
-        return env.ASSETS.fetch(request);
+        return fetchStaticAsset(request, env, surface);
       }
 
       if (request.method === 'POST' && url.pathname === '/api/admin/bootstrap') {
+        requireSurface(surface, 'dashboard');
         await bootstrapAdmin(env, await readJson<{ token: string }>(request));
         return json({ ok: true }, 201);
       }
 
       if (request.method === 'GET' && url.pathname === '/api/client-config') {
-        requireConfiguration(env);
+        requireSurface(surface, 'wallet');
         return json({ publishableKey: env.OMS_PUBLISHABLE_KEY } satisfies ClientConfig);
       }
 
       const approvalMatch = url.pathname.match(/^\/api\/approvals\/([^/]+)$/);
       if (request.method === 'GET' && approvalMatch) {
-        return json(await getApproval(env, approvalMatch[1], url.origin));
+        requireSurface(surface, 'wallet');
+        return json(await getApproval(env, approvalMatch[1], config.dashboardOrigin));
       }
 
       const approveMatch = url.pathname.match(/^\/api\/approvals\/([^/]+)\/approve$/);
       if (request.method === 'POST' && approveMatch) {
+        requireSurface(surface, 'wallet');
         await approveRequest(
           env,
           approveMatch[1],
           await readJson<ApproveRequestBody>(request),
-          url.origin
+          config.dashboardOrigin
         );
         return json({ ok: true });
       }
 
       const rejectMatch = url.pathname.match(/^\/api\/approvals\/([^/]+)\/reject$/);
       if (request.method === 'POST' && rejectMatch) {
-        await rejectRequest(env, rejectMatch[1], url.origin);
+        requireSurface(surface, 'wallet');
+        await rejectRequest(env, rejectMatch[1], config.dashboardOrigin);
         return json({ ok: true });
       }
 
       if (url.pathname.startsWith('/api/admin/')) {
+        requireSurface(surface, 'dashboard');
         const admin = await requireAdmin(request, env);
         if (request.method === 'GET' && url.pathname === '/api/admin/overview') {
-          return json(await getAdminOverview(env, admin.racId, url.origin));
+          return json(await getAdminOverview(env, admin.racId, config.dashboardOrigin));
         }
         if (request.method === 'POST' && url.pathname === '/api/admin/rac') {
           await generateBackendRac(env, admin.racId);
           return json({ ok: true }, 201);
         }
         if (request.method === 'POST' && url.pathname === '/api/admin/rac/rotate') {
-          await rotateBackendRac(env, admin.racId, url.origin);
+          await rotateBackendRac(env, admin.racId, config.dashboardOrigin);
           return json({ ok: true });
         }
         if (request.method === 'POST' && url.pathname === '/api/admin/approvals') {
@@ -197,7 +211,7 @@ export default {
             await createApproval(
               env,
               admin.racId,
-              url,
+              config,
               await readJson<CreateApprovalBody>(request)
             ),
             201
@@ -206,12 +220,12 @@ export default {
 
         const approvalLinkMatch = url.pathname.match(/^\/api\/admin\/approvals\/([^/]+)\/link$/);
         if (request.method === 'POST' && approvalLinkMatch) {
-          return json(await getApprovalLink(env, admin.racId, approvalLinkMatch[1], url.origin));
+          return json(await getApprovalLink(env, admin.racId, approvalLinkMatch[1], config));
         }
 
         const sessionMatch = url.pathname.match(/^\/api\/admin\/sessions\/([^/]+)$/);
         if (request.method === 'DELETE' && sessionMatch) {
-          await dismissSession(env, admin.racId, sessionMatch[1], url.origin);
+          await dismissSession(env, admin.racId, sessionMatch[1], config.dashboardOrigin);
           return json({ ok: true });
         }
 
@@ -225,7 +239,7 @@ export default {
               admin.racId,
               transactionMatch[1],
               await readJson<CreateTransactionBody>(request),
-              url.origin
+              config.dashboardOrigin
             ),
             201
           );
@@ -233,7 +247,9 @@ export default {
 
         const statusMatch = url.pathname.match(/^\/api\/admin\/transactions\/([^/]+)$/);
         if (request.method === 'GET' && statusMatch) {
-          return json(await refreshTransaction(env, admin.racId, statusMatch[1], url.origin));
+          return json(
+            await refreshTransaction(env, admin.racId, statusMatch[1], config.dashboardOrigin)
+          );
         }
       }
 
@@ -287,14 +303,14 @@ async function getApproval(env: Env, token: string, origin: string): Promise<App
 async function createApproval(
   env: Env,
   racId: string,
-  requestUrl: URL,
+  config: DeploymentConfig,
   body: CreateApprovalBody
 ): Promise<CreatedApproval> {
   const { network, asset } = requireSmartSessionConfig(body.networkId, body.assetId);
   const recipientScope = requireRecipientScope(body.recipientScope, asset.kind);
   const allowance = positiveBigInt(body.allowance, 'allowance');
   const expiresAt = validFutureDate(body.expiresAt, 'expiresAt');
-  const credential = await requireCredential(env, racId, requestUrl.origin);
+  const credential = await requireCredential(env, racId, config.dashboardOrigin);
   if (expiresAt.getTime() > Date.parse(credential.expires_at)) {
     throw new HttpError(400, 'Approval expiry cannot exceed the RAC expiry');
   }
@@ -327,7 +343,7 @@ async function createApproval(
 
   return {
     id,
-    approvalPath: `/?request=${encodeURIComponent(token)}`,
+    approvalUrl: approvalUrl(config.walletOrigin, token),
     expiresAt: expiresAt.toISOString()
   };
 }
@@ -336,7 +352,7 @@ async function getApprovalLink(
   env: Env,
   racId: string,
   id: string,
-  origin: string
+  config: DeploymentConfig
 ): Promise<CreatedApproval> {
   const approval = await env.DB.prepare(
     `SELECT id, token, credential_id, expires_at, approved_at, rejected_at
@@ -358,14 +374,14 @@ async function getApprovalLink(
   if (Date.parse(approval.expires_at) <= Date.now()) {
     throw new HttpError(410, 'Approval request has expired');
   }
-  const credential = await requireCredential(env, racId, origin);
+  const credential = await requireCredential(env, racId, config.dashboardOrigin);
   if (approval.credential_id !== credential.credential_id) {
     throw new HttpError(409, 'This approval request belongs to a previous backend RAC');
   }
 
   return {
     id: approval.id,
-    approvalPath: `/?request=${encodeURIComponent(approval.token)}`,
+    approvalUrl: approvalUrl(config.walletOrigin, approval.token),
     expiresAt: approval.expires_at
   };
 }
@@ -866,7 +882,11 @@ async function refreshTransaction(
   }
 }
 
-async function requireCredential(env: Env, racId: string, origin: string): Promise<CredentialRow> {
+async function requireCredential(
+  env: Env,
+  racId: string,
+  dashboardOrigin: string
+): Promise<CredentialRow> {
   requireConfiguration(env);
   const rac = await createRac(env, racId);
   const existing = await env.DB.prepare(
@@ -891,7 +911,7 @@ async function requireCredential(env: Env, racId: string, origin: string): Promi
       lifetimeSeconds: RAC_LIFETIME_SECONDS,
       metadata: {
         appName: 'OMS Smart Session Admin',
-        appUrl: `${origin}/dashboard/`,
+        appUrl: dashboardOrigin,
         appLogoUrl: '',
         custom: { networks: 'polygon-amoy,polygon' }
       }
@@ -1010,8 +1030,81 @@ async function requireAdmin(request: Request, env: Env): Promise<AdminContext> {
   return { racId: stored.id };
 }
 
-function requireConfiguration(env: Env): void {
+function requireConfiguration(env: Env): DeploymentConfig {
   if (!env.OMS_PUBLISHABLE_KEY?.trim()) throw new HttpError(500, 'OMS_PUBLISHABLE_KEY is missing');
+  const walletOrigin = configuredOrigin(env.WALLET_ORIGIN, 'WALLET_ORIGIN');
+  const dashboardOrigin = configuredOrigin(env.DASHBOARD_ORIGIN, 'DASHBOARD_ORIGIN');
+  if (walletOrigin === dashboardOrigin) {
+    throw new HttpError(500, 'WALLET_ORIGIN and DASHBOARD_ORIGIN must be different');
+  }
+  return { walletOrigin, dashboardOrigin };
+}
+
+function configuredOrigin(value: string | undefined, name: string): string {
+  if (!value?.trim()) throw new HttpError(500, `${name} is missing`);
+  try {
+    const url = new URL(value.trim());
+    if (
+      url.username ||
+      url.password ||
+      url.pathname !== '/' ||
+      url.search ||
+      url.hash ||
+      (url.protocol !== 'https:' && !(url.protocol === 'http:' && isLoopback(url.hostname)))
+    ) {
+      throw new Error();
+    }
+    return url.origin;
+  } catch {
+    throw new HttpError(500, `${name} must be an HTTPS origin without a path`);
+  }
+}
+
+function requestSurface(url: URL, config: DeploymentConfig): RequestSurface | undefined {
+  if (url.origin === config.walletOrigin) return 'wallet';
+  if (url.origin === config.dashboardOrigin) return 'dashboard';
+  return isLoopback(url.hostname) ? 'local' : undefined;
+}
+
+function requireSurface(surface: RequestSurface, expected: Exclude<RequestSurface, 'local'>): void {
+  if (surface !== 'local' && surface !== expected) throw new HttpError(404, 'Not found');
+}
+
+function fetchStaticAsset(request: Request, env: Env, surface: RequestSurface): Promise<Response> {
+  if (surface === 'local') return env.ASSETS.fetch(request);
+
+  const url = new URL(request.url);
+  if (surface === 'wallet') {
+    if (url.pathname === '/dashboard' || url.pathname.startsWith('/dashboard/')) {
+      throw new HttpError(404, 'Not found');
+    }
+    return env.ASSETS.fetch(request);
+  }
+
+  url.pathname =
+    url.pathname === '/'
+      ? '/dashboard/'
+      : url.pathname === '/dashboard'
+        ? '/dashboard/'
+        : url.pathname.startsWith('/dashboard/')
+          ? url.pathname
+          : `/dashboard${url.pathname}`;
+  return env.ASSETS.fetch(new Request(url, request));
+}
+
+function approvalUrl(walletOrigin: string, token: string): string {
+  const url = new URL('/', walletOrigin);
+  url.searchParams.set('request', token);
+  return url.toString();
+}
+
+function isLoopback(hostname: string): boolean {
+  return (
+    hostname === 'localhost' ||
+    hostname === '127.0.0.1' ||
+    hostname === '[::1]' ||
+    hostname === '::1'
+  );
 }
 
 async function readJson<T>(request: Request): Promise<T> {

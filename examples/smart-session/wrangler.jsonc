@@ -9,7 +9,7 @@
   "assets": {
     "directory": "./dist",
     "binding": "ASSETS",
-    "run_worker_first": ["/", "/health", "/api/*"]
+    "run_worker_first": true
   },
   "d1_databases": [
     {
@@ -20,6 +20,8 @@
     }
   ],
   "vars": {
-    "OMS_PUBLISHABLE_KEY": "pk_dev_sdbx_01kqa06hyyetj_01kv5zt5s3eke9038q8y67jdvj"
+    "OMS_PUBLISHABLE_KEY": "pk_dev_sdbx_01kqa06hyyetj_01kv5zt5s3eke9038q8y67jdvj",
+    "WALLET_ORIGIN": "http://localhost:5173",
+    "DASHBOARD_ORIGIN": "http://localhost:5174"
   }
 }

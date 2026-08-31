@@ -10,6 +10,8 @@ yarn-error.log*
 .env.*.local
 examples/smart-session/.dev.vars
 examples/smart-session/.wrangler/
+examples/smart-session/.env.cloudflare.local
+examples/smart-session/wrangler.deploy.generated.json
 /.pnp
 .pnp.js
 
