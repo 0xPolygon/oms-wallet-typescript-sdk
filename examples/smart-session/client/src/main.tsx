@@ -32,7 +32,6 @@ import {
   BASE_USDC,
   getSmartSessionAsset,
   getSmartSessionNetwork,
-  SMART_SESSION_ASSETS,
   SMART_SESSION_NETWORKS
 } from '../../shared/networks';
 import { createSmartSessionGrants } from '../../shared/permissions';
@@ -473,7 +472,6 @@ function App() {
       return;
     }
 
-    const networks = Object.values(SMART_SESSION_NETWORKS).map((network) => network.network);
     if (!background) {
       setPortfolio(null);
       setPortfolioStatus('Loading balances…');
@@ -481,7 +479,7 @@ function App() {
     try {
       const result = await wallet.indexer.getBalances({
         walletAddress: address,
-        networks,
+        networkType: 'ALL',
         includeMetadata: true
       });
       const balances = [
@@ -1151,6 +1149,9 @@ function PermissionRequestCard({
 
 function formatApprovedGrant(grant: SmartSessionGrant, chainId?: number): string {
   const network = chainId === undefined ? undefined : findNetworkById(chainId);
+  const configuredNetwork = Object.values(SMART_SESSION_NETWORKS).find(
+    (candidate) => candidate.network.id === chainId
+  );
   const chain = network
     ? `${network.displayName} (chain ${chainId})`
     : chainId === undefined
@@ -1158,15 +1159,15 @@ function formatApprovedGrant(grant: SmartSessionGrant, chainId?: number): string
       : `chain ${chainId}`;
 
   if (grant.kind === 'nativeTransfer') {
+    const nativeAsset = configuredNetwork?.assetIds
+      .map((assetId) => getSmartSessionAsset(configuredNetwork.id, assetId))
+      .find((asset) => asset.kind === 'native');
     const allowance = network
-      ? `${formatUnits(grant.limit, SMART_SESSION_ASSETS.pol.decimals)} ${network.nativeTokenSymbol}`
+      ? `${formatUnits(grant.limit, nativeAsset?.decimals ?? 18)} ${network.nativeTokenSymbol}`
       : `${grant.limit.toString()} native-token units`;
     return `Send up to ${allowance} on ${chain} to ${shortAddress(grant.to)}`;
   }
 
-  const configuredNetwork = Object.values(SMART_SESSION_NETWORKS).find(
-    (candidate) => candidate.network.id === chainId
-  );
   const asset = configuredNetwork?.assetIds
     .map((assetId) => getSmartSessionAsset(configuredNetwork.id, assetId))
     .find(

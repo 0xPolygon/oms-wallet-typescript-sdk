@@ -2,8 +2,8 @@ import { Networks } from '@polygonlabs/oms-wallet';
 
 import type { Address } from 'viem';
 
-export type SmartSessionNetworkId = 'polygon-amoy' | 'polygon' | 'base';
-export type SmartSessionAssetId = 'pol' | 'usdc' | 'usdt';
+export type SmartSessionNetworkId = 'polygon-amoy' | 'polygon' | 'base' | 'base-sepolia';
+export type SmartSessionAssetId = 'pol' | 'eth' | 'usdc' | 'usdt';
 
 export const BASE_USDC = '0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913' as Address;
 
@@ -16,6 +16,15 @@ export const SMART_SESSION_ASSETS = {
     kind: 'native',
     defaultAllowance: '0.01',
     defaultTransferAmount: '0.001'
+  },
+  eth: {
+    id: 'eth',
+    symbol: 'ETH',
+    name: 'Ether',
+    decimals: 18,
+    kind: 'native',
+    defaultAllowance: '0.001',
+    defaultTransferAmount: '0.0001'
   },
   usdc: {
     id: 'usdc',
@@ -69,7 +78,14 @@ export const SMART_SESSION_NETWORKS = {
     name: 'Base',
     shortName: 'Base',
     network: Networks.base,
-    assetIds: ['usdc']
+    assetIds: ['eth', 'usdc']
+  },
+  'base-sepolia': {
+    id: 'base-sepolia',
+    name: 'Base Sepolia',
+    shortName: 'Base Sepolia',
+    network: Networks.baseSepolia,
+    assetIds: ['eth']
   }
 } as const;
 

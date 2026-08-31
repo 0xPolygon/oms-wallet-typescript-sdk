@@ -3,7 +3,7 @@
 This example demonstrates multiple independently administered backend-owned Remote Access
 Credentials (RACs), each serving smart sessions approved by multiple OMS wallets. The demo is
 configured for native POL transfers on Polygon Amoy and for POL, USDC, and USDT transfers on
-Polygon mainnet, plus USDC transfers on Base.
+Polygon mainnet, plus ETH and USDC transfers on Base and ETH transfers on Base Sepolia.
 
 The Worker accepts only this checked-in network and asset allowlist:
 
@@ -11,7 +11,8 @@ The Worker accepts only this checked-in network and asset allowlist:
 | --- | --- |
 | Polygon Amoy | Native POL |
 | Polygon mainnet | Native POL, [USDC](https://polygonscan.com/token/0x3c499c542cef5e3811e1192ce70d8cc03d5c3359), [USDT](https://polygonscan.com/token/0xc2132d05d31c914a87c6611c10748aeb04b58e8f) |
-| Base | [USDC](https://basescan.org/token/0x833589fcd6edb6e08f4c7c32d4f71b54bdA02913) |
+| Base | Native ETH, [USDC](https://basescan.org/token/0x833589fcd6edb6e08f4c7c32d4f71b54bdA02913) |
+| Base Sepolia | Native ETH |
 
 Polygon and Base mainnet assets have real value. Keep Polygon Amoy selected unless you intend to
 create and execute a real mainnet permission.
@@ -33,8 +34,8 @@ The workspace contains:
   serves it at the root of its own dashboard hostname.
 
 The owner app uses the Indexer to show the authenticated wallet's positive native and ERC-20
-balances on Polygon Amoy, Polygon mainnet, and Base, including indexed token icons and USD values
-when available. It uses WaaS `ListAccess` to show every active remote session for that wallet. The
+balances across all indexed mainnets and testnets, including indexed token icons and USD values when
+available. It uses WaaS `ListAccess` to show every active remote session for that wallet. The
 dashboard only shows sessions completed through this backend. The Worker uses the RAC's
 `ListSessions`, `GetSession`, and `GetSessionUsage` APIs for authoritative live session details and
 remaining allowances; D1 retains the approval and transaction history. WaaS and the on-chain
@@ -76,8 +77,9 @@ pnpm dev
 ```
 
 If you initialized D1 with an older version of the example schema, delete the example's local
-`.wrangler/state/v3/d1` directory before running `pnpm dev` again. This example has not been
-deployed, so schema changes update the initial migration instead of adding compatibility migrations.
+`.wrangler/state/v3/d1` directory before running `pnpm dev` again. Remote schema changes require a
+new migration after deployment. Network and asset additions do not change the schema: the Worker's
+runtime configuration is the allowlist, while D1 stores the validated identifiers as text.
 
 Open:
 
@@ -87,7 +89,7 @@ Open:
 
 The Vite apps proxy `/api/*` to the Worker on port `8787`.
 The client route also works without an approval link: it restores the current wallet session, shows
-its non-zero Polygon Amoy, Polygon mainnet, and Base asset balances, lists approved smart sessions,
+its non-zero native and ERC-20 balances across indexed EVM networks, lists approved smart sessions,
 and allows the owner to copy the full wallet address or sign out. Wallet owners can sign in with
 Google, Apple, or an email verification code, matching the main React example.
 
@@ -96,9 +98,10 @@ Google, Apple, or an email verification code, matching the main React example.
 1. Open the dashboard and select **Initialize admin + RAC**. The browser persists its generated
    admin access while the Worker persists the generated RAC key in D1 and registers its RAC
    credential ID with WaaS.
-2. Select a network and asset, create an approval request, and copy its generated link. USDC is
-   available on Polygon and Base mainnet; USDT is available only on Polygon mainnet. Pending
-   requests retain a **Copy link** action after the dashboard refreshes.
+2. Select a network and asset, create an approval request, and copy its generated link. Native ETH
+   is available on Base and Base Sepolia, USDC is available on Polygon and Base mainnet, and USDT is
+   available only on Polygon mainnet. Pending requests retain a **Copy link** action after the
+   dashboard refreshes.
 3. Open the link in the client app, sign in to an Ethereum wallet, review the exact permission, and
    approve or reject it.
 4. Return to the dashboard. While a non-expired request is pending, it refreshes the overview every

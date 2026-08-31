@@ -15,8 +15,9 @@ CREATE TABLE approval_requests (
   token TEXT NOT NULL,
   token_hash TEXT NOT NULL UNIQUE,
   credential_id TEXT NOT NULL,
-  network_id TEXT NOT NULL CHECK (network_id IN ('polygon-amoy', 'polygon', 'base')),
-  asset_id TEXT NOT NULL CHECK (asset_id IN ('pol', 'usdc', 'usdt')),
+  -- The Worker validates these values against its runtime allowlist before insertion.
+  network_id TEXT NOT NULL,
+  asset_id TEXT NOT NULL,
   recipient_mode TEXT NOT NULL CHECK (recipient_mode IN ('specific', 'any')),
   recipients TEXT NOT NULL,
   allowance TEXT NOT NULL,
@@ -24,11 +25,6 @@ CREATE TABLE approval_requests (
   created_at TEXT NOT NULL,
   approved_at TEXT,
   rejected_at TEXT,
-  CHECK (
-    (network_id = 'polygon-amoy' AND asset_id = 'pol') OR
-    (network_id = 'polygon' AND asset_id IN ('pol', 'usdc', 'usdt')) OR
-    (network_id = 'base' AND asset_id = 'usdc')
-  ),
   FOREIGN KEY (rac_id) REFERENCES backend_racs(id)
 );
 

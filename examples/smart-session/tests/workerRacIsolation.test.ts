@@ -451,6 +451,58 @@ test('prepares Base USDC transfers on Base with the configured token contract', 
   ]);
 });
 
+test.each([
+  ['Base', 'base'],
+  ['Base Sepolia', 'base-sepolia']
+] as const)('prepares native ETH transfers on %s', async (_label, networkId) => {
+  const token = `admin-${networkId}-eth-token-that-is-at-least-32-characters`;
+  const created = await createApprovedNativeSession(
+    token,
+    recipientA,
+    walletA,
+    `session-${networkId}-eth`,
+    networkId
+  );
+
+  await adminRequest<AdminTransaction>(
+    token,
+    `/api/admin/sessions/${created.sessionRecordId}/transactions`,
+    { method: 'POST', body: { recipient: recipientA, amount: '1' } },
+    201
+  );
+  expect(mockedWaas.preparedTransactions).toEqual([
+    expect.objectContaining({
+      network: created.network.network,
+      sessionId: created.sessionId,
+      to: recipientA,
+      value: 1n
+    })
+  ]);
+});
+
+test('rejects network and asset pairs outside the runtime allowlist', async () => {
+  const token = 'admin-invalid-pair-token-that-is-at-least-32-characters';
+  await bootstrapAdmin(token);
+  await adminRequest(token, '/api/admin/rac', { method: 'POST' }, 201);
+
+  await adminRequest(
+    token,
+    '/api/admin/approvals',
+    {
+      method: 'POST',
+      body: {
+        recipientScope: { mode: 'specific', recipients: [recipientA] },
+        allowance: '10',
+        expiresAt: new Date(Date.now() + 60 * 60_000).toISOString(),
+        networkId: 'base-sepolia',
+        assetId: 'usdc'
+      }
+    },
+    400
+  );
+  expect((await overview(token)).approvals).toEqual([]);
+});
+
 async function createNativeActivity(
   token: string,
   recipient: string,
@@ -471,17 +523,28 @@ async function createApprovedNativeSession(
   token: string,
   recipient: string,
   walletAddress: string,
-  sessionId: string
+  sessionId: string,
+  networkId: 'polygon-amoy' | 'base' | 'base-sepolia' = 'polygon-amoy'
 ) {
+  const network = getSmartSessionNetwork(networkId);
+  const assetId = networkId === 'polygon-amoy' ? 'pol' : 'eth';
+  const asset = getSmartSessionAsset(networkId, assetId);
+  if (asset.kind !== 'native') throw new Error(`${network.name} ${asset.symbol} must be native`);
   const approval = await createApproval(token, {
     recipientScope: { mode: 'specific', recipients: [recipient] },
     allowance: '10',
-    networkId: 'polygon-amoy',
-    assetId: 'pol'
+    networkId,
+    assetId
   });
   mockedWaas.sessions.set(sessionId, {
     credentialId: approval.credentialId,
-    session: nativeSession(sessionId, 'authoritative-wallet', recipient, approval.expiresAt),
+    session: nativeSession(
+      sessionId,
+      'authoritative-wallet',
+      recipient,
+      approval.expiresAt,
+      network.network.id
+    ),
     usage: [],
     listed: true,
     active: true
@@ -495,7 +558,7 @@ async function createApprovedNativeSession(
     (candidate) => candidate.sessionId === sessionId
   );
   if (!sessionRecord) throw new Error('Approved session was not returned by the overview');
-  return { ...approval, sessionId, sessionRecordId: sessionRecord.id };
+  return { ...approval, network, sessionId, sessionRecordId: sessionRecord.id };
 }
 
 async function createApprovedUsdcSession(
@@ -585,7 +648,8 @@ function nativeSession(
   sessionId: string,
   walletId: string,
   recipient: string,
-  expiresAt: string
+  expiresAt: string,
+  chainId = 80002
 ): RemoteAccessSession {
   return {
     sessionId,
@@ -598,7 +662,7 @@ function nativeSession(
         limit: 10n
       }
     ],
-    chainId: 80002,
+    chainId,
     expiresAt
   };
 }
