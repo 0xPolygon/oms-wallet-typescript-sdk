@@ -117,6 +117,14 @@ function App() {
   const [isBusy, setIsBusy] = useState(false);
   const initializationStarted = useRef(false);
   const walletAddress = omsWallet?.wallet.walletAddress ?? '';
+  const sessionAuth = omsWallet?.wallet.session.auth;
+  const loginMethod =
+    sessionAuth?.type === 'email'
+      ? 'Email'
+      : (sessionAuth?.providerLabel ?? sessionAuth?.provider ?? 'OIDC');
+  const loginIdentity = sessionAuth
+    ? [loginMethod, sessionAuth.email].filter(Boolean).join(' — ')
+    : '';
 
   useEffect(() => {
     if (initializationStarted.current) return;
@@ -671,6 +679,13 @@ function App() {
             </div>
           ) : null}
         </header>
+
+        {loginIdentity ? (
+          <div className="wallet-login-identity">
+            <span>Signed in with</span>
+            <strong>{loginIdentity}</strong>
+          </div>
+        ) : null}
 
         {walletAddress ? (
           <div className="wallet-address-card">
