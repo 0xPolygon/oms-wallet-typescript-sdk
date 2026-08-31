@@ -11,7 +11,6 @@ export interface ApprovalRequest {
   expiresAt: string;
   status: ApprovalStatus;
   credentialId: string;
-  publishableKey: string;
   networkId: SmartSessionNetworkId;
   assetId: SmartSessionAssetId;
 }
@@ -21,11 +20,8 @@ export interface ClientConfig {
 }
 
 export interface ApproveRequestBody {
-  credentialId: string;
-  walletId: string;
   walletAddress: string;
   sessionId: string;
-  expiresAt: string;
 }
 
 export interface CreateApprovalBody {
@@ -50,57 +46,40 @@ export interface AdminApproval {
   status: ApprovalStatus;
   networkId: SmartSessionNetworkId;
   assetId: SmartSessionAssetId;
-  walletAddress?: string;
   createdAt: string;
   approvedAt?: string;
   rejectedAt?: string;
 }
 
-export interface AdminApprovalStatus {
-  id: string;
-  status: ApprovalStatus;
-  approvedAt?: string;
-  rejectedAt?: string;
-}
-
-export interface AdminApprovalStatuses {
-  approvals: AdminApprovalStatus[];
-}
-
-export interface AdminSessionStatus {
-  id: string;
-  status: 'usable' | 'revoked' | 'expired';
-  revokedAt?: string;
-}
-
-export interface AdminActivityStatuses extends AdminApprovalStatuses {
-  sessions: AdminSessionStatus[];
-}
+export type AdminSmartSessionGrant =
+  | {
+      kind: 'nativeTransfer';
+      to: string;
+      limit: string;
+      used?: string;
+      remaining?: string;
+    }
+  | {
+      kind: 'erc20Transfer';
+      token: string;
+      to?: string;
+      limit: string;
+      cumulative?: boolean;
+      used?: string;
+      remaining?: string;
+    };
 
 export interface AdminSmartSession {
   id: string;
-  walletId: string;
   walletAddress: string;
   balance?: string;
   sessionId: string;
-  recipientScope: RecipientScope;
-  allowance: string;
+  grants: AdminSmartSessionGrant[];
   networkId: SmartSessionNetworkId;
   assetId: SmartSessionAssetId;
   expiresAt: string;
   createdAt: string;
   status: 'usable' | 'revoked' | 'expired';
-  revokedAt?: string;
-}
-
-export interface RevokeSessionBody {
-  credentialId: string;
-  sessionId: string;
-  signature: string;
-}
-
-export interface SessionRevocationResult {
-  recorded: boolean;
 }
 
 export interface CreateTransactionBody {

@@ -21,10 +21,6 @@ CREATE TABLE approval_requests (
   recipients TEXT NOT NULL,
   allowance TEXT NOT NULL,
   expires_at TEXT NOT NULL,
-  status TEXT NOT NULL CHECK (status IN ('pending', 'approved')),
-  wallet_id TEXT,
-  wallet_address TEXT,
-  session_id TEXT,
   created_at TEXT NOT NULL,
   approved_at TEXT,
   rejected_at TEXT,
@@ -39,26 +35,16 @@ CREATE TABLE smart_sessions (
   id TEXT PRIMARY KEY,
   rac_id TEXT NOT NULL,
   approval_id TEXT NOT NULL UNIQUE,
-  wallet_id TEXT NOT NULL,
   wallet_address TEXT NOT NULL,
   session_id TEXT NOT NULL,
-  credential_id TEXT NOT NULL,
-  network_id TEXT NOT NULL CHECK (network_id IN ('polygon-amoy', 'polygon')),
-  asset_id TEXT NOT NULL CHECK (asset_id IN ('pol', 'usdc', 'usdt')),
-  recipient_mode TEXT NOT NULL CHECK (recipient_mode IN ('specific', 'any')),
-  recipients TEXT NOT NULL,
-  allowance TEXT NOT NULL,
-  expires_at TEXT NOT NULL,
   created_at TEXT NOT NULL,
-  status TEXT NOT NULL DEFAULT 'active' CHECK (status IN ('active', 'revoked')),
-  revoked_at TEXT,
-  CHECK (network_id = 'polygon' OR asset_id = 'pol'),
+  dismissed_at TEXT,
   FOREIGN KEY (rac_id) REFERENCES backend_racs(id),
   FOREIGN KEY (approval_id) REFERENCES approval_requests(id)
 );
 
-CREATE UNIQUE INDEX smart_sessions_wallet_session
-  ON smart_sessions (wallet_id, session_id);
+CREATE UNIQUE INDEX smart_sessions_session_id
+  ON smart_sessions (session_id);
 
 CREATE INDEX smart_sessions_rac_created_at
   ON smart_sessions (rac_id, created_at DESC);

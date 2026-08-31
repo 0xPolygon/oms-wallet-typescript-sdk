@@ -6,7 +6,6 @@ import { SMART_SESSION_ASSETS } from '../shared/networks.ts';
 import {
   createSmartSessionGrants,
   MAX_SMART_SESSION_GRANTS,
-  recipientIsAllowed,
   validateRecipientScope
 } from '../shared/permissions.ts';
 
@@ -74,10 +73,9 @@ test('any-receiver ERC-20 permission omits the grant recipient', () => {
       }
     ]
   );
-  assert.equal(recipientIsAllowed({ mode: 'any' }, receiverTwo), true);
 });
 
-test('specific receiver validation rejects duplicates and unauthorized recipients', () => {
+test('specific receiver validation rejects duplicates', () => {
   assert.throws(
     () =>
       validateRecipientScope(
@@ -85,14 +83,6 @@ test('specific receiver validation rejects duplicates and unauthorized recipient
         'erc20'
       ),
     /unique/
-  );
-  assert.equal(
-    recipientIsAllowed({ mode: 'specific', recipients: [receiverOne] }, getAddress(receiverOne)),
-    true
-  );
-  assert.equal(
-    recipientIsAllowed({ mode: 'specific', recipients: [receiverOne] }, receiverTwo),
-    false
   );
 });
 

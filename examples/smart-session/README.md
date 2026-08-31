@@ -23,18 +23,22 @@ for any receiver, one cumulative allowance is shared across all transfers.
 The workspace contains:
 
 - a Cloudflare Worker API that owns the RACs, signs WaaS requests, and serves both frontends;
-- a D1 database containing each RAC's approval requests, smart-session bindings, transaction
+- a D1 database containing each RAC's approval workflow, minimal session associations, transaction
   records, and monotonic request nonces;
 - a wallet-owner React app at `/` that approves and revokes smart sessions; and
 - an admin React app at `/dashboard/` that creates approval links, lists the authenticated RAC's
-  active, revoked, and expired session records, and submits permitted transactions.
+  active, revoked, and expired session records, dismisses terminal records from the session list,
+  and submits permitted transactions.
 
 The owner app uses the Indexer to show the authenticated wallet's positive native and ERC-20
 balances on Polygon Amoy, Polygon mainnet, and Base, including indexed token icons and USD values
 when available. It uses WaaS `ListAccess` to show every active remote session for that wallet. The
-dashboard only shows sessions completed through this backend. WaaS and the on-chain session
-contracts remain authoritative: an expired, revoked, or out-of-policy transaction is rejected when
-the backend tries to use it.
+dashboard only shows sessions completed through this backend. The Worker uses the RAC's
+`ListSessions`, `GetSession`, and `GetSessionUsage` APIs for authoritative live session details and
+remaining allowances; D1 retains the approval and transaction history. WaaS and the on-chain
+session contracts remain the final authority for transaction execution. The wallet address posted
+by the owner app is retained only for dashboard display and Indexer balance lookup; transactions use
+the authoritative wallet ID returned by `GetSession`.
 
 The wallet settings menu also includes a one-time Trails automation. Enabling **Auto-convert USDT**
 immediately checks the wallet and then watches for a positive Polygon USDT balance. Once detected,
@@ -95,17 +99,17 @@ Google, Apple, or an email verification code, matching the main React example.
    the dashboard refreshes.
 3. Open the link in the client app, sign in to an Ethereum wallet, review the exact permission, and
    approve or reject it.
-4. Return to the dashboard. While a non-expired request is pending, it checks approval status every
+4. Return to the dashboard. While a non-expired request is pending, it refreshes the overview every
    10 seconds when visible. A rejected request is recorded without creating a session. Once approved,
-   the new wallet/session binding and its current selected-asset balance appear under backend smart
-   sessions.
+   the new wallet/session association, authoritative grants and usage, and current selected-asset
+   balance appear under backend smart sessions.
 5. Fund that smart wallet with the selected asset if needed, then submit a transfer from the session
    card.
 6. The dashboard polls pending transactions and links executed transactions to PolygonScan.
-7. The wallet owner can revoke an active session. The client signs a revocation notice, WaaS
-   revokes the binding, and the Worker verifies the wallet signature before marking its matching
-   record revoked. The dashboard preserves that record as history without offering transaction
-   controls.
+7. The wallet owner can revoke an active session directly through WaaS. The dashboard observes the
+   revocation through the backend RAC's session APIs and preserves the local association as history
+   without offering transaction controls. Revoked and expired session cards can be dismissed from
+   the session list without removing their approval or transaction history.
 
 The RAC registration lasts 30 days. Session requests cannot extend beyond that credential expiry.
 The Worker registers the persisted RAC key again after its current credential expires. Existing

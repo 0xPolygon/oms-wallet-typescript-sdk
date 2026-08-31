@@ -4,14 +4,19 @@ import {
   feeOptionSelection,
   isOMSWalletError
 } from '@polygonlabs/oms-wallet';
-import { encodeFunctionData, isAddress } from 'viem';
+import type {
+  RemoteAccessSession,
+  SmartSessionGrant,
+  SmartSessionGrantUsage
+} from '@polygonlabs/oms-wallet';
+import { encodeFunctionData, getAddress, isAddress } from 'viem';
 import { generatePrivateKey } from 'viem/accounts';
 
 import type {
-  AdminActivityStatuses,
   AdminApproval,
   AdminOverview,
   AdminSmartSession,
+  AdminSmartSessionGrant,
   AdminTransaction,
   ApiError,
   ApprovalRequest,
@@ -21,25 +26,22 @@ import type {
   CreateApprovalBody,
   CreateTransactionBody,
   CreatedApproval,
-  RecipientScope,
-  RevokeSessionBody,
-  SessionRevocationResult
+  RecipientScope
 } from '../shared/api.js';
-import type { SmartSessionAssetId, SmartSessionNetworkId } from '../shared/networks.js';
+import type {
+  SmartSessionAsset,
+  SmartSessionAssetId,
+  SmartSessionNetworkId
+} from '../shared/networks.js';
 import {
   getSmartSessionAsset,
   getSmartSessionNetwork,
   isSmartSessionAssetId,
   isSmartSessionNetworkId
 } from '../shared/networks.js';
-import {
-  requireAllowedTransactionRecipient,
-  validateRecipientScope
-} from '../shared/permissions.js';
-import { createSessionRevocationMessage } from '../shared/sessionRevocation.js';
+import { createSmartSessionGrants, validateRecipientScope } from '../shared/permissions.js';
 import { serializeWaasError } from './errors.js';
 import { createRacContext, RAC_LIFETIME_SECONDS, type RacContext } from './rac.js';
-import { verifySessionRevocation } from './sessionRevocation.js';
 
 const erc20TransferAbi = [
   {
@@ -81,10 +83,6 @@ interface ApprovalRow {
   recipients: string;
   allowance: string;
   expires_at: string;
-  status: 'pending' | 'approved';
-  wallet_id: string | null;
-  wallet_address: string | null;
-  session_id: string | null;
   created_at: string;
   approved_at: string | null;
   rejected_at: string | null;
@@ -93,19 +91,19 @@ interface ApprovalRow {
 interface SessionRow {
   id: string;
   rac_id: string;
-  wallet_id: string;
   wallet_address: string;
   session_id: string;
-  credential_id: string;
+  approval_id: string;
+  created_at: string;
+}
+
+interface SessionRecordRow extends SessionRow {
   network_id: SmartSessionNetworkId;
   asset_id: SmartSessionAssetId;
   recipient_mode: RecipientScope['mode'];
   recipients: string;
   allowance: string;
   expires_at: string;
-  created_at: string;
-  status: 'active' | 'revoked';
-  revoked_at: string | null;
 }
 
 interface TransactionRow {
@@ -181,19 +179,10 @@ export default {
         return json({ ok: true });
       }
 
-      if (request.method === 'POST' && url.pathname === '/api/session-revocations') {
-        return json(
-          await recordSessionRevocation(env, await readJson<RevokeSessionBody>(request), url.origin)
-        );
-      }
-
       if (url.pathname.startsWith('/api/admin/')) {
         const admin = await requireAdmin(request, env);
         if (request.method === 'GET' && url.pathname === '/api/admin/overview') {
           return json(await getAdminOverview(env, admin.racId, url.origin));
-        }
-        if (request.method === 'GET' && url.pathname === '/api/admin/activity-statuses') {
-          return json(await getAdminActivityStatuses(env, admin.racId, url.origin));
         }
         if (request.method === 'POST' && url.pathname === '/api/admin/rac') {
           await generateBackendRac(env, admin.racId);
@@ -218,6 +207,12 @@ export default {
         const approvalLinkMatch = url.pathname.match(/^\/api\/admin\/approvals\/([^/]+)\/link$/);
         if (request.method === 'POST' && approvalLinkMatch) {
           return json(await getApprovalLink(env, admin.racId, approvalLinkMatch[1], url.origin));
+        }
+
+        const sessionMatch = url.pathname.match(/^\/api\/admin\/sessions\/([^/]+)$/);
+        if (request.method === 'DELETE' && sessionMatch) {
+          await dismissSession(env, admin.racId, sessionMatch[1], url.origin);
+          return json({ ok: true });
         }
 
         const transactionMatch = url.pathname.match(
@@ -261,8 +256,8 @@ export default {
 
 async function getApproval(env: Env, token: string, origin: string): Promise<ApprovalRequest> {
   const row = await env.DB.prepare(
-    `SELECT id, rac_id, credential_id, network_id, asset_id, recipient_mode, recipients, allowance, expires_at,
-      status, wallet_id, wallet_address, session_id, created_at, approved_at, rejected_at
+    `SELECT id, rac_id, credential_id, network_id, asset_id, recipient_mode, recipients, allowance,
+      expires_at, created_at, approved_at, rejected_at
      FROM approval_requests WHERE token_hash = ?`
   )
     .bind(await sha256(token))
@@ -284,7 +279,6 @@ async function getApproval(env: Env, token: string, origin: string): Promise<App
     expiresAt: row.expires_at,
     status: approvalStatus(row),
     credentialId: credential.credential_id,
-    publishableKey: env.OMS_PUBLISHABLE_KEY,
     networkId: row.network_id,
     assetId: row.asset_id
   };
@@ -312,8 +306,8 @@ async function createApproval(
     `INSERT INTO approval_requests
       (id, rac_id, token, token_hash, credential_id, network_id, asset_id, recipient_mode,
        recipients, allowance,
-       expires_at, status, created_at)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'pending', ?)`
+       expires_at, created_at)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
   )
     .bind(
       id,
@@ -345,7 +339,7 @@ async function getApprovalLink(
   origin: string
 ): Promise<CreatedApproval> {
   const approval = await env.DB.prepare(
-    `SELECT id, token, credential_id, expires_at, status, rejected_at
+    `SELECT id, token, credential_id, expires_at, approved_at, rejected_at
      FROM approval_requests WHERE id = ? AND rac_id = ?`
   )
     .bind(id, racId)
@@ -354,11 +348,11 @@ async function getApprovalLink(
       token: string;
       credential_id: string;
       expires_at: string;
-      status: 'pending' | 'approved';
+      approved_at: string | null;
       rejected_at: string | null;
     }>();
   if (!approval) throw new HttpError(404, 'Approval request not found');
-  if (approval.status !== 'pending' || approval.rejected_at) {
+  if (approval.approved_at || approval.rejected_at) {
     throw new HttpError(409, 'Approval request was already used');
   }
   if (Date.parse(approval.expires_at) <= Date.now()) {
@@ -382,35 +376,35 @@ async function approveRequest(
   body: ApproveRequestBody,
   origin: string
 ): Promise<void> {
-  if (!body.walletId?.trim()) throw new HttpError(400, 'walletId is required');
   if (!body.sessionId?.trim()) throw new HttpError(400, 'sessionId is required');
   if (!isAddress(body.walletAddress)) throw new HttpError(400, 'walletAddress is invalid');
-  const effectiveExpiry = validFutureDate(body.expiresAt, 'expiresAt');
   const approval = await env.DB.prepare(
-    `SELECT id, rac_id, credential_id, network_id, asset_id, recipient_mode, recipients, allowance, expires_at,
-      status, wallet_id, wallet_address, session_id, created_at, approved_at, rejected_at
+    `SELECT id, rac_id, credential_id, network_id, asset_id, recipient_mode, recipients, allowance,
+      expires_at, created_at, approved_at, rejected_at
      FROM approval_requests WHERE token_hash = ?`
   )
     .bind(await sha256(token))
     .first<ApprovalRow>();
 
   if (!approval) throw new HttpError(404, 'Approval request not found');
-  if (approval.status !== 'pending' || approval.rejected_at) {
+  if (approval.approved_at || approval.rejected_at) {
     throw new HttpError(409, 'Approval request was already used');
   }
   if (Date.parse(approval.expires_at) <= Date.now()) {
     throw new HttpError(410, 'Approval request has expired');
   }
-  if (effectiveExpiry.getTime() > Date.parse(approval.expires_at)) {
-    throw new HttpError(400, 'Authorized expiry exceeds the requested expiry');
-  }
   const credential = await requireCredential(env, approval.rac_id, origin);
-  if (
-    body.credentialId !== credential.credential_id ||
-    approval.credential_id !== credential.credential_id
-  ) {
+  if (approval.credential_id !== credential.credential_id) {
     throw new HttpError(409, 'The backend RAC changed; reload and approve a new request');
   }
+  const rac = await createRac(env, approval.rac_id);
+  let session: RemoteAccessSession;
+  try {
+    session = await getSessionAfterAuthorization(rac, body.sessionId);
+  } catch (error) {
+    throw waasError('Unable to verify the authorized smart session', error);
+  }
+  validateAuthorizedSession(approval, session);
 
   const now = new Date().toISOString();
   const sessionRecordId = crypto.randomUUID();
@@ -418,26 +412,22 @@ async function approveRequest(
     const results = await env.DB.batch([
       env.DB.prepare(
         `UPDATE approval_requests
-         SET status = 'approved', wallet_id = ?, wallet_address = ?, session_id = ?, approved_at = ?
-         WHERE id = ? AND rac_id = ? AND status = 'pending' AND rejected_at IS NULL`
-      ).bind(body.walletId, body.walletAddress, body.sessionId, now, approval.id, approval.rac_id),
+         SET approved_at = ?, expires_at = ?
+         WHERE id = ? AND rac_id = ? AND approved_at IS NULL AND rejected_at IS NULL`
+      ).bind(now, session.expiresAt, approval.id, approval.rac_id),
       env.DB.prepare(
         `INSERT INTO smart_sessions
-          (id, rac_id, approval_id, wallet_id, wallet_address, session_id, credential_id,
-           network_id, asset_id, recipient_mode, recipients, allowance, expires_at, created_at)
-         SELECT ?, rac_id, id, ?, ?, ?, ?, network_id, asset_id, recipient_mode, recipients,
-           allowance, ?, ?
-         FROM approval_requests WHERE id = ? AND rac_id = ? AND status = 'approved'`
+          (id, rac_id, approval_id, wallet_address, session_id, created_at)
+         SELECT ?, rac_id, id, ?, ?, ?
+         FROM approval_requests WHERE id = ? AND rac_id = ? AND approved_at = ?`
       ).bind(
         sessionRecordId,
-        body.walletId,
-        body.walletAddress,
+        getAddress(body.walletAddress),
         body.sessionId,
-        credential.credential_id,
-        effectiveExpiry.toISOString(),
         now,
         approval.id,
-        approval.rac_id
+        approval.rac_id,
+        now
       )
     ]);
     if (results.some((result) => result.meta.changes !== 1)) {
@@ -450,16 +440,19 @@ async function approveRequest(
 
 async function rejectRequest(env: Env, token: string, origin: string): Promise<void> {
   const approval = await env.DB.prepare(
-    `SELECT id, rac_id, credential_id, expires_at, status, rejected_at
+    `SELECT id, rac_id, credential_id, expires_at, approved_at, rejected_at
      FROM approval_requests WHERE token_hash = ?`
   )
     .bind(await sha256(token))
     .first<
-      Pick<ApprovalRow, 'id' | 'rac_id' | 'credential_id' | 'expires_at' | 'status' | 'rejected_at'>
+      Pick<
+        ApprovalRow,
+        'id' | 'rac_id' | 'credential_id' | 'expires_at' | 'approved_at' | 'rejected_at'
+      >
     >();
 
   if (!approval) throw new HttpError(404, 'Approval request not found');
-  if (approval.status !== 'pending' || approval.rejected_at) {
+  if (approval.approved_at || approval.rejected_at) {
     throw new HttpError(409, 'Approval request was already used');
   }
   if (Date.parse(approval.expires_at) <= Date.now()) {
@@ -472,7 +465,7 @@ async function rejectRequest(env: Env, token: string, origin: string): Promise<v
 
   const result = await env.DB.prepare(
     `UPDATE approval_requests SET rejected_at = ?
-     WHERE id = ? AND rac_id = ? AND status = 'pending' AND rejected_at IS NULL`
+     WHERE id = ? AND rac_id = ? AND approved_at IS NULL AND rejected_at IS NULL`
   )
     .bind(new Date().toISOString(), approval.id, approval.rac_id)
     .run();
@@ -481,96 +474,53 @@ async function rejectRequest(env: Env, token: string, origin: string): Promise<v
   }
 }
 
-async function recordSessionRevocation(
-  env: Env,
-  body: RevokeSessionBody,
-  origin: string
-): Promise<SessionRevocationResult> {
-  if (!body.credentialId?.trim()) throw new HttpError(400, 'credentialId is required');
-  if (!body.sessionId?.trim()) throw new HttpError(400, 'sessionId is required');
-  if (!body.signature?.trim()) throw new HttpError(400, 'signature is required');
-
-  const session = await env.DB.prepare(
-    `SELECT id, wallet_address, network_id
-     FROM smart_sessions
-     WHERE credential_id = ? AND session_id = ?`
-  )
-    .bind(body.credentialId, body.sessionId)
-    .first<Pick<SessionRow, 'id' | 'wallet_address' | 'network_id'>>();
-  if (!session) throw new HttpError(404, 'Smart session not found');
-  if (!isAddress(session.wallet_address)) {
-    throw new HttpError(500, 'Smart session contains an invalid wallet address');
-  }
-
-  const network = getSmartSessionNetwork(session.network_id).network;
-  const message = createSessionRevocationMessage({
-    origin,
-    credentialId: body.credentialId,
-    sessionId: body.sessionId,
-    walletAddress: session.wallet_address,
-    chainId: network.id
-  });
-  let isValid: boolean;
-  try {
-    isValid = await verifySessionRevocation({
-      publishableKey: env.OMS_PUBLISHABLE_KEY,
-      network,
-      walletAddress: session.wallet_address,
-      message,
-      signature: body.signature
-    });
-  } catch (error) {
-    throw waasError('Unable to verify the session revocation', error);
-  }
-  if (!isValid) throw new HttpError(403, 'Invalid session revocation signature');
-
-  const result = await env.DB.prepare(
-    `UPDATE smart_sessions SET status = 'revoked', revoked_at = ?
-     WHERE id = ? AND status = 'active'`
-  )
-    .bind(new Date().toISOString(), session.id)
-    .run();
-
-  return { recorded: result.meta.changes > 0 };
-}
-
 async function getAdminOverview(env: Env, racId: string, origin: string): Promise<AdminOverview> {
   const credential = await requireCredential(env, racId, origin);
-  const [approvalResult, sessionResult, transactionResult] = await Promise.all([
+  const rac = await createRac(env, racId);
+  const [approvalResult, sessionResult, transactionResult, remoteSessions] = await Promise.all([
     env.DB.prepare(
       `SELECT id, rac_id, credential_id, network_id, asset_id, recipient_mode, recipients,
-        allowance, expires_at,
-        status, wallet_id, wallet_address, session_id, created_at, approved_at, rejected_at
+        allowance, expires_at, created_at, approved_at, rejected_at
        FROM approval_requests WHERE rac_id = ? ORDER BY created_at DESC LIMIT 50`
     )
       .bind(racId)
       .all<ApprovalRow>(),
     env.DB.prepare(
-      `SELECT id, rac_id, wallet_id, wallet_address, session_id, credential_id, recipient_mode,
-        recipients, network_id, asset_id, allowance, expires_at, created_at, status, revoked_at
+      `SELECT smart_sessions.id, smart_sessions.rac_id, smart_sessions.approval_id,
+        smart_sessions.wallet_address, smart_sessions.session_id, smart_sessions.created_at,
+        approval_requests.network_id, approval_requests.asset_id,
+        approval_requests.recipient_mode, approval_requests.recipients,
+        approval_requests.allowance, approval_requests.expires_at
        FROM smart_sessions
-       WHERE rac_id = ? AND credential_id = ?
-       ORDER BY created_at DESC LIMIT 50`
+       JOIN approval_requests ON approval_requests.id = smart_sessions.approval_id
+       WHERE smart_sessions.rac_id = ? AND approval_requests.credential_id = ?
+         AND smart_sessions.dismissed_at IS NULL
+       ORDER BY smart_sessions.created_at DESC LIMIT 50`
     )
       .bind(racId, credential.credential_id)
-      .all<SessionRow>(),
+      .all<SessionRecordRow>(),
     env.DB.prepare(
       `SELECT transactions.id, transactions.smart_session_id, smart_sessions.wallet_address,
-        smart_sessions.network_id, smart_sessions.asset_id, transactions.txn_id,
+        approval_requests.network_id, approval_requests.asset_id, transactions.txn_id,
         transactions.recipient, transactions.amount, transactions.status, transactions.txn_hash,
         transactions.error,
         transactions.created_at, transactions.updated_at
        FROM transactions
        JOIN smart_sessions ON smart_sessions.id = transactions.smart_session_id
+       JOIN approval_requests ON approval_requests.id = smart_sessions.approval_id
        WHERE smart_sessions.rac_id = ?
        ORDER BY transactions.created_at DESC LIMIT 50`
     )
       .bind(racId)
-      .all<TransactionRow>()
+      .all<TransactionRow>(),
+    rac.client
+      .listSessions()
+      .catch((error) => Promise.reject(waasError('Unable to list smart sessions', error)))
   ]);
+  const resolvedSessions = await resolveSessionRecords(rac, sessionResult.results, remoteSessions);
   const sessionBalances = await getSessionBalances(
     env,
-    sessionResult.results.filter((session) => sessionStatus(session) === 'usable')
+    resolvedSessions.filter(({ status }) => status === 'usable').map(({ row }) => row)
   );
 
   return {
@@ -579,59 +529,65 @@ async function getAdminOverview(env: Env, racId: string, origin: string): Promis
       expiresAt: credential.expires_at
     },
     approvals: approvalResult.results.map(toAdminApproval),
-    sessions: sessionResult.results.map((row) => ({
-      ...toAdminSession(row),
-      balance: sessionBalances.get(row.id)
-    })),
+    sessions: resolvedSessions.map(({ row, remote, usage, status }) =>
+      toAdminSession(row, remote, usage, status, sessionBalances.get(row.id))
+    ),
     transactions: transactionResult.results.map(toAdminTransaction)
   };
 }
 
-async function getAdminActivityStatuses(
-  env: Env,
-  racId: string,
-  origin: string
-): Promise<AdminActivityStatuses> {
-  const credential = await requireCredential(env, racId, origin);
-  const [approvalResult, sessionResult] = await Promise.all([
-    env.DB.prepare(
-      `SELECT id, status, approved_at, rejected_at
-       FROM approval_requests WHERE rac_id = ? ORDER BY created_at DESC LIMIT 50`
-    )
-      .bind(racId)
-      .all<Pick<ApprovalRow, 'id' | 'status' | 'approved_at' | 'rejected_at'>>(),
-    env.DB.prepare(
-      `SELECT id, expires_at, status, revoked_at
-       FROM smart_sessions WHERE rac_id = ? AND credential_id = ? ORDER BY created_at DESC LIMIT 50`
-    )
-      .bind(racId, credential.credential_id)
-      .all<Pick<SessionRow, 'id' | 'expires_at' | 'status' | 'revoked_at'>>()
-  ]);
+interface ResolvedSessionRecord {
+  row: SessionRecordRow;
+  remote?: RemoteAccessSession;
+  usage: SmartSessionGrantUsage[];
+  status: AdminSmartSession['status'];
+}
 
-  return {
-    approvals: approvalResult.results.map((row) => ({
-      id: row.id,
-      status: approvalStatus(row),
-      approvedAt: row.approved_at ?? undefined,
-      rejectedAt: row.rejected_at ?? undefined
-    })),
-    sessions: sessionResult.results.map((row) => ({
-      id: row.id,
-      status: sessionStatus(row),
-      revokedAt: row.revoked_at ?? undefined
-    }))
-  };
+async function resolveSessionRecords(
+  rac: RacContext,
+  rows: SessionRecordRow[],
+  listedSessions: RemoteAccessSession[]
+): Promise<ResolvedSessionRecord[]> {
+  const listedById = new Map(listedSessions.map((session) => [session.sessionId, session]));
+  return Promise.all(
+    rows.map(async (row) => {
+      if (Date.parse(row.expires_at) <= Date.now()) {
+        return { row, usage: [], status: 'expired' as const };
+      }
+
+      let remote = listedById.get(row.session_id);
+      if (!remote) {
+        try {
+          remote = await rac.client.getSession({ sessionId: row.session_id });
+        } catch (error) {
+          if (isMissingSessionError(error)) {
+            return { row, usage: [], status: 'revoked' as const };
+          }
+          throw waasError('Unable to reconcile a smart session', error);
+        }
+      }
+      validateAuthorizedSession(row, remote);
+      const network = getSmartSessionNetwork(row.network_id).network;
+      let usage: SmartSessionGrantUsage[];
+      try {
+        usage = await rac.client.getSessionUsage({ sessionId: remote.sessionId, network });
+      } catch (error) {
+        throw waasError('Unable to load smart-session usage', error);
+      }
+      return { row, remote, usage, status: 'usable' as const };
+    })
+  );
 }
 
 async function getSessionBalances(
   env: Env,
-  sessions: SessionRow[]
+  sessions: SessionRecordRow[]
 ): Promise<Map<string, string | undefined>> {
   if (sessions.length === 0) return new Map();
 
   const groups = new Map<
     string,
-    { walletAddress: string; networkId: SmartSessionNetworkId; sessions: SessionRow[] }
+    { walletAddress: string; networkId: SmartSessionNetworkId; sessions: SessionRecordRow[] }
   >();
   for (const session of sessions) {
     const key = `${session.wallet_address.toLowerCase()}:${session.network_id}`;
@@ -696,52 +652,43 @@ async function createTransaction(
   origin: string
 ): Promise<AdminTransaction> {
   const amount = positiveBigInt(body.amount, 'amount');
-  const session = await env.DB.prepare(
-    `SELECT id, rac_id, wallet_id, wallet_address, session_id, credential_id, recipient_mode,
-      recipients, network_id, asset_id, allowance, expires_at, created_at, status, revoked_at
-     FROM smart_sessions WHERE id = ? AND rac_id = ?`
-  )
-    .bind(sessionRecordId, racId)
-    .first<SessionRow>();
-  if (!session) throw new HttpError(404, 'Smart session not found');
-  if (session.status === 'revoked') {
-    throw new HttpError(410, 'Smart session has been revoked');
-  }
+  const session = await requireSessionRecord(env, racId, sessionRecordId);
   if (Date.parse(session.expires_at) <= Date.now()) {
     throw new HttpError(410, 'Smart session has expired');
   }
-  if (amount > BigInt(session.allowance)) {
-    throw new HttpError(400, 'Amount exceeds the session allowance');
-  }
 
   const { network, asset } = requireSmartSessionConfig(session.network_id, session.asset_id);
-  const recipientScope = recipientScopeFromRow(session);
-  let recipient: `0x${string}`;
-  try {
-    recipient = requireAllowedTransactionRecipient(recipientScope, body.recipient);
-  } catch (error) {
-    throw new HttpError(400, error instanceof Error ? error.message : 'Recipient is invalid');
-  }
-
-  const credential = await requireCredential(env, racId, origin);
-  if (session.credential_id !== credential.credential_id) {
-    throw new HttpError(409, 'This session belongs to a different backend RAC');
-  }
-
+  await requireCredential(env, racId, origin);
   const rac = await createRac(env, racId);
+  let remote: RemoteAccessSession;
+  let usage: SmartSessionGrantUsage[];
+  try {
+    remote = await rac.client.getSession({ sessionId: session.session_id });
+    validateAuthorizedSession(session, remote);
+    usage = await rac.client.getSessionUsage({
+      sessionId: remote.sessionId,
+      network: network.network
+    });
+  } catch (error) {
+    if (error instanceof HttpError) throw error;
+    if (isMissingSessionError(error)) throw new HttpError(410, 'Smart session is no longer active');
+    throw waasError('Unable to verify the smart session and its usage', error);
+  }
+  const recipient = requireAuthorizedTransfer(remote.grants, usage, asset, body.recipient, amount);
+
   try {
     const prepared = await rac.client.prepareTransaction(
       asset.kind === 'native'
         ? {
-            walletId: session.wallet_id,
-            sessionId: session.session_id,
+            walletId: remote.walletId,
+            sessionId: remote.sessionId,
             network: network.network,
             to: recipient,
             value: amount
           }
         : {
-            walletId: session.wallet_id,
-            sessionId: session.session_id,
+            walletId: remote.walletId,
+            sessionId: remote.sessionId,
             network: network.network,
             to: asset.tokenAddress,
             data: encodeFunctionData({
@@ -817,6 +764,56 @@ async function createTransaction(
   }
 }
 
+async function requireSessionRecord(
+  env: Env,
+  racId: string,
+  sessionRecordId: string
+): Promise<SessionRecordRow> {
+  const session = await env.DB.prepare(
+    `SELECT smart_sessions.id, smart_sessions.rac_id, smart_sessions.approval_id,
+      smart_sessions.wallet_address, smart_sessions.session_id, smart_sessions.created_at,
+      approval_requests.network_id, approval_requests.asset_id,
+      approval_requests.recipient_mode, approval_requests.recipients,
+      approval_requests.allowance, approval_requests.expires_at
+     FROM smart_sessions
+     JOIN approval_requests ON approval_requests.id = smart_sessions.approval_id
+     WHERE smart_sessions.id = ? AND smart_sessions.rac_id = ?
+       AND smart_sessions.dismissed_at IS NULL`
+  )
+    .bind(sessionRecordId, racId)
+    .first<SessionRecordRow>();
+  if (!session) throw new HttpError(404, 'Smart session not found');
+  return session;
+}
+
+async function dismissSession(
+  env: Env,
+  racId: string,
+  sessionRecordId: string,
+  origin: string
+): Promise<void> {
+  const session = await requireSessionRecord(env, racId, sessionRecordId);
+  if (Date.parse(session.expires_at) > Date.now()) {
+    await requireCredential(env, racId, origin);
+    const rac = await createRac(env, racId);
+    const listedSessions = await rac.client
+      .listSessions()
+      .catch((error) => Promise.reject(waasError('Unable to list smart sessions', error)));
+    const [resolved] = await resolveSessionRecords(rac, [session], listedSessions);
+    if (resolved?.status === 'usable') {
+      throw new HttpError(409, 'Only revoked or expired smart sessions can be dismissed');
+    }
+  }
+
+  const result = await env.DB.prepare(
+    `UPDATE smart_sessions SET dismissed_at = ?
+     WHERE id = ? AND rac_id = ? AND dismissed_at IS NULL`
+  )
+    .bind(new Date().toISOString(), session.id, racId)
+    .run();
+  if (result.meta.changes !== 1) throw new HttpError(404, 'Smart session not found');
+}
+
 async function refreshTransaction(
   env: Env,
   racId: string,
@@ -825,12 +822,13 @@ async function refreshTransaction(
 ): Promise<AdminTransaction> {
   const row = await env.DB.prepare(
     `SELECT transactions.id, transactions.smart_session_id, smart_sessions.wallet_address,
-      smart_sessions.network_id, smart_sessions.asset_id, transactions.txn_id,
+      approval_requests.network_id, approval_requests.asset_id, transactions.txn_id,
       transactions.recipient, transactions.amount, transactions.status, transactions.txn_hash,
       transactions.error,
       transactions.created_at, transactions.updated_at
      FROM transactions
      JOIN smart_sessions ON smart_sessions.id = transactions.smart_session_id
+     JOIN approval_requests ON approval_requests.id = smart_sessions.approval_id
      WHERE transactions.id = ? AND smart_sessions.rac_id = ?`
   )
     .bind(id, racId)
@@ -1067,6 +1065,123 @@ function recipientScopeFromRow(
   }
 }
 
+function expectedSessionGrants(
+  row: Pick<ApprovalRow, 'network_id' | 'asset_id' | 'recipient_mode' | 'recipients' | 'allowance'>
+): SmartSessionGrant[] {
+  const asset = getSmartSessionAsset(row.network_id, row.asset_id);
+  return createSmartSessionGrants(asset, recipientScopeFromRow(row), BigInt(row.allowance));
+}
+
+function validateAuthorizedSession(
+  approval: Pick<
+    ApprovalRow,
+    'network_id' | 'asset_id' | 'recipient_mode' | 'recipients' | 'allowance' | 'expires_at'
+  >,
+  session: RemoteAccessSession
+): void {
+  const expectedChainId = getSmartSessionNetwork(approval.network_id).network.id;
+  if (session.chainId !== expectedChainId) {
+    throw new HttpError(409, 'Authorized session uses a different network than requested');
+  }
+  const expectedGrants = expectedSessionGrants(approval);
+  if (!sameGrantSet(session.grants, expectedGrants)) {
+    throw new HttpError(409, 'Authorized session grants do not match the approval request');
+  }
+  const expiry = Date.parse(session.expiresAt);
+  if (Number.isNaN(expiry) || expiry > Date.parse(approval.expires_at)) {
+    throw new HttpError(409, 'Authorized session expiry exceeds the approval request');
+  }
+}
+
+function requireAuthorizedTransfer(
+  grants: ReadonlyArray<SmartSessionGrant>,
+  usage: SmartSessionGrantUsage[],
+  asset: SmartSessionAsset,
+  recipientValue: string,
+  amount: bigint
+): `0x${string}` {
+  if (!isAddress(recipientValue)) throw new HttpError(400, 'Recipient is not a valid address');
+  const recipient = getAddress(recipientValue);
+  const grant =
+    grants.find((candidate) => {
+      if (asset.kind === 'native') {
+        return candidate.kind === 'nativeTransfer' && sameAddress(candidate.to, recipient);
+      }
+      return (
+        candidate.kind === 'erc20Transfer' &&
+        sameAddress(candidate.token, asset.tokenAddress) &&
+        candidate.to !== undefined &&
+        sameAddress(candidate.to, recipient)
+      );
+    }) ??
+    grants.find(
+      (candidate) =>
+        asset.kind === 'erc20' &&
+        candidate.kind === 'erc20Transfer' &&
+        sameAddress(candidate.token, asset.tokenAddress) &&
+        candidate.to === undefined
+    );
+  if (!grant) throw new HttpError(400, 'Recipient is not allowed by this smart session');
+  const used = usage.find((entry) => sameGrant(entry.grant, grant))?.used;
+  const remaining = used === undefined ? grant.limit : maxRemaining(grant.limit, used);
+  if (amount > remaining) {
+    throw new HttpError(400, 'Amount exceeds the remaining smart-session allowance');
+  }
+  return recipient;
+}
+
+function sameGrantSet(
+  left: ReadonlyArray<SmartSessionGrant>,
+  right: ReadonlyArray<SmartSessionGrant>
+): boolean {
+  if (left.length !== right.length) return false;
+  const leftKeys = left.map(grantKey).sort();
+  const rightKeys = right.map(grantKey).sort();
+  return leftKeys.every((key, index) => key === rightKeys[index]);
+}
+
+function sameGrant(left: SmartSessionGrant, right: SmartSessionGrant): boolean {
+  return grantKey(left) === grantKey(right);
+}
+
+function grantKey(grant: SmartSessionGrant): string {
+  return grant.kind === 'nativeTransfer'
+    ? `native:${grant.to.toLowerCase()}:${grant.limit}`
+    : `erc20:${grant.token.toLowerCase()}:${grant.to?.toLowerCase() ?? '*'}:${grant.limit}:${grant.cumulative === true}`;
+}
+
+function sameAddress(left: string, right: string): boolean {
+  return left.toLowerCase() === right.toLowerCase();
+}
+
+function maxRemaining(limit: bigint, used: bigint): bigint {
+  return used >= limit ? 0n : limit - used;
+}
+
+function isMissingSessionError(error: unknown): boolean {
+  if (!isOMSWalletError(error) && (typeof error !== 'object' || error === null)) return false;
+  const status = 'status' in error ? error.status : undefined;
+  return status === 401 || status === 403 || status === 404;
+}
+
+async function getSessionAfterAuthorization(
+  rac: RacContext,
+  sessionId: string
+): Promise<RemoteAccessSession> {
+  const retryDelays = [0, 100, 250, 500];
+  let lastError: unknown;
+  for (const delay of retryDelays) {
+    if (delay) await new Promise((resolve) => setTimeout(resolve, delay));
+    try {
+      return await rac.client.getSession({ sessionId });
+    } catch (error) {
+      if (!isMissingSessionError(error)) throw error;
+      lastError = error;
+    }
+  }
+  throw lastError;
+}
+
 function positiveBigInt(value: string, field: string): bigint {
   try {
     const parsed = BigInt(value);
@@ -1109,39 +1224,51 @@ function toAdminApproval(row: ApprovalRow): AdminApproval {
     status: approvalStatus(row),
     networkId: row.network_id,
     assetId: row.asset_id,
-    walletAddress: row.wallet_address ?? undefined,
     createdAt: row.created_at,
     approvedAt: row.approved_at ?? undefined,
     rejectedAt: row.rejected_at ?? undefined
   };
 }
 
-function approvalStatus(row: Pick<ApprovalRow, 'status' | 'rejected_at'>): ApprovalStatus {
-  return row.rejected_at ? 'rejected' : row.status;
+function approvalStatus(row: Pick<ApprovalRow, 'approved_at' | 'rejected_at'>): ApprovalStatus {
+  if (row.rejected_at) return 'rejected';
+  return row.approved_at ? 'approved' : 'pending';
 }
 
-function toAdminSession(row: SessionRow): AdminSmartSession {
+function toAdminSession(
+  row: SessionRecordRow,
+  remote: RemoteAccessSession | undefined,
+  usage: SmartSessionGrantUsage[],
+  status: AdminSmartSession['status'],
+  balance: string | undefined
+): AdminSmartSession {
+  const grants = remote?.grants ?? expectedSessionGrants(row);
   return {
     id: row.id,
-    walletId: row.wallet_id,
     walletAddress: row.wallet_address,
     sessionId: row.session_id,
-    recipientScope: recipientScopeFromRow(row),
-    allowance: row.allowance,
+    grants: grants.map((grant) => toAdminGrant(grant, usage)),
     networkId: row.network_id,
     assetId: row.asset_id,
-    expiresAt: row.expires_at,
+    expiresAt: remote?.expiresAt ?? row.expires_at,
     createdAt: row.created_at,
-    status: sessionStatus(row),
-    revokedAt: row.revoked_at ?? undefined
+    status,
+    balance
   };
 }
 
-function sessionStatus(
-  row: Pick<SessionRow, 'status' | 'expires_at'>
-): AdminSmartSession['status'] {
-  if (row.status === 'revoked') return 'revoked';
-  return Date.parse(row.expires_at) <= Date.now() ? 'expired' : 'usable';
+function toAdminGrant(
+  grant: SmartSessionGrant,
+  usage: SmartSessionGrantUsage[]
+): AdminSmartSessionGrant {
+  const used = usage.find((entry) => sameGrant(entry.grant, grant))?.used;
+  const remaining = used === undefined ? undefined : maxRemaining(grant.limit, used);
+  return {
+    ...grant,
+    limit: grant.limit.toString(),
+    ...(used === undefined ? {} : { used: used.toString() }),
+    ...(remaining === undefined ? {} : { remaining: remaining.toString() })
+  };
 }
 
 function toAdminTransaction(row: TransactionRow): AdminTransaction {

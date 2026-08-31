@@ -3,8 +3,8 @@ import { createRoot } from 'react-dom/client';
 import { formatUnits, isAddress, parseUnits } from 'viem';
 
 import type {
-  AdminActivityStatuses,
   AdminOverview,
+  AdminSmartSessionGrant,
   AdminSmartSession,
   AdminTransaction,
   ApiError,
@@ -23,6 +23,7 @@ import '../../shared/styles.css';
 
 const ADMIN_TOKEN_KEY = 'oms-smart-session-admin-token';
 const DEFAULT_RECIPIENT = '0x120117a430b5bf1ba6752732196cb86976701d53';
+const SUCCESS_STATUS_DURATION_MS = 5_000;
 
 function App() {
   const [adminToken, setAdminToken] = useState(() => localStorage.getItem(ADMIN_TOKEN_KEY) ?? '');
@@ -40,7 +41,7 @@ function App() {
   const [statuses, setStatuses] = useState<Record<string, string>>({
     backend: ''
   });
-  const [isBusy, setIsBusy] = useState(false);
+  const [pendingActions, setPendingActions] = useState<Set<string>>(() => new Set());
   const [isLoadingOverview, setIsLoadingOverview] = useState(Boolean(adminToken));
   const statusResetTimers = useRef<Record<string, number>>({});
   const pendingApprovals =
@@ -48,8 +49,11 @@ function App() {
   const pendingApprovalsKey = pendingApprovals
     .map((approval) => `${approval.id}:${approval.expiresAt}`)
     .join('|');
-  const sessionStatusesKey =
-    overview?.sessions.map((session) => `${session.id}:${session.status}`).join('|') ?? '';
+  const usableSessionsKey =
+    overview?.sessions
+      .filter((session) => session.status === 'usable')
+      .map((session) => session.id)
+      .join('|') ?? '';
   const selectedNetwork = getSmartSessionNetwork(networkId);
   const selectedAsset = getSmartSessionAsset(networkId, assetId);
 
@@ -71,49 +75,21 @@ function App() {
   }, [overview, adminToken]);
 
   useEffect(() => {
-    const pendingExpiries = new Map(
-      pendingApprovals.map((approval) => [approval.id, Date.parse(approval.expiresAt)])
-    );
-    const knownSessionStatuses = new Map(
-      overview?.sessions
-        .filter((session) => session.status === 'usable')
-        .map((session) => [session.id, session.status]) ?? []
-    );
-    if (!adminToken || (pendingExpiries.size === 0 && knownSessionStatuses.size === 0)) return;
+    if (!adminToken || (pendingApprovals.length === 0 && !usableSessionsKey)) return;
 
     let isPolling = false;
-    const pollActivityStatuses = async () => {
-      const now = Date.now();
-      const activeIds = new Set(
-        Array.from(pendingExpiries)
-          .filter(([, expiresAt]) => expiresAt > now)
-          .map(([id]) => id)
-      );
+    const pollOverview = async () => {
       if (document.visibilityState !== 'visible' || isPolling) return;
       isPolling = true;
       try {
-        const result = await adminApi<AdminActivityStatuses>(
-          '/api/admin/activity-statuses',
-          adminToken
-        );
-        const approvalChanged = result.approvals.some(
-          (approval) => activeIds.has(approval.id) && approval.status !== 'pending'
-        );
-        const sessionChanged = result.sessions.some(
-          (session) =>
-            knownSessionStatuses.has(session.id) &&
-            knownSessionStatuses.get(session.id) !== session.status
-        );
-        if (approvalChanged || sessionChanged) {
-          await loadOverview();
-        }
+        setOverview(await adminApi<AdminOverview>('/api/admin/overview', adminToken));
       } catch {
         // The manual refresh remains available if a background status check fails.
       } finally {
         isPolling = false;
       }
     };
-    const pollWhenVisible = () => void pollActivityStatuses();
+    const pollWhenVisible = () => void pollOverview();
     const timer = window.setInterval(pollWhenVisible, 10_000);
     document.addEventListener('visibilitychange', pollWhenVisible);
     window.addEventListener('focus', pollWhenVisible);
@@ -123,7 +99,7 @@ function App() {
       document.removeEventListener('visibilitychange', pollWhenVisible);
       window.removeEventListener('focus', pollWhenVisible);
     };
-  }, [pendingApprovalsKey, sessionStatusesKey, adminToken]);
+  }, [pendingApprovalsKey, usableSessionsKey, adminToken]);
 
   function updateStatus(key: string, message: string) {
     window.clearTimeout(statusResetTimers.current[key]);
@@ -136,18 +112,31 @@ function App() {
     statusResetTimers.current[key] = window.setTimeout(() => {
       delete statusResetTimers.current[key];
       setStatuses((current) => (current[key] === message ? { ...current, [key]: '' } : current));
-    }, 1500);
+    }, SUCCESS_STATUS_DURATION_MS);
   }
 
-  async function run(key: string, label: string, action: () => Promise<void>) {
-    setIsBusy(true);
-    updateStatus(key, label);
+  function isActionPending(key: string): boolean {
+    return pendingActions.has(key);
+  }
+
+  async function run(
+    actionKey: string,
+    label: string,
+    action: () => Promise<void>,
+    statusKey = actionKey
+  ) {
+    setPendingActions((current) => new Set(current).add(actionKey));
+    updateStatus(statusKey, label);
     try {
       await action();
     } catch (error) {
-      updateStatus(key, messageFrom(error));
+      updateStatus(statusKey, messageFrom(error));
     } finally {
-      setIsBusy(false);
+      setPendingActions((current) => {
+        const next = new Set(current);
+        next.delete(actionKey);
+        return next;
+      });
     }
   }
 
@@ -173,22 +162,32 @@ function App() {
   }
 
   async function refresh() {
-    await run('backend', 'Loading backend records…', async () => {
-      await loadOverview(adminToken);
-      updateStatus('backend', 'Backend records refreshed.');
-    });
+    await run(
+      'refresh',
+      'Loading backend records…',
+      async () => {
+        await loadOverview(adminToken);
+        updateTransientStatus('backend', 'Backend records refreshed.');
+      },
+      'backend'
+    );
   }
 
   async function rotateRac() {
-    await run('backend', 'Rotating backend RAC…', async () => {
-      await adminApi('/api/admin/rac/rotate', adminToken, { method: 'POST' });
-      setIsConfirmingRotation(false);
-      await loadOverview(adminToken);
-      updateStatus(
-        'backend',
-        'Backend RAC rotated. Its approval requests, sessions, and transaction history were cleared.'
-      );
-    });
+    await run(
+      'rac-rotation',
+      'Rotating backend RAC…',
+      async () => {
+        await adminApi('/api/admin/rac/rotate', adminToken, { method: 'POST' });
+        setIsConfirmingRotation(false);
+        await loadOverview(adminToken);
+        updateTransientStatus(
+          'backend',
+          'Backend RAC rotated. Its approval requests, sessions, and transaction history were cleared.'
+        );
+      },
+      'backend'
+    );
   }
 
   function selectNetwork(nextNetworkId: SmartSessionNetworkId) {
@@ -255,7 +254,10 @@ function App() {
       });
       setApprovalLink(new URL(created.approvalPath, clientOrigin()).toString());
       await loadOverview();
-      updateStatus('approval-request', 'Approval link created. Send it to the wallet owner.');
+      updateTransientStatus(
+        'approval-request',
+        'Approval link created. Send it to the wallet owner.'
+      );
     });
   }
 
@@ -264,8 +266,7 @@ function App() {
     await run(statusKey, 'Preparing and executing through the backend RAC…', async () => {
       const asset = getSmartSessionAsset(session.networkId, session.assetId);
       const amount = amounts[session.id] ?? asset.defaultTransferAmount;
-      const recipient =
-        transactionRecipients[session.id] ?? defaultTransactionRecipient(session.recipientScope);
+      const recipient = transactionRecipients[session.id] ?? defaultTransactionRecipient(session);
       if (!isAddress(recipient)) throw new Error('Enter a valid Polygon receiver address.');
       const transaction = await adminApi<AdminTransaction>(
         `/api/admin/sessions/${encodeURIComponent(session.id)}/transactions`,
@@ -279,12 +280,22 @@ function App() {
         }
       );
       await loadOverview();
-      updateStatus(
+      updateTransientStatus(
         statusKey,
         transaction.txnHash
           ? 'Transaction executed. Its hash and explorer link are shown below.'
           : 'Transaction submitted. Its status will refresh automatically below.'
       );
+    });
+  }
+
+  async function dismissSession(session: AdminSmartSession) {
+    const statusKey = `session:${session.id}`;
+    await run(statusKey, 'Dismissing smart session…', async () => {
+      await adminApi(`/api/admin/sessions/${encodeURIComponent(session.id)}`, adminToken, {
+        method: 'DELETE'
+      });
+      await loadOverview();
     });
   }
 
@@ -296,7 +307,7 @@ function App() {
         adminToken
       );
       await loadOverview();
-      updateStatus(
+      updateTransientStatus(
         statusKey,
         refreshed.txnHash
           ? 'Transaction hash loaded.'
@@ -413,7 +424,7 @@ function App() {
             </li>
           </ol>
 
-          {isBusy ? (
+          {isActionPending('backend') ? (
             <div className="onboarding-progress" aria-live="polite">
               <span className="dashboard-loading-spinner" aria-hidden="true" />
               <div>
@@ -431,7 +442,7 @@ function App() {
             </button>
           )}
 
-          {!isBusy && statuses.backend ? (
+          {!isActionPending('backend') && statuses.backend ? (
             <output className="onboarding-status">{statuses.backend}</output>
           ) : null}
 
@@ -461,16 +472,16 @@ function App() {
               type="button"
               className="secondary subtle"
               onClick={() => void refresh()}
-              disabled={isBusy}
+              disabled={isActionPending('refresh')}
             >
-              {isLoadingOverview ? 'Refreshing…' : 'Refresh'}
+              {isActionPending('refresh') ? 'Refreshing…' : 'Refresh'}
             </button>
           </div>
         </header>
 
         {statuses.backend ? <output className="section-status">{statuses.backend}</output> : null}
 
-        {!overview && (isLoadingOverview || isBusy) ? (
+        {!overview && (isLoadingOverview || isActionPending('backend')) ? (
           <section className="dashboard-loading" aria-live="polite">
             <span className="dashboard-loading-spinner" aria-hidden="true" />
             <div>
@@ -494,7 +505,7 @@ function App() {
               type="button"
               className="secondary subtle"
               onClick={() => setIsConfirmingRotation(true)}
-              disabled={isBusy}
+              disabled={isActionPending('rac-rotation')}
             >
               Rotate backend RAC
             </button>
@@ -509,14 +520,18 @@ function App() {
               approval requests, stored sessions, and transaction history.
             </p>
             <div className="actions">
-              <button type="button" onClick={() => void rotateRac()} disabled={isBusy}>
-                Confirm rotation
+              <button
+                type="button"
+                onClick={() => void rotateRac()}
+                disabled={isActionPending('rac-rotation')}
+              >
+                {isActionPending('rac-rotation') ? 'Rotating…' : 'Confirm rotation'}
               </button>
               <button
                 type="button"
                 className="secondary"
                 onClick={() => setIsConfirmingRotation(false)}
-                disabled={isBusy}
+                disabled={isActionPending('rac-rotation')}
               >
                 Cancel
               </button>
@@ -690,9 +705,11 @@ function App() {
               <button
                 type="button"
                 onClick={() => void createApproval()}
-                disabled={isBusy || !overview}
+                disabled={isActionPending('approval-request') || !overview}
               >
-                Create owner approval link
+                {isActionPending('approval-request')
+                  ? 'Creating approval link…'
+                  : 'Create owner approval link'}
               </button>
               {approvalLink ? (
                 <div className="approval-link">
@@ -701,7 +718,7 @@ function App() {
                     type="button"
                     className="secondary subtle copy-feedback-button"
                     onClick={() => void copyApprovalLink()}
-                    disabled={isBusy || statuses['approval-request'] === 'Copying approval link…'}
+                    disabled={statuses['approval-request'] === 'Copying approval link…'}
                   >
                     {statuses['approval-request'] === 'Copying approval link…'
                       ? 'Copying…'
@@ -759,11 +776,23 @@ function App() {
                           </div>
                           <small>Wallet owner</small>
                         </div>
-                        <span
-                          className={`status-badge ${session.status === 'usable' ? 'success-badge' : session.status === 'revoked' ? 'revoked-badge' : ''}`}
-                        >
-                          {session.status}
-                        </span>
+                        <div className="row-actions">
+                          <span
+                            className={`status-badge ${session.status === 'usable' ? 'success-badge' : session.status === 'revoked' ? 'revoked-badge' : ''}`}
+                          >
+                            {session.status}
+                          </span>
+                          {session.status !== 'usable' ? (
+                            <button
+                              type="button"
+                              className="secondary subtle"
+                              onClick={() => void dismissSession(session)}
+                              disabled={isActionPending(`session:${session.id}`)}
+                            >
+                              {isActionPending(`session:${session.id}`) ? 'Dismissing…' : 'Dismiss'}
+                            </button>
+                          ) : null}
+                        </div>
                       </div>
                       <dl className="detail-grid compact-details">
                         {session.status === 'usable' ? (
@@ -778,30 +807,21 @@ function App() {
                         ) : (
                           <Detail
                             label="Session status"
-                            value={
-                              session.revokedAt
-                                ? `Revoked ${new Date(session.revokedAt).toLocaleString()}`
-                                : 'Expired'
-                            }
+                            value={session.status === 'expired' ? 'Expired' : 'Revoked'}
                           />
                         )}
-                        <Detail
-                          label={
-                            session.recipientScope.mode === 'any' ? 'Receiver scope' : 'Receivers'
-                          }
-                          value={formatRecipientScope(session.recipientScope)}
-                          code={session.recipientScope.mode === 'specific'}
-                        />
                         <Detail label="Network" value={recordNetwork(session).name} />
-                        <Detail
-                          label={
-                            recordAsset(session).kind === 'erc20' &&
-                            session.recipientScope.mode === 'specific'
-                              ? 'Cumulative allowance per receiver'
-                              : 'Total cumulative allowance'
-                          }
-                          value={formatAssetAmount(session, session.allowance)}
-                        />
+                        {session.grants.map((grant, index) => (
+                          <Detail
+                            key={`${session.id}:grant:${index}`}
+                            label={
+                              session.grants.length === 1
+                                ? 'Authorized grant'
+                                : `Grant ${index + 1}`
+                            }
+                            value={formatSessionGrant(session, grant)}
+                          />
+                        ))}
                         <Detail
                           label="Permission expires"
                           value={new Date(session.expiresAt).toLocaleString()}
@@ -810,7 +830,7 @@ function App() {
                       </dl>
                       {session.status === 'usable' ? (
                         <div className="send-row">
-                          {session.recipientScope.mode === 'any' ? (
+                          {sessionAllowsAnyRecipient(session) ? (
                             <label>
                               Receiver
                               <input
@@ -823,14 +843,14 @@ function App() {
                                 }
                               />
                             </label>
-                          ) : session.recipientScope.recipients.length > 1 ? (
+                          ) : sessionRecipients(session).length > 1 ? (
                             <label>
                               Receiver
                               <span className="select-control">
                                 <select
                                   value={
                                     transactionRecipients[session.id] ??
-                                    session.recipientScope.recipients[0]
+                                    sessionRecipients(session)[0]
                                   }
                                   onChange={(event) =>
                                     setTransactionRecipients({
@@ -839,7 +859,7 @@ function App() {
                                     })
                                   }
                                 >
-                                  {session.recipientScope.recipients.map((allowedRecipient) => (
+                                  {sessionRecipients(session).map((allowedRecipient) => (
                                     <option key={allowedRecipient} value={allowedRecipient}>
                                       {allowedRecipient}
                                     </option>
@@ -863,9 +883,11 @@ function App() {
                           <button
                             type="button"
                             onClick={() => void sendTransaction(session)}
-                            disabled={isBusy}
+                            disabled={isActionPending(`session:${session.id}`)}
                           >
-                            Send with smart session
+                            {isActionPending(`session:${session.id}`)
+                              ? 'Sending…'
+                              : 'Send with smart session'}
                           </button>
                         </div>
                       ) : null}
@@ -913,7 +935,6 @@ function App() {
                             className="secondary subtle copy-feedback-button"
                             onClick={() => void copyStoredApprovalLink(approval.id)}
                             disabled={
-                              isBusy ||
                               statuses[`approval:${approval.id}`] === 'Loading owner approval link…'
                             }
                           >
@@ -991,9 +1012,11 @@ function App() {
                             type="button"
                             className="secondary subtle"
                             onClick={() => void refreshTransaction(transaction)}
-                            disabled={isBusy}
+                            disabled={isActionPending(`transaction:${transaction.id}`)}
                           >
-                            Refresh
+                            {isActionPending(`transaction:${transaction.id}`)
+                              ? 'Refreshing…'
+                              : 'Refresh'}
                           </button>
                         ) : null}
                       </div>
@@ -1038,8 +1061,27 @@ function formatAssetAmount(record: AssetRecord, amount: string): string {
   return `${formatUnits(BigInt(amount), asset.decimals)} ${asset.symbol}`;
 }
 
-function defaultTransactionRecipient(scope: RecipientScope): string {
-  return scope.mode === 'specific' ? (scope.recipients[0] ?? '') : '';
+function sessionRecipients(session: AdminSmartSession): string[] {
+  return session.grants.flatMap((grant) => (grant.to ? [grant.to] : []));
+}
+
+function sessionAllowsAnyRecipient(session: AdminSmartSession): boolean {
+  return session.grants.some((grant) => grant.kind === 'erc20Transfer' && grant.to === undefined);
+}
+
+function defaultTransactionRecipient(session: AdminSmartSession): string {
+  return sessionAllowsAnyRecipient(session) ? '' : (sessionRecipients(session)[0] ?? '');
+}
+
+function formatSessionGrant(session: AdminSmartSession, grant: AdminSmartSessionGrant): string {
+  const receiver = grant.to ? shortAddress(grant.to) : 'Any receiver';
+  const limit = formatAssetAmount(session, grant.limit);
+  if (grant.used === undefined) {
+    return grant.kind === 'erc20Transfer' && grant.cumulative
+      ? `${receiver}: ${limit} cumulative allowance`
+      : `${receiver}: up to ${limit} per transaction`;
+  }
+  return `${receiver}: ${formatAssetAmount(session, grant.remaining ?? '0')} remaining of ${limit}`;
 }
 
 function formatRecipientScope(scope: RecipientScope, compact = false): string {

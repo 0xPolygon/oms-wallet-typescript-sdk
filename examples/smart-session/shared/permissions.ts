@@ -63,22 +63,3 @@ export function createSmartSessionGrants(
     cumulative: true
   }));
 }
-
-export function recipientIsAllowed(scope: RecipientScope, recipient: string): boolean {
-  if (!isAddress(recipient)) return false;
-  if (scope.mode === 'any') return true;
-  return scope.recipients.some(
-    (allowedRecipient) => allowedRecipient.toLowerCase() === recipient.toLowerCase()
-  );
-}
-
-export function requireAllowedTransactionRecipient(
-  scope: RecipientScope,
-  recipient: string
-): `0x${string}` {
-  if (!isAddress(recipient)) throw new Error('Recipient is not a valid address');
-  if (!recipientIsAllowed(scope, recipient)) {
-    throw new Error('Recipient is not allowed by this smart session');
-  }
-  return getAddress(recipient);
-}

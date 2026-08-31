@@ -2,39 +2,61 @@ import { env } from 'cloudflare:workers';
 import { applyD1Migrations } from 'cloudflare:test';
 import { beforeAll, beforeEach, expect, test, vi } from 'vitest';
 
+import type { RemoteAccessSession, SmartSessionGrantUsage } from '@polygonlabs/oms-wallet';
+
 import type {
-  AdminActivityStatuses,
   AdminOverview,
   AdminTransaction,
-  CreatedApproval,
-  SessionRevocationResult
+  ApprovalRequest,
+  CreateApprovalBody,
+  CreatedApproval
 } from '../shared/api.js';
-import { createSessionRevocationMessage } from '../shared/sessionRevocation.js';
+import { SMART_SESSION_ASSETS } from '../shared/networks.js';
 import worker from '../worker/index.js';
+
+interface MockSession {
+  credentialId: string;
+  session: RemoteAccessSession;
+  usage: SmartSessionGrantUsage[];
+  listed: boolean;
+  active: boolean;
+}
 
 const mockedWaas = vi.hoisted(() => ({
   nextTransaction: 0,
   revokedCredentialIds: [] as string[],
-  verifiedRevocations: [] as Array<{
-    walletAddress: string;
-    chainId: number;
-    message: string;
-    signature: string;
-  }>
+  sessions: new Map<string, MockSession>(),
+  preparedTransactions: [] as Array<Record<string, unknown>>
 }));
 
 vi.mock('../worker/rac.js', () => ({
   RAC_LIFETIME_SECONDS: 30 * 24 * 60 * 60,
   createRacContext: async (_publishableKey: string, privateKey: string) => {
     const racSuffix = privateKey.slice(-12);
+    const credentialId = `credential-${racSuffix}`;
+    const findSession = (sessionId: string): MockSession => {
+      const entry = mockedWaas.sessions.get(sessionId);
+      if (!entry?.active || entry.credentialId !== credentialId) {
+        throw Object.assign(new Error('Session not found'), { status: 404 });
+      }
+      return entry;
+    };
     return {
       signerId: `signer-${racSuffix}`,
       client: {
-        registerCredential: async () => ({ credentialId: `credential-${racSuffix}` }),
-        revokeCredential: async ({ credentialId }: { credentialId: string }) => {
-          mockedWaas.revokedCredentialIds.push(credentialId);
+        registerCredential: async () => ({ credentialId }),
+        revokeCredential: async ({ credentialId: revokedId }: { credentialId: string }) => {
+          mockedWaas.revokedCredentialIds.push(revokedId);
         },
-        prepareTransaction: async () => {
+        listSessions: async () =>
+          Array.from(mockedWaas.sessions.values())
+            .filter((entry) => entry.credentialId === credentialId && entry.active && entry.listed)
+            .map((entry) => entry.session),
+        getSession: async ({ sessionId }: { sessionId: string }) => findSession(sessionId).session,
+        getSessionUsage: async ({ sessionId }: { sessionId: string }) =>
+          findSession(sessionId).usage,
+        prepareTransaction: async (params: Record<string, unknown>) => {
+          mockedWaas.preparedTransactions.push(params);
           mockedWaas.nextTransaction += 1;
           return {
             txnId: `txn-${mockedWaas.nextTransaction}`,
@@ -53,23 +75,6 @@ vi.mock('../worker/rac.js', () => ({
   }
 }));
 
-vi.mock('../worker/sessionRevocation.js', () => ({
-  verifySessionRevocation: async (params: {
-    walletAddress: string;
-    network: { id: number };
-    message: string;
-    signature: string;
-  }) => {
-    mockedWaas.verifiedRevocations.push({
-      walletAddress: params.walletAddress,
-      chainId: params.network.id,
-      message: params.message,
-      signature: params.signature
-    });
-    return params.signature === `proof:${params.walletAddress.toLowerCase()}`;
-  }
-}));
-
 interface TestEnv {
   DB: D1Database;
   OMS_PUBLISHABLE_KEY: string;
@@ -78,208 +83,410 @@ interface TestEnv {
 
 const testEnv = env as TestEnv;
 const origin = 'https://smart-session.example';
-const adminAToken = 'admin-a-token-that-is-at-least-32-characters';
-const adminBToken = 'admin-b-token-that-is-at-least-32-characters';
 const recipientA = '0x1000000000000000000000000000000000000001';
 const recipientB = '0x2000000000000000000000000000000000000002';
 const walletA = '0x3000000000000000000000000000000000000003';
 const walletB = '0x4000000000000000000000000000000000000004';
+const sessionSigner = '0x5000000000000000000000000000000000000005';
 
 beforeAll(async () => {
   await applyD1Migrations(testEnv.DB, testEnv.TEST_MIGRATIONS);
 });
 
 beforeEach(() => {
-  mockedWaas.nextTransaction = 0;
   mockedWaas.revokedCredentialIds.length = 0;
-  mockedWaas.verifiedRevocations.length = 0;
+  mockedWaas.sessions.clear();
+  mockedWaas.preparedTransactions.length = 0;
 });
 
 test('rotating one backend RAC removes only its activity', async () => {
-  await bootstrapAdmin(adminAToken);
-  await bootstrapAdmin(adminBToken);
-  await adminRequest(adminAToken, '/api/admin/rac', { method: 'POST' }, 201);
-  await adminRequest(adminBToken, '/api/admin/rac', { method: 'POST' }, 201);
-
-  const activityA = await createActivity({
-    token: adminAToken,
-    recipient: recipientA,
-    walletAddress: walletA,
-    walletId: 'wallet-a',
-    sessionId: 'session-a'
-  });
-  const activityB = await createActivity({
-    token: adminBToken,
-    recipient: recipientB,
-    walletAddress: walletB,
-    walletId: 'wallet-b',
-    sessionId: 'session-b'
-  });
-
-  expect(activityA.overview.approvals.map(({ id }) => id)).toEqual([activityA.approvalId]);
-  expect(activityA.overview.sessions.map(({ id }) => id)).toEqual([activityA.sessionRecordId]);
-  expect(activityA.overview.transactions.map(({ id }) => id)).toEqual([activityA.transactionId]);
-  expect(activityB.overview.approvals.map(({ id }) => id)).toEqual([activityB.approvalId]);
-  expect(activityB.overview.sessions.map(({ id }) => id)).toEqual([activityB.sessionRecordId]);
-  expect(activityB.overview.transactions.map(({ id }) => id)).toEqual([activityB.transactionId]);
+  const activityA = await createNativeActivity(
+    'admin-a-token-that-is-at-least-32-characters',
+    recipientA,
+    walletA,
+    'session-a'
+  );
+  const activityB = await createNativeActivity(
+    'admin-b-token-that-is-at-least-32-characters',
+    recipientB,
+    walletB,
+    'session-b'
+  );
 
   await adminRequest(
-    adminAToken,
+    activityA.token,
     `/api/admin/approvals/${activityB.approvalId}/link`,
     { method: 'POST' },
     404
   );
   await adminRequest(
-    adminAToken,
+    activityA.token,
     `/api/admin/sessions/${activityB.sessionRecordId}/transactions`,
     { method: 'POST', body: { recipient: recipientB, amount: '1' } },
     404
   );
   await adminRequest(
-    adminAToken,
+    activityA.token,
     `/api/admin/transactions/${activityB.transactionId}`,
     undefined,
     404
   );
 
-  await adminRequest(adminAToken, '/api/admin/rac/rotate', { method: 'POST' });
+  await adminRequest(activityA.token, '/api/admin/rac/rotate', { method: 'POST' });
 
-  const rotatedA = await overview(adminAToken);
-  const preservedB = await overview(adminBToken);
-  expect(rotatedA.credential.id).not.toBe(activityA.overview.credential.id);
+  const rotatedA = await overview(activityA.token);
+  const preservedB = await overview(activityB.token);
+  expect(rotatedA.credential.id).not.toBe(activityA.credentialId);
   expect(rotatedA.approvals).toEqual([]);
   expect(rotatedA.sessions).toEqual([]);
   expect(rotatedA.transactions).toEqual([]);
-  expect(preservedB).toEqual(activityB.overview);
-  expect(mockedWaas.revokedCredentialIds).toEqual([activityA.overview.credential.id]);
+  expect(preservedB.approvals.map(({ id }) => id)).toEqual([activityB.approvalId]);
+  expect(preservedB.sessions.map(({ id }) => id)).toEqual([activityB.sessionRecordId]);
+  expect(preservedB.transactions.map(({ id }) => id)).toEqual([activityB.transactionId]);
+  expect(mockedWaas.revokedCredentialIds).toEqual([activityA.credentialId]);
 });
+
+test.each([
+  ['network', { chainId: 137 }],
+  [
+    'grants',
+    {
+      grants: [
+        {
+          kind: 'nativeTransfer' as const,
+          to: recipientA as `0x${string}`,
+          limit: 11n
+        }
+      ]
+    }
+  ],
+  ['expiry', { expiresAt: new Date(Date.now() + 2 * 60 * 60_000).toISOString() }]
+])('rejects an authorized session with mismatched %s', async (field, override) => {
+  const token = `admin-mismatch-${field}-token-at-least-32-characters`;
+  const approval = await createApproval(token, {
+    recipientScope: { mode: 'specific', recipients: [recipientA] },
+    allowance: '10',
+    networkId: 'polygon-amoy',
+    assetId: 'pol'
+  });
+  const sessionId = `session-mismatch-${field}`;
+  mockedWaas.sessions.set(sessionId, {
+    credentialId: approval.credentialId,
+    session: {
+      ...nativeSession(sessionId, 'authoritative-wallet', recipientA, approval.expiresAt),
+      ...override
+    },
+    usage: [],
+    listed: true,
+    active: true
+  });
+
+  await requestJson(
+    `/api/approvals/${encodeURIComponent(approval.approvalToken)}/approve`,
+    { method: 'POST', body: { walletAddress: walletA, sessionId } },
+    409
+  );
+  expect((await overview(token)).approvals[0]?.status).toBe('pending');
+});
+
+test('reconciles list, session fallback, usage, and revocation from WaaS', async () => {
+  const token = 'admin-reconcile-token-that-is-at-least-32-characters';
+  const created = await createApprovedNativeSession(token, recipientA, walletA, 'session-sync');
+  const entry = mockedWaas.sessions.get(created.sessionId);
+  if (!entry) throw new Error('Mock session was not created');
+  await requestJson(
+    `/api/approvals/${encodeURIComponent(created.approvalToken)}/approve`,
+    { method: 'POST', body: { walletAddress: walletA, sessionId: created.sessionId } },
+    409
+  );
+  entry.listed = false;
+  entry.usage = [{ grant: entry.session.grants[0], used: 4n }];
+
+  const reconciled = (await overview(token)).sessions[0];
+  expect(reconciled).toMatchObject({
+    status: 'usable',
+    sessionId: created.sessionId,
+    grants: [{ limit: '10', used: '4', remaining: '6' }]
+  });
+
+  entry.active = false;
+  expect((await overview(token)).sessions[0]?.status).toBe('revoked');
+
+  await testEnv.DB.prepare('UPDATE approval_requests SET expires_at = ? WHERE id = ?')
+    .bind(new Date(Date.now() - 1_000).toISOString(), created.approvalId)
+    .run();
+  expect((await overview(token)).sessions[0]?.status).toBe('expired');
+});
+
+test('dismisses only inactive session records owned by the backend RAC', async () => {
+  const revoked = await createNativeActivity(
+    'admin-dismiss-revoked-token-at-least-32-characters',
+    recipientA,
+    walletA,
+    'session-dismiss-revoked'
+  );
+  const active = await createApprovedNativeSession(
+    revoked.token,
+    recipientB,
+    walletB,
+    'session-dismiss-active'
+  );
+  const outsiderToken = 'admin-dismiss-outsider-token-at-least-32-characters';
+  await bootstrapAdmin(outsiderToken);
+
+  const revokedEntry = mockedWaas.sessions.get(revoked.sessionId);
+  if (!revokedEntry) throw new Error('Mock session was not created');
+  revokedEntry.active = false;
+
+  await adminRequest(
+    revoked.token,
+    `/api/admin/sessions/${active.sessionRecordId}`,
+    { method: 'DELETE' },
+    409
+  );
+  await adminRequest(
+    outsiderToken,
+    `/api/admin/sessions/${revoked.sessionRecordId}`,
+    { method: 'DELETE' },
+    404
+  );
+  await adminRequest(revoked.token, `/api/admin/sessions/${revoked.sessionRecordId}`, {
+    method: 'DELETE'
+  });
+
+  const remaining = await overview(revoked.token);
+  expect(remaining.sessions.map(({ id }) => id)).toEqual([active.sessionRecordId]);
+  expect(remaining.transactions.map(({ id }) => id)).toEqual([revoked.transactionId]);
+  expect(remaining.approvals.map(({ id }) => id)).toEqual(
+    expect.arrayContaining([revoked.approvalId, active.approvalId])
+  );
+});
+
+test('dismisses an expired session record', async () => {
+  const token = 'admin-dismiss-expired-token-at-least-32-characters';
+  const expired = await createApprovedNativeSession(
+    token,
+    recipientA,
+    walletA,
+    'session-dismiss-expired'
+  );
+  await testEnv.DB.prepare('UPDATE approval_requests SET expires_at = ? WHERE id = ?')
+    .bind(new Date(Date.now() - 1_000).toISOString(), expired.approvalId)
+    .run();
+
+  await adminRequest(token, `/api/admin/sessions/${expired.sessionRecordId}`, { method: 'DELETE' });
+
+  expect((await overview(token)).sessions).toEqual([]);
+});
+
+test('checks per-recipient cumulative usage and uses the authoritative wallet ID', async () => {
+  const token = 'admin-usage-token-that-is-at-least-32-characters';
+  const created = await createApprovedUsdcSession(
+    token,
+    [recipientA, recipientB],
+    walletA,
+    'session-usage'
+  );
+  const entry = mockedWaas.sessions.get(created.sessionId);
+  if (!entry) throw new Error('Mock session was not created');
+  entry.usage = [
+    { grant: entry.session.grants[0], used: 7n },
+    { grant: entry.session.grants[1], used: 1n }
+  ];
+
+  await adminRequest(
+    token,
+    `/api/admin/sessions/${created.sessionRecordId}/transactions`,
+    { method: 'POST', body: { recipient: recipientA, amount: '4' } },
+    400
+  );
+  expect(mockedWaas.preparedTransactions).toEqual([]);
+
+  await adminRequest<AdminTransaction>(
+    token,
+    `/api/admin/sessions/${created.sessionRecordId}/transactions`,
+    { method: 'POST', body: { recipient: recipientB, amount: '9' } },
+    201
+  );
+  expect(mockedWaas.preparedTransactions).toEqual([
+    expect.objectContaining({
+      walletId: 'authoritative-wallet',
+      sessionId: created.sessionId,
+      to: SMART_SESSION_ASSETS.usdc.tokenAddress
+    })
+  ]);
+});
+
+test('shares cumulative usage across an unrestricted ERC-20 grant', async () => {
+  const token = 'admin-any-recipient-token-that-is-at-least-32-characters';
+  const created = await createApprovedUsdcSession(token, 'any', walletA, 'session-any');
+  const entry = mockedWaas.sessions.get(created.sessionId);
+  if (!entry) throw new Error('Mock session was not created');
+  entry.usage = [{ grant: entry.session.grants[0], used: 7n }];
+
+  await adminRequest(
+    token,
+    `/api/admin/sessions/${created.sessionRecordId}/transactions`,
+    { method: 'POST', body: { recipient: recipientB, amount: '4' } },
+    400
+  );
+  await adminRequest(
+    token,
+    `/api/admin/sessions/${created.sessionRecordId}/transactions`,
+    { method: 'POST', body: { recipient: recipientB, amount: '3' } },
+    201
+  );
+});
+
+async function createNativeActivity(
+  token: string,
+  recipient: string,
+  walletAddress: string,
+  sessionId: string
+) {
+  const session = await createApprovedNativeSession(token, recipient, walletAddress, sessionId);
+  const transaction = await adminRequest<AdminTransaction>(
+    token,
+    `/api/admin/sessions/${session.sessionRecordId}/transactions`,
+    { method: 'POST', body: { recipient, amount: '1' } },
+    201
+  );
+  return { ...session, token, transactionId: transaction.id };
+}
+
+async function createApprovedNativeSession(
+  token: string,
+  recipient: string,
+  walletAddress: string,
+  sessionId: string
+) {
+  const approval = await createApproval(token, {
+    recipientScope: { mode: 'specific', recipients: [recipient] },
+    allowance: '10',
+    networkId: 'polygon-amoy',
+    assetId: 'pol'
+  });
+  mockedWaas.sessions.set(sessionId, {
+    credentialId: approval.credentialId,
+    session: nativeSession(sessionId, 'authoritative-wallet', recipient, approval.expiresAt),
+    usage: [],
+    listed: true,
+    active: true
+  });
+  await requestJson(`/api/approvals/${encodeURIComponent(approval.approvalToken)}/approve`, {
+    method: 'POST',
+    body: { walletAddress, sessionId }
+  });
+  const approvedOverview = await overview(token);
+  const sessionRecord = approvedOverview.sessions.find(
+    (candidate) => candidate.sessionId === sessionId
+  );
+  if (!sessionRecord) throw new Error('Approved session was not returned by the overview');
+  return { ...approval, sessionId, sessionRecordId: sessionRecord.id };
+}
+
+async function createApprovedUsdcSession(
+  token: string,
+  recipients: string[] | 'any',
+  walletAddress: string,
+  sessionId: string
+) {
+  const approval = await createApproval(token, {
+    recipientScope: recipients === 'any' ? { mode: 'any' } : { mode: 'specific', recipients },
+    allowance: '10',
+    networkId: 'polygon',
+    assetId: 'usdc'
+  });
+  const grants =
+    recipients === 'any'
+      ? [
+          {
+            kind: 'erc20Transfer' as const,
+            token: SMART_SESSION_ASSETS.usdc.tokenAddress,
+            limit: 10n,
+            cumulative: true
+          }
+        ]
+      : recipients.map((recipient) => ({
+          kind: 'erc20Transfer' as const,
+          token: SMART_SESSION_ASSETS.usdc.tokenAddress,
+          to: recipient as `0x${string}`,
+          limit: 10n,
+          cumulative: true
+        }));
+  mockedWaas.sessions.set(sessionId, {
+    credentialId: approval.credentialId,
+    session: {
+      sessionId,
+      walletId: 'authoritative-wallet',
+      signerAddress: sessionSigner,
+      grants,
+      chainId: 137,
+      expiresAt: approval.expiresAt
+    },
+    usage: [],
+    listed: true,
+    active: true
+  });
+  await requestJson(`/api/approvals/${encodeURIComponent(approval.approvalToken)}/approve`, {
+    method: 'POST',
+    body: { walletAddress, sessionId }
+  });
+  const approvedOverview = await overview(token);
+  const sessionRecord = approvedOverview.sessions.find(
+    (candidate) => candidate.sessionId === sessionId
+  );
+  if (!sessionRecord) throw new Error('Approved session was not returned by the overview');
+  return { ...approval, sessionId, sessionRecordId: sessionRecord.id };
+}
+
+async function createApproval(token: string, policy: Omit<CreateApprovalBody, 'expiresAt'>) {
+  await bootstrapAdmin(token);
+  await adminRequest(token, '/api/admin/rac', { method: 'POST' }, 201);
+  const expiresAt = new Date(Date.now() + 60 * 60_000).toISOString();
+  const created = await adminRequest<CreatedApproval>(
+    token,
+    '/api/admin/approvals',
+    { method: 'POST', body: { ...policy, expiresAt } },
+    201
+  );
+  const approvalToken = new URL(created.approvalPath, origin).searchParams.get('request');
+  if (!approvalToken) throw new Error('Approval response did not contain a request token');
+  const request = await requestJson<ApprovalRequest>(
+    `/api/approvals/${encodeURIComponent(approvalToken)}`
+  );
+  return {
+    approvalId: created.id,
+    approvalToken,
+    credentialId: request.credentialId,
+    expiresAt
+  };
+}
+
+function nativeSession(
+  sessionId: string,
+  walletId: string,
+  recipient: string,
+  expiresAt: string
+): RemoteAccessSession {
+  return {
+    sessionId,
+    walletId,
+    signerAddress: sessionSigner,
+    grants: [
+      {
+        kind: 'nativeTransfer',
+        to: recipient as `0x${string}`,
+        limit: 10n
+      }
+    ],
+    chainId: 80002,
+    expiresAt
+  };
+}
 
 async function bootstrapAdmin(token: string): Promise<void> {
   await requestJson('/api/admin/bootstrap', { method: 'POST', body: { token } }, 201);
-}
-
-async function createActivity(params: {
-  token: string;
-  recipient: string;
-  walletAddress: string;
-  walletId: string;
-  sessionId: string;
-}): Promise<{
-  approvalId: string;
-  sessionRecordId: string;
-  transactionId: string;
-  overview: AdminOverview;
-}> {
-  const approvalExpiry = new Date(Date.now() + 60 * 60 * 1_000).toISOString();
-  const sessionExpiry = new Date(Date.now() + 30 * 60 * 1_000).toISOString();
-  const approval = await adminRequest<CreatedApproval>(
-    params.token,
-    '/api/admin/approvals',
-    {
-      method: 'POST',
-      body: {
-        recipientScope: { mode: 'specific', recipients: [params.recipient] },
-        allowance: '10',
-        expiresAt: approvalExpiry,
-        networkId: 'polygon-amoy',
-        assetId: 'pol'
-      }
-    },
-    201
-  );
-  const approvalToken = new URL(approval.approvalPath, origin).searchParams.get('request');
-  if (!approvalToken) throw new Error('Approval response did not contain a request token');
-
-  const initialOverview = await overview(params.token);
-  await requestJson(`/api/approvals/${encodeURIComponent(approvalToken)}/approve`, {
-    method: 'POST',
-    body: {
-      credentialId: initialOverview.credential.id,
-      walletId: params.walletId,
-      walletAddress: params.walletAddress,
-      sessionId: params.sessionId,
-      expiresAt: sessionExpiry
-    }
-  });
-
-  const activityStatuses = await adminRequest<AdminActivityStatuses>(
-    params.token,
-    '/api/admin/activity-statuses'
-  );
-  const session = activityStatuses.sessions[0];
-  if (!session) throw new Error('Approved smart session was not returned by the admin status API');
-  const transaction = await adminRequest<AdminTransaction>(
-    params.token,
-    `/api/admin/sessions/${session.id}/transactions`,
-    { method: 'POST', body: { recipient: params.recipient, amount: '1' } },
-    201
-  );
-  await requestJson(
-    '/api/session-revocations',
-    {
-      method: 'POST',
-      body: {
-        credentialId: initialOverview.credential.id,
-        sessionId: params.sessionId,
-        signature: 'invalid-proof'
-      }
-    },
-    403
-  );
-  const activeStatus = await adminRequest<AdminActivityStatuses>(
-    params.token,
-    '/api/admin/activity-statuses'
-  );
-  expect(activeStatus.sessions.find(({ id }) => id === session.id)?.status).toBe('usable');
-  await requestJson(
-    '/api/session-revocations',
-    {
-      method: 'POST',
-      body: {
-        credentialId: 'credential-from-another-rac',
-        sessionId: params.sessionId,
-        signature: `proof:${params.walletAddress.toLowerCase()}`
-      }
-    },
-    404
-  );
-  const revocation = await requestJson<SessionRevocationResult>('/api/session-revocations', {
-    method: 'POST',
-    body: {
-      credentialId: initialOverview.credential.id,
-      sessionId: params.sessionId,
-      signature: `proof:${params.walletAddress.toLowerCase()}`
-    }
-  });
-  expect(revocation.recorded).toBe(true);
-  expect(mockedWaas.verifiedRevocations.at(-1)).toEqual({
-    walletAddress: params.walletAddress,
-    chainId: 80002,
-    message: createSessionRevocationMessage({
-      origin,
-      credentialId: initialOverview.credential.id,
-      sessionId: params.sessionId,
-      walletAddress: params.walletAddress,
-      chainId: 80002
-    }),
-    signature: `proof:${params.walletAddress.toLowerCase()}`
-  });
-  const replay = await requestJson<SessionRevocationResult>('/api/session-revocations', {
-    method: 'POST',
-    body: {
-      credentialId: initialOverview.credential.id,
-      sessionId: params.sessionId,
-      signature: `proof:${params.walletAddress.toLowerCase()}`
-    }
-  });
-  expect(replay.recorded).toBe(false);
-
-  return {
-    approvalId: approval.id,
-    sessionRecordId: session.id,
-    transactionId: transaction.id,
-    overview: await overview(params.token)
-  };
 }
 
 function overview(token: string): Promise<AdminOverview> {

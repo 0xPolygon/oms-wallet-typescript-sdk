@@ -27,14 +27,7 @@ import {
   isPendingWalletSelection,
   type OidcRedirectProvider
 } from '../../../shared/example-utils';
-import type {
-  ApiError,
-  ApprovalRequest,
-  ClientConfig,
-  RecipientScope,
-  RevokeSessionBody,
-  SessionRevocationResult
-} from '../../shared/api';
+import type { ApiError, ApprovalRequest, ClientConfig, RecipientScope } from '../../shared/api';
 import {
   getSmartSessionAsset,
   getSmartSessionNetwork,
@@ -42,7 +35,6 @@ import {
   SMART_SESSION_NETWORKS
 } from '../../shared/networks';
 import { createSmartSessionGrants } from '../../shared/permissions';
-import { createSessionRevocationMessage } from '../../shared/sessionRevocation';
 import polygonPolIconUrl from './assets/polygon-pol.svg';
 import polygonUsdtIconUrl from './assets/polygon-usdt.svg';
 import { resolveBalanceUsd } from './portfolio';
@@ -61,6 +53,7 @@ import '../../shared/styles.css';
 
 type SignInStep = 'email' | 'code' | 'wallet-selection' | 'wallet';
 type ApprovedSession = RemoteAccessGrant & { chainId?: number };
+type ApprovalAction = 'authorizing' | 'confirming' | 'rejecting' | null;
 
 interface PortfolioAssetBalance {
   key: string;
@@ -80,15 +73,26 @@ interface WalletPortfolio {
 
 const PENDING_APPROVAL_TOKEN_KEY = 'oms-smart-session-pending-approval-token';
 const PORTFOLIO_REFRESH_INTERVAL_MS = 5_000;
+const SUCCESS_STATUS_DURATION_MS = 5_000;
+const PERMISSION_APPROVED_STATUS = 'Permission approved. The new smart session is ready to use.';
+const PERMISSION_REJECTED_STATUS = 'Permission rejected. No new smart-session access was granted.';
+const SESSION_REVOKED_STATUS = 'Session revoked.';
+const TRANSIENT_OWNER_STATUSES = new Set([
+  PERMISSION_APPROVED_STATUS,
+  PERMISSION_REJECTED_STATUS,
+  'This smart-session request has already been approved.',
+  'This smart-session request was rejected.'
+]);
 
 function App() {
-  const token = useMemo(() => {
+  const initialApprovalToken = useMemo(() => {
     const requestToken = new URLSearchParams(window.location.search).get('request');
     if (requestToken) return requestToken;
     return hasOidcCallbackParams()
       ? (sessionStorage.getItem(PENDING_APPROVAL_TOKEN_KEY) ?? '')
       : '';
   }, []);
+  const [approvalToken, setApprovalToken] = useState(initialApprovalToken);
   const [approval, setApproval] = useState<ApprovalRequest | null>(null);
   const [omsWallet, setOmsWallet] = useState<OMSWallet | null>(null);
   const [step, setStep] = useState<SignInStep>('email');
@@ -98,6 +102,7 @@ function App() {
   const [code, setCode] = useState('');
   const [approvedSessions, setApprovedSessions] = useState<ApprovedSession[]>([]);
   const [approvedSessionsStatus, setApprovedSessionsStatus] = useState('');
+  const [approvedSessionsLoading, setApprovedSessionsLoading] = useState(false);
   const [portfolio, setPortfolio] = useState<WalletPortfolio | null>(null);
   const [portfolioStatus, setPortfolioStatus] = useState('');
   const [addressCopyStatus, setAddressCopyStatus] = useState('');
@@ -107,7 +112,8 @@ function App() {
     IDLE_AUTO_CONVERT_PROGRESS
   );
   const [sessionPendingRevocation, setSessionPendingRevocation] = useState('');
-  const [status, setStatus] = useState(token ? 'Loading approval request…' : '');
+  const [status, setStatus] = useState(initialApprovalToken ? 'Loading approval request…' : '');
+  const [approvalAction, setApprovalAction] = useState<ApprovalAction>(null);
   const [isBusy, setIsBusy] = useState(false);
   const initializationStarted = useRef(false);
   const walletAddress = omsWallet?.wallet.walletAddress ?? '';
@@ -177,6 +183,21 @@ function App() {
   }, [addressCopyStatus]);
 
   useEffect(() => {
+    if (!TRANSIENT_OWNER_STATUSES.has(status)) return;
+    const timeout = window.setTimeout(() => setStatus(''), SUCCESS_STATUS_DURATION_MS);
+    return () => window.clearTimeout(timeout);
+  }, [status]);
+
+  useEffect(() => {
+    if (approvedSessionsStatus !== SESSION_REVOKED_STATUS) return;
+    const timeout = window.setTimeout(
+      () => setApprovedSessionsStatus(''),
+      SUCCESS_STATUS_DURATION_MS
+    );
+    return () => window.clearTimeout(timeout);
+  }, [approvedSessionsStatus]);
+
+  useEffect(() => {
     if (!omsWallet || !walletAddress) return;
 
     let refreshInProgress = false;
@@ -203,22 +224,28 @@ function App() {
         setStatus('Completing redirect sign-in…');
         try {
           redirectResult = await nextWallet.wallet.completeOidcRedirectAuth({
-            replaceUrl: (cleanUrl) => restoreApprovalRequestUrl(cleanUrl, token)
+            replaceUrl: (cleanUrl) => restoreApprovalRequestUrl(cleanUrl, approvalToken)
           });
         } finally {
           setIsBusy(false);
         }
       }
 
-      const nextApproval = token
-        ? await api<ApprovalRequest>(`/api/approvals/${encodeURIComponent(token)}`)
+      const nextApproval = approvalToken
+        ? await api<ApprovalRequest>(`/api/approvals/${encodeURIComponent(approvalToken)}`)
         : null;
       setApproval(nextApproval);
 
       if (nextApproval && nextApproval.status !== 'pending') {
+        clearApprovalRequest();
         if (nextWallet.wallet.walletAddress) {
           setStep('wallet');
-          await loadPortfolio(nextWallet);
+          await Promise.all([
+            loadPortfolio(nextWallet),
+            loadApprovedSessions(nextWallet, {
+              loadingLabel: 'Refreshing approved smart sessions…'
+            })
+          ]);
         }
         setStatus(
           nextApproval.status === 'approved'
@@ -233,7 +260,7 @@ function App() {
         return;
       }
 
-      if (!token) {
+      if (!approvalToken) {
         if (nextWallet.wallet.walletAddress) {
           setStep('wallet');
           setStatus('');
@@ -291,7 +318,9 @@ function App() {
     const label = formatOidcProvider(provider);
     await run(`Redirecting to ${label}…`, async () => {
       setPendingWalletSelection(null);
-      if (token) sessionStorage.setItem(PENDING_APPROVAL_TOKEN_KEY, token);
+      if (approvalToken) {
+        sessionStorage.setItem(PENDING_APPROVAL_TOKEN_KEY, approvalToken);
+      }
       await omsWallet.wallet.signInWithOidcRedirect({
         provider:
           provider === 'google' ? OmsRelayOidcProviders.google : OmsRelayOidcProviders.apple,
@@ -315,7 +344,7 @@ function App() {
     setStep('wallet');
     setStatus('');
     await loadPortfolio(wallet);
-    if (!token) await loadApprovedSessions(wallet);
+    if (!approvalToken) await loadApprovedSessions(wallet);
   }
 
   async function selectPendingWallet(wallet: WalletAccount) {
@@ -349,40 +378,60 @@ function App() {
 
   async function approve() {
     if (!omsWallet || !approval || !walletAddress) return;
-    await run('Authorizing smart session…', async () => {
-      const network = getSmartSessionNetwork(approval.networkId);
-      const asset = getSmartSessionAsset(approval.networkId, approval.assetId);
-      const authorization = await omsWallet.wallet.authorizeRemoteAccess({
-        credentialId: approval.credentialId,
-        network: network.network,
-        grants: createSmartSessionGrants(
-          asset,
-          approval.recipientScope,
-          BigInt(approval.allowance)
-        ),
-        expiresAt: approval.expiresAt
-      });
-      await api(`/api/approvals/${encodeURIComponent(token)}/approve`, {
-        method: 'POST',
-        body: JSON.stringify({
+    setApprovalAction('authorizing');
+    try {
+      await run('Authorizing smart session…', async () => {
+        const network = getSmartSessionNetwork(approval.networkId);
+        const asset = getSmartSessionAsset(approval.networkId, approval.assetId);
+        const { sessionId } = await omsWallet.wallet.authorizeRemoteAccess({
           credentialId: approval.credentialId,
-          walletId: authorization.walletId,
-          walletAddress,
-          sessionId: authorization.sessionId,
-          expiresAt: authorization.expiresAt
-        })
+          network: network.network,
+          grants: createSmartSessionGrants(
+            asset,
+            approval.recipientScope,
+            BigInt(approval.allowance)
+          ),
+          expiresAt: approval.expiresAt
+        });
+        setApprovalAction('confirming');
+        setStatus('Confirming permission with the backend…');
+        await api(`/api/approvals/${encodeURIComponent(approvalToken)}/approve`, {
+          method: 'POST',
+          body: JSON.stringify({
+            walletAddress,
+            sessionId
+          })
+        });
+        setApproval({ ...approval, status: 'approved' });
+        clearApprovalRequest();
+        setStatus(PERMISSION_APPROVED_STATUS);
+        await loadApprovedSessions(omsWallet, {
+          loadingLabel: 'Refreshing approved smart sessions…'
+        });
       });
-      setApproval({ ...approval, status: 'approved' });
-      setStatus('Permission approved. The backend RAC can now act only within these limits.');
-    });
+    } finally {
+      setApprovalAction(null);
+    }
   }
 
   async function rejectApproval() {
     if (!approval) return;
-    await run('Rejecting permission…', async () => {
-      await api(`/api/approvals/${encodeURIComponent(token)}/reject`, { method: 'POST' });
-      leaveApprovalRequest();
-    });
+    setApprovalAction('rejecting');
+    try {
+      await run('Rejecting permission…', async () => {
+        await api(`/api/approvals/${encodeURIComponent(approvalToken)}/reject`, {
+          method: 'POST'
+        });
+        setApproval({ ...approval, status: 'rejected' });
+        clearApprovalRequest();
+        setStatus(PERMISSION_REJECTED_STATUS);
+        await loadApprovedSessions(omsWallet, {
+          loadingLabel: 'Refreshing approved smart sessions…'
+        });
+      });
+    } finally {
+      setApprovalAction(null);
+    }
   }
 
   async function signOut() {
@@ -476,35 +525,31 @@ function App() {
     );
   }
 
-  async function loadApprovedSessions(wallet = omsWallet): Promise<boolean> {
+  async function loadApprovedSessions(
+    wallet = omsWallet,
+    { loadingLabel = 'Loading approved smart sessions…' }: { loadingLabel?: string } = {}
+  ): Promise<boolean> {
     if (!wallet?.wallet.walletAddress) {
       setApprovedSessions([]);
       setApprovedSessionsStatus('');
+      setApprovedSessionsLoading(false);
       return false;
     }
 
-    setApprovedSessionsStatus('Loading approved smart sessions…');
+    setApprovedSessionsLoading(true);
+    setApprovedSessionsStatus(loadingLabel);
     try {
       const access = await wallet.wallet.listAccess({ type: 'remote' });
       const remoteAccess = access.filter(
         (grant): grant is RemoteAccessGrant => grant.type === 'remote'
       );
-      const firstSessionResults = await Promise.allSettled(
+      const sessionResults = await Promise.allSettled(
         remoteAccess.map(async (grant) => {
           const session = await wallet.wallet.getRemoteAccessSession({
             sessionId: grant.sessionId
           });
           return { ...grant, chainId: session.chainId };
         })
-      );
-      const sessionResults = await Promise.allSettled(
-        firstSessionResults.map((result, index) =>
-          result.status === 'fulfilled'
-            ? result.value
-            : wallet.wallet
-                .getRemoteAccessSession({ sessionId: remoteAccess[index].sessionId })
-                .then((session) => ({ ...remoteAccess[index], chainId: session.chainId }))
-        )
       );
       const sessions = sessionResults.map((result, index) =>
         result.status === 'fulfilled' ? result.value : remoteAccess[index]
@@ -524,30 +569,17 @@ function App() {
     } catch (error) {
       setApprovedSessionsStatus(messageFrom(error));
       return false;
+    } finally {
+      setApprovedSessionsLoading(false);
     }
   }
 
   async function revokeSession(session: ApprovedSession) {
-    if (!omsWallet || !walletAddress) return;
+    if (!omsWallet) return;
 
     setIsBusy(true);
     setApprovedSessionsStatus('Revoking smart session…');
     try {
-      const chainId =
-        session.chainId ??
-        (await omsWallet.wallet.getRemoteAccessSession({ sessionId: session.sessionId })).chainId;
-      const network = findNetworkById(chainId);
-      if (!network) throw new Error(`Unsupported smart-session chain ID: ${chainId}`);
-      const signature = await omsWallet.wallet.signMessage({
-        network,
-        message: createSessionRevocationMessage({
-          origin: window.location.origin,
-          credentialId: session.credentialId,
-          sessionId: session.sessionId,
-          walletAddress,
-          chainId
-        })
-      });
       await omsWallet.wallet.revokeAccess({
         credentialId: session.credentialId,
         sessionId: session.sessionId
@@ -556,30 +588,8 @@ function App() {
         current.filter((candidate) => sessionKey(candidate) !== sessionKey(session))
       );
 
-      let recorded = false;
-      try {
-        const body: RevokeSessionBody = {
-          credentialId: session.credentialId,
-          sessionId: session.sessionId,
-          signature
-        };
-        const result = await api<SessionRevocationResult>('/api/session-revocations', {
-          method: 'POST',
-          body: JSON.stringify(body)
-        });
-        recorded = result.recorded;
-      } catch {
-        await loadApprovedSessions(omsWallet);
-        setApprovedSessionsStatus(
-          'Session revoked in WaaS, but the demo Worker could not update its local record.'
-        );
-        return;
-      }
-
       if (!(await loadApprovedSessions(omsWallet))) return;
-      setApprovedSessionsStatus(
-        recorded ? 'Session revoked. The backend record is now marked revoked.' : 'Session revoked.'
-      );
+      setApprovedSessionsStatus(SESSION_REVOKED_STATUS);
     } catch (error) {
       setApprovedSessionsStatus(messageFrom(error));
     } finally {
@@ -588,9 +598,10 @@ function App() {
     }
   }
 
-  function leaveApprovalRequest() {
+  function clearApprovalRequest() {
     sessionStorage.removeItem(PENDING_APPROVAL_TOKEN_KEY);
-    window.location.assign('/');
+    setApprovalToken('');
+    window.history.replaceState(null, '', new URL('/', window.location.origin));
   }
 
   return (
@@ -609,7 +620,7 @@ function App() {
           </div>
           {walletAddress ? (
             <div className="wallet-owner-account">
-              {!token ? (
+              {!approvalToken ? (
                 <div className="wallet-settings">
                   <button
                     type="button"
@@ -679,14 +690,14 @@ function App() {
         ) : null}
 
         {!walletAddress ? (
-          (!token || approval?.status === 'pending') && omsWallet ? (
+          (!approvalToken || approval?.status === 'pending') && omsWallet ? (
             <section className="wallet-auth-card" aria-label="Login options">
               {step === 'email' ? (
                 <div className="wallet-auth-step">
                   <header className="wallet-auth-heading">
                     <h2 className="section-title">Log in or sign up</h2>
                     <p>
-                      {token
+                      {approvalToken
                         ? 'Sign in to review this permission request.'
                         : 'Access your wallet with your preferred method.'}
                     </p>
@@ -742,15 +753,16 @@ function App() {
           />
         )}
 
-        {walletAddress && !token && autoConvertProgress.phase !== 'idle' ? (
+        {walletAddress && !approvalToken && autoConvertProgress.phase !== 'idle' ? (
           <AutoConvertProgressCard progress={autoConvertProgress} />
         ) : null}
 
-        {approval && walletAddress ? (
+        {approval?.status === 'pending' && walletAddress ? (
           <PermissionRequestCard
             approval={approval}
             walletAddress={walletAddress}
             isBusy={isBusy}
+            action={approvalAction}
             onApprove={() => void approve()}
             onReject={() => void rejectApproval()}
           />
@@ -764,15 +776,7 @@ function App() {
           </output>
         ) : null}
 
-        {approval?.status !== 'pending' && approval ? (
-          <div className="actions">
-            <button type="button" className="secondary" onClick={leaveApprovalRequest}>
-              Back to wallet
-            </button>
-          </div>
-        ) : null}
-
-        {walletAddress && !token ? (
+        {walletAddress && !approvalToken ? (
           <section
             className="permission-card wallet-sessions-card"
             aria-label="Active approved smart sessions"
@@ -786,8 +790,9 @@ function App() {
                 type="button"
                 className="secondary subtle"
                 onClick={() => void loadApprovedSessions()}
+                disabled={approvedSessionsLoading || isBusy}
               >
-                Refresh
+                {approvedSessionsLoading ? 'Refreshing…' : 'Refresh'}
               </button>
             </div>
 
@@ -1068,12 +1073,14 @@ function PermissionRequestCard({
   approval,
   walletAddress,
   isBusy,
+  action,
   onApprove,
   onReject
 }: {
   approval: ApprovalRequest;
   walletAddress: string;
   isBusy: boolean;
+  action: ApprovalAction;
   onApprove: () => void;
   onReject: () => void;
 }) {
@@ -1115,10 +1122,14 @@ function PermissionRequestCard({
       {approval.status === 'pending' && walletAddress ? (
         <div className="permission-actions">
           <button type="button" onClick={onApprove} disabled={isBusy}>
-            {isBusy ? 'Working…' : 'Approve permission'}
+            {action === 'authorizing'
+              ? 'Authorizing…'
+              : action === 'confirming'
+                ? 'Confirming…'
+                : 'Approve permission'}
           </button>
           <button type="button" className="secondary subtle" onClick={onReject} disabled={isBusy}>
-            Reject
+            {action === 'rejecting' ? 'Rejecting…' : 'Reject'}
           </button>
         </div>
       ) : null}
