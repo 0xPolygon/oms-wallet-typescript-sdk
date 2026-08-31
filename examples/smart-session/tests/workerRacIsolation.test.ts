@@ -11,7 +11,13 @@ import type {
   CreateApprovalBody,
   CreatedApproval
 } from '../shared/api.js';
-import { BASE_USDC, getSmartSessionAsset, getSmartSessionNetwork } from '../shared/networks.js';
+import {
+  BASE_SEPOLIA_USDC,
+  BASE_USDC,
+  getSmartSessionAsset,
+  getSmartSessionNetwork,
+  POLYGON_AMOY_USDC
+} from '../shared/networks.js';
 import worker from '../worker/index.js';
 
 interface MockSession {
@@ -426,30 +432,37 @@ test('shares cumulative usage across an unrestricted ERC-20 grant', async () => 
   );
 });
 
-test('prepares Base USDC transfers on Base with the configured token contract', async () => {
-  const token = 'admin-base-usdc-token-that-is-at-least-32-characters';
-  const created = await createApprovedUsdcSession(
-    token,
-    [recipientA],
-    walletA,
-    'session-base-usdc',
-    'base'
-  );
+test.each([
+  ['Polygon Amoy', 'polygon-amoy', POLYGON_AMOY_USDC],
+  ['Base', 'base', BASE_USDC],
+  ['Base Sepolia', 'base-sepolia', BASE_SEPOLIA_USDC]
+] as const)(
+  'prepares USDC transfers on %s with the configured token contract',
+  async (_label, networkId, tokenAddress) => {
+    const token = `admin-${networkId}-usdc-token-that-is-at-least-32-characters`;
+    const created = await createApprovedUsdcSession(
+      token,
+      [recipientA],
+      walletA,
+      `session-${networkId}-usdc`,
+      networkId
+    );
 
-  await adminRequest<AdminTransaction>(
-    token,
-    `/api/admin/sessions/${created.sessionRecordId}/transactions`,
-    { method: 'POST', body: { recipient: recipientA, amount: '1' } },
-    201
-  );
-  expect(mockedWaas.preparedTransactions).toEqual([
-    expect.objectContaining({
-      network: getSmartSessionNetwork('base').network,
-      sessionId: created.sessionId,
-      to: BASE_USDC
-    })
-  ]);
-});
+    await adminRequest<AdminTransaction>(
+      token,
+      `/api/admin/sessions/${created.sessionRecordId}/transactions`,
+      { method: 'POST', body: { recipient: recipientA, amount: '1' } },
+      201
+    );
+    expect(mockedWaas.preparedTransactions).toEqual([
+      expect.objectContaining({
+        network: getSmartSessionNetwork(networkId).network,
+        sessionId: created.sessionId,
+        to: tokenAddress
+      })
+    ]);
+  }
+);
 
 test.each([
   ['Base', 'base'],
@@ -495,7 +508,7 @@ test('rejects network and asset pairs outside the runtime allowlist', async () =
         allowance: '10',
         expiresAt: new Date(Date.now() + 60 * 60_000).toISOString(),
         networkId: 'base-sepolia',
-        assetId: 'usdc'
+        assetId: 'usdt'
       }
     },
     400
@@ -566,7 +579,7 @@ async function createApprovedUsdcSession(
   recipients: string[] | 'any',
   walletAddress: string,
   sessionId: string,
-  networkId: 'polygon' | 'base' = 'polygon'
+  networkId: 'polygon-amoy' | 'polygon' | 'base' | 'base-sepolia' = 'polygon'
 ) {
   const network = getSmartSessionNetwork(networkId);
   const asset = getSmartSessionAsset(networkId, 'usdc');

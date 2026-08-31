@@ -6,6 +6,8 @@ export type SmartSessionNetworkId = 'polygon-amoy' | 'polygon' | 'base' | 'base-
 export type SmartSessionAssetId = 'pol' | 'eth' | 'usdc' | 'usdt';
 
 export const BASE_USDC = '0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913' as Address;
+export const BASE_SEPOLIA_USDC = '0x036CbD53842c5426634e7929541eC2318f3dCF7e' as Address;
+export const POLYGON_AMOY_USDC = '0x41E94Eb019C0762f9Bfcf9Fb1E58725BfB0e7582' as Address;
 
 export const SMART_SESSION_ASSETS = {
   pol: {
@@ -49,12 +51,18 @@ export const SMART_SESSION_ASSETS = {
 const SMART_SESSION_TOKEN_ADDRESSES: Partial<
   Record<SmartSessionNetworkId, Partial<Record<SmartSessionAssetId, Address>>>
 > = {
+  'polygon-amoy': {
+    usdc: POLYGON_AMOY_USDC
+  },
   polygon: {
     usdc: '0x3c499c542cEF5E3811e1192ce70d8cC03d5c3359',
     usdt: '0xc2132D05D31c914a87C6611C10748AEb04B58e8F'
   },
   base: {
     usdc: BASE_USDC
+  },
+  'base-sepolia': {
+    usdc: BASE_SEPOLIA_USDC
   }
 };
 
@@ -64,7 +72,7 @@ export const SMART_SESSION_NETWORKS = {
     name: 'Polygon Amoy',
     shortName: 'Amoy',
     network: Networks.amoy,
-    assetIds: ['pol']
+    assetIds: ['pol', 'usdc']
   },
   polygon: {
     id: 'polygon',
@@ -85,7 +93,7 @@ export const SMART_SESSION_NETWORKS = {
     name: 'Base Sepolia',
     shortName: 'Base Sepolia',
     network: Networks.baseSepolia,
-    assetIds: ['eth']
+    assetIds: ['eth', 'usdc']
   }
 } as const;
 

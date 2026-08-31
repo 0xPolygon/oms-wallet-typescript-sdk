@@ -1197,7 +1197,10 @@ function nativePortfolioAsset(balance: NativeTokenBalance): PortfolioAssetBalanc
     name: balance.name,
     decimals: 18,
     balance: balance.balance,
-    iconUrl: balance.chainId === Networks.polygon.id ? polygonPolIconUrl : undefined,
+    iconUrl:
+      balance.chainId === Networks.polygon.id || balance.chainId === Networks.amoy.id
+        ? polygonPolIconUrl
+        : undefined,
     balanceUsd: resolveBalanceUsd({
       balance: balance.balance,
       balanceUsd: balance.balanceUSD,

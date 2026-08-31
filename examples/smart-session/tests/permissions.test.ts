@@ -2,7 +2,13 @@ import assert from 'node:assert/strict';
 import { getAddress } from 'viem';
 import { test } from 'vitest';
 
-import { BASE_USDC, getSmartSessionAsset, SMART_SESSION_ASSETS } from '../shared/networks.ts';
+import {
+  BASE_SEPOLIA_USDC,
+  BASE_USDC,
+  getSmartSessionAsset,
+  POLYGON_AMOY_USDC,
+  SMART_SESSION_ASSETS
+} from '../shared/networks.ts';
 import {
   createSmartSessionGrants,
   MAX_SMART_SESSION_GRANTS,
@@ -77,15 +83,19 @@ test('any-receiver ERC-20 permission omits the grant recipient', () => {
   ]);
 });
 
-test('USDC permissions use the contract configured for the selected network', () => {
-  const baseUsdc = getSmartSessionAsset('base', 'usdc');
-  assert.equal(baseUsdc.kind, 'erc20');
-  if (baseUsdc.kind !== 'erc20') return;
+test.each([
+  ['Polygon Amoy', 'polygon-amoy', POLYGON_AMOY_USDC],
+  ['Base', 'base', BASE_USDC],
+  ['Base Sepolia', 'base-sepolia', BASE_SEPOLIA_USDC]
+] as const)('USDC permissions use the contract configured for %s', (_label, networkId, token) => {
+  const usdc = getSmartSessionAsset(networkId, 'usdc');
+  assert.equal(usdc.kind, 'erc20');
+  if (usdc.kind !== 'erc20') return;
 
-  assert.deepEqual(createSmartSessionGrants(baseUsdc, { mode: 'any' }, 1_000_000n), [
+  assert.deepEqual(createSmartSessionGrants(usdc, { mode: 'any' }, 1_000_000n), [
     {
       kind: 'erc20Transfer',
-      token: BASE_USDC,
+      token,
       limit: 1_000_000n,
       cumulative: true
     }

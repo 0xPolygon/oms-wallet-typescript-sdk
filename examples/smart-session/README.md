@@ -2,17 +2,17 @@
 
 This example demonstrates multiple independently administered backend-owned Remote Access
 Credentials (RACs), each serving smart sessions approved by multiple OMS wallets. The demo is
-configured for native POL transfers on Polygon Amoy and for POL, USDC, and USDT transfers on
-Polygon mainnet, plus ETH and USDC transfers on Base and ETH transfers on Base Sepolia.
+configured for POL and USDC transfers on Polygon Amoy; POL, USDC, and USDT transfers on Polygon
+mainnet; and ETH and USDC transfers on Base and Base Sepolia.
 
 The Worker accepts only this checked-in network and asset allowlist:
 
 | Network | Assets |
 | --- | --- |
-| Polygon Amoy | Native POL |
+| Polygon Amoy | Native POL, [USDC](https://amoy.polygonscan.com/token/0x41e94eb019c0762f9bfcf9fb1e58725bfb0e7582) |
 | Polygon mainnet | Native POL, [USDC](https://polygonscan.com/token/0x3c499c542cef5e3811e1192ce70d8cc03d5c3359), [USDT](https://polygonscan.com/token/0xc2132d05d31c914a87c6611c10748aeb04b58e8f) |
 | Base | Native ETH, [USDC](https://basescan.org/token/0x833589fcd6edb6e08f4c7c32d4f71b54bdA02913) |
-| Base Sepolia | Native ETH |
+| Base Sepolia | Native ETH, [USDC](https://sepolia.basescan.org/token/0x036cbd53842c5426634e7929541ec2318f3dcf7e) |
 
 Polygon and Base mainnet assets have real value. Keep Polygon Amoy selected unless you intend to
 create and execute a real mainnet permission.
@@ -99,8 +99,8 @@ Google, Apple, or an email verification code, matching the main React example.
    admin access while the Worker persists the generated RAC key in D1 and registers its RAC
    credential ID with WaaS.
 2. Select a network and asset, create an approval request, and copy its generated link. Native ETH
-   is available on Base and Base Sepolia, USDC is available on Polygon and Base mainnet, and USDT is
-   available only on Polygon mainnet. Pending requests retain a **Copy link** action after the
+   is available on Base and Base Sepolia, USDC is available on all four configured networks, and
+   USDT is available only on Polygon mainnet. Pending requests retain a **Copy link** action after the
    dashboard refreshes.
 3. Open the link in the client app, sign in to an Ethereum wallet, review the exact permission, and
    approve or reject it.
