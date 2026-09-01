@@ -992,7 +992,7 @@ function App() {
                               target="_blank"
                               rel="noreferrer"
                             >
-                              View on PolygonScan
+                              View on {recordNetwork(transaction).explorerName}
                             </a>
                           </>
                         ) : (

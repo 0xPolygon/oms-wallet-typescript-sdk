@@ -71,6 +71,7 @@ export const SMART_SESSION_NETWORKS = {
     id: 'polygon-amoy',
     name: 'Polygon Amoy',
     shortName: 'Amoy',
+    explorerName: 'PolygonScan',
     network: Networks.amoy,
     assetIds: ['pol', 'usdc']
   },
@@ -78,6 +79,7 @@ export const SMART_SESSION_NETWORKS = {
     id: 'polygon',
     name: 'Polygon',
     shortName: 'Polygon',
+    explorerName: 'PolygonScan',
     network: Networks.polygon,
     assetIds: ['pol', 'usdc', 'usdt']
   },
@@ -85,6 +87,7 @@ export const SMART_SESSION_NETWORKS = {
     id: 'base',
     name: 'Base',
     shortName: 'Base',
+    explorerName: 'BaseScan',
     network: Networks.base,
     assetIds: ['eth', 'usdc']
   },
@@ -92,6 +95,7 @@ export const SMART_SESSION_NETWORKS = {
     id: 'base-sepolia',
     name: 'Base Sepolia',
     shortName: 'Base Sepolia',
+    explorerName: 'BaseScan',
     network: Networks.baseSepolia,
     assetIds: ['eth', 'usdc']
   }

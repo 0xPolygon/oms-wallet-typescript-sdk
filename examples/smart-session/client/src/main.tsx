@@ -1057,20 +1057,20 @@ function AutoConvertProgressCard({ progress }: { progress: TrailsAutoConvertProg
         <div className="wallet-auto-convert-links">
           {progress.originTransactionHash ? (
             <a
-              href={`${Networks.polygon.explorerUrl}/tx/${progress.originTransactionHash}`}
+              href={`${SMART_SESSION_NETWORKS.polygon.network.explorerUrl}/tx/${progress.originTransactionHash}`}
               target="_blank"
               rel="noreferrer"
             >
-              Polygon transaction
+              View on {SMART_SESSION_NETWORKS.polygon.explorerName}
             </a>
           ) : null}
           {progress.destinationTransactionHash ? (
             <a
-              href={`${Networks.base.explorerUrl}/tx/${progress.destinationTransactionHash}`}
+              href={`${SMART_SESSION_NETWORKS.base.network.explorerUrl}/tx/${progress.destinationTransactionHash}`}
               target="_blank"
               rel="noreferrer"
             >
-              Base transaction
+              View on {SMART_SESSION_NETWORKS.base.explorerName}
             </a>
           ) : null}
         </div>
