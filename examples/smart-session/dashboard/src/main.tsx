@@ -466,12 +466,12 @@ function App() {
             <p className="eyebrow">OMS Wallet TypeScript SDK</p>
             <h1>Smart-session administration</h1>
             <p className="lede">
-              Browser admin access controls this Worker. Its backend RAC uses owner-approved smart
-              sessions on Polygon Amoy and Polygon mainnet.
+              This browser profile administers one backend RAC and only its approval requests, smart
+              sessions, and transactions.
             </p>
           </div>
           <div className="dashboard-header-actions">
-            <span className="network-meta">Polygon</span>
+            <span className="network-meta">RAC-scoped</span>
             <button
               type="button"
               className="secondary subtle"
