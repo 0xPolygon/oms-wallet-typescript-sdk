@@ -22,6 +22,15 @@ export interface OMSWalletParams {
     storage?: StorageManager;
     redirectAuthStorage?: StorageManager;
     credentialSigner?: CredentialSigner;
+    walletImport?: WalletImportConfig;
+}
+```
+
+### `WalletImportConfig`
+
+```typescript
+export interface WalletImportConfig {
+    readonly trustedPcr0s: ReadonlyArray<string>;
 }
 ```
 
@@ -30,7 +39,7 @@ export interface OMSWalletParams {
 ### `OMSWalletClient.walletAddress`
 
 ```typescript
-readonly walletAddress: Address | undefined;
+readonly walletAddress: string | undefined;
 ```
 
 ### `OMSWalletClient.session`
@@ -129,6 +138,26 @@ createWallet(params?: {
 }): Promise<WalletActivationResult>;
 ```
 
+### `OMSWalletClient.importWallet`
+
+```typescript
+importWallet(params: ImportWalletParams): Promise<WalletActivationResult>;
+```
+
+### `OMSWalletClient.getWalletImportRecipientKey`
+
+```typescript
+getWalletImportRecipientKey(params: {
+    cipherSuite: WalletImportCipherSuite;
+}): Promise<WalletImportRecipientKey>;
+```
+
+### `OMSWalletClient.importEncryptedWallet`
+
+```typescript
+importEncryptedWallet(params: ImportEncryptedWalletParams): Promise<WalletActivationResult>;
+```
+
 ### `OMSWalletClient.getIdToken`
 
 ```typescript
@@ -147,12 +176,41 @@ listAccess(params?: ListAccessParams): Promise<AccessGrant[]>;
 listAccessPages(params?: ListAccessParams): AsyncIterable<AccessGrantPage>;
 ```
 
+### `OMSWalletClient.inspectRemoteCredential`
+
+```typescript
+inspectRemoteCredential(params: {
+    credentialId: string;
+}): Promise<RemoteCredentialMetadata>;
+```
+
+### `OMSWalletClient.authorizeRemoteAccess`
+
+```typescript
+authorizeRemoteAccess(params: AuthorizeRemoteAccessParams): Promise<AuthorizedRemoteAccess>;
+```
+
+### `OMSWalletClient.getRemoteAccessSession`
+
+```typescript
+getRemoteAccessSession(params: {
+    sessionId: string;
+}): Promise<RemoteAccessSession>;
+```
+
+### `OMSWalletClient.getRemoteAccessSessionUsage`
+
+```typescript
+getRemoteAccessSessionUsage(params: {
+    sessionId: string;
+    network: Network;
+}): Promise<SmartSessionGrantUsage[]>;
+```
+
 ### `OMSWalletClient.revokeAccess`
 
 ```typescript
-revokeAccess(params: {
-    targetCredentialId: string;
-}): Promise<void>;
+revokeAccess(params: RevokeAccessParams): Promise<void>;
 ```
 
 ### `StartEmailAuthParams`
@@ -178,7 +236,7 @@ export interface CompleteEmailAuthParams {
 
 ```typescript
 export interface CompleteEmailAuthResult {
-    readonly walletAddress: Address;
+    readonly walletAddress: string;
     readonly wallet: WalletAccount;
     readonly wallets: ReadonlyArray<WalletAccount>;
     readonly credential: Readonly<WalletCredential>;
@@ -204,7 +262,7 @@ export interface SignInWithOidcIdTokenParams {
 
 ```typescript
 export interface CompleteOidcIdTokenAuthResult {
-    readonly walletAddress: Address;
+    readonly walletAddress: string;
     readonly wallet: WalletAccount;
     readonly wallets: ReadonlyArray<WalletAccount>;
     readonly credential: Readonly<WalletCredential>;
@@ -254,7 +312,7 @@ export interface CompleteOidcRedirectAuthParams {
 
 ```typescript
 export interface CompleteOidcRedirectAuthResult {
-    readonly walletAddress: Address;
+    readonly walletAddress: string;
     readonly wallet: WalletAccount;
     readonly wallets: ReadonlyArray<WalletAccount>;
     readonly credential: Readonly<WalletCredential>;
@@ -346,8 +404,31 @@ export type OidcAuthMode = typeof AuthMode.AuthCode | typeof AuthMode.AuthCodePK
 ```typescript
 export declare const WalletType: Readonly<{
     readonly Ethereum: "ethereum";
+    readonly Solana: "solana";
 }>;
 export type WalletType = (typeof WalletType)[keyof typeof WalletType];
+```
+
+### `WalletKeyOrigin`
+
+```typescript
+export declare const WalletKeyOrigin: Readonly<{
+    readonly Enclave: "enclave";
+    readonly Imported: "imported";
+}>;
+export type WalletKeyOrigin = (typeof WalletKeyOrigin)[keyof typeof WalletKeyOrigin];
+```
+
+### `WalletImportCipherSuite`
+
+```typescript
+export declare const WalletImportCipherSuite: Readonly<{
+    readonly X25519Sha256Aes256Gcm: "x25519-sha256-aes256gcm";
+    readonly X25519Sha256ChaCha20Poly1305: "x25519-sha256-chacha20poly1305";
+    readonly P256Sha256Aes256Gcm: "p256-sha256-aes256gcm";
+    readonly P256Sha256ChaCha20Poly1305: "p256-sha256-chacha20poly1305";
+}>;
+export type WalletImportCipherSuite = (typeof WalletImportCipherSuite)[keyof typeof WalletImportCipherSuite];
 ```
 
 ### `WalletSelectionBehavior`
@@ -359,11 +440,30 @@ export type WalletSelectionBehavior = "automatic" | "manual";
 ### `WalletAccount`
 
 ```typescript
-export interface WalletAccount {
+export type WalletAccount = EthereumWalletAccount | SolanaWalletAccount;
+```
+
+### `EthereumWalletAccount`
+
+```typescript
+export interface EthereumWalletAccount {
     readonly id: string;
-    readonly type: WalletType;
+    readonly type: "ethereum";
     readonly address: Address;
     readonly reference?: string;
+    readonly keyOrigin: WalletKeyOrigin;
+}
+```
+
+### `SolanaWalletAccount`
+
+```typescript
+export interface SolanaWalletAccount {
+    readonly id: string;
+    readonly type: "solana";
+    readonly address: string;
+    readonly reference?: string;
+    readonly keyOrigin: WalletKeyOrigin;
 }
 ```
 
@@ -371,8 +471,53 @@ export interface WalletAccount {
 
 ```typescript
 export interface WalletActivationResult {
-    readonly walletAddress: Address;
+    readonly walletAddress: string;
     readonly wallet: WalletAccount;
+}
+```
+
+### `ImportWalletParams`
+
+```typescript
+export type ImportWalletParams = {
+    type: "ethereum";
+    privateKey: string | Uint8Array;
+    reference?: string;
+} | {
+    type: "solana";
+    privateKey: string | Uint8Array;
+    reference?: string;
+};
+```
+
+### `WalletImportRecipientKey`
+
+```typescript
+export interface WalletImportRecipientKey {
+    readonly keyId: string;
+    readonly cipherSuite: WalletImportCipherSuite;
+    readonly publicKey: string;
+}
+```
+
+### `EncryptedWalletImportKeyMaterial`
+
+```typescript
+export interface EncryptedWalletImportKeyMaterial {
+    readonly keyId: string;
+    readonly cipherSuite: WalletImportCipherSuite;
+    readonly encapsulatedKey: string;
+    readonly ciphertext: string;
+}
+```
+
+### `ImportEncryptedWalletParams`
+
+```typescript
+export interface ImportEncryptedWalletParams {
+    type: WalletType;
+    keyMaterial: EncryptedWalletImportKeyMaterial;
+    reference?: string;
 }
 ```
 
@@ -430,7 +575,7 @@ export type OMSWalletSessionAuth = OMSWalletEmailSessionAuth | OMSWalletOidcSess
 
 ```typescript
 export interface OMSWalletSessionState {
-    readonly walletAddress: Address | undefined;
+    readonly walletAddress: string | undefined;
     readonly expiresAt: string | undefined;
     readonly auth: OMSWalletSessionAuth | undefined;
 }
@@ -473,7 +618,53 @@ export interface WalletCredential {
 ### `AccessGrant`
 
 ```typescript
-export type AccessGrant = WalletCredential;
+export type AccessGrant = DirectAccessGrant | RemoteAccessGrant;
+```
+
+### `DirectAccessGrant`
+
+```typescript
+export interface DirectAccessGrant extends WalletCredential {
+    type: "direct";
+}
+```
+
+### `RemoteAccessGrant`
+
+```typescript
+export interface RemoteAccessGrant extends WalletCredential {
+    type: "remote";
+    sessionId: string;
+    metadata: RemoteCredentialMetadata;
+    grants: ReadonlyArray<SmartSessionGrant>;
+}
+```
+
+### `RemoteCredentialMetadata`
+
+```typescript
+export interface RemoteCredentialMetadata {
+    appUrl: string;
+    appName: string;
+    appLogoUrl: string;
+    custom: Readonly<Record<string, string>>;
+}
+```
+
+### `SmartSessionGrant`
+
+```typescript
+export type SmartSessionGrant = {
+    kind: "nativeTransfer";
+    to: Address;
+    limit: bigint;
+} | {
+    kind: "erc20Transfer";
+    token: Address;
+    to?: Address;
+    limit: bigint;
+    cumulative?: boolean;
+};
 ```
 
 ### `ListAccessParams`
@@ -481,6 +672,7 @@ export type AccessGrant = WalletCredential;
 ```typescript
 export interface ListAccessParams {
     pageSize?: number;
+    type?: AccessGrant["type"];
 }
 ```
 
@@ -489,6 +681,59 @@ export interface ListAccessParams {
 ```typescript
 export interface AccessGrantPage {
     grants: AccessGrant[];
+}
+```
+
+### `AuthorizeRemoteAccessParams`
+
+```typescript
+export interface AuthorizeRemoteAccessParams {
+    credentialId: string;
+    network: Network;
+    grants: ReadonlyArray<SmartSessionGrant>;
+    expiresAt: string;
+    sessionId?: string;
+}
+```
+
+### `AuthorizedRemoteAccess`
+
+```typescript
+export interface AuthorizedRemoteAccess {
+    walletId: string;
+    sessionId: string;
+    expiresAt: string;
+}
+```
+
+### `RemoteAccessSession`
+
+```typescript
+export interface RemoteAccessSession {
+    sessionId: string;
+    walletId: string;
+    signerAddress: Address;
+    grants: ReadonlyArray<SmartSessionGrant>;
+    chainId: number;
+    expiresAt: string;
+}
+```
+
+### `SmartSessionGrantUsage`
+
+```typescript
+export interface SmartSessionGrantUsage {
+    grant: SmartSessionGrant;
+    used?: bigint;
+}
+```
+
+### `RevokeAccessParams`
+
+```typescript
+export interface RevokeAccessParams {
+    credentialId: string;
+    sessionId?: string;
 }
 ```
 
@@ -588,12 +833,138 @@ export declare class EthereumPrivateKeyCredentialSigner implements CredentialSig
 }
 ```
 
+## Remote applications
+
+### `RemoteAccessClient`
+
+Signs remote-application requests for owner-authorized smart sessions.
+
+```typescript
+export declare class RemoteAccessClient {
+    constructor(params: RemoteAccessClientParams);
+    registerCredential(params: RegisterRemoteCredentialParams): Promise<RegisteredRemoteCredential>;
+    prepareTransaction(params: PrepareRemoteTransactionParams): Promise<PreparedRemoteTransaction>;
+    executeTransaction(params: ExecuteRemoteTransactionParams): Promise<ExecutedRemoteTransaction>;
+    getTransactionStatus(params: {
+        txnId: string;
+    }): Promise<TransactionStatusResponse>;
+    revokeCredential(params: RevokeRemoteCredentialParams): Promise<void>;
+    listSessions(params?: ListRemoteAccessSessionsParams): Promise<RemoteAccessSession[]>;
+    listSessionPages(params?: ListRemoteAccessSessionsParams): AsyncIterable<RemoteAccessSessionPage>;
+    getSession(params: {
+        sessionId: string;
+    }): Promise<RemoteAccessSession>;
+    getSessionUsage(params: {
+        sessionId: string;
+        network: Network;
+    }): Promise<SmartSessionGrantUsage[]>;
+}
+```
+
+### `RemoteAccessClientParams`
+
+```typescript
+export interface RemoteAccessClientParams {
+    publishableKey: string;
+    credentialSigner: CredentialSigner;
+}
+```
+
+### `RegisterRemoteCredentialParams`
+
+```typescript
+export interface RegisterRemoteCredentialParams {
+    lifetimeSeconds: number;
+    metadata: RemoteCredentialMetadata;
+}
+```
+
+### `RegisteredRemoteCredential`
+
+```typescript
+export interface RegisteredRemoteCredential {
+    credentialId: string;
+}
+```
+
+### `RevokeRemoteCredentialParams`
+
+```typescript
+export interface RevokeRemoteCredentialParams {
+    credentialId: string;
+}
+```
+
+### `ListRemoteAccessSessionsParams`
+
+```typescript
+export interface ListRemoteAccessSessionsParams {
+    pageSize?: number;
+}
+```
+
+### `RemoteAccessSessionPage`
+
+```typescript
+export interface RemoteAccessSessionPage {
+    sessions: RemoteAccessSession[];
+}
+```
+
+### `PrepareRemoteTransactionParams`
+
+```typescript
+export interface PrepareRemoteTransactionParams {
+    walletId: string;
+    sessionId: string;
+    network: Network;
+    to: Address;
+    value?: bigint;
+    data?: Hex;
+}
+```
+
+### `PreparedRemoteTransaction`
+
+```typescript
+export interface PreparedRemoteTransaction {
+    txnId: string;
+    status: TransactionStatus;
+    feeOptions: ReadonlyArray<FeeOption>;
+    sponsored: boolean;
+    expiresAt: string;
+}
+```
+
+### `ExecuteRemoteTransactionParams`
+
+```typescript
+export interface ExecuteRemoteTransactionParams {
+    txnId: string;
+    feeOption?: FeeOptionSelection;
+}
+```
+
+### `ExecutedRemoteTransaction`
+
+```typescript
+export interface ExecutedRemoteTransaction {
+    status: TransactionStatus;
+}
+```
+
 ## Transactions and signing
 
 ### `OMSWalletClient.signMessage`
 
 ```typescript
 signMessage(params: SignMessageParams): Promise<string>;
+```
+
+### `OMSWalletClient.signSolanaMessage`
+
+```typescript
+signSolanaMessage(params: SignSolanaMessageParams): Promise<string>;
 ```
 
 ### `OMSWalletClient.signTypedData`
@@ -606,6 +977,12 @@ signTypedData(params: SignTypedDataParams): Promise<string>;
 
 ```typescript
 isValidMessageSignature(params: IsValidMessageSignatureParams): Promise<boolean>;
+```
+
+### `OMSWalletClient.isValidSolanaMessageSignature`
+
+```typescript
+isValidSolanaMessageSignature(params: IsValidSolanaMessageSignatureParams): Promise<boolean>;
 ```
 
 ### `OMSWalletClient.isValidTypedDataSignature`
@@ -621,6 +998,12 @@ sendTransaction(params: SendNativeTransactionParams): Promise<SendTransactionRes
 sendTransaction(params: SendDataTransactionParams): Promise<SendTransactionResponse>;
 sendTransaction<const abi extends Abi | readonly unknown[], functionName extends ContractFunctionName<abi> | undefined = ContractFunctionName<abi>>(params: SendContractTransactionParams<abi, functionName>): Promise<SendTransactionResponse>;
 sendTransaction(params: SendTransactionParams): Promise<SendTransactionResponse>;
+```
+
+### `OMSWalletClient.sendSolanaTransfer`
+
+```typescript
+sendSolanaTransfer(params: SendSolanaTransferParams): Promise<SendTransactionResponse>;
 ```
 
 ### `OMSWalletClient.callContract`
@@ -655,6 +1038,14 @@ export interface SignMessageParams {
 }
 ```
 
+### `SignSolanaMessageParams`
+
+```typescript
+export interface SignSolanaMessageParams {
+    message: string;
+}
+```
+
 ### `SignTypedDataParams`
 
 ```typescript
@@ -670,6 +1061,17 @@ export interface SignTypedDataParams {
 export interface IsValidMessageSignatureParams {
     network?: Network;
     walletAddress?: Address;
+    walletId?: string;
+    message: string;
+    signature: string;
+}
+```
+
+### `IsValidSolanaMessageSignatureParams`
+
+```typescript
+export interface IsValidSolanaMessageSignatureParams {
+    walletAddress?: string;
     walletId?: string;
     message: string;
     signature: string;
@@ -742,6 +1144,21 @@ export type SendContractTransactionParams<abi extends Abi | readonly unknown[] =
 
 ```typescript
 export type SendTransactionParams = SendNativeTransactionParams | SendDataTransactionParams | SendContractTransactionParams;
+```
+
+### `SendSolanaTransferParams`
+
+```typescript
+export type SendSolanaTransferParams = {
+    network: SolanaNetwork;
+    asset: string;
+    to: string;
+    amount: bigint;
+    mode?: TransactionMode;
+    selectFeeOption?: FeeOptionSelector;
+    waitForStatus?: boolean;
+    statusPolling?: TransactionStatusPollingOptions;
+};
 ```
 
 ### `SendTransactionResponse`
@@ -822,6 +1239,7 @@ export interface FeeOption {
 ```typescript
 export interface FeeOptionSelection {
     token: string;
+    index?: number;
 }
 ```
 
@@ -849,6 +1267,12 @@ export declare namespace FeeOptionSelector {
 }
 ```
 
+### `feeOptionSelection`
+
+```typescript
+export declare function feeOptionSelection(feeOption: FeeOption, index?: number): FeeOptionSelection;
+```
+
 ## Indexer
 
 ### `OMSWalletIndexerClient`
@@ -856,6 +1280,7 @@ export declare namespace FeeOptionSelector {
 ```typescript
 export interface OMSWalletIndexerClient {
     getBalances(params: GetBalancesParams): Promise<BalancesResult>;
+    getSolanaBalances(params: GetSolanaBalancesParams): Promise<SolanaBalancesResult>;
     getTransactionHistory(params: GetTransactionHistoryParams): Promise<TransactionHistoryResult>;
 }
 ```
@@ -885,6 +1310,102 @@ export interface BalancesResult {
     nativeBalances: NativeTokenBalance[];
     balances: ContractTokenBalance[];
 }
+```
+
+### `GetSolanaBalancesParams`
+
+```typescript
+export interface GetSolanaBalancesParams {
+    walletAddress: string;
+    networks?: SolanaNetwork[];
+    includeMetadata?: boolean;
+    omitNativeBalances?: boolean;
+    mintAddresses?: string[];
+    excludedMintAddresses?: string[];
+}
+```
+
+### `SolanaBalancesResult`
+
+```typescript
+export interface SolanaBalancesResult {
+    status: number;
+    balances: SolanaBalance[];
+    errors: SolanaNetworkError[];
+}
+```
+
+### `SolanaBalance`
+
+```typescript
+export type SolanaBalance = SolanaNativeBalance | SolanaFungibleTokenBalance;
+```
+
+### `SolanaNativeBalance`
+
+```typescript
+export interface SolanaNativeBalance {
+    network: SolanaNetwork;
+    accountAddress: string;
+    name: string;
+    symbol: string;
+    decimals: number;
+    balance: string;
+    formattedBalance: string;
+    imageUrl?: string;
+    metadataUri?: string;
+    verificationStatus: SolanaVerificationStatus;
+    verificationSource: SolanaVerificationSource;
+    priceUSD?: string;
+    balanceUSD?: string;
+    assetType: "native";
+    tokenProgram?: undefined;
+    mintAddress?: undefined;
+}
+```
+
+### `SolanaFungibleTokenBalance`
+
+```typescript
+export interface SolanaFungibleTokenBalance {
+    network: SolanaNetwork;
+    accountAddress: string;
+    name: string;
+    symbol: string;
+    decimals: number;
+    balance: string;
+    formattedBalance: string;
+    imageUrl?: string;
+    metadataUri?: string;
+    verificationStatus: SolanaVerificationStatus;
+    verificationSource: SolanaVerificationSource;
+    priceUSD?: string;
+    balanceUSD?: string;
+    assetType: "fungible-token";
+    tokenProgram: "spl-token" | "token-2022";
+    mintAddress: string;
+}
+```
+
+### `SolanaNetworkError`
+
+```typescript
+export interface SolanaNetworkError {
+    network: SolanaNetwork;
+    reason: string;
+}
+```
+
+### `SolanaVerificationStatus`
+
+```typescript
+export type SolanaVerificationStatus = "verified" | "unverified" | "unknown";
+```
+
+### `SolanaVerificationSource`
+
+```typescript
+export type SolanaVerificationSource = "jupiter" | "solflare-utl" | "none";
 ```
 
 ### `GetTransactionHistoryParams`
@@ -1254,6 +1775,21 @@ export declare const Networks: Readonly<{
 }>;
 ```
 
+### `SolanaNetwork`
+
+```typescript
+export type SolanaNetwork = (typeof SolanaNetworks)[keyof typeof SolanaNetworks];
+```
+
+### `SolanaNetworks`
+
+```typescript
+export declare const SolanaNetworks: Readonly<{
+    readonly devnet: "solana:devnet";
+    readonly mainnet: "solana:mainnet";
+}>;
+```
+
 ### `findNetworkById`
 
 ```typescript
@@ -1269,7 +1805,7 @@ export declare function findNetworkByName(name: string): Network | undefined;
 ### `OMSWalletErrorCode`
 
 ```typescript
-export type OMSWalletErrorCode = "OMS_HTTP_ERROR" | "OMS_INVALID_RESPONSE" | "OMS_REQUEST_FAILED" | "OMS_AUTH_COMMITMENT_CONSUMED" | "OMS_SESSION_MISSING" | "OMS_SESSION_EXPIRED" | "OMS_WALLET_SELECTION_STALE" | "OMS_WALLET_SELECTION_UNAVAILABLE" | "OMS_WALLET_SELECTION_IN_FLIGHT" | "OMS_TRANSACTION_EXECUTION_UNCONFIRMED" | "OMS_TRANSACTION_STATUS_LOOKUP_FAILED" | "OMS_VALIDATION_ERROR" | "OMS_STORAGE_ERROR";
+export type OMSWalletErrorCode = "OMS_HTTP_ERROR" | "OMS_INVALID_RESPONSE" | "OMS_REQUEST_FAILED" | "OMS_AUTH_COMMITMENT_CONSUMED" | "OMS_WALLET_ADDRESS_ALREADY_IMPORTED" | "OMS_ATTESTATION_VERIFICATION_FAILED" | "OMS_SESSION_MISSING" | "OMS_SESSION_EXPIRED" | "OMS_WALLET_SELECTION_STALE" | "OMS_WALLET_SELECTION_UNAVAILABLE" | "OMS_WALLET_SELECTION_IN_FLIGHT" | "OMS_TRANSACTION_EXECUTION_UNCONFIRMED" | "OMS_TRANSACTION_STATUS_LOOKUP_FAILED" | "OMS_VALIDATION_ERROR" | "OMS_STORAGE_ERROR";
 ```
 
 ### `OMSWalletUpstreamError`
@@ -1312,7 +1848,7 @@ export declare abstract class OMSWalletError extends Error {
 ```typescript
 export declare class OMSWalletRequestError extends OMSWalletError {
     constructor(params: Omit<{
-        code: "OMS_HTTP_ERROR" | "OMS_REQUEST_FAILED" | "OMS_AUTH_COMMITMENT_CONSUMED";
+        code: "OMS_HTTP_ERROR" | "OMS_REQUEST_FAILED" | "OMS_AUTH_COMMITMENT_CONSUMED" | "OMS_WALLET_ADDRESS_ALREADY_IMPORTED";
         message: string;
         operation?: string;
         status?: number;
@@ -1321,7 +1857,7 @@ export declare class OMSWalletRequestError extends OMSWalletError {
         upstreamError?: OMSWalletUpstreamError;
         cause?: unknown;
     }, "code"> & {
-        code?: "OMS_HTTP_ERROR" | "OMS_REQUEST_FAILED" | "OMS_AUTH_COMMITMENT_CONSUMED";
+        code?: "OMS_HTTP_ERROR" | "OMS_REQUEST_FAILED" | "OMS_AUTH_COMMITMENT_CONSUMED" | "OMS_WALLET_ADDRESS_ALREADY_IMPORTED";
     });
 }
 ```
@@ -1331,7 +1867,7 @@ export declare class OMSWalletRequestError extends OMSWalletError {
 ```typescript
 export declare class OMSWalletResponseError extends OMSWalletError {
     constructor(params: Omit<{
-        code: "OMS_INVALID_RESPONSE";
+        code: "OMS_INVALID_RESPONSE" | "OMS_ATTESTATION_VERIFICATION_FAILED";
         message: string;
         operation?: string;
         status?: number;
@@ -1340,7 +1876,7 @@ export declare class OMSWalletResponseError extends OMSWalletError {
         upstreamError?: OMSWalletUpstreamError;
         cause?: unknown;
     }, "code"> & {
-        code?: "OMS_INVALID_RESPONSE";
+        code?: "OMS_INVALID_RESPONSE" | "OMS_ATTESTATION_VERIFICATION_FAILED";
     });
 }
 ```

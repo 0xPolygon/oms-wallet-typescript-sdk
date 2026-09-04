@@ -36,7 +36,13 @@ pnpm test                     # SDK + connector test suites (pnpm -r)
 pnpm build                    # build packages (dual CJS+ESM) + all examples (pnpm -r)
 pnpm check:exports            # publint on the publishable packages
 pnpm dev:example              # run a browser example
+pnpm dev:smart-session-example # run the Worker + approval app + admin dashboard
 ```
+
+The Cloudflare-deployable [`examples/smart-session`](examples/smart-session) workspace demonstrates
+independently administered backend-owned RACs serving smart sessions approved by multiple owner
+wallets. It supports native POL transfers on Polygon Amoy and POL, USDC, and USDT transfers on
+Polygon mainnet, with recipient-scoped permissions, indexed balances, and a Trails conversion.
 
 Workspace packages resolve each other from **source** (via the `@polygonlabs/source` export
 condition), so no package needs to be built before its consumers — `pnpm test` and `pnpm build` run

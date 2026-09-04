@@ -25,29 +25,6 @@
   line-height: 1;
 }
 
-.select-control {
-  position: relative;
-  display: block;
-}
-
-.select-control::after {
-  content: '';
-  position: absolute;
-  top: 50%;
-  right: 16px;
-  width: 7px;
-  height: 7px;
-  border-right: 2px solid var(--oms-muted-ink);
-  border-bottom: 2px solid var(--oms-muted-ink);
-  pointer-events: none;
-  transform: translateY(-70%) rotate(45deg);
-}
-
-.select-control select {
-  appearance: none;
-  padding-right: 44px;
-}
-
 button.danger {
   color: var(--oms-red-700);
   background: var(--oms-red-50);
@@ -191,8 +168,100 @@ button.danger:active:not(:disabled) {
   overflow-wrap: anywhere;
 }
 
+.balance-assets {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 12px;
+  margin-bottom: 8px;
+}
+
+.balance-asset {
+  display: grid;
+  gap: 4px;
+  min-width: 0;
+  padding: 10px 12px;
+  border: 1px solid var(--oms-slate-200);
+  border-radius: var(--oms-radius-input);
+  background: var(--oms-slate-50);
+}
+
+.balance-asset a {
+  width: fit-content;
+  color: var(--oms-brand);
+  font-size: 13px;
+  font-weight: 700;
+  text-decoration: none;
+}
+
+.balance-asset a:hover {
+  text-decoration: underline;
+}
+
 .network-tool {
   gap: 8px;
+}
+
+.wallet-tabs {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 4px;
+  padding: 4px;
+  border: 1px solid var(--oms-slate-200);
+  border-radius: var(--oms-radius-input);
+  background: var(--oms-slate-100);
+}
+
+.wallet-tab {
+  color: var(--oms-muted-ink);
+  background: transparent;
+  border-color: transparent;
+  box-shadow: none;
+}
+
+.wallet-tab:hover:not(:disabled) {
+  color: var(--oms-ink);
+  background: var(--oms-surface);
+  border-color: var(--oms-slate-200);
+}
+
+.wallet-tab-active,
+.wallet-tab-active:hover:not(:disabled) {
+  color: var(--oms-brand);
+  background: var(--oms-surface);
+  border-color: var(--oms-purple-200);
+}
+
+.wallet-type-prompt {
+  gap: 10px;
+}
+
+.solana-tool {
+  gap: 16px;
+}
+
+.operation-block {
+  display: grid;
+  gap: 12px;
+  padding-top: 16px;
+  border-top: 1px solid var(--oms-slate-200);
+}
+
+.operation-block h3 {
+  margin: 0;
+  color: var(--oms-ink);
+}
+
+.inline-links {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 10px;
+}
+
+.compact-button {
+  width: auto;
+  min-height: 36px;
+  padding: 7px 12px;
 }
 
 .network-meta {
@@ -206,9 +275,13 @@ button.danger:active:not(:disabled) {
 
 .inline-field-action {
   display: grid;
-  grid-template-columns: minmax(0, 1fr) auto;
+  grid-template-columns: minmax(120px, 0.55fr) minmax(0, 1fr) auto;
   align-items: end;
   gap: 10px;
+}
+
+.wallet-import-fields {
+  grid-template-columns: minmax(120px, 0.55fr) minmax(180px, 1.2fr) minmax(0, 1fr) auto;
 }
 
 .management-list {
@@ -405,6 +478,7 @@ button.danger:active:not(:disabled) {
 }
 
 @media (max-width: 520px) {
+  .balance-assets,
   .session-info,
   .inline-field-action {
     grid-template-columns: 1fr;
