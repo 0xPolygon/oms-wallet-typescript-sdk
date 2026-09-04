@@ -90,7 +90,7 @@ describe('public API error contracts', () => {
     vi.stubGlobal('fetch', fetchMock);
 
     const oms = createOmsClientWithSession({
-      walletImport: { trustedPcr0s: ['0'.repeat(96)] }
+      walletImport: { trustedPcr0s: ['1'.repeat(96)] }
     });
 
     await expect(

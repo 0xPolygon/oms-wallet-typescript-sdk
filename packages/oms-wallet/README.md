@@ -252,7 +252,8 @@ created by WaaS and `WalletKeyOrigin.Imported` for an imported key.
 
 Wallet import must be enabled with one or more trusted AWS Nitro enclave PCR0 measurements. Source
 these measurements from an audited release channel; do not bootstrap trust from the API status
-response that the measurement is intended to verify.
+response that the measurement is intended to verify. All-zero measurements from debug-mode
+enclaves are rejected because they do not establish an enclave identity.
 
 ```typescript
 import {

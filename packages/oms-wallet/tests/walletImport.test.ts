@@ -171,7 +171,7 @@ describe('wallet import', () => {
     expect(fetchMock).not.toHaveBeenCalled();
   });
 
-  it.each([[[]], [['0'.repeat(95)]], [['z'.repeat(96)]]])(
+  it.each([[[]], [['0'.repeat(95)]], [['0'.repeat(96)]], [['z'.repeat(96)]]])(
     'rejects invalid trusted PCR0 configuration %#',
     (trustedPcr0s) => {
       expect(
@@ -182,7 +182,7 @@ describe('wallet import', () => {
             credentialSigner: new MockSigner(),
             walletImport: { trustedPcr0s }
           })
-      ).toThrow('walletImport.trustedPcr0s must contain at least one 48-byte hex PCR0');
+      ).toThrow('walletImport.trustedPcr0s must contain at least one nonzero 48-byte hex PCR0');
     }
   );
 
@@ -197,7 +197,7 @@ describe('wallet import', () => {
       },
       storage: new MemoryStorageManager(),
       credentialSigner: new MockSigner(),
-      walletImport: { trustedPcr0s: ['0'.repeat(96)] }
+      walletImport: { trustedPcr0s: ['1'.repeat(96)] }
     });
     (wallet as any).activePendingWalletSelection = {
       id: 'pending-1',
