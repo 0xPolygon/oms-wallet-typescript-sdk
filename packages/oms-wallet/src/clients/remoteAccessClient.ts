@@ -18,7 +18,6 @@ import type { TransactionStatusResponse } from '../types/waas.js';
 
 import { toOMSWalletError } from '../errors.js';
 import { Waas } from '../generated/waas.gen.js';
-import { environmentFromPublishableKey } from '../omsEnvironment.js';
 import { RemoteAccessOperation } from '../operations.js';
 import { parsePublishableKey } from '../publishableKey.js';
 import { createSignedFetch } from '../signedFetch.js';
@@ -46,8 +45,7 @@ export class RemoteAccessClient {
   readonly #client: Waas;
 
   constructor(params: RemoteAccessClientParams) {
-    const { projectId } = parsePublishableKey(params.publishableKey);
-    const { walletApiUrl } = environmentFromPublishableKey(params.publishableKey);
+    const { projectId, walletApiUrl } = parsePublishableKey(params.publishableKey);
     this.#client = new Waas(
       walletApiUrl,
       createSignedFetch(params.publishableKey, params.credentialSigner, projectId)

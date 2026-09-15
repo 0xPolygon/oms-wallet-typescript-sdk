@@ -30,6 +30,7 @@ import {
   WalletImportCipherSuite as WalletImportCipherSuiteValues,
   WalletKeyOrigin as WalletKeyOriginValues
 } from '../types/waas.js';
+import { invalidResponseError } from './invalidResponse.js';
 
 export function toGeneratedAuthMode(authMode: OidcAuthMode): GeneratedAuthMode {
   switch (authMode) {
@@ -57,6 +58,10 @@ export function fromGeneratedNetworkFamily(
       return 'ethereum';
     case GeneratedNetworkFamily.Solana:
       return 'solana';
+    default:
+      throw invalidResponseError(
+        `Wallet response contains unsupported networkFamily: ${String(networkFamily)}`
+      );
   }
 }
 
@@ -66,6 +71,10 @@ export function fromGeneratedWalletKeyOrigin(keyOrigin: GeneratedKeyOrigin): Wal
       return WalletKeyOriginValues.Enclave;
     case GeneratedKeyOriginValues.Imported:
       return WalletKeyOriginValues.Imported;
+    default:
+      throw invalidResponseError(
+        `Wallet response contains unsupported keyOrigin: ${String(keyOrigin)}`
+      );
   }
 }
 

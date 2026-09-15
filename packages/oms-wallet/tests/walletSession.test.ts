@@ -1605,6 +1605,74 @@ describe('WalletClient session storage', () => {
     expect(requestCount(fetchMock, '/CreateWallet')).toBe(1);
   });
 
+  it('serializes imports with every pending wallet selection action', async () => {
+    const fetchMock = vi.fn(async (input: RequestInfo | URL) => {
+      const url = input.toString();
+
+      if (url.endsWith('/CompleteAuth')) {
+        return jsonResponse({
+          identity: { type: 'email', sub: 'user-1' },
+          email: 'user@example.com',
+          wallets: [testWallet('wallet-1', WalletType.Ethereum, '11')],
+          credential: testCredential()
+        });
+      }
+
+      if (url.endsWith('/UseWallet') || url.endsWith('/CreateWallet')) {
+        throw new Error('A second pending selection action must not reach WaaS');
+      }
+
+      throw new Error(`Unexpected request: ${url}`);
+    });
+    vi.stubGlobal('fetch', fetchMock);
+
+    const wallet = new WalletClient({
+      publishableKey: 'publishable-key',
+      projectId: 'project-id',
+      environment: testEnvironment(),
+      storage: new MemoryStorageManager(),
+      credentialSigner: new MockSigner(),
+      walletImportTrustedPcr0s: ['1'.repeat(96)]
+    });
+    seedEmailAuthAttempt(wallet);
+    const selection = await wallet.completeEmailAuth({ code: '123456', walletSelection: 'manual' });
+    const importedWallet = deferred<ReturnType<typeof testWallet>>();
+    const requestImportWallet = vi
+      .spyOn(wallet as any, 'requestImportWallet')
+      .mockReturnValue(importedWallet.promise);
+    const importParams = {
+      type: WalletType.Ethereum,
+      keyMaterial: {
+        keyId: 'key-1',
+        cipherSuite: 'p256-sha256-aes256gcm' as const,
+        encapsulatedKey: 'AQID',
+        ciphertext: 'BAUG'
+      }
+    };
+
+    const firstImport = wallet.importEncryptedWallet(importParams);
+    await vi.waitFor(() => expect(requestImportWallet).toHaveBeenCalledOnce());
+
+    await expect(wallet.importEncryptedWallet(importParams)).rejects.toMatchObject({
+      code: 'OMS_WALLET_SELECTION_IN_FLIGHT',
+      operation: 'wallet.importEncryptedWallet'
+    });
+    await expect(selection.selectWallet({ walletId: 'wallet-1' })).rejects.toMatchObject({
+      code: 'OMS_WALLET_SELECTION_IN_FLIGHT',
+      operation: 'wallet.pendingWalletSelection.selectWallet'
+    });
+    await expect(selection.createAndSelectWallet()).rejects.toMatchObject({
+      code: 'OMS_WALLET_SELECTION_IN_FLIGHT',
+      operation: 'wallet.pendingWalletSelection.createAndSelectWallet'
+    });
+    expect(requestImportWallet).toHaveBeenCalledOnce();
+    expect(requestCount(fetchMock, '/UseWallet')).toBe(0);
+    expect(requestCount(fetchMock, '/CreateWallet')).toBe(0);
+
+    importedWallet.resolve(testWallet('wallet-imported', WalletType.Ethereum, '33'));
+    await expect(firstImport).resolves.toMatchObject({ wallet: { id: 'wallet-imported' } });
+  });
+
   it('failed pending create can be retried when the selection was not consumed', async () => {
     let createAttempts = 0;
     const fetchMock = vi.fn(async (input: RequestInfo | URL) => {

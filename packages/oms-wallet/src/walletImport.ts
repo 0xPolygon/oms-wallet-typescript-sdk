@@ -1,6 +1,6 @@
 import type { ImportWalletParams } from './wallet.js';
 
-import { base64DecodeBytes, base64EncodeBytes } from './utils/base64.js';
+import { base64DecodeBytes, base64EncodeBytes, toArrayBuffer } from './utils/base64.js';
 
 const secp256k1Order = 0xfffffffffffffffffffffffffffffffebaaedce6af48a03bbfd25e8cd0364141n;
 const base58Alphabet = '123456789ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz';
@@ -123,8 +123,4 @@ function hexToBytes(value: string): Uint8Array {
 
 function trimAsciiWhitespace(value: string): string {
   return value.replace(/^[\t\n\f\r ]+|[\t\n\f\r ]+$/g, '');
-}
-
-function toArrayBuffer(bytes: Uint8Array): ArrayBuffer {
-  return Uint8Array.from(bytes).buffer;
 }

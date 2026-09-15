@@ -10,6 +10,7 @@ import type {
 } from '../types/accessGrant.js';
 
 import { GrantKind } from '../generated/waas.gen.js';
+import { invalidResponseError } from './invalidResponse.js';
 
 export function toGeneratedSmartSessionGrant(grant: SmartSessionGrant): Grant {
   if (grant.kind === 'nativeTransfer') {
@@ -30,7 +31,7 @@ export function toGeneratedSmartSessionGrant(grant: SmartSessionGrant): Grant {
 }
 
 export function fromGeneratedSmartSessionGrant(grant: Grant | undefined): SmartSessionGrant {
-  if (!grant) throw invalidSessionResponse('Session contains an invalid grant');
+  if (!grant) throw invalidResponseError('Session contains an invalid grant');
   if (grant.kind === GrantKind.NativeTransfer && grant.nativeTransfer) {
     return {
       kind: 'nativeTransfer',
@@ -50,7 +51,7 @@ export function fromGeneratedSmartSessionGrant(grant: Grant | undefined): SmartS
       cumulative: grant.erc20Transfer.cumulative
     };
   }
-  throw invalidSessionResponse('Session contains an invalid grant');
+  throw invalidResponseError('Session contains an invalid grant');
 }
 
 export function fromGeneratedRemoteAccessSession(
@@ -63,11 +64,11 @@ export function fromGeneratedRemoteAccessSession(
     !session.expiresAt?.trim() ||
     !Array.isArray(session.grants?.entries)
   ) {
-    throw invalidSessionResponse('Session response is missing required fields');
+    throw invalidResponseError('Session response is missing required fields');
   }
   const chainId = Number(session.chainId);
   if (!Number.isSafeInteger(chainId) || chainId <= 0 || chainId.toString() !== session.chainId) {
-    throw invalidSessionResponse('Session contains an invalid chain ID');
+    throw invalidResponseError('Session contains an invalid chain ID');
   }
   return {
     sessionId: session.sessionId,
@@ -83,7 +84,7 @@ export function fromGeneratedRemoteAccessSessions(
   sessions: SessionInfo[] | undefined
 ): RemoteAccessSession[] {
   if (!Array.isArray(sessions)) {
-    throw invalidSessionResponse('Session-list response is missing sessions');
+    throw invalidResponseError('Session-list response is missing sessions');
   }
   return sessions.map(fromGeneratedRemoteAccessSession);
 }
@@ -91,7 +92,7 @@ export function fromGeneratedRemoteAccessSessions(
 export function fromGeneratedSmartSessionGrantUsage(
   usage: GrantUsage | undefined
 ): SmartSessionGrantUsage {
-  if (!usage?.grant) throw invalidSessionResponse('Session usage contains an invalid grant');
+  if (!usage?.grant) throw invalidResponseError('Session usage contains an invalid grant');
   return {
     grant: fromGeneratedSmartSessionGrant(usage.grant),
     used: usage.used === undefined ? undefined : unsignedBigInt(usage.used, 'grant usage')
@@ -102,14 +103,14 @@ export function fromGeneratedSmartSessionGrantUsages(
   entries: GrantUsage[] | undefined
 ): SmartSessionGrantUsage[] {
   if (!Array.isArray(entries)) {
-    throw invalidSessionResponse('Session-usage response is missing entries');
+    throw invalidResponseError('Session-usage response is missing entries');
   }
   return entries.map(fromGeneratedSmartSessionGrantUsage);
 }
 
 function ethereumAddress(value: string, field: string): Address {
   if (!isAddress(value)) {
-    throw invalidSessionResponse(`Session contains an invalid ${field}`);
+    throw invalidResponseError(`Session contains an invalid ${field}`);
   }
   return value;
 }
@@ -120,12 +121,6 @@ function unsignedBigInt(value: string, field: string): bigint {
     if (parsed < 0n || parsed.toString() !== value) throw new Error();
     return parsed;
   } catch {
-    throw invalidSessionResponse(`Session contains an invalid ${field}`);
+    throw invalidResponseError(`Session contains an invalid ${field}`);
   }
-}
-
-function invalidSessionResponse(message: string): Error {
-  const error = new Error(message);
-  error.name = 'OMSWalletInvalidResponseError';
-  return error;
 }

@@ -477,6 +477,99 @@ describe('WalletClient access management', () => {
       operation: 'wallet.listAccessPages'
     });
   });
+
+  it.each([
+    {
+      label: 'a missing network family',
+      wallet: {
+        id: 'wallet-invalid',
+        keyOrigin: 'enclave',
+        address: '0x1111111111111111111111111111111111111111'
+      }
+    },
+    {
+      label: 'an unsupported network family',
+      wallet: {
+        id: 'wallet-invalid',
+        networkFamily: 'bitcoin',
+        keyOrigin: 'enclave',
+        address: 'bc1invalid'
+      }
+    },
+    {
+      label: 'a missing key origin',
+      wallet: {
+        id: 'wallet-invalid',
+        networkFamily: 'evm',
+        address: '0x1111111111111111111111111111111111111111'
+      }
+    },
+    {
+      label: 'an unsupported key origin',
+      wallet: {
+        id: 'wallet-invalid',
+        networkFamily: 'evm',
+        keyOrigin: 'custodial',
+        address: '0x1111111111111111111111111111111111111111'
+      }
+    }
+  ])('classifies wallet responses with $label as invalid responses', async ({ wallet: result }) => {
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async (input: RequestInfo | URL) => {
+        if (input.toString().endsWith('/CreateWallet')) {
+          return jsonResponse({ wallet: result });
+        }
+        throw new Error(`Unexpected request: ${input.toString()}`);
+      })
+    );
+
+    await expect(createWalletWithSession().createWallet()).rejects.toMatchObject({
+      code: 'OMS_INVALID_RESPONSE',
+      operation: 'wallet.createWallet'
+    });
+  });
+
+  it.each([
+    {
+      label: 'an unsupported credential type',
+      credential: {
+        ...testCredential(),
+        type: 'delegated',
+        sessionId: 'session-1',
+        metadata: {
+          appUrl: 'https://app.example',
+          appName: 'Example App',
+          appLogoUrl: 'https://app.example/logo.png',
+          custom: {}
+        },
+        grants: { entries: [] }
+      }
+    },
+    {
+      label: 'incomplete remote session data',
+      credential: {
+        ...testCredential(),
+        type: 'remote',
+        sessionId: 'session-1'
+      }
+    }
+  ])('classifies access entries with $label as invalid responses', async ({ credential }) => {
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async (input: RequestInfo | URL) => {
+        if (input.toString().endsWith('/ListAccess')) {
+          return jsonResponse({ credentials: [credential], page: {} });
+        }
+        throw new Error(`Unexpected request: ${input.toString()}`);
+      })
+    );
+
+    await expect(createWalletWithSession().listAccess()).rejects.toMatchObject({
+      code: 'OMS_INVALID_RESPONSE',
+      operation: 'wallet.listAccess'
+    });
+  });
 });
 
 function createWalletWithSession(): WalletClient {

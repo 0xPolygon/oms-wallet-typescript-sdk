@@ -2,7 +2,13 @@ import type { X509Certificate } from '@peculiar/x509';
 import type { Decoder, Tag as CborTag } from 'cbor-x';
 
 import { attestationVerificationErrorPrefix } from './errors.js';
-import { base64DecodeBytes, base64EncodeBytes, bytesToHex, equalBytes } from './utils/base64.js';
+import {
+  base64DecodeBytes,
+  base64EncodeBytes,
+  bytesToHex,
+  equalBytes,
+  toArrayBuffer
+} from './utils/base64.js';
 
 type Fetch = (input: RequestInfo, init?: RequestInit) => Promise<Response>;
 
@@ -299,8 +305,4 @@ function randomAttestationNonce(): string {
 
 function rawCertificate(certificate: X509Certificate): Uint8Array {
   return new Uint8Array(certificate.rawData);
-}
-
-function toArrayBuffer(bytes: Uint8Array): ArrayBuffer {
-  return Uint8Array.from(bytes).buffer;
 }

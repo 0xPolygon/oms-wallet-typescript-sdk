@@ -21,3 +21,7 @@ export function equalBytes(left: Uint8Array, right: Uint8Array): boolean {
   for (let i = 0; i < left.length; i += 1) difference |= left[i] ^ right[i];
   return difference === 0;
 }
+
+export function toArrayBuffer(bytes: Uint8Array): ArrayBuffer {
+  return Uint8Array.from(bytes).buffer;
+}
