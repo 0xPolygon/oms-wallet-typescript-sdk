@@ -5,8 +5,8 @@ Wagmi connector for an active `@polygonlabs/oms-wallet` SDK instance.
 ## Basic setup
 
 ```ts
-import { createConfig, http } from 'wagmi'
-import { polygon } from 'wagmi/chains'
+import { connect, createConfig, disconnect, http } from '@wagmi/core'
+import { polygon } from 'viem/chains'
 import { FeeOptionSelector, OMSWallet } from '@polygonlabs/oms-wallet'
 import { omsWalletConnector } from '@polygonlabs/oms-wallet-wagmi-connector'
 
@@ -49,7 +49,7 @@ if (!omsWallet.wallet.walletAddress) {
   throw new Error('OMS auth completed without an active wallet.')
 }
 
-await connect({
+await connect(wagmiConfig, {
   connector: omsConnector,
   chainId: polygon.id,
 })
@@ -64,7 +64,7 @@ Wagmi `disconnect()` only disconnects the wagmi connector. It does not sign out 
 To sign out completely, disconnect wagmi state and then sign out with the SDK:
 
 ```ts
-await disconnect()
+await disconnect(wagmiConfig)
 await omsWallet.wallet.signOut()
 ```
 

@@ -17,24 +17,14 @@ import { WalletType } from '@polygonlabs/oms-wallet'
 const wallet = await omsWallet.wallet.createWallet()
 
 if (wallet.wallet.type === WalletType.Ethereum) {
-  useEthereumAddress(wallet.wallet.address)
+  const ethereumAddress = wallet.wallet.address
+  // Pass `ethereumAddress` to viem or another Ethereum-only API here.
 }
 ```
 
-Every `WalletAccount` now has a required `keyOrigin` field. Code that constructs wallet fixtures or
-implements SDK-facing wallet account types must set it to `WalletKeyOrigin.Enclave` or
-`WalletKeyOrigin.Imported`:
-
-```typescript
-import { WalletKeyOrigin, type EthereumWalletAccount } from '@polygonlabs/oms-wallet'
-
-const wallet: EthereumWalletAccount = {
-  id: 'wallet-id',
-  type: 'ethereum',
-  address: '0x1111111111111111111111111111111111111111',
-  keyOrigin: WalletKeyOrigin.Enclave,
-}
-```
+Every `WalletAccount` now has a required `keyOrigin` field. Wallets returned by the SDK already
+include it. Tests, mocks, or adapters that construct `WalletAccount` values directly must set it to
+`WalletKeyOrigin.Enclave` or `WalletKeyOrigin.Imported`.
 
 ### Access grants and revocation
 
@@ -45,7 +35,8 @@ const wallet: EthereumWalletAccount = {
 ```typescript
 for (const grant of await omsWallet.wallet.listAccess()) {
   if (grant.type === 'remote') {
-    showRemoteSession(grant.sessionId, grant.metadata, grant.grants)
+    // Use these fields to display the remote app/session and its authorized permissions.
+    console.log(grant.sessionId, grant.metadata, grant.grants)
   }
 }
 ```
@@ -70,8 +61,12 @@ to stop execution. `FeeOptionSelector.firstAvailable` already handles both spons
 non-sponsored transactions.
 
 ```typescript
-selectFeeOption: async (feeOptions) => {
-  if (feeOptions.length === 0) return undefined
-  return chooseFeeOption(feeOptions)
-}
+import { FeeOptionSelector, Networks } from '@polygonlabs/oms-wallet'
+
+await omsWallet.wallet.sendTransaction({
+  network: Networks.amoy,
+  to: '0x1111111111111111111111111111111111111111',
+  value: 1n,
+  selectFeeOption: FeeOptionSelector.firstAvailable,
+})
 ```

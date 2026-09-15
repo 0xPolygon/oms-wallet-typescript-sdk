@@ -234,7 +234,8 @@ const omsWallet = new OMSWallet({
 })
 
 const unsubscribe = omsWallet.wallet.onSessionExpired(({ session }) => {
-  showReauth(session)
+  // Use the expired session metadata to populate and display your reauthentication UI.
+  console.info('Session expired:', session)
 })
 ```
 
@@ -299,11 +300,21 @@ const recipient = await omsWallet.wallet.getWalletImportRecipientKey({
   cipherSuite: WalletImportCipherSuite.P256Sha256ChaCha20Poly1305,
 })
 
-// The application backend sends this value to Privy as `recipient_public_key`.
-const privyExport: {
+// Replace this path with your application backend endpoint.
+const response = await fetch('/api/export-privy-wallet', {
+  method: 'POST',
+  headers: { 'content-type': 'application/json' },
+  body: JSON.stringify({ recipientPublicKey: recipient.publicKey }),
+})
+
+if (!response.ok) {
+  throw new Error('Privy wallet export failed')
+}
+
+const privyExport = await response.json() as {
   encapsulated_key: string
   ciphertext: string
-} = await exportPrivyWalletOnYourBackend(recipient.publicKey)
+}
 
 await omsWallet.wallet.importEncryptedWallet({
   type: WalletType.Ethereum,
@@ -788,8 +799,11 @@ operate within the granted limits.
 ```typescript
 const credentialId = 'remote-credential-id'
 const metadata = await omsWallet.wallet.inspectRemoteCredential({ credentialId })
-showConsentScreen(metadata)
 
+// Display `metadata` to the wallet owner and continue only after they approve.
+console.log(metadata)
+
+// After the owner approves:
 const session = await omsWallet.wallet.authorizeRemoteAccess({
   credentialId,
   network: Networks.polygon,
