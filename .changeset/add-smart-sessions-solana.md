@@ -1,5 +1,5 @@
 ---
-'@polygonlabs/oms-wallet': major
+'@polygonlabs/oms-wallet': minor
 ---
 
 Add public smart-session credential inspection, owner-side session management, a signed remote

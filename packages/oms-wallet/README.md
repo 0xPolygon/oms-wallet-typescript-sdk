@@ -1,6 +1,8 @@
 # OMS Wallet TypeScript SDK
 
-Build non-custodial EVM wallet experiences in TypeScript with OMS Wallet: email and OIDC auth, session restore, message signing, transaction submission, and token balance queries.
+Build non-custodial EVM and Solana wallet experiences in TypeScript with OMS Wallet: email and OIDC
+auth, session restore, message signing, transaction submission, attested opt-in key import, smart
+sessions, and token balance queries.
 
 [API reference](https://docs.polygon.technology/wallets/sdk/typescript/api-reference)
 
@@ -279,9 +281,10 @@ console.log(wallet.keyOrigin === WalletKeyOrigin.Imported)
 The high-level method validates the key locally, fetches an attested recipient key, verifies the
 Nitro certificate chain, PCR0, freshness, nonce, signature, and request/response binding, and HPKE
 encrypts the private key before sending it. EVM keys can be 32 raw bytes or hexadecimal text;
-Solana keys can be a 32-byte seed, 64-byte keypair, or base58 text. Imported keys are never stored
-by the SDK. Import also works while a manual wallet selection is pending, provided its wallet type
-matches the pending selection.
+Solana keys can be a 32-byte seed, 64-byte keypair, or unambiguous base58 text. Pass raw bytes when
+a valid base58 encoding is itself exactly 32 or 64 characters, because those string lengths are
+rejected as ambiguous. Imported keys are never stored by the SDK. Import also works while a manual
+wallet selection is pending, provided its wallet type matches the pending selection.
 
 Custody systems that perform HPKE themselves can call `getWalletImportRecipientKey` followed by
 `importEncryptedWallet`. These advanced methods expose base64 key material and all WaaS-supported
@@ -737,6 +740,11 @@ Public methods throw `OMSWalletError` subclasses with stable SDK fields such as 
 
 For transaction writes, `OMS_TRANSACTION_EXECUTION_UNCONFIRMED` means the SDK has a `txnId` from preparation, but the execute request failed before the SDK could confirm whether the transaction was submitted; do not blindly resend the same write. `OMS_TRANSACTION_STATUS_LOOKUP_FAILED` means the transaction was submitted but status polling failed, so retry status lookup with the returned `txnId`. `retryable` describes the failed SDK operation, not the whole user intent.
 
+Wallet import reports an already-managed address as `OMS_WALLET_ADDRESS_ALREADY_IMPORTED` and a
+missing, malformed, stale, or untrusted enclave attestation as
+`OMS_ATTESTATION_VERIFICATION_FAILED`. Do not retry or send key material after an attestation
+failure until the SDK trust policy or backend attestation has been corrected.
+
 ```typescript
 import { OMSWalletError } from '@polygonlabs/oms-wallet'
 
@@ -751,11 +759,17 @@ try {
 
 ### Manage Access
 
+`listAccess` returns a discriminated `AccessGrant` union. Narrow on `type` before using remote-only
+session metadata, or pass `{ type: 'direct' }` / `{ type: 'remote' }` to filter the request.
+
 ```typescript
 const grants = await omsWallet.wallet.listAccess()
 
 for (const grant of grants) {
   console.log(grant.credentialId, grant.expiresAt, grant.isCaller)
+  if (grant.type === 'remote') {
+    console.log(grant.sessionId, grant.metadata, grant.grants)
+  }
 }
 
 for await (const page of omsWallet.wallet.listAccessPages({ pageSize: 25 })) {

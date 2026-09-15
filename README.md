@@ -1,11 +1,13 @@
 # OMS Wallet TypeScript SDK
 
-Build **non-custodial EVM wallet experiences in TypeScript** with OMS Wallet — email and OIDC
-sign-in, session restore, message signing, transaction submission, and token-balance queries —
-without your app ever holding a private key. This repository is the source of truth for the OMS
-Wallet SDK and its official [wagmi](https://wagmi.sh) connector: it exists so web and Node
-applications can integrate an OMS embedded wallet from a single, versioned, typed package set
-instead of re-implementing WaaS auth, request signing, and session handling by hand.
+Build **non-custodial EVM and Solana wallet experiences in TypeScript** with OMS Wallet — email and
+OIDC sign-in, session restore, message signing, transaction submission, token-balance queries, and
+attested opt-in key import. Normal wallet creation never exposes a private key through the SDK;
+import flows accept caller-provided key material only when an application explicitly uses them.
+This repository is the source of truth for the OMS Wallet SDK and its official
+[wagmi](https://wagmi.sh) connector: it exists so web and Node applications can integrate an OMS
+embedded wallet from a single, versioned, typed package set instead of re-implementing WaaS auth,
+request signing, and session handling by hand.
 
 It is a **pnpm workspace**. The root is a private orchestrator (not published); the shippable code
 lives in `packages/`, and `examples/` holds runnable browser and Node demos that consume the
@@ -15,8 +17,8 @@ packages exactly as an external app would.
 
 | Package | Published as | What it does |
 |---|---|---|
-| [`packages/oms-wallet`](packages/oms-wallet) | [`@polygonlabs/oms-wallet`](https://www.npmjs.com/package/@polygonlabs/oms-wallet) | The core SDK — email/OIDC authentication, WaaS request signing, wallet/session storage, transaction submission and status polling, signing, access management, and indexer balance queries. Ships dual CJS + ESM for browser and Node consumers. |
-| [`packages/oms-wallet-wagmi-connector`](packages/oms-wallet-wagmi-connector) | [`@polygonlabs/oms-wallet-wagmi-connector`](https://www.npmjs.com/package/@polygonlabs/oms-wallet-wagmi-connector) | Adapts an active `@polygonlabs/oms-wallet` instance as a [wagmi](https://wagmi.sh) connector, so existing wagmi apps can use OMS Wallet as a connection option. |
+| [`packages/oms-wallet`](packages/oms-wallet) | [`@polygonlabs/oms-wallet`](https://www.npmjs.com/package/@polygonlabs/oms-wallet) | The core SDK — email/OIDC authentication, EVM and Solana wallets, attested key import, signed remote access, transaction submission and status polling, access management, and EVM/Solana indexer balance queries. Ships dual CJS + ESM for browser and Node consumers. |
+| [`packages/oms-wallet-wagmi-connector`](packages/oms-wallet-wagmi-connector) | [`@polygonlabs/oms-wallet-wagmi-connector`](https://www.npmjs.com/package/@polygonlabs/oms-wallet-wagmi-connector) | Adapts an active Ethereum wallet from `@polygonlabs/oms-wallet` as a [wagmi](https://wagmi.sh) connector, so existing wagmi apps can use OMS Wallet as a connection option. |
 
 Both packages release **in lockstep** (a changesets `fixed` group), so they always share a version.
 
