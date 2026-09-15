@@ -5,8 +5,8 @@ Wagmi connector for an active `@polygonlabs/oms-wallet` SDK instance.
 ## Basic setup
 
 ```ts
-import { createConfig, http } from 'wagmi'
-import { polygon } from 'wagmi/chains'
+import { connect, createConfig, disconnect, http } from '@wagmi/core'
+import { polygon } from 'viem/chains'
 import { FeeOptionSelector, OMSWallet } from '@polygonlabs/oms-wallet'
 import { omsWalletConnector } from '@polygonlabs/oms-wallet-wagmi-connector'
 
@@ -35,6 +35,10 @@ export const wagmiConfig = createConfig({
 
 The connector does not render authentication UI. Authenticate with the OMS Wallet SDK first, then call wagmi `connect` with the OMS Wallet connector once `omsWallet.wallet.walletAddress` is set.
 
+The connector is Ethereum-only even though the core SDK also supports Solana wallets. Select an
+Ethereum wallet before connecting. Connecting or requesting accounts with an active Solana wallet
+rejects with `OMSWalletProviderRpcError` code `4100`.
+
 Email example:
 
 ```ts
@@ -45,7 +49,7 @@ if (!omsWallet.wallet.walletAddress) {
   throw new Error('OMS auth completed without an active wallet.')
 }
 
-await connect({
+await connect(wagmiConfig, {
   connector: omsConnector,
   chainId: polygon.id,
 })
@@ -60,7 +64,7 @@ Wagmi `disconnect()` only disconnects the wagmi connector. It does not sign out 
 To sign out completely, disconnect wagmi state and then sign out with the SDK:
 
 ```ts
-await disconnect()
+await disconnect(wagmiConfig)
 await omsWallet.wallet.signOut()
 ```
 
@@ -91,7 +95,13 @@ omsWalletConnector({
 })
 ```
 
-The SDK calls `selectFeeOption` after preparing the transaction. The selector receives `FeeOptionWithBalance[]`, including each WaaS fee option and wallet balance data when the indexer can load it. Use `FeeOptionSelector.firstAvailable` to choose the first option the wallet can pay, or return `option.selection` from a custom selector. Without a selector, the SDK keeps sponsored transactions fee-free and otherwise chooses the first returned fee option.
+The SDK calls `selectFeeOption` after preparing the transaction. For an unsponsored transaction, the
+selector receives `FeeOptionWithBalance[]`, including each WaaS fee option and wallet balance data
+when the indexer can load it. For a sponsored transaction, it receives an empty array; return
+`undefined` to continue or throw to stop execution. Use `FeeOptionSelector.firstAvailable` to handle
+both cases and choose the first affordable option when payment is required, or return
+`option.selection` from a custom selector. Without a selector, the SDK keeps sponsored transactions
+fee-free and otherwise chooses the first returned fee option.
 
 For React UI, keep `selectFeeOption` wired in the connector initializer and bridge it into a modal or sheet with app state. The workspace wagmi example shows this as a hook-driven modal; see `examples/wagmi/src/feeOptionSelectionBridge.ts`, `examples/wagmi/src/useFeeOptionSelection.ts`, and the fee option panel in `examples/wagmi/src/App.tsx`.
 

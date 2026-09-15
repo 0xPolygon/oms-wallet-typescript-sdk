@@ -39,12 +39,17 @@
     "build:node-example": "pnpm --filter node-example build",
     "dev:node-contract-deploy-example": "pnpm --filter node-contract-deploy-example dev",
     "build:node-contract-deploy-example": "pnpm --filter node-contract-deploy-example build",
+    "dev:privy-import-worker": "pnpm --filter privy-import-worker-example dev",
+    "build:privy-import-worker": "pnpm --filter privy-import-worker-example build",
+    "deploy:privy-import-worker": "pnpm --filter privy-import-worker-example deploy",
+    "dev:smart-session-example": "pnpm --filter smart-session-example dev",
+    "build:smart-session-example": "pnpm --filter smart-session-example build",
     "ci:stage-release": "pnpm lint && pnpm test && pnpm build && pnpm check:exports && node scripts/stage-npm-packages.mjs",
     "prepare": "husky"
   },
   "devDependencies": {
     "@changesets/changelog-github": "^0.7.0",
-    "@changesets/cli": "^2.30.0",
+    "@changesets/cli": "^3.0.2",
     "@commitlint/cli": "^19.0.0",
     "@commitlint/config-conventional": "^19.0.0",
     "@polygonlabs/apps-team-lint": "^2.1.0",
