@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
-import { Networks, OMSWallet } from '../src';
+import { Networks, OMSWallet, SolanaNetworks } from '../src';
 import { parsePublishableKey } from '../src/publishableKey';
 import { MemoryStorageManager } from '../src/storageManager';
 
@@ -12,23 +12,45 @@ afterEach(() => {
 
 describe('OMSWallet publishable key routing', () => {
   it.each([
-    ['pk_local_sdbx_project_key', 'https://sandbox-api.local.polygon-dev.technology'],
-    ['pk_local_live_project_key', 'https://api.local.polygon-dev.technology'],
-    ['pk_dev_sdbx_project_key', 'https://sandbox-api.dev.polygon-dev.technology'],
-    ['pk_dev_live_project_key', 'https://api.dev.polygon-dev.technology'],
-    ['pk_stg_sdbx_project_key', 'https://sandbox-api.stg.polygon-dev.technology'],
-    ['pk_stg_live_project_key', 'https://api.stg.polygon-dev.technology'],
-    ['pk_sdbx_project_key', 'https://sandbox-api.polygon.technology'],
-    ['pk_live_project_key', 'https://api.polygon.technology']
-  ])('derives service URLs from %s', (publishableKey, apiUrl) => {
+    [
+      'pk_local_sdbx_project_key',
+      'https://sandbox-api.local.polygon-dev.technology',
+      '0'.repeat(96)
+    ],
+    ['pk_local_live_project_key', 'https://api.local.polygon-dev.technology', '0'.repeat(96)],
+    ['pk_dev_sdbx_project_key', 'https://sandbox-api.dev.polygon-dev.technology', '0'.repeat(96)],
+    ['pk_dev_live_project_key', 'https://api.dev.polygon-dev.technology', '0'.repeat(96)],
+    [
+      'pk_stg_sdbx_project_key',
+      'https://sandbox-api.stg.polygon-dev.technology',
+      'e271fe4b26c9d58d6089b908ab713f888e6107e2cb4782ddaceea950bbec9971ccd9159e7a099bd506e04ce55c3da696'
+    ],
+    [
+      'pk_stg_live_project_key',
+      'https://api.stg.polygon-dev.technology',
+      'e271fe4b26c9d58d6089b908ab713f888e6107e2cb4782ddaceea950bbec9971ccd9159e7a099bd506e04ce55c3da696'
+    ],
+    [
+      'pk_sdbx_project_key',
+      'https://sandbox-api.polygon.technology',
+      '1935cbc713f0b43060315689e87285f6ba76bcf06f26d0719735e8d674b71e0eff71dcf77fe90ab32870ef3c954973b7'
+    ],
+    [
+      'pk_live_project_key',
+      'https://api.polygon.technology',
+      '1935cbc713f0b43060315689e87285f6ba76bcf06f26d0719735e8d674b71e0eff71dcf77fe90ab32870ef3c954973b7'
+    ]
+  ])('derives managed environment configuration from %s', (publishableKey, apiUrl, pcr0) => {
     expect(parsePublishableKey(publishableKey)).toEqual({
       projectId: 'prj_project',
       walletApiUrl: apiUrl,
-      indexerGatewayUrl: `${apiUrl}/v1/IndexerGateway/`
+      indexerGatewayUrl: `${apiUrl}/v1/IndexerGateway/`,
+      solanaIndexerGatewayUrl: `${apiUrl}/v1/SolanaIndexerGateway/`,
+      walletImportTrustedPcr0s: [pcr0]
     });
   });
 
-  it('uses the derived URLs for WaaS and IndexerGateway requests', async () => {
+  it('uses the derived URLs for WaaS and indexer requests', async () => {
     const fetchMock = vi.fn(async (input: RequestInfo | URL) => {
       const url = input.toString();
 
@@ -42,6 +64,10 @@ describe('OMSWallet publishable key routing', () => {
           nativeBalances: [],
           balances: []
         });
+      }
+
+      if (url.endsWith('/v1/SolanaIndexerGateway/GetTokenBalancesDetails')) {
+        return jsonResponse({ balances: [], errors: [] });
       }
 
       throw new Error(`Unexpected request: ${url}`);
@@ -72,12 +98,21 @@ describe('OMSWallet publishable key routing', () => {
       nativeBalances: [],
       balances: []
     });
+    await expect(
+      oms.indexer.getSolanaBalances({
+        networks: [SolanaNetworks.mainnet],
+        walletAddress: 'solana-wallet'
+      })
+    ).resolves.toEqual({ status: 200, balances: [], errors: [] });
 
     expect(fetchMock.mock.calls[0][0].toString()).toBe(
       'https://api.stg.polygon-dev.technology/v1/WaasPublic/IsValidMessageSignature'
     );
     expect(fetchMock.mock.calls[1][0].toString()).toBe(
       'https://api.stg.polygon-dev.technology/v1/IndexerGateway/GetTokenBalancesDetails'
+    );
+    expect(fetchMock.mock.calls[2][0].toString()).toBe(
+      'https://api.stg.polygon-dev.technology/v1/SolanaIndexerGateway/GetTokenBalancesDetails'
     );
   });
 

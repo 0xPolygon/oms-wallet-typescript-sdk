@@ -1,7 +1,8 @@
 import type {
-  WalletType as GeneratedWalletType,
+  Ciphersuite as GeneratedCiphersuite,
   FeeOption as GeneratedFeeOption,
   FeeOptionSelection as GeneratedFeeOptionSelection,
+  KeyOrigin as GeneratedKeyOrigin,
   TransactionStatusResponse as GeneratedTransactionStatusResponse
 } from '../generated/waas.gen.js';
 import type {
@@ -9,15 +10,27 @@ import type {
   FeeOptionSelection,
   OidcAuthMode,
   TransactionStatusResponse,
+  WalletImportCipherSuite,
+  WalletKeyOrigin,
   WalletType as PublicWalletType
 } from '../types/waas.js';
 
 import {
   AuthMode as GeneratedAuthMode,
+  Ciphersuite as GeneratedCiphersuiteValues,
+  KeyOrigin as GeneratedKeyOriginValues,
+  NetworkFamily as GeneratedNetworkFamily,
   TransactionMode as GeneratedTransactionMode,
   TransactionStatus as GeneratedTransactionStatus
 } from '../generated/waas.gen.js';
-import { AuthMode, TransactionMode, TransactionStatus } from '../types/waas.js';
+import {
+  AuthMode,
+  TransactionMode,
+  TransactionStatus,
+  WalletImportCipherSuite as WalletImportCipherSuiteValues,
+  WalletKeyOrigin as WalletKeyOriginValues
+} from '../types/waas.js';
+import { invalidResponseError } from './invalidResponse.js';
 
 export function toGeneratedAuthMode(authMode: OidcAuthMode): GeneratedAuthMode {
   switch (authMode) {
@@ -28,12 +41,56 @@ export function toGeneratedAuthMode(authMode: OidcAuthMode): GeneratedAuthMode {
   }
 }
 
-export function toGeneratedWalletType(walletType: PublicWalletType): GeneratedWalletType {
-  return walletType as GeneratedWalletType;
+export function toGeneratedNetworkFamily(walletType: PublicWalletType): GeneratedNetworkFamily {
+  switch (walletType) {
+    case 'ethereum':
+      return GeneratedNetworkFamily.EVM;
+    case 'solana':
+      return GeneratedNetworkFamily.Solana;
+  }
 }
 
-export function fromGeneratedWalletType(walletType: GeneratedWalletType): PublicWalletType {
-  return walletType as PublicWalletType;
+export function fromGeneratedNetworkFamily(
+  networkFamily: GeneratedNetworkFamily
+): PublicWalletType {
+  switch (networkFamily) {
+    case GeneratedNetworkFamily.EVM:
+      return 'ethereum';
+    case GeneratedNetworkFamily.Solana:
+      return 'solana';
+    default:
+      throw invalidResponseError(
+        `Wallet response contains unsupported networkFamily: ${String(networkFamily)}`
+      );
+  }
+}
+
+export function fromGeneratedWalletKeyOrigin(keyOrigin: GeneratedKeyOrigin): WalletKeyOrigin {
+  switch (keyOrigin) {
+    case GeneratedKeyOriginValues.Enclave:
+      return WalletKeyOriginValues.Enclave;
+    case GeneratedKeyOriginValues.Imported:
+      return WalletKeyOriginValues.Imported;
+    default:
+      throw invalidResponseError(
+        `Wallet response contains unsupported keyOrigin: ${String(keyOrigin)}`
+      );
+  }
+}
+
+export function toGeneratedWalletImportCipherSuite(
+  cipherSuite: WalletImportCipherSuite
+): GeneratedCiphersuite {
+  switch (cipherSuite) {
+    case WalletImportCipherSuiteValues.X25519Sha256Aes256Gcm:
+      return GeneratedCiphersuiteValues.X25519_SHA256_AES_256_GCM;
+    case WalletImportCipherSuiteValues.X25519Sha256ChaCha20Poly1305:
+      return GeneratedCiphersuiteValues.X25519_SHA256_ChaCha20_Poly1305;
+    case WalletImportCipherSuiteValues.P256Sha256Aes256Gcm:
+      return GeneratedCiphersuiteValues.P256_SHA256_AES_256_GCM;
+    case WalletImportCipherSuiteValues.P256Sha256ChaCha20Poly1305:
+      return GeneratedCiphersuiteValues.P256_SHA256_ChaCha20_Poly1305;
+  }
 }
 
 export function toGeneratedTransactionMode(mode: TransactionMode): GeneratedTransactionMode {
@@ -82,5 +139,5 @@ export function fromGeneratedFeeOption(feeOption: GeneratedFeeOption): FeeOption
 export function toGeneratedFeeOptionSelection(
   selection: FeeOptionSelection
 ): GeneratedFeeOptionSelection {
-  return { token: selection.token };
+  return { token: selection.token, index: selection.index };
 }
