@@ -2,7 +2,7 @@ export const DEMO_ENVIRONMENTS = [
   {
     id: 'production',
     label: 'Production sandbox',
-    publishableKey: 'pk_sdbx_01kqfw9zaykks_01kwetq606fv699qb9bhfmb45s'
+    publishableKey: 'pk_sdbx_01m2mwxcn8p59_01m2n33tshe52vt5jyjyt0kc6g'
   },
   {
     id: 'development',
