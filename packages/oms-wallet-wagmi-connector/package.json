@@ -1,6 +1,6 @@
 {
   "name": "@polygonlabs/oms-wallet-wagmi-connector",
-  "version": "0.2.0",
+  "version": "0.3.0",
   "description": "Wagmi connector for OMS Wallet.",
   "license": "Apache-2.0",
   "type": "module",

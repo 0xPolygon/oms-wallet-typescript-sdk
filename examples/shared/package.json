@@ -1,6 +1,6 @@
 {
   "name": "oms-example-shared",
-  "version": "0.0.0",
+  "version": "0.0.1",
   "private": true,
   "description": "Shared design tokens, components, and utilities for the OMS Wallet browser examples.",
   "type": "module",
