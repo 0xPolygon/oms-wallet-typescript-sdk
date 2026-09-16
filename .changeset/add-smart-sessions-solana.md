@@ -11,8 +11,8 @@ token account must be created.
 `walletAddress` and `WalletAccount` now represent both Ethereum and Solana addresses. Use the wallet
 type discriminator before applying Ethereum-specific address handling.
 
-Ethereum-specific signing, transactions, smart-session authorization, and the wagmi connector now
-reject an active Solana wallet explicitly.
+Ethereum-specific signing, transactions, and smart-session authorization now reject an active
+Solana wallet explicitly.
 
 Sponsored transactions now invoke an optional fee selector with an empty list before execution, so
 applications can acknowledge the free fee or stop the transaction. `FeeOptionSelector.firstAvailable`
