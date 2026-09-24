@@ -12,7 +12,7 @@ export const DEMO_ENVIRONMENTS = [
   {
     id: 'staging',
     label: 'Staging sandbox',
-    publishableKey: 'pk_stg_sdbx_01kqab7as5htf_01kxgdcajtfcgv9e6f56xm3rc2'
+    publishableKey: 'pk_stg_sdbx_01m3a4z4ect1b_01m3a5d1eaffavebejndwsny90'
   }
 ] as const;
 
