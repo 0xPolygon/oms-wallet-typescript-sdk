@@ -66,7 +66,7 @@ That token identifies an independent backend RAC and scopes all of its approval 
 sessions, and transactions. The authenticated dashboard then asks the Worker to generate that RAC's
 key, which this demo stores in local D1.
 
-The checked-in Development sandbox publishable key is configured in `wrangler.jsonc`. Replace it
+The checked-in Production sandbox publishable key is configured in `wrangler.jsonc`. Replace it
 there when testing another WaaS project or environment.
 
 Start all three processes. The `predev` hook initializes or updates local D1 before building the
