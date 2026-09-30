@@ -2,6 +2,29 @@
 
 Wagmi connector for an active `@polygonlabs/oms-wallet` SDK instance.
 
+## Installation
+
+```bash
+pnpm add @polygonlabs/oms-wallet-wagmi-connector @polygonlabs/oms-wallet @wagmi/core viem
+```
+
+For npm or yarn projects:
+
+```bash
+npm install @polygonlabs/oms-wallet-wagmi-connector @polygonlabs/oms-wallet @wagmi/core viem
+yarn add @polygonlabs/oms-wallet-wagmi-connector @polygonlabs/oms-wallet @wagmi/core viem
+```
+
+Peer dependencies:
+
+| Package | Range |
+|---|---|
+| `@polygonlabs/oms-wallet` | The same release version as this package (the two are versioned in lockstep) |
+| `@wagmi/core` | `>=3.5.0 <4` |
+| `viem` | `>=2.48.4 <3` |
+
+This package is ESM-only and requires Node.js 22 or later.
+
 ## Basic setup
 
 ```ts

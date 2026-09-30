@@ -10,7 +10,6 @@ Run it from the repository root:
 
 ```bash
 pnpm install
-pnpm build
 pnpm dev:example
 ```
 
@@ -39,6 +38,10 @@ Its source and deployment instructions are in `examples/helpers/privy-import-wor
 
 The deployed example is available at `https://0xpolygon.github.io/oms-wallet-typescript-sdk/react-example/`.
 
+When the active wallet is a Solana wallet, the example shows a Solana operations panel
+(`src/SolanaExample.tsx`) that signs and verifies a message, reads the Devnet SOL balance, and
+sends SOL or SPL transfers on Solana Devnet with fee-option selection.
+
 The Amoy-only "ERC20 example" panel includes a WalletKit Dollar example using
 the demo WKUSD contract deployed on Polygon Amoy.
 
@@ -47,6 +50,5 @@ Google redirect sign-in uses the SDK default Google client id. Apple redirect si
 Build it from the repository root:
 
 ```bash
-pnpm build
 pnpm build:example
 ```

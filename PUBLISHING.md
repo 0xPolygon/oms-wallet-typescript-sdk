@@ -89,7 +89,8 @@ pnpm check:exports   # publint — validates the publishable packages' exports/t
 
 These are the same standard scripts the CI workflow runs (`.github/workflows/ci-trigger.yml`): the
 shared `ci` composite runs lint/typecheck/test, a build job runs `build` + `check:exports`, and a
-drift-check job runs each package's `codegen-drift-check`. The release helper additionally verifies
+drift-check job runs the `codegen-drift-check` script, which only `@polygonlabs/oms-wallet`
+defines (it rebuilds, then checks the public API baseline and `API.md`). The release helper additionally verifies
 the fixed-package invariant and the pnpm-packed manifests immediately before staging.
 
 ## Prerelease / snapshot builds
