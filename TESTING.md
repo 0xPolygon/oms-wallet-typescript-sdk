@@ -3,15 +3,15 @@
 How testing works in this repo. `AGENTS.md` points here so agents know how to verify changes.
 
 > The SDK lives in `packages/oms-wallet`. Paths below (`tests/`, `type-tests/`, `src/`) are relative
-> to that package, and SDK-scoped commands (`vitest`, `tsc --noEmit`, `test:types`) run either from
-> inside `packages/oms-wallet` or from the repo root with `pnpm --filter @polygonlabs/oms-wallet …`.
-> The root `pnpm test` runs the release-helper unit tests, then delegates to both publishable
-> packages.
+> to that package, and SDK-scoped scripts (`test`, `test:types`, `test:watch`, `check:public-api`,
+> `generate:api`, `check:api`) run either from inside `packages/oms-wallet` or from the repo root with
+> `pnpm --filter @polygonlabs/oms-wallet <script>`. The root `pnpm test` runs the release-helper unit
+> tests, then delegates to both publishable packages.
 
 ## Frameworks & tools
 
 - **Test runner:** [Vitest](https://vitest.dev/) v4+
-- **Type tests:** `tsc --noEmit` (compile-time API assertions in `type-tests/`)
+- **Type tests:** `tsc --noEmit` via `test:types` (compile-time API assertions in `type-tests/`)
 - **Packaged API check:** TypeScript AST comparison of built declarations with a committed public API baseline
 - **No coverage enforcement** currently — focus is on behavioral correctness
 - **Environment:** `dotenv` loaded via `vitest.config.ts`; tests run serially (`fileParallelism: false`)
@@ -22,18 +22,22 @@ How testing works in this repo. `AGENTS.md` points here so agents know how to ve
   behavior, request payloads, error mapping, OIDC state handling, pagination, transaction status,
   and type-level API contracts — not internal implementation details.
 - **Location:** `tests/**/*.ts`
-- **Run:** `pnpm exec vitest run` (or `pnpm test` which runs this then type tests)
+- **Run:** `pnpm --filter @polygonlabs/oms-wallet exec vitest run` (or `pnpm --filter @polygonlabs/oms-wallet test`, which runs this then the type tests)
 - **Package tests:** `packages/oms-wallet-wagmi-connector/tests/**/*.ts` run from that package with
   `pnpm --filter @polygonlabs/oms-wallet-wagmi-connector test`
-- **Release helper:** `scripts/stage-npm-packages.test.mjs` uses Node's built-in test runner to
-  validate fixed-package and packed-manifest safeguards without contacting npm
+- **Release helpers:** `scripts/stage-npm-packages.test.mjs` and `scripts/prepare-npm-snapshot.test.mjs`
+  use Node's built-in test runner to validate fixed-package, packed-manifest, and snapshot-tag
+  safeguards without contacting npm
+- **API docs generator:** `packages/oms-wallet/scripts/generate-api-docs.test.cjs` covers the
+  generator that produces `API.md`; run it with
+  `pnpm --filter @polygonlabs/oms-wallet test:api-generator`
 
 ## Integration / type tests
 
 - **Scope:** Compile-time API contract tests — verify that exported TypeScript types match
   expected shapes. These catch public API regressions that runtime tests cannot.
 - **Location:** `type-tests/oidcProviderTypes.ts`
-- **Run:** `pnpm test:types`
+- **Run:** `pnpm --filter @polygonlabs/oms-wallet test:types`
 - **Note:** A few existing tests in `tests/` seed private wallet state via `(wallet as any)` to
   exercise established session fixtures. Use public methods or small fixtures for new coverage.
 
@@ -52,10 +56,13 @@ How testing works in this repo. `AGENTS.md` points here so agents know how to ve
 | Changed wagmi React example | `pnpm build:wagmi-example` |
 | Changed Node example | `pnpm build:node-example` |
 | Changed Node contract deploy example | `pnpm build:node-contract-deploy-example` |
-| Changed public types / `src/index.ts` | `pnpm test:types` |
-| Changed built declarations or package exports | `pnpm build && pnpm check:public-api` |
-| Full pre-handoff check | `pnpm exec tsc --noEmit && pnpm test` |
-| Watch mode during development | `pnpm test:watch` |
+| Changed public types / `src/index.ts` | `pnpm --filter @polygonlabs/oms-wallet test:types` |
+| Changed built declarations or package exports | `pnpm build && pnpm --filter @polygonlabs/oms-wallet check:public-api` |
+| Changed public API (regenerate `API.md`) | `pnpm --filter @polygonlabs/oms-wallet generate:api` |
+| Verify `API.md` and the public API baseline are current | `pnpm --filter @polygonlabs/oms-wallet check:api` |
+| Changed the API docs generator | `pnpm --filter @polygonlabs/oms-wallet test:api-generator` |
+| Full pre-handoff check | `pnpm typecheck && pnpm test` |
+| Watch mode during development | `pnpm --filter @polygonlabs/oms-wallet test:watch` |
 | High-risk paths (auth, signing, tx, storage) | Add a focused regression test, then `pnpm test` |
 
 ## Conventions
@@ -97,10 +104,13 @@ How testing works in this repo. `AGENTS.md` points here so agents know how to ve
 
 | Goal | Command |
 |---|---|
-| Run unit tests | `pnpm exec vitest run` |
-| Run type tests | `pnpm test:types` |
+| Run SDK unit tests | `pnpm --filter @polygonlabs/oms-wallet exec vitest run` |
+| Run type tests | `pnpm --filter @polygonlabs/oms-wallet test:types` |
 | Run everything | `pnpm test` |
 | Run release-helper tests | `pnpm test:release` |
-| Typecheck (no emit) | `pnpm exec tsc --noEmit` |
-| Check packaged declarations | `pnpm check:public-api` |
-| Watch mode | `pnpm test:watch` |
+| Typecheck (no emit) | `pnpm typecheck` |
+| Check packaged declarations | `pnpm --filter @polygonlabs/oms-wallet check:public-api` |
+| Regenerate `API.md` | `pnpm --filter @polygonlabs/oms-wallet generate:api` |
+| Check `API.md` and baseline | `pnpm --filter @polygonlabs/oms-wallet check:api` |
+| Test the API docs generator | `pnpm --filter @polygonlabs/oms-wallet test:api-generator` |
+| Watch mode | `pnpm --filter @polygonlabs/oms-wallet test:watch` |

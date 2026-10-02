@@ -10,7 +10,6 @@ Run it from the repository root:
 
 ```bash
 pnpm install
-pnpm build
 OMS_PUBLISHABLE_KEY=your-publishable-key pnpm dev:node-example
 ```
 

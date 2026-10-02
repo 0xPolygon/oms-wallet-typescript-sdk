@@ -134,7 +134,7 @@ void omsWallet.wallet.signInWithOidcRedirect({ provider: OmsRelayOidcProviders.a
 
 // On the callback page:
 const result = await omsWallet.wallet.completeOidcRedirectAuth()
-if (result) {
+if (result && 'walletAddress' in result) {
   console.log('Wallet address:', result.walletAddress)
 }
 ```
@@ -151,7 +151,7 @@ window.location.assign(authorizationUrl)
 
 // On the callback route:
 const result = await omsWallet.wallet.completeOidcRedirectAuth()
-if (result) {
+if (result && 'walletAddress' in result) {
   console.log('Wallet address:', result.walletAddress)
 }
 ```
@@ -367,6 +367,18 @@ const isValid = await omsWallet.wallet.isValidMessageSignature({
 
 ```typescript
 import { Networks, WalletType } from '@polygonlabs/oms-wallet'
+
+const typedData = {
+  domain: { name: 'Checkout', version: '1', chainId: 80002n },
+  types: {
+    Order: [
+      { name: 'orderId', type: 'uint256' },
+      { name: 'amount', type: 'uint256' },
+    ],
+  },
+  primaryType: 'Order',
+  message: { orderId: 1042n, amount: 1_000_000n },
+} as const
 
 const activeWallet = (await omsWallet.wallet.listWallets()).find(
   (wallet) => wallet.address === omsWallet.wallet.walletAddress,
@@ -894,118 +906,35 @@ long-running single process can reuse `EthereumPrivateKeyCredentialSigner`; dist
 should wrap `CredentialSigner` with a shared atomic nonce store. The
 [`examples/smart-session`](../../examples/smart-session) Cloudflare example uses D1 for this.
 
-## React Example
+## Examples
 
-A deployed React example is available at [https://0xpolygon.github.io/oms-wallet-typescript-sdk/react-example/](https://0xpolygon.github.io/oms-wallet-typescript-sdk/react-example/).
+Runnable examples live in the
+[repository](https://github.com/0xPolygon/oms-wallet-typescript-sdk/tree/master/examples):
 
-To run it locally from the repository root:
+| Example | What it shows | Live demo |
+|---|---|---|
+| [`react`](https://github.com/0xPolygon/oms-wallet-typescript-sdk/tree/master/examples/react) | Email, Google, and Apple sign-in, signing, transactions, balances, wallet management, Privy wallet import, and Solana | [Live demo](https://0xpolygon.github.io/oms-wallet-typescript-sdk/react-example/) |
+| [`wagmi`](https://github.com/0xPolygon/oms-wallet-typescript-sdk/tree/master/examples/wagmi) | The wagmi connector with the MetaMask connector and the Trails widget | [Live demo](https://0xpolygon.github.io/oms-wallet-typescript-sdk/wagmi-example/) |
+| [`trails-actions`](https://github.com/0xPolygon/oms-wallet-typescript-sdk/tree/master/examples/trails-actions) | Trails swap, Earn deposit, and Earn withdrawal flows | [Live demo](https://0xpolygon.github.io/oms-wallet-typescript-sdk/trails-actions-example/) |
+| [`custom-google-redirect`](https://github.com/0xPolygon/oms-wallet-typescript-sdk/tree/master/examples/custom-google-redirect) | Google as a custom OIDC provider with a localhost redirect URI | Local only |
+| [`custom-auth0-id-token`](https://github.com/0xPolygon/oms-wallet-typescript-sdk/tree/master/examples/custom-auth0-id-token) | Passing an Auth0-issued ID token to `signInWithOidcIdToken` | Local only |
+| [`node`](https://github.com/0xPolygon/oms-wallet-typescript-sdk/tree/master/examples/node) | Email OTP sign-in and message signing from a terminal | Local only |
+| [`node-contract-deploy-example`](https://github.com/0xPolygon/oms-wallet-typescript-sdk/tree/master/examples/node-contract-deploy-example) | Compiling and deploying an ERC-20 on Polygon Amoy from Node | Local only |
+| [`smart-session`](https://github.com/0xPolygon/oms-wallet-typescript-sdk/tree/master/examples/smart-session) | Backend-owned RACs serving smart sessions approved by owner wallets, on a Cloudflare Worker | Local only |
 
-```bash
-pnpm dev:example
-```
+See the [repository README](https://github.com/0xPolygon/oms-wallet-typescript-sdk#readme) for how
+to run them.
 
-## Custom Google Redirect Example
+## Wagmi connector
 
-The custom Google redirect example verifies Google configured as a custom OIDC
-provider with `providerRedirectUri: "http://localhost:5173"`. It does not use
-the SDK built-in Google relay helper.
-
-To run it locally from the repository root:
-
-```bash
-pnpm dev:custom-google-redirect-example
-```
-
-## Auth0-issued ID Token Example
-
-The Auth0-issued ID-token example uses `@auth0/auth0-react` to authenticate the user,
-reads the raw Auth0 ID token, and passes it to `signInWithOidcIdToken` with the
-Auth0 issuer and client ID as audience. The authenticated wallet can also submit
-a sponsored native Polygon Amoy transaction using prefilled test values.
-
-Add `http://localhost:5173` to the Auth0 application's Allowed Callback URLs,
-Allowed Logout URLs, and Allowed Web Origins,
-then run it locally from the repository root:
-
-```bash
-pnpm dev:custom-auth0-id-token-example
-```
-
-## Wagmi Connector
-
-This workspace also includes `@polygonlabs/oms-wallet-wagmi-connector`, an ESM-only package that adapts an
-active OMS Wallet SDK instance to wagmi's connector API.
-
-```bash
-pnpm --filter @polygonlabs/oms-wallet-wagmi-connector build
-pnpm --filter @polygonlabs/oms-wallet-wagmi-connector test
-```
-
-See [packages/oms-wallet-wagmi-connector/README.md](https://github.com/0xPolygon/oms-wallet-typescript-sdk/blob/master/packages/oms-wallet-wagmi-connector/README.md) for usage.
-
-## Wagmi React Example
-
-The Wagmi example uses `@polygonlabs/oms-wallet-wagmi-connector`, wagmi's MetaMask connector, and the Trails widget.
-
-The deployed Wagmi example is available at [https://0xpolygon.github.io/oms-wallet-typescript-sdk/wagmi-example/](https://0xpolygon.github.io/oms-wallet-typescript-sdk/wagmi-example/).
-
-To run it locally from the repository root:
-
-```bash
-pnpm dev:wagmi-example
-```
-
-## Trails Actions React Example
-
-The Trails Actions example prepares and sends Polygon swap, Earn deposit, swap plus Earn deposit, and Earn withdrawal flows with `0xtrails/actions`.
-
-The deployed Trails Actions example is available at [https://0xpolygon.github.io/oms-wallet-typescript-sdk/trails-actions-example/](https://0xpolygon.github.io/oms-wallet-typescript-sdk/trails-actions-example/).
-
-To run it locally from the repository root:
-
-```bash
-pnpm dev:trails-actions-example
-```
-
-## Node Example
-
-The Node example walks through email OTP sign-in and message signing from a terminal.
-
-To run it locally from the repository root:
-
-```bash
-OMS_PUBLISHABLE_KEY=your-publishable-key pnpm dev:node-example
-```
-
-## Node Contract Deploy Example
-
-The Node contract deploy example compiles a small ERC-20 contract and submits a Polygon Amoy deployment transaction through the OMS Wallet API.
-
-To run it locally from the repository root:
-
-```bash
-cp examples/node-contract-deploy-example/.env.example examples/node-contract-deploy-example/.env.local
-# Fill OMS_PUBLISHABLE_KEY in examples/node-contract-deploy-example/.env.local
-pnpm dev:node-contract-deploy-example
-```
+To use OMS Wallet with [wagmi](https://wagmi.sh), install
+[`@polygonlabs/oms-wallet-wagmi-connector`](https://www.npmjs.com/package/@polygonlabs/oms-wallet-wagmi-connector)
+from npm. It is an ESM-only package that adapts an active Ethereum wallet from this SDK to wagmi's
+connector API.
 
 ## API Reference
 
 See [API.md](./API.md) for the full method and type reference.
-
-## Publishing
-
-See [PUBLISHING.md](https://github.com/0xPolygon/oms-wallet-typescript-sdk/blob/master/PUBLISHING.md) for release and npm publishing steps.
-
-## Contributing
-
-1. **Read [`AGENTS.md`](https://github.com/0xPolygon/oms-wallet-typescript-sdk/blob/master/AGENTS.md)** — covers repo layout, coding rules, and the agent workflow.
-2. **Install dependencies:** `pnpm install`
-3. **Verify your change:** `pnpm exec tsc --noEmit && pnpm test`
-4. **Branch naming:** use plain descriptive names like `fix-login-timeout` (no `codex/` prefix).
-5. **Open a PR** — the PR template will walk you through the checklist.
-
-See [`TESTING.md`](https://github.com/0xPolygon/oms-wallet-typescript-sdk/blob/master/TESTING.md) for full testing conventions and commands.
 
 ## License
 

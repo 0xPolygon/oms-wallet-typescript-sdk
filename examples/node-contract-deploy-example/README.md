@@ -30,7 +30,6 @@ From the repository root:
 
 ```bash
 pnpm install
-pnpm build
 cp examples/node-contract-deploy-example/.env.example examples/node-contract-deploy-example/.env.local
 # Fill OMS_PUBLISHABLE_KEY in .env.local
 pnpm dev:node-contract-deploy-example

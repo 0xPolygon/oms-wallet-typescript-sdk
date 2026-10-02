@@ -13,8 +13,8 @@
 <!-- How was this verified? Commands run, manual steps, screenshots. -->
 
 - [ ] `pnpm test` passes
-- [ ] `pnpm exec tsc --noEmit` passes
-- [ ] `pnpm test:types` passes (if public types changed)
+- [ ] `pnpm typecheck` passes
+- [ ] `pnpm --filter @polygonlabs/oms-wallet test:types` passes (if public types changed)
 - [ ] `pnpm --filter @polygonlabs/oms-wallet-wagmi-connector test` passes (if connector behavior changed)
 - [ ] `pnpm --filter @polygonlabs/oms-wallet-wagmi-connector build` passes (if connector types/build changed)
 - [ ] Relevant example builds pass: `pnpm build:example`, `pnpm build:trails-actions-example`, `pnpm build:wagmi-example`, `pnpm build:node-example`, or `pnpm build:node-contract-deploy-example`

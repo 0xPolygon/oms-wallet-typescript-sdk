@@ -11,7 +11,6 @@ Run it from the repository root:
 
 ```bash
 pnpm install
-pnpm build
 pnpm dev:trails-actions-example
 ```
 
@@ -25,6 +24,5 @@ Google and Apple redirect login use the SDK's default provider helpers.
 Build it from the repository root:
 
 ```bash
-pnpm build
 pnpm build:trails-actions-example
 ```

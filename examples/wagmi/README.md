@@ -6,7 +6,6 @@ Run it from the repository root:
 
 ```bash
 pnpm install
-pnpm build
 pnpm dev:wagmi-example
 ```
 
@@ -43,6 +42,5 @@ call `omsWallet.wallet.signOut()` from the SDK.
 Build it from the repository root:
 
 ```bash
-pnpm build
 pnpm build:wagmi-example
 ```
