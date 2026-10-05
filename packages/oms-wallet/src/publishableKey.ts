@@ -11,10 +11,11 @@ interface PublishableKeyRoute {
 // trusts both measurements before deploying the replacement, then remove the retired measurement.
 const debugWalletImportPcr0s = ['0'.repeat(96)];
 const stagingWalletImportPcr0s = [
-  'e271fe4b26c9d58d6089b908ab713f888e6107e2cb4782ddaceea950bbec9971ccd9159e7a099bd506e04ce55c3da696'
+  '3d21c70519a0ea3d5e6af43c5323234d90755d1ca08431064bd9687ddde4a4788a0a4736701513eee6008f1ec17e0d23'
 ];
 const productionWalletImportPcr0s = [
-  '1935cbc713f0b43060315689e87285f6ba76bcf06f26d0719735e8d674b71e0eff71dcf77fe90ab32870ef3c954973b7'
+  '1935cbc713f0b43060315689e87285f6ba76bcf06f26d0719735e8d674b71e0eff71dcf77fe90ab32870ef3c954973b7',
+  '66d0d20073ec8549b6eb1cd3cd53311495225ec79d68f168ab734b24a69a8ed0f890f85ff31d5f0a79486a4e3a303b3c'
 ];
 
 const publishableKeyRoutes: PublishableKeyRoute[] = [
