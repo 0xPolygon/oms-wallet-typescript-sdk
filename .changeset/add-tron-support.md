@@ -20,4 +20,5 @@ Add Tron wallet support, and replace `walletAddress` with a typed `activeWallet`
 - **`wallet.session`** is now `OMSWalletSession | undefined`, with `expiresAt` and `auth` always defined. `OMSWalletSessionState` is renamed to **`OMSWalletSession`** and no longer has `walletAddress`.
 - `walletAddress` is removed from auth and wallet activation results. Use `result.wallet.address`.
 - Session-expired events now include the expired `wallet`.
+- Wallet responses whose Ethereum address is not a valid hex address now fail with `OMS_INVALID_RESPONSE` instead of being passed through as an `Address`.
 - Sessions saved by 0.3.x are discarded on load, so users sign in once after upgrading.

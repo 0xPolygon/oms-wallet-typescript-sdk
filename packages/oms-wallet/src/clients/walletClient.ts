@@ -3041,7 +3041,7 @@ function parseStoredWalletAccount(value: unknown): WalletAccount | undefined {
   ) {
     return undefined;
   }
-  if (wallet.type === WalletType.Ethereum && !isAddress(wallet.address)) {
+  if (wallet.type === WalletType.Ethereum && !isAddress(wallet.address, { strict: false })) {
     return undefined;
   }
   return {

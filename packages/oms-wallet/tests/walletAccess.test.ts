@@ -497,6 +497,15 @@ describe('WalletClient access management', () => {
       }
     },
     {
+      label: 'an Ethereum wallet without a hex address',
+      wallet: {
+        id: 'wallet-invalid',
+        networkFamily: 'evm',
+        keyOrigin: 'enclave',
+        address: 'TNPeeaaFB7K9cmo4uQpcU32zGK8G1NYqeL'
+      }
+    },
+    {
       label: 'a missing key origin',
       wallet: {
         id: 'wallet-invalid',
