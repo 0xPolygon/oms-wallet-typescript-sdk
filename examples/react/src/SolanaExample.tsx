@@ -426,7 +426,7 @@ function errorMessage(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
 }
 
-function parseDecimalBaseUnits(value: string, decimals: number, label: string): bigint {
+export function parseDecimalBaseUnits(value: string, decimals: number, label: string): bigint {
   const normalized = value.trim();
   if (!/^\d+(\.\d+)?$/.test(normalized)) {
     throw new Error(`${label} must be a positive decimal value.`);
@@ -455,7 +455,7 @@ function parseTokenDecimals(value: string): number {
   return parsed;
 }
 
-function formatBaseUnits(value: bigint, decimals: number): string {
+export function formatBaseUnits(value: bigint, decimals: number): string {
   const divisor = 10n ** BigInt(decimals);
   const whole = value / divisor;
   const fraction = (value % divisor).toString().padStart(decimals, '0').replace(/0+$/, '');

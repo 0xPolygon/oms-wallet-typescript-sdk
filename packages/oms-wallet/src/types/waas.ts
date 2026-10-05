@@ -10,7 +10,8 @@ export type OidcAuthMode = typeof AuthMode.AuthCode | typeof AuthMode.AuthCodePK
 
 export const WalletType = Object.freeze({
   Ethereum: 'ethereum',
-  Solana: 'solana'
+  Solana: 'solana',
+  Tron: 'tron'
 } as const);
 
 export type WalletType = (typeof WalletType)[keyof typeof WalletType];

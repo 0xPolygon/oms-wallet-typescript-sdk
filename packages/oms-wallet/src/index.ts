@@ -23,10 +23,12 @@ export {
 export {
   Networks,
   SolanaNetworks,
+  TronNetworks,
   findNetworkById,
   findNetworkByName,
   type Network,
-  type SolanaNetwork
+  type SolanaNetwork,
+  type TronNetwork
 } from './networks.js';
 export {
   AuthMode,
@@ -78,22 +80,27 @@ export type {
   IsValidMessageSignatureParams,
   IsValidSolanaMessageSignatureParams,
   IsValidTypedDataSignatureParams,
+  IsValidTronMessageSignatureParams,
+  IsValidTronTypedDataSignatureParams,
   OMSWalletEmailSessionAuth,
   OMSWalletOidcSessionAuth,
   OMSWalletOidcSessionAuthFlow,
   OMSWalletSessionAuth,
   OMSWalletSessionExpiredEvent,
   OMSWalletSessionExpiredListener,
-  OMSWalletSessionState,
+  OMSWalletSession,
   WalletAccount,
   EthereumWalletAccount,
   SolanaWalletAccount,
+  TronWalletAccount,
   PendingWalletSelection,
   SignInWithOidcIdTokenParams,
   SignMessageParams,
   SignSolanaMessageParams,
   SignInWithOidcRedirectParams,
   SignTypedDataParams,
+  SignTronMessageParams,
+  SignTronTypedDataParams,
   StartEmailAuthParams,
   StartOidcRedirectAuthParams,
   StartOidcRedirectAuthResult,
@@ -108,6 +115,7 @@ export type {
   ContractTokenBalance,
   GetBalancesParams,
   GetSolanaBalancesParams,
+  GetTronBalancesParams,
   GetTransactionHistoryParams,
   IndexerNetworkType,
   MetadataOptions,
@@ -129,7 +137,12 @@ export type {
   TokenMetadataAsset,
   Transaction,
   TransactionHistoryResult,
-  TransactionTransfer
+  TransactionTransfer,
+  TronBalance,
+  TronBalancesResult,
+  TronNativeBalance,
+  TronNetworkError,
+  TronTrc20Balance
 } from './clients/indexerClient.js';
 export type {
   AccessGrant,
@@ -155,6 +168,8 @@ export type {
   SendTransactionBase,
   SendTransactionParams,
   SendTransactionResponse,
+  SendTronTransactionParams,
+  CallTronContractParams,
   TransactionStatusPollingOptions
 } from './types/transactionTypes.js';
 export { FeeOptionSelector, feeOptionSelection } from './types/transactionTypes.js';

@@ -103,10 +103,10 @@ describe('WalletClient OIDC ID-token auth', () => {
     });
 
     expect(result).toMatchObject({
-      walletAddress: '0x1111111111111111111111111111111111111111',
+      wallet: { address: '0x1111111111111111111111111111111111111111' },
       credential: testCredential()
     });
-    expect(wallet.session.auth).toEqual({
+    expect(wallet.session?.auth).toEqual({
       type: 'oidc',
       flow: 'id-token',
       issuer: 'https://accounts.google.com',
@@ -115,7 +115,7 @@ describe('WalletClient OIDC ID-token auth', () => {
       email: 'user@example.com'
     });
     expect(JSON.parse(storage.get(Constants.sessionStorageKey) ?? 'null').auth).toEqual(
-      wallet.session.auth
+      wallet.session?.auth
     );
     expect(requestCount(fetchMock, '/CommitVerifier')).toBe(1);
     expect(requestCount(fetchMock, '/CompleteAuth')).toBe(1);
@@ -187,11 +187,11 @@ describe('WalletClient OIDC ID-token auth', () => {
         keyOrigin: 'enclave'
       }
     ]);
-    expect(wallet.session.auth).toBeUndefined();
+    expect(wallet.session?.auth).toBeUndefined();
 
     await selection.selectWallet({ walletId: 'wallet-id' });
 
-    expect(wallet.session.auth).toEqual({
+    expect(wallet.session?.auth).toEqual({
       type: 'oidc',
       flow: 'id-token',
       issuer: 'https://idp.example',
@@ -335,7 +335,7 @@ describe('WalletClient OIDC ID-token auth', () => {
       operation: 'wallet.signInWithOidcIdToken',
       message: 'Wallet session changed while auth was in flight'
     });
-    expect(wallet.walletAddress).toBeUndefined();
+    expect(wallet.activeWallet?.address).toBeUndefined();
     expect(storage.get(Constants.sessionStorageKey)).toBeNull();
   });
 });

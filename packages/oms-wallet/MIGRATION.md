@@ -3,6 +3,66 @@
 This document records breaking changes and the steps to migrate between published
 versions of `@polygonlabs/oms-wallet`.
 
+## 0.4.0
+
+### Active wallet replaces `walletAddress`
+
+`omsWallet.wallet.walletAddress` was removed. Read the active wallet from
+`omsWallet.wallet.activeWallet`, which is a `WalletAccount` (`id`, `type`, `address`, `reference`,
+`keyOrigin`) or `undefined` when signed out. Narrowing on `type` gives Ethereum wallets a viem
+`Address`, so the `listWallets()` lookup from 0.3.0 is no longer needed:
+
+```typescript
+import { WalletType } from '@polygonlabs/oms-wallet'
+
+// Before
+const address = omsWallet.wallet.walletAddress
+
+// After
+const activeWallet = omsWallet.wallet.activeWallet
+if (activeWallet?.type === WalletType.Ethereum) {
+  const ethereumAddress = activeWallet.address // viem Address
+}
+```
+
+The `walletAddress` field was also removed from `WalletActivationResult` and the auth results
+(`CompleteEmailAuthResult`, `CompleteOidcIdTokenAuthResult`, `CompleteOidcRedirectAuthResult`). Use
+`result.wallet.address`.
+
+### `session` is `undefined` when signed out
+
+`OMSWalletSessionState` was renamed to `OMSWalletSession`, and `omsWallet.wallet.session` is now
+`OMSWalletSession | undefined`. Previously it returned an object whose fields were all `undefined`.
+The `walletAddress` field was removed, and `expiresAt` and `auth` are now always defined. `session`
+is defined exactly when `activeWallet` is.
+
+```typescript
+// Before
+const email = omsWallet.wallet.session.auth?.email
+
+// After
+const email = omsWallet.wallet.session?.auth.email
+```
+
+`OMSWalletSessionExpiredEvent` gained `wallet: WalletAccount | undefined`, and its `session` no
+longer carries `walletAddress`. `wallet` is `undefined` when the credential expired while a manual
+wallet selection was still pending.
+
+### One-time sign-in after upgrading
+
+Saved sessions now record the wallet's type. Sessions saved by 0.3.x do not, so 0.4.0 discards them
+on load and users sign in once after upgrading.
+
+### Exhaustive wallet-type checks
+
+`WalletType` gained `Tron` and `WalletAccount` gained `TronWalletAccount`. Exhaustive `switch`
+statements over either need a `tron` case.
+
+### Wagmi connector
+
+`@polygonlabs/oms-wallet-wagmi-connector` now reads `wallet.activeWallet` instead of
+`wallet.walletAddress`. Upgrade both packages together; they are released with the same version.
+
 ## 0.3.0
 
 ### Wallet addresses and provenance

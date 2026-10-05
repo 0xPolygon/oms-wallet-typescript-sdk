@@ -115,8 +115,8 @@ function App() {
   const [approvalAction, setApprovalAction] = useState<ApprovalAction>(null);
   const [isBusy, setIsBusy] = useState(false);
   const initializationStarted = useRef(false);
-  const walletAddress = omsWallet?.wallet.walletAddress ?? '';
-  const sessionAuth = omsWallet?.wallet.session.auth;
+  const walletAddress = omsWallet?.wallet.activeWallet?.address ?? '';
+  const sessionAuth = omsWallet?.wallet.session?.auth;
   const loginMethod =
     sessionAuth?.type === 'email'
       ? 'Email'
@@ -245,7 +245,7 @@ function App() {
 
       if (nextApproval && nextApproval.status !== 'pending') {
         clearApprovalRequest();
-        if (nextWallet.wallet.walletAddress) {
+        if (nextWallet.wallet.activeWallet?.address) {
           setStep('wallet');
           await Promise.all([
             loadPortfolio(nextWallet),
@@ -268,7 +268,7 @@ function App() {
       }
 
       if (!approvalToken) {
-        if (nextWallet.wallet.walletAddress) {
+        if (nextWallet.wallet.activeWallet?.address) {
           setStep('wallet');
           setStatus('');
           await Promise.all([loadPortfolio(nextWallet), loadApprovedSessions(nextWallet)]);
@@ -278,7 +278,7 @@ function App() {
         return;
       }
 
-      if (nextWallet.wallet.walletAddress) {
+      if (nextWallet.wallet.activeWallet?.address) {
         setStep('wallet');
         setStatus('');
         await loadPortfolio(nextWallet);
@@ -465,7 +465,7 @@ function App() {
     wallet = omsWallet,
     { background = false }: { background?: boolean } = {}
   ): Promise<void> {
-    const address = wallet?.wallet.walletAddress;
+    const address = wallet?.wallet.activeWallet?.address;
     if (!wallet || !address) {
       setPortfolio(null);
       setPortfolioStatus('');
@@ -532,7 +532,7 @@ function App() {
     wallet = omsWallet,
     { loadingLabel = 'Loading approved smart sessions…' }: { loadingLabel?: string } = {}
   ): Promise<boolean> {
-    if (!wallet?.wallet.walletAddress) {
+    if (!wallet?.wallet.activeWallet?.address) {
       setApprovedSessions([]);
       setApprovedSessionsStatus('');
       setApprovedSessionsLoading(false);

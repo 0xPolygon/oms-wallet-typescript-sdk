@@ -6,6 +6,7 @@ import { TransactionMode, TransactionStatus } from '../src/types/waas';
 import { Networks, SolanaNetworks } from '../src/networks';
 import { MemoryStorageManager } from '../src/storageManager';
 import { FeeOptionSelector } from '../src/types/transactionTypes';
+import { testWalletAccount } from './fixtures/walletAccount.js';
 
 class MockSigner implements CredentialSigner {
   readonly signingAlgorithm = 'ecdsa-p256-sha256';
@@ -1389,7 +1390,7 @@ function createWalletWithSession(
     storage,
     credentialSigner: new MockSigner()
   });
-  (wallet as any).persistSession('wallet-id', walletAddress, {
+  (wallet as any).persistSession(testWalletAccount('wallet-id', walletAddress), {
     expiresAt: '2099-01-01T00:00:00Z',
     auth: { type: 'email', email: 'user@example.com' },
     signerCredentialId: '0x04' + '11'.repeat(64),

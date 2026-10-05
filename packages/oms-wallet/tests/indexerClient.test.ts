@@ -1,7 +1,8 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import { IndexerClient } from '../src/clients/indexerClient';
-import { Networks, SolanaNetworks } from '../src/networks';
+import { Networks, SolanaNetworks, TronNetworks } from '../src/networks';
+import { tronAddressToHex } from '../src/utils/tronAddress';
 
 afterEach(() => {
   vi.restoreAllMocks();
@@ -697,6 +698,159 @@ describe('IndexerClient', () => {
       status: 502,
       retryable: true
     });
+  });
+  it('reads Tron TRX and TRC-20 balances through batched public JSON-RPC', async () => {
+    const wallet = 'TNPeeaaFB7K9cmo4uQpcU32zGK8G1NYqeL';
+    const walletHex = '0x8840e6c55b9ada326d211d818c34a994aeced808';
+    const usdt = 'TXYZopYRdj2D9XRtbG411XZZ3kM5VkAeBf';
+    const usdtHex = '0xeca9bc828a3005b9a3b909f2cc5c2a54794de05f';
+    const word = (value: bigint) => value.toString(16).padStart(64, '0');
+    const abiString = (value: string) =>
+      '0x' +
+      word(32n) +
+      word(BigInt(value.length)) +
+      Buffer.from(value).toString('hex').padEnd(64, '0');
+    const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      expect(input.toString()).toBe('https://nile.trongrid.io/jsonrpc');
+      expect(init?.headers).not.toHaveProperty('Api-Key');
+      const calls = JSON.parse(init?.body as string);
+      expect(calls).toEqual([
+        { jsonrpc: '2.0', id: 0, method: 'eth_getBalance', params: [walletHex, 'latest'] },
+        {
+          jsonrpc: '2.0',
+          id: 1,
+          method: 'eth_call',
+          params: [{ to: usdtHex, data: '0x70a08231' + word(BigInt(walletHex)) }, 'latest']
+        },
+        {
+          jsonrpc: '2.0',
+          id: 2,
+          method: 'eth_call',
+          params: [{ to: usdtHex, data: '0x313ce567' }, 'latest']
+        },
+        {
+          jsonrpc: '2.0',
+          id: 3,
+          method: 'eth_call',
+          params: [{ to: usdtHex, data: '0x95d89b41' }, 'latest']
+        },
+        {
+          jsonrpc: '2.0',
+          id: 4,
+          method: 'eth_call',
+          params: [{ to: usdtHex, data: '0x06fdde03' }, 'latest']
+        }
+      ]);
+      // Out-of-order responses are matched by id.
+      return new Response(
+        JSON.stringify([
+          { jsonrpc: '2.0', id: 4, result: abiString('Tether USD') },
+          { jsonrpc: '2.0', id: 0, result: '0x68ea50aa' },
+          { jsonrpc: '2.0', id: 1, result: '0x' + word(5_000_000_000n) },
+          { jsonrpc: '2.0', id: 2, result: '0x' + word(6n) },
+          { jsonrpc: '2.0', id: 3, result: abiString('USDT') }
+        ]),
+        { status: 200 }
+      );
+    });
+    vi.stubGlobal('fetch', fetchMock);
+
+    const indexer = new IndexerClient({
+      publishableKey: 'publishable-key',
+      environment: testEnvironment()
+    });
+
+    await expect(
+      indexer.getTronBalances({
+        walletAddress: wallet,
+        networks: [TronNetworks.nile],
+        contractAddresses: [usdt]
+      })
+    ).resolves.toEqual({
+      status: 200,
+      balances: [
+        {
+          network: 'tron:nile',
+          accountAddress: wallet,
+          assetType: 'native',
+          name: 'TRX',
+          symbol: 'TRX',
+          decimals: 6,
+          balance: '1760186538',
+          formattedBalance: '1760.186538'
+        },
+        {
+          network: 'tron:nile',
+          accountAddress: wallet,
+          assetType: 'trc20',
+          contractAddress: usdt,
+          name: 'Tether USD',
+          symbol: 'USDT',
+          decimals: 6,
+          balance: '5000000000',
+          formattedBalance: '5000'
+        }
+      ],
+      errors: []
+    });
+  });
+
+  it('reports Tron networks that fail as errors and defaults to mainnet and Nile', async () => {
+    const fetchMock = vi.fn(async (input: RequestInfo | URL) =>
+      input.toString().startsWith('https://api.trongrid.io')
+        ? new Response(JSON.stringify([{ jsonrpc: '2.0', id: 0, result: '0x0' }]), { status: 200 })
+        : new Response('rate limited', { status: 429 })
+    );
+    vi.stubGlobal('fetch', fetchMock);
+
+    const indexer = new IndexerClient({
+      publishableKey: 'publishable-key',
+      environment: testEnvironment()
+    });
+
+    const result = await indexer.getTronBalances({
+      walletAddress: 'TNPeeaaFB7K9cmo4uQpcU32zGK8G1NYqeL'
+    });
+
+    expect(fetchMock.mock.calls.map(([url]) => url.toString())).toEqual([
+      'https://api.trongrid.io/jsonrpc',
+      'https://nile.trongrid.io/jsonrpc'
+    ]);
+    expect(result.balances).toMatchObject([
+      { network: 'tron:mainnet', assetType: 'native', balance: '0', formattedBalance: '0' }
+    ]);
+    expect(result.errors).toEqual([
+      { network: 'tron:nile', reason: 'Tron RPC request failed with HTTP 429' }
+    ]);
+  });
+
+  it('rejects invalid Tron addresses before any request', async () => {
+    const fetchMock = vi.fn();
+    vi.stubGlobal('fetch', fetchMock);
+    const indexer = new IndexerClient({
+      publishableKey: 'publishable-key',
+      environment: testEnvironment()
+    });
+
+    await expect(
+      indexer.getTronBalances({ walletAddress: '0x8840e6c55b9ada326d211d818c34a994aeced808' })
+    ).rejects.toMatchObject({ code: 'OMS_VALIDATION_ERROR', operation: 'indexer.getTronBalances' });
+    await expect(
+      indexer.getTronBalances({
+        walletAddress: 'TNPeeaaFB7K9cmo4uQpcU32zGK8G1NYqeL',
+        contractAddresses: ['TNPeeaaFB7K9cmo4uQpcU32zGK8G1NYqeM']
+      })
+    ).rejects.toMatchObject({ code: 'OMS_VALIDATION_ERROR' });
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
+  it('decodes Base58Check Tron addresses and rejects bad checksums and Solana addresses', () => {
+    expect(tronAddressToHex('TNPeeaaFB7K9cmo4uQpcU32zGK8G1NYqeL')).toBe(
+      '0x8840e6c55b9ada326d211d818c34a994aeced808'
+    );
+    expect(tronAddressToHex('TNPeeaaFB7K9cmo4uQpcU32zGK8G1NYqeM')).toBeUndefined();
+    expect(tronAddressToHex('4Nd1mYQbqjVU2aR7cJNPyqW9XjHnBYvWQd7ZxYxvT6uP')).toBeUndefined();
+    expect(tronAddressToHex('not-base58-0OIl')).toBeUndefined();
   });
 });
 

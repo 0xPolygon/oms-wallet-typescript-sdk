@@ -1,6 +1,5 @@
 import React, { useEffect, useRef, useState } from 'react';
 import { createRoot } from 'react-dom/client';
-import { isAddress } from 'viem';
 import {
   Networks,
   WalletType,
@@ -46,9 +45,10 @@ import {
 import { TEST_SESSION_LIFETIME_SECONDS, omsWallet } from './omsWallet';
 import { WalletKitDollarExample } from './WalletKitDollarExample';
 import { SolanaExample } from './SolanaExample';
+import { TronExample } from './TronExample';
 
 type Step = 'email' | 'code' | 'wallet-selection' | 'wallet';
-type WalletTab = 'ethereum' | 'solana';
+type WalletTab = 'ethereum' | 'solana' | 'tron';
 type FeeSelectionController = {
   resolve: (selection: FeeOptionSelection) => void;
   reject: (error: Error) => void;
@@ -126,9 +126,10 @@ function App() {
 
   const selectedNetwork =
     supportedNetworks.find((network) => network.id === selectedNetworkId) ?? Networks.amoy;
-  const activeWalletType = isAddress(walletAddress) ? WalletType.Ethereum : WalletType.Solana;
+  const activeWalletType = omsWallet.wallet.activeWallet?.type ?? WalletType.Ethereum;
   const hasEvmWallet = managedWallets.some((wallet) => wallet.type === WalletType.Ethereum);
   const hasSolanaWallet = managedWallets.some((wallet) => wallet.type === WalletType.Solana);
+  const hasTronWallet = managedWallets.some((wallet) => wallet.type === WalletType.Tron);
   const session = omsWallet.wallet.session;
   const {
     useManualWalletSelection,
@@ -164,9 +165,10 @@ function App() {
   }, []);
 
   useEffect(() => {
-    if (omsWallet.wallet.walletAddress) {
-      setWalletAddress(omsWallet.wallet.walletAddress);
-      setWalletTab(isAddress(omsWallet.wallet.walletAddress) ? 'ethereum' : 'solana');
+    const restoredWallet = omsWallet.wallet.activeWallet;
+    if (restoredWallet) {
+      setWalletAddress(restoredWallet.address);
+      setWalletTab(restoredWallet.type);
       setStep('wallet');
       setWalletStatus('Wallet session restored.');
       return;
@@ -283,10 +285,11 @@ function App() {
         return;
       }
 
-      const restoredAddress = omsWallet.wallet.walletAddress ?? '';
+      const restoredWallet = omsWallet.wallet.activeWallet;
+      const restoredAddress = restoredWallet?.address ?? '';
       setWalletAddress(restoredAddress);
-      if (restoredAddress) {
-        setWalletTab(isAddress(restoredAddress) ? 'ethereum' : 'solana');
+      if (restoredWallet) {
+        setWalletTab(restoredWallet.type);
       }
       setStep(restoredAddress ? 'wallet' : 'email');
       setWalletStatus(restoredAddress ? 'Wallet ready.' : '');
@@ -308,7 +311,7 @@ function App() {
     setPendingWalletSelection(null);
     setLastIdToken('');
     clearManagementState();
-    setWalletAddress(result.walletAddress);
+    setWalletAddress(result.wallet.address);
     setWalletTab(result.wallet.type);
     setStep('wallet');
     setWalletStatus(status);
@@ -481,7 +484,7 @@ function App() {
   async function useManagedWallet(wallet: WalletAccount) {
     await run('Switching wallet...', setActiveWalletStatus, async () => {
       const result = await omsWallet.wallet.useWallet({ walletId: wallet.id });
-      setWalletAddress(result.walletAddress);
+      setWalletAddress(result.wallet.address);
       setWalletTab(result.wallet.type);
       clearWalletOperationResults();
       setAccessGrants([]);
@@ -502,7 +505,7 @@ function App() {
         type,
         reference: reference || undefined
       });
-      setWalletAddress(result.walletAddress);
+      setWalletAddress(result.wallet.address);
       setWalletTab(result.wallet.type);
       clearWalletOperationResults();
       setAccessGrants([]);
@@ -530,7 +533,7 @@ function App() {
           privateKey: importPrivateKey.trim(),
           reference: importWalletReference.trim() || undefined
         });
-        setWalletAddress(result.walletAddress);
+        setWalletAddress(result.wallet.address);
         setWalletTab(result.wallet.type);
         clearWalletOperationResults();
         setAccessGrants([]);
@@ -598,7 +601,7 @@ function App() {
             ciphertext: encryptedWallet.ciphertext
           }
         });
-        if (!sameAddress(result.walletAddress, encryptedWallet.address)) {
+        if (!sameAddress(result.wallet.address, encryptedWallet.address)) {
           throw new Error('The imported OMS wallet address does not match the Privy wallet.');
         }
         progressTimeline.show({
@@ -607,7 +610,7 @@ function App() {
           import: 'complete'
         });
         await progressTimeline.finished();
-        setWalletAddress(result.walletAddress);
+        setWalletAddress(result.wallet.address);
         setWalletTab('ethereum');
         clearWalletOperationResults();
         setAccessGrants([]);
@@ -639,7 +642,7 @@ function App() {
         ? await omsWallet.wallet.useWallet({ walletId: existing.id })
         : await omsWallet.wallet.createWallet({ type });
 
-      setWalletAddress(result.walletAddress);
+      setWalletAddress(result.wallet.address);
       setWalletTab(result.wallet.type);
       clearWalletOperationResults();
       setAccessGrants([]);
@@ -854,15 +857,15 @@ function App() {
             <div className="session-info">
               <div>
                 <span>Auth</span>
-                <strong>{formatSessionAuth(session.auth)}</strong>
+                <strong>{formatSessionAuth(session?.auth)}</strong>
               </div>
               <div>
                 <span>Account</span>
-                <strong>{session.auth?.email ?? 'Unknown'}</strong>
+                <strong>{session?.auth.email ?? 'Unknown'}</strong>
               </div>
               <div>
                 <span>Expires</span>
-                <strong>{formatSessionExpiry(session.expiresAt)}</strong>
+                <strong>{formatSessionExpiry(session?.expiresAt)}</strong>
               </div>
             </div>
 
@@ -886,6 +889,16 @@ function App() {
                 disabled={isBusy}
               >
                 Solana
+              </button>
+              <button
+                type="button"
+                role="tab"
+                aria-selected={walletTab === 'tron'}
+                className={walletTab === 'tron' ? 'wallet-tab wallet-tab-active' : 'wallet-tab'}
+                onClick={() => selectWalletTab('tron')}
+                disabled={isBusy}
+              >
+                Tron
               </button>
             </div>
 
@@ -1049,6 +1062,42 @@ function App() {
               <SolanaExample key={walletAddress} walletAddress={walletAddress} />
             )}
 
+            {walletTab === 'tron' && activeWalletType !== WalletType.Tron && (
+              <section className="tool wallet-type-prompt">
+                <h2>
+                  {!walletInventoryLoaded
+                    ? walletInventoryError
+                      ? 'Unable to load wallets'
+                      : 'Loading wallets'
+                    : hasTronWallet
+                      ? 'Use a Tron wallet'
+                      : 'Create a Tron wallet'}
+                </h2>
+                <button
+                  type="button"
+                  onClick={() =>
+                    void (walletInventoryLoaded
+                      ? activateWalletType(WalletType.Tron)
+                      : loadManagedWallets())
+                  }
+                  disabled={isBusy || (!walletInventoryLoaded && !walletInventoryError)}
+                >
+                  {!walletInventoryLoaded
+                    ? walletInventoryError
+                      ? 'Retry loading wallets'
+                      : 'Loading wallets...'
+                    : hasTronWallet
+                      ? 'Use Tron wallet'
+                      : 'Create Tron wallet'}
+                </button>
+                {activeWalletStatus && <output>{activeWalletStatus}</output>}
+              </section>
+            )}
+
+            {walletTab === 'tron' && activeWalletType === WalletType.Tron && (
+              <TronExample key={walletAddress} walletAddress={walletAddress} />
+            )}
+
             <details className="tool collapsible-tool">
               <summary>Wallet management</summary>
               <div className="collapsible-content">
@@ -1119,6 +1168,7 @@ function App() {
                         >
                           <option value={WalletType.Ethereum}>Ethereum</option>
                           <option value={WalletType.Solana}>Solana</option>
+                          <option value={WalletType.Tron}>Tron</option>
                         </select>
                       </span>
                     </label>
@@ -1159,6 +1209,7 @@ function App() {
                         >
                           <option value={WalletType.Ethereum}>Ethereum</option>
                           <option value={WalletType.Solana}>Solana</option>
+                          <option value={WalletType.Tron}>Tron</option>
                         </select>
                       </span>
                     </label>

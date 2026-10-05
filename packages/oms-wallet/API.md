@@ -27,16 +27,20 @@ export interface OMSWalletParams {
 
 ## Authentication and sessions
 
-### `OMSWalletClient.walletAddress`
+### `OMSWalletClient.activeWallet`
+
+The active wallet, or `undefined` when signed out. Same shape as `listWallets()` entries.
 
 ```typescript
-readonly walletAddress: string | undefined;
+readonly activeWallet: WalletAccount | undefined;
 ```
 
 ### `OMSWalletClient.session`
 
+Expiry and auth metadata for the active session; defined exactly when `activeWallet` is.
+
 ```typescript
-readonly session: OMSWalletSessionState;
+readonly session: OMSWalletSession | undefined;
 ```
 
 ### `OMSWalletClient.onSessionExpired`
@@ -227,7 +231,6 @@ export interface CompleteEmailAuthParams {
 
 ```typescript
 export interface CompleteEmailAuthResult {
-    readonly walletAddress: string;
     readonly wallet: WalletAccount;
     readonly wallets: ReadonlyArray<WalletAccount>;
     readonly credential: Readonly<WalletCredential>;
@@ -253,7 +256,6 @@ export interface SignInWithOidcIdTokenParams {
 
 ```typescript
 export interface CompleteOidcIdTokenAuthResult {
-    readonly walletAddress: string;
     readonly wallet: WalletAccount;
     readonly wallets: ReadonlyArray<WalletAccount>;
     readonly credential: Readonly<WalletCredential>;
@@ -303,7 +305,6 @@ export interface CompleteOidcRedirectAuthParams {
 
 ```typescript
 export interface CompleteOidcRedirectAuthResult {
-    readonly walletAddress: string;
     readonly wallet: WalletAccount;
     readonly wallets: ReadonlyArray<WalletAccount>;
     readonly credential: Readonly<WalletCredential>;
@@ -396,6 +397,7 @@ export type OidcAuthMode = typeof AuthMode.AuthCode | typeof AuthMode.AuthCodePK
 export declare const WalletType: Readonly<{
     readonly Ethereum: "ethereum";
     readonly Solana: "solana";
+    readonly Tron: "tron";
 }>;
 export type WalletType = (typeof WalletType)[keyof typeof WalletType];
 ```
@@ -431,7 +433,7 @@ export type WalletSelectionBehavior = "automatic" | "manual";
 ### `WalletAccount`
 
 ```typescript
-export type WalletAccount = EthereumWalletAccount | SolanaWalletAccount;
+export type WalletAccount = EthereumWalletAccount | SolanaWalletAccount | TronWalletAccount;
 ```
 
 ### `EthereumWalletAccount`
@@ -458,11 +460,22 @@ export interface SolanaWalletAccount {
 }
 ```
 
+### `TronWalletAccount`
+
+```typescript
+export interface TronWalletAccount {
+    readonly id: string;
+    readonly type: "tron";
+    readonly address: string;
+    readonly reference?: string;
+    readonly keyOrigin: WalletKeyOrigin;
+}
+```
+
 ### `WalletActivationResult`
 
 ```typescript
 export interface WalletActivationResult {
-    readonly walletAddress: string;
     readonly wallet: WalletAccount;
 }
 ```
@@ -476,6 +489,10 @@ export type ImportWalletParams = {
     reference?: string;
 } | {
     type: "solana";
+    privateKey: string | Uint8Array;
+    reference?: string;
+} | {
+    type: "tron";
     privateKey: string | Uint8Array;
     reference?: string;
 };
@@ -562,13 +579,12 @@ export interface OMSWalletOidcSessionAuth {
 export type OMSWalletSessionAuth = OMSWalletEmailSessionAuth | OMSWalletOidcSessionAuth;
 ```
 
-### `OMSWalletSessionState`
+### `OMSWalletSession`
 
 ```typescript
-export interface OMSWalletSessionState {
-    readonly walletAddress: string | undefined;
-    readonly expiresAt: string | undefined;
-    readonly auth: OMSWalletSessionAuth | undefined;
+export interface OMSWalletSession {
+    readonly expiresAt: string;
+    readonly auth: OMSWalletSessionAuth;
 }
 ```
 
@@ -576,7 +592,8 @@ export interface OMSWalletSessionState {
 
 ```typescript
 export interface OMSWalletSessionExpiredEvent {
-    readonly session: OMSWalletSessionState;
+    readonly wallet: WalletAccount | undefined;
+    readonly session: OMSWalletSession;
     readonly expiredAt: string;
 }
 ```
@@ -982,6 +999,30 @@ isValidSolanaMessageSignature(params: IsValidSolanaMessageSignatureParams): Prom
 isValidTypedDataSignature(params: IsValidTypedDataSignatureParams): Promise<boolean>;
 ```
 
+### `OMSWalletClient.signTronMessage`
+
+```typescript
+signTronMessage(params: SignTronMessageParams): Promise<string>;
+```
+
+### `OMSWalletClient.signTronTypedData`
+
+```typescript
+signTronTypedData(params: SignTronTypedDataParams): Promise<string>;
+```
+
+### `OMSWalletClient.isValidTronMessageSignature`
+
+```typescript
+isValidTronMessageSignature(params: IsValidTronMessageSignatureParams): Promise<boolean>;
+```
+
+### `OMSWalletClient.isValidTronTypedDataSignature`
+
+```typescript
+isValidTronTypedDataSignature(params: IsValidTronTypedDataSignatureParams): Promise<boolean>;
+```
+
 ### `OMSWalletClient.sendTransaction`
 
 ```typescript
@@ -995,6 +1036,18 @@ sendTransaction(params: SendTransactionParams): Promise<SendTransactionResponse>
 
 ```typescript
 sendSolanaTransfer(params: SendSolanaTransferParams): Promise<SendTransactionResponse>;
+```
+
+### `OMSWalletClient.sendTronTransaction`
+
+```typescript
+sendTronTransaction(params: SendTronTransactionParams): Promise<SendTransactionResponse>;
+```
+
+### `OMSWalletClient.callTronContract`
+
+```typescript
+callTronContract(params: CallTronContractParams): Promise<SendTransactionResponse>;
 ```
 
 ### `OMSWalletClient.callContract`
@@ -1081,6 +1134,44 @@ export interface IsValidTypedDataSignatureParams {
 }
 ```
 
+### `SignTronMessageParams`
+
+```typescript
+export interface SignTronMessageParams {
+    message: string;
+}
+```
+
+### `SignTronTypedDataParams`
+
+```typescript
+export interface SignTronTypedDataParams {
+    typedData: unknown;
+}
+```
+
+### `IsValidTronMessageSignatureParams`
+
+```typescript
+export interface IsValidTronMessageSignatureParams {
+    walletAddress?: string;
+    walletId?: string;
+    message: string;
+    signature: string;
+}
+```
+
+### `IsValidTronTypedDataSignatureParams`
+
+```typescript
+export interface IsValidTronTypedDataSignatureParams {
+    walletAddress?: string;
+    walletId?: string;
+    typedData: unknown;
+    signature: string;
+}
+```
+
 ### `AbiArg`
 
 ```typescript
@@ -1146,6 +1237,42 @@ export type SendSolanaTransferParams = {
     to: string;
     amount: bigint;
     mode?: TransactionMode;
+    selectFeeOption?: FeeOptionSelector;
+    waitForStatus?: boolean;
+    statusPolling?: TransactionStatusPollingOptions;
+};
+```
+
+### `SendTronTransactionParams`
+
+A Tron transaction. Tron wallets are EOAs and always execute in native mode.
+
+Omitting `data` sends a plain TRX transfer. Passing `data` (including `'0x'`) makes the
+transaction a contract call; `'0x'` calls the contract's payable fallback.
+
+```typescript
+export type SendTronTransactionParams = {
+    network: TronNetwork;
+    to: string;
+    value?: bigint;
+    data?: Hex;
+    selectFeeOption?: FeeOptionSelector;
+    waitForStatus?: boolean;
+    statusPolling?: TransactionStatusPollingOptions;
+};
+```
+
+### `CallTronContractParams`
+
+A Tron contract call, ABI-encoded by the wallet service. Address-typed arguments accept
+Base58Check (`T…`) addresses.
+
+```typescript
+export type CallTronContractParams = {
+    network: TronNetwork;
+    contractAddress: string;
+    method: string;
+    args?: Array<AbiArg>;
     selectFeeOption?: FeeOptionSelector;
     waitForStatus?: boolean;
     statusPolling?: TransactionStatusPollingOptions;
@@ -1272,6 +1399,7 @@ export declare function feeOptionSelection(feeOption: FeeOption, index?: number)
 export interface OMSWalletIndexerClient {
     getBalances(params: GetBalancesParams): Promise<BalancesResult>;
     getSolanaBalances(params: GetSolanaBalancesParams): Promise<SolanaBalancesResult>;
+    getTronBalances(params: GetTronBalancesParams): Promise<TronBalancesResult>;
     getTransactionHistory(params: GetTransactionHistoryParams): Promise<TransactionHistoryResult>;
 }
 ```
@@ -1397,6 +1525,74 @@ export type SolanaVerificationStatus = "verified" | "unverified" | "unknown";
 
 ```typescript
 export type SolanaVerificationSource = "jupiter" | "solflare-utl" | "none";
+```
+
+### `GetTronBalancesParams`
+
+```typescript
+export interface GetTronBalancesParams {
+    walletAddress: string;
+    networks?: TronNetwork[];
+    omitNativeBalances?: boolean;
+    contractAddresses?: string[];
+}
+```
+
+### `TronBalancesResult`
+
+```typescript
+export interface TronBalancesResult {
+    status: number;
+    balances: TronBalance[];
+    errors: TronNetworkError[];
+}
+```
+
+### `TronBalance`
+
+```typescript
+export type TronBalance = TronNativeBalance | TronTrc20Balance;
+```
+
+### `TronNativeBalance`
+
+```typescript
+export interface TronNativeBalance {
+    network: TronNetwork;
+    accountAddress: string;
+    name: string;
+    symbol: string;
+    decimals: number;
+    balance: string;
+    formattedBalance: string;
+    assetType: "native";
+    contractAddress?: undefined;
+}
+```
+
+### `TronTrc20Balance`
+
+```typescript
+export interface TronTrc20Balance {
+    network: TronNetwork;
+    accountAddress: string;
+    name: string;
+    symbol: string;
+    decimals: number;
+    balance: string;
+    formattedBalance: string;
+    assetType: "trc20";
+    contractAddress: string;
+}
+```
+
+### `TronNetworkError`
+
+```typescript
+export interface TronNetworkError {
+    network: TronNetwork;
+    reason: string;
+}
 ```
 
 ### `GetTransactionHistoryParams`
@@ -1778,6 +1974,21 @@ export type SolanaNetwork = (typeof SolanaNetworks)[keyof typeof SolanaNetworks]
 export declare const SolanaNetworks: Readonly<{
     readonly devnet: "solana:devnet";
     readonly mainnet: "solana:mainnet";
+}>;
+```
+
+### `TronNetwork`
+
+```typescript
+export type TronNetwork = (typeof TronNetworks)[keyof typeof TronNetworks];
+```
+
+### `TronNetworks`
+
+```typescript
+export declare const TronNetworks: Readonly<{
+    readonly mainnet: "tron:mainnet";
+    readonly nile: "tron:nile";
 }>;
 ```
 

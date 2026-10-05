@@ -16,6 +16,13 @@ export const SolanaNetworks = Object.freeze({
 
 export type SolanaNetwork = (typeof SolanaNetworks)[keyof typeof SolanaNetworks];
 
+export const TronNetworks = Object.freeze({
+  mainnet: 'tron:mainnet',
+  nile: 'tron:nile'
+} as const);
+
+export type TronNetwork = (typeof TronNetworks)[keyof typeof TronNetworks];
+
 interface NetworkDefinition {
   id: number;
   name: string;

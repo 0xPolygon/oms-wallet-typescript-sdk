@@ -36,7 +36,7 @@ export function WalletKitDollarExample() {
   );
 
   useEffect(() => {
-    const restoredAddress = omsWallet.wallet.walletAddress ?? '';
+    const restoredAddress = omsWallet.wallet.activeWallet?.address ?? '';
     setWalletAddress(restoredAddress);
     if (isAddress(restoredAddress)) {
       void refreshBalance(restoredAddress);
@@ -128,7 +128,7 @@ export function WalletKitDollarExample() {
   }
 
   function requireWalletAddress(): Address {
-    const activeWallet = omsWallet.wallet.walletAddress ?? walletAddress;
+    const activeWallet = omsWallet.wallet.activeWallet?.address ?? walletAddress;
     if (!isAddress(activeWallet)) {
       throw new Error('Active wallet address is not a valid EVM address.');
     }

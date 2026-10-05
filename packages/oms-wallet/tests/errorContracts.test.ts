@@ -16,6 +16,7 @@ import {
   type CredentialSigner,
   type StorageManager
 } from '../src';
+import { testWalletAccount } from './fixtures/walletAccount.js';
 
 class MockSigner implements CredentialSigner {
   readonly signingAlgorithm = 'ecdsa-p256-sha256';
@@ -1933,12 +1934,15 @@ class ThrowingSetStorage implements StorageManager {
 
 function createOmsClientWithSession(params: CreateOmsClientParams = {}): OMSWallet {
   const oms = createOmsClient(params);
-  (oms.wallet as any).persistSession('wallet-id', '0x9999999999999999999999999999999999999999', {
-    expiresAt: '2099-01-01T00:00:00Z',
-    auth: { type: 'email', email: 'user@example.com' },
-    signerCredentialId: '0x04' + '11'.repeat(64),
-    signerKeyType: 'ecdsa-p256-sha256'
-  });
+  (oms.wallet as any).persistSession(
+    testWalletAccount('wallet-id', '0x9999999999999999999999999999999999999999'),
+    {
+      expiresAt: '2099-01-01T00:00:00Z',
+      auth: { type: 'email', email: 'user@example.com' },
+      signerCredentialId: '0x04' + '11'.repeat(64),
+      signerKeyType: 'ecdsa-p256-sha256'
+    }
+  );
   return oms;
 }
 

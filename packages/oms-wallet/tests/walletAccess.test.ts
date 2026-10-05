@@ -5,6 +5,7 @@ import type { CredentialSigner } from '../src/credentialSigner';
 import { Networks } from '../src/networks';
 import { MemoryStorageManager } from '../src/storageManager';
 import { WalletType } from '../src/types/waas';
+import { testWalletAccount } from './fixtures/walletAccount.js';
 
 class MockSigner implements CredentialSigner {
   readonly signingAlgorithm = 'ecdsa-p256-sha256';
@@ -284,7 +285,6 @@ describe('WalletClient access management', () => {
     const wallet = createWalletWithSession();
 
     await expect(wallet.createWallet({ type: WalletType.Solana })).resolves.toEqual({
-      walletAddress: '9xQeWvG816bUx9EPjHmaT23yvVMuZwHngkQF5JC9YjCy',
       wallet: {
         id: 'solana-wallet-id',
         type: 'solana',
@@ -580,12 +580,15 @@ function createWalletWithSession(): WalletClient {
     storage: new MemoryStorageManager(),
     credentialSigner: new MockSigner()
   });
-  (wallet as any).persistSession('wallet-id', '0x1111111111111111111111111111111111111111', {
-    expiresAt: '2099-01-01T00:00:00Z',
-    auth: { type: 'email', email: 'user@example.com' },
-    signerCredentialId: '0x04' + '11'.repeat(64),
-    signerKeyType: 'ecdsa-p256-sha256'
-  });
+  (wallet as any).persistSession(
+    testWalletAccount('wallet-id', '0x1111111111111111111111111111111111111111'),
+    {
+      expiresAt: '2099-01-01T00:00:00Z',
+      auth: { type: 'email', email: 'user@example.com' },
+      signerCredentialId: '0x04' + '11'.repeat(64),
+      signerKeyType: 'ecdsa-p256-sha256'
+    }
+  );
   return wallet;
 }
 

@@ -19,7 +19,7 @@ const DEFAULT_MESSAGE = 'hello from OMS Wallet';
 const BALANCE_NETWORKS = [Networks.polygon, Networks.base, Networks.arbitrum];
 
 function App() {
-  const restoredWalletAddress = omsWallet.wallet.walletAddress ?? '';
+  const restoredWalletAddress = omsWallet.wallet.activeWallet?.address ?? '';
   const [walletAddress, setWalletAddress] = useState(restoredWalletAddress);
   const [status, setStatus] = useState(
     restoredWalletAddress
@@ -74,7 +74,7 @@ function App() {
         return;
       }
 
-      setWalletAddress(result.walletAddress);
+      setWalletAddress(result.wallet.address);
       setStatus('Google sign-in complete.');
     });
   }
@@ -164,15 +164,15 @@ function App() {
               </div>
               <div>
                 <dt>Sign-in method</dt>
-                <dd>{formatSessionAuth(omsWallet.wallet.session.auth)}</dd>
+                <dd>{formatSessionAuth(omsWallet.wallet.session?.auth)}</dd>
               </div>
               <div>
                 <dt>Email</dt>
-                <dd>{omsWallet.wallet.session.auth?.email ?? 'Unknown'}</dd>
+                <dd>{omsWallet.wallet.session?.auth?.email ?? 'Unknown'}</dd>
               </div>
               <div>
                 <dt>Session expires</dt>
-                <dd>{formatSessionExpiry(omsWallet.wallet.session.expiresAt)}</dd>
+                <dd>{formatSessionExpiry(omsWallet.wallet.session?.expiresAt)}</dd>
               </div>
             </dl>
 

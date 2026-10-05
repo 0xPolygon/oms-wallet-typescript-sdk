@@ -13,6 +13,7 @@ import {
   encodeOidcState,
   redirectUriFromCurrentUrl
 } from '../src/utils/oidcRedirect';
+import { testWalletAccount } from './fixtures/walletAccount.js';
 
 const expectedDefaultGoogleClientId =
   '913882656162-7l4ofa0ou2hqo90umlkenhdop1f5inba.apps.googleusercontent.com';
@@ -231,12 +232,15 @@ describe('WalletClient OIDC redirect auth', () => {
       redirectAuthStorage: new MemoryStorageManager(),
       credentialSigner: new MockSigner()
     });
-    (wallet as any).persistSession('wallet-id', '0x1111111111111111111111111111111111111111', {
-      expiresAt: '2099-01-01T00:00:00Z',
-      auth: googleAuth('last@example.com'),
-      signerCredentialId: '0x04' + '11'.repeat(64),
-      signerKeyType: 'ecdsa-p256-sha256'
-    });
+    (wallet as any).persistSession(
+      testWalletAccount('wallet-id', '0x1111111111111111111111111111111111111111'),
+      {
+        expiresAt: '2099-01-01T00:00:00Z',
+        auth: googleAuth('last@example.com'),
+        signerCredentialId: '0x04' + '11'.repeat(64),
+        signerKeyType: 'ecdsa-p256-sha256'
+      }
+    );
 
     const result = await wallet.startOidcRedirectAuth({
       provider: OmsRelayOidcProviders.google,
@@ -260,12 +264,15 @@ describe('WalletClient OIDC redirect auth', () => {
     const wallet = createWalletClient({
       redirectAuthStorage: new MemoryStorageManager()
     });
-    (wallet as any).persistSession('wallet-id', '0x1111111111111111111111111111111111111111', {
-      expiresAt: '2099-01-01T00:00:00Z',
-      auth: googleAuth('last@example.com'),
-      signerCredentialId: '0x04' + '11'.repeat(64),
-      signerKeyType: 'ecdsa-p256-sha256'
-    });
+    (wallet as any).persistSession(
+      testWalletAccount('wallet-id', '0x1111111111111111111111111111111111111111'),
+      {
+        expiresAt: '2099-01-01T00:00:00Z',
+        auth: googleAuth('last@example.com'),
+        signerCredentialId: '0x04' + '11'.repeat(64),
+        signerKeyType: 'ecdsa-p256-sha256'
+      }
+    );
 
     const result = await wallet.startOidcRedirectAuth({
       provider: OmsRelayOidcProviders.google,
@@ -677,10 +684,10 @@ describe('WalletClient OIDC redirect auth', () => {
     });
 
     expect(completed).toMatchObject({
-      walletAddress: '0x1111111111111111111111111111111111111111',
+      wallet: { address: '0x1111111111111111111111111111111111111111' },
       credential: testCredential()
     });
-    expect(wallet.session.auth).toEqual({
+    expect(wallet.session?.auth).toEqual({
       type: 'oidc',
       flow: 'redirect',
       issuer: 'https://issuer.example',
@@ -756,11 +763,11 @@ describe('WalletClient OIDC redirect auth', () => {
       replaceUrl
     });
 
-    expect(completed.walletAddress).toBe('0x1111111111111111111111111111111111111111');
+    expect(completed.wallet.address).toBe('0x1111111111111111111111111111111111111111');
     expect(completed.credential).toEqual(testCredential());
-    expect(wallet.walletAddress).toBe('0x1111111111111111111111111111111111111111');
+    expect(wallet.activeWallet?.address).toBe('0x1111111111111111111111111111111111111111');
+    expect(wallet.activeWallet?.address).toBe('0x1111111111111111111111111111111111111111');
     expect(wallet.session).toEqual({
-      walletAddress: '0x1111111111111111111111111111111111111111',
       expiresAt: '2099-01-01T00:00:00Z',
       auth: googleAuth(undefined)
     });
@@ -825,7 +832,7 @@ describe('WalletClient OIDC redirect auth', () => {
     const completed = await wallet.completeOidcRedirectAuth({ replaceUrl });
 
     expect(completed).toMatchObject({
-      walletAddress: '0x1111111111111111111111111111111111111111',
+      wallet: { address: '0x1111111111111111111111111111111111111111' },
       credential: testCredential()
     });
     expect(replaceUrl).toHaveBeenCalledWith('https://app.example/auth/callback');
@@ -974,7 +981,7 @@ describe('WalletClient OIDC redirect auth', () => {
     });
     expect(selection.selectWallet).toEqual(expect.any(Function));
     expect(selection.createAndSelectWallet).toEqual(expect.any(Function));
-    expect(wallet.walletAddress).toBeUndefined();
+    expect(wallet.activeWallet?.address).toBeUndefined();
     expect(redirectAuthStorage.get(Constants.redirectAuthStorageKey)).toBeNull();
   });
 
@@ -1232,10 +1239,10 @@ describe('WalletClient OIDC redirect auth', () => {
     });
 
     expect(completed).toMatchObject({
-      walletAddress: '0x2222222222222222222222222222222222222222',
+      wallet: { address: '0x2222222222222222222222222222222222222222' },
       credential: testCredential()
     });
-    expect(wallet.walletAddress).toBe('0x2222222222222222222222222222222222222222');
+    expect(wallet.activeWallet?.address).toBe('0x2222222222222222222222222222222222222222');
     expect(replaceUrl).toHaveBeenCalledWith('https://app.example/login');
   });
 
@@ -1292,12 +1299,15 @@ describe('WalletClient OIDC redirect auth', () => {
       storage,
       credentialSigner: new MockSigner()
     });
-    (wallet as any).persistSession('wallet-id', '0x1111111111111111111111111111111111111111', {
-      expiresAt: '2099-01-01T00:00:00Z',
-      auth: googleAuth('last@example.com'),
-      signerCredentialId: '0x04' + '11'.repeat(64),
-      signerKeyType: 'ecdsa-p256-sha256'
-    });
+    (wallet as any).persistSession(
+      testWalletAccount('wallet-id', '0x1111111111111111111111111111111111111111'),
+      {
+        expiresAt: '2099-01-01T00:00:00Z',
+        auth: googleAuth('last@example.com'),
+        signerCredentialId: '0x04' + '11'.repeat(64),
+        signerKeyType: 'ecdsa-p256-sha256'
+      }
+    );
 
     await expect(
       wallet.startOidcRedirectAuth({
@@ -1306,11 +1316,10 @@ describe('WalletClient OIDC redirect auth', () => {
       })
     ).rejects.toThrow('OIDC redirect auth requires redirectAuthStorage or browser sessionStorage');
 
-    expect(wallet.walletAddress).toBe('0x1111111111111111111111111111111111111111');
+    expect(wallet.activeWallet?.address).toBe('0x1111111111111111111111111111111111111111');
     expect(JSON.parse(storage.get(Constants.sessionStorageKey) ?? 'null')).toMatchObject({
-      version: 1,
-      walletId: 'wallet-id',
-      walletAddress: '0x1111111111111111111111111111111111111111'
+      version: 2,
+      wallet: { id: 'wallet-id', address: '0x1111111111111111111111111111111111111111' }
     });
   });
 });

@@ -21,6 +21,8 @@ import type {
   PrepareEthereumTransactionRequest,
   PrepareEthereumContractCallRequest,
   PrepareSolanaTransferRequest,
+  PrepareTronTransactionRequest,
+  PrepareTronContractCallRequest,
   ExecuteRequest,
   ExecuteResponse,
   TransactionStatusRequest,
@@ -29,7 +31,7 @@ import type {
   HPKEPayload,
   FeeOption as GeneratedFeeOption
 } from '../generated/waas.gen.js';
-import type { Network, SolanaNetwork } from '../networks.js';
+import type { Network, SolanaNetwork, TronNetwork } from '../networks.js';
 import type { ResolvedOidcProviderConfig } from '../oidc.js';
 import type { OMSWalletEnvironment } from '../omsEnvironment.js';
 import type { StorageManager } from '../storageManager.js';
@@ -54,6 +56,8 @@ import type {
   SendSolanaTransferParams,
   SendTransactionParams,
   SendTransactionResponse,
+  SendTronTransactionParams,
+  CallTronContractParams,
   TransactionStatusPollingOptions
 } from '../types/transactionTypes.js';
 import type {
@@ -76,6 +80,8 @@ import type {
   IsValidMessageSignatureParams,
   IsValidSolanaMessageSignatureParams,
   IsValidTypedDataSignatureParams,
+  IsValidTronMessageSignatureParams,
+  IsValidTronTypedDataSignatureParams,
   ImportEncryptedWalletParams,
   ImportWalletParams,
   ManualWalletSelectionParams,
@@ -86,13 +92,15 @@ import type {
   OMSWalletSessionAuth,
   OMSWalletSessionExpiredEvent,
   OMSWalletSessionExpiredListener,
-  OMSWalletSessionState,
+  OMSWalletSession,
   PendingWalletSelection,
   SignInWithOidcIdTokenParams,
   SignInWithOidcRedirectParams,
   SignMessageParams,
   SignSolanaMessageParams,
   SignTypedDataParams,
+  SignTronMessageParams,
+  SignTronTypedDataParams,
   StartEmailAuthParams,
   StartOidcRedirectAuthParams,
   StartOidcRedirectAuthResult,
@@ -122,6 +130,7 @@ import {
   KeyFormat as GeneratedKeyFormat,
   TransportPurpose as GeneratedTransportPurpose
 } from '../generated/waas.gen.js';
+import { TronNetworks } from '../networks.js';
 import { isOmsRelayOidcProvider, resolveOidcProviderConfig } from '../oidc.js';
 import { WalletOperation } from '../operations.js';
 import { createSignedFetch } from '../signedFetch.js';
@@ -132,6 +141,7 @@ import {
   TransactionMode,
   TransactionStatus,
   WalletImportCipherSuite as WalletImportCipherSuiteValues,
+  WalletKeyOrigin,
   WalletType
 } from '../types/waas.js';
 import {
@@ -199,20 +209,26 @@ interface WalletSessionMetadata {
   signerKeyType: CredentialSigningAlgorithm;
 }
 
+/** A point-in-time view of a session; `wallet` is undefined while a wallet selection is pending. */
+interface SessionSnapshot {
+  wallet: WalletAccount | undefined;
+  expiresAt: string;
+  auth: OMSWalletSessionAuth;
+}
+
 interface StoredSessionSnapshot {
   serializedRecord: string;
-  session: OMSWalletSessionState;
+  session: SessionSnapshot;
 }
 
 interface StoredSessionRecord {
-  version: 1;
+  version: 2;
   scope: {
     projectId: string;
     walletApiUrl: string;
     indexerGatewayUrl: string;
   };
-  walletId: string;
-  walletAddress: string;
+  wallet: WalletAccount;
   expiresAt: string;
   auth: OMSWalletSessionAuth;
   signerCredentialId: string;
@@ -336,7 +352,7 @@ export class WalletClient implements OMSWalletClient {
   private readonly transactionStatusPollIntervalMs = 2_000;
   private readonly transactionStatusPollTimeoutMs = 60_000;
 
-  private activeWalletAddress: string | undefined;
+  private activeWalletAccount: WalletAccount | undefined;
   private sessionExpiresAt: string | undefined;
   private sessionAuth: OMSWalletSessionAuth | undefined;
   private sessionSignerCredentialId: string | undefined;
@@ -370,15 +386,15 @@ export class WalletClient implements OMSWalletClient {
 
     if (storedSession) {
       const { record } = storedSession;
-      const restoredSession = {
-        walletAddress: record.walletAddress,
+      const restoredSession: SessionSnapshot = {
+        wallet: record.wallet,
         expiresAt: record.expiresAt,
         auth: record.auth
       };
 
       if (this.isSessionExpired(restoredSession)) {
         this.walletId = '';
-        this.activeWalletAddress = undefined;
+        this.activeWalletAccount = undefined;
         this.sessionExpiresAt = undefined;
         this.sessionAuth = undefined;
         this.scheduleStoredSessionExpiryNotification({
@@ -386,8 +402,8 @@ export class WalletClient implements OMSWalletClient {
           session: restoredSession
         });
       } else {
-        this.walletId = record.walletId;
-        this.activeWalletAddress = restoredSession.walletAddress;
+        this.walletId = record.wallet.id;
+        this.activeWalletAccount = record.wallet;
         this.sessionExpiresAt = restoredSession.expiresAt;
         this.sessionAuth = restoredSession.auth;
         this.sessionSignerCredentialId = record.signerCredentialId;
@@ -396,7 +412,7 @@ export class WalletClient implements OMSWalletClient {
       }
     } else {
       this.walletId = '';
-      this.activeWalletAddress = undefined;
+      this.activeWalletAccount = undefined;
       this.sessionExpiresAt = undefined;
       this.sessionAuth = undefined;
       this.sessionSignerCredentialId = undefined;
@@ -425,25 +441,23 @@ export class WalletClient implements OMSWalletClient {
     });
   }
 
-  /** The on-chain address of this wallet. Undefined until auth completes or a session is restored. */
-  get walletAddress(): string | undefined {
-    return this.activeWalletAddress;
+  /**
+   * The active wallet. Undefined until auth completes or a session is restored, and after sign-out
+   * or session expiry. Narrow on `type` to get the family-specific address type.
+   */
+  get activeWallet(): WalletAccount | undefined {
+    return this.activeWalletAccount ? cloneWalletAccount(this.activeWalletAccount) : undefined;
   }
 
-  /** Durable metadata for the completed wallet session. */
-  get session(): OMSWalletSessionState {
-    if (!this.activeWalletAddress) {
-      return {
-        walletAddress: undefined,
-        expiresAt: undefined,
-        auth: undefined
-      };
+  /** Durable metadata for the active wallet session. Defined exactly when `activeWallet` is. */
+  get session(): OMSWalletSession | undefined {
+    if (!this.activeWalletAccount || !this.sessionExpiresAt || !this.sessionAuth) {
+      return undefined;
     }
 
     return {
-      walletAddress: this.activeWalletAddress,
       expiresAt: this.sessionExpiresAt,
-      auth: cloneSessionAuth(this.sessionAuth)
+      auth: { ...this.sessionAuth }
     };
   }
 
@@ -707,7 +721,7 @@ export class WalletClient implements OMSWalletClient {
         authorizeParams,
         loginHint: this.loginHintForProvider(
           provider,
-          params.loginHint ?? previousSession.auth?.email
+          params.loginHint ?? previousSession?.auth.email
         )
       });
       this.requireCurrentSessionRevision(authRevision, WalletOperation.startOidcRedirectAuth);
@@ -815,7 +829,7 @@ export class WalletClient implements OMSWalletClient {
           }
         );
 
-        if (walletSelection === 'automatic' && !this.activeWalletAddress) {
+        if (walletSelection === 'automatic' && !this.activeWalletAccount) {
           throw new Error('OIDC auth completed without an active wallet');
         }
 
@@ -1035,7 +1049,7 @@ export class WalletClient implements OMSWalletClient {
       }
     }
     this.walletId = '';
-    this.activeWalletAddress = undefined;
+    this.activeWalletAccount = undefined;
     this.sessionExpiresAt = undefined;
     this.sessionAuth = undefined;
     this.sessionSignerCredentialId = undefined;
@@ -1141,6 +1155,62 @@ export class WalletClient implements OMSWalletClient {
     });
   }
 
+  async signTronMessage(params: SignTronMessageParams): Promise<string> {
+    return this.runOperation(WalletOperation.signTronMessage, async () => {
+      await this.requireActiveTronSession(WalletOperation.signTronMessage);
+      const request: SignMessageRequest = {
+        network: '',
+        walletId: this.walletId,
+        message: params.message
+      };
+      const response = await this.client.signMessage(request);
+      return response.signature;
+    });
+  }
+
+  async signTronTypedData(params: SignTronTypedDataParams): Promise<string> {
+    return this.runOperation(WalletOperation.signTronTypedData, async () => {
+      await this.requireActiveTronSession(WalletOperation.signTronTypedData);
+      const request: SignTypedDataRequest = {
+        network: '',
+        walletId: this.walletId,
+        typedData: normalizeJsonBigInts(params.typedData)
+      };
+      const response = await this.client.signTypedData(request);
+      return response.signature;
+    });
+  }
+
+  async isValidTronMessageSignature(params: IsValidTronMessageSignatureParams): Promise<boolean> {
+    return this.runOperation(WalletOperation.isValidTronMessageSignature, async () => {
+      const request: IsValidMessageSignatureRequest = {
+        networkFamily: GeneratedNetworkFamily.Tron,
+        walletAddress: params.walletAddress,
+        walletId: params.walletId ?? (params.walletAddress ? undefined : this.activeWalletId()),
+        message: params.message,
+        signature: params.signature
+      };
+      const response = await this.publicClient.isValidMessageSignature(request);
+      return response.isValid;
+    });
+  }
+
+  async isValidTronTypedDataSignature(
+    params: IsValidTronTypedDataSignatureParams
+  ): Promise<boolean> {
+    return this.runOperation(WalletOperation.isValidTronTypedDataSignature, async () => {
+      const request: IsValidTypedDataSignatureRequest = {
+        networkFamily: GeneratedNetworkFamily.Tron,
+        walletAddress: params.walletAddress,
+        walletId: params.walletId ?? (params.walletAddress ? undefined : this.activeWalletId()),
+        typedData: normalizeJsonBigInts(params.typedData),
+        signature: params.signature
+      };
+      const response = await this.publicClient.isValidTypedDataSignature(request);
+      return response.isValid;
+    });
+  }
+
   async sendTransaction(params: SendNativeTransactionParams): Promise<SendTransactionResponse>;
   async sendTransaction(params: SendDataTransactionParams): Promise<SendTransactionResponse>;
   async sendTransaction<
@@ -1186,6 +1256,54 @@ export class WalletClient implements OMSWalletClient {
       };
 
       const prepared = await this.client.prepareSolanaTransfer(request);
+      return this.executePreparedTransaction({
+        prepared,
+        network: params.network,
+        selectFeeOption: params.selectFeeOption,
+        waitForStatus: params.waitForStatus,
+        statusPolling: params.statusPolling
+      });
+    });
+  }
+
+  async sendTronTransaction(params: SendTronTransactionParams): Promise<SendTransactionResponse> {
+    return this.runOperation(WalletOperation.sendTronTransaction, async () => {
+      await this.requireActiveTronSession(WalletOperation.sendTronTransaction);
+      // `data` is forwarded as given: omitted means a TRX transfer, while any value (even '0x')
+      // makes this a contract call.
+      const request: PrepareTronTransactionRequest = {
+        network: params.network,
+        walletId: this.walletId,
+        to: params.to,
+        value: (params.value ?? 0n).toString(),
+        ...(params.data === undefined ? {} : { data: params.data }),
+        mode: toGeneratedTransactionMode(TransactionMode.Native)
+      };
+
+      const prepared = await this.client.prepareTronTransaction(request);
+      return this.executePreparedTransaction({
+        prepared,
+        network: params.network,
+        selectFeeOption: params.selectFeeOption,
+        waitForStatus: params.waitForStatus,
+        statusPolling: params.statusPolling
+      });
+    });
+  }
+
+  async callTronContract(params: CallTronContractParams): Promise<SendTransactionResponse> {
+    return this.runOperation(WalletOperation.callTronContract, async () => {
+      await this.requireActiveTronSession(WalletOperation.callTronContract);
+      const request: PrepareTronContractCallRequest = {
+        network: params.network,
+        walletId: this.walletId,
+        contract: params.contractAddress,
+        method: params.method,
+        args: params.args,
+        mode: toGeneratedTransactionMode(TransactionMode.Native)
+      };
+
+      const prepared = await this.client.prepareTronContractCall(request);
       return this.executePreparedTransaction({
         prepared,
         network: params.network,
@@ -1420,9 +1538,9 @@ export class WalletClient implements OMSWalletClient {
     metadata: WalletSessionMetadata,
     operation?: WalletOperation
   ): WalletActivationResult {
-    this.persistSession(wallet.id, wallet.address, metadata, operation);
+    this.persistSession(wallet, metadata, operation);
     this.activePendingWalletSelection = undefined;
-    return { walletAddress: wallet.address, wallet };
+    return { wallet: cloneWalletAccount(wallet) };
   }
 
   private async completeWalletAuth(
@@ -1465,7 +1583,6 @@ export class WalletClient implements OMSWalletClient {
     const resultWallets = wallet ? wallets : [...wallets, activated.wallet];
 
     return {
-      walletAddress: activated.walletAddress,
       wallet: activated.wallet,
       wallets: resultWallets,
       credential
@@ -1579,16 +1696,14 @@ export class WalletClient implements OMSWalletClient {
 
   /** Saves wallet metadata. The non-extractable credential key is owned by the signer. */
   private persistSession(
-    walletId: string,
-    walletAddress: string,
+    wallet: WalletAccount,
     metadata: WalletSessionMetadata,
     operation?: WalletOperation
   ): void {
     const record: StoredSessionRecord = {
-      version: 1,
+      version: 2,
       scope: this.sessionScope(),
-      walletId,
-      walletAddress,
+      wallet: cloneWalletAccount(wallet),
       expiresAt: metadata.expiresAt,
       auth: cloneSessionAuth(metadata.auth),
       signerCredentialId: metadata.signerCredentialId,
@@ -1605,13 +1720,13 @@ export class WalletClient implements OMSWalletClient {
     }
 
     this.latestSessionExpiredEvent = undefined;
-    this.walletId = walletId;
-    this.activeWalletAddress = walletAddress;
+    this.walletId = wallet.id;
+    this.activeWalletAccount = cloneWalletAccount(wallet);
     this.sessionExpiresAt = metadata.expiresAt;
     this.sessionAuth = cloneSessionAuth(metadata.auth);
     this.sessionSignerCredentialId = metadata.signerCredentialId;
     this.sessionSignerKeyType = metadata.signerKeyType;
-    this.scheduleSessionExpiry(this.session);
+    this.scheduleSessionExpiry(this.sessionFromMetadata(this.activeWalletAccount, metadata));
   }
 
   private loadStoredSessionRecord(): LoadedSessionRecord | undefined {
@@ -1624,10 +1739,11 @@ export class WalletClient implements OMSWalletClient {
       const auth = normalizeSessionAuth(parsed.auth);
       const signerCredentialId = parsed.signerCredentialId;
       const signerKeyType = parsed.signerKeyType;
+      const wallet = parseStoredWalletAccount(parsed.wallet);
+      // Version 1 records (SDK 0.3.x) carry no wallet type; they are discarded and the user signs in again.
       if (
-        parsed.version !== 1 ||
-        typeof parsed.walletId !== 'string' ||
-        typeof parsed.walletAddress !== 'string' ||
+        parsed.version !== 2 ||
+        !wallet ||
         typeof parsed.expiresAt !== 'string' ||
         typeof signerCredentialId !== 'string' ||
         !isCredentialSigningAlgorithm(signerKeyType) ||
@@ -1654,10 +1770,9 @@ export class WalletClient implements OMSWalletClient {
       return {
         serialized,
         record: {
-          version: 1,
+          version: 2,
           scope: expectedScope,
-          walletId: parsed.walletId,
-          walletAddress: parsed.walletAddress,
+          wallet,
           expiresAt: parsed.expiresAt,
           auth,
           signerCredentialId,
@@ -2203,7 +2318,7 @@ export class WalletClient implements OMSWalletClient {
 
   private async executePreparedTransaction(params: {
     prepared: PrepareResponse;
-    network?: Network | SolanaNetwork;
+    network?: Network | SolanaNetwork | TronNetwork;
     selectFeeOption?: FeeOptionSelector;
     waitForStatus?: boolean;
     statusPolling?: TransactionStatusPollingOptions;
@@ -2278,7 +2393,7 @@ export class WalletClient implements OMSWalletClient {
   private async selectFeeOption(params: {
     feeOptions: GeneratedFeeOption[];
     sponsored: boolean;
-    network?: Network | SolanaNetwork;
+    network?: Network | SolanaNetwork | TronNetwork;
     selectFeeOption?: FeeOptionSelector;
   }): Promise<FeeOptionSelection | undefined> {
     if (params.sponsored) {
@@ -2309,14 +2424,16 @@ export class WalletClient implements OMSWalletClient {
   }
 
   private async enrichFeeOptionsWithBalances(
-    network: Network | SolanaNetwork,
+    network: Network | SolanaNetwork | TronNetwork,
     feeOptions: FeeOption[]
   ): Promise<FeeOptionWithBalance[]> {
     if (typeof network === 'string') {
-      return this.enrichSolanaFeeOptionsWithBalances(network, feeOptions);
+      return isTronNetwork(network)
+        ? this.enrichTronFeeOptionsWithBalances(network, feeOptions)
+        : this.enrichSolanaFeeOptionsWithBalances(network, feeOptions);
     }
 
-    const walletAddress = this.walletAddress;
+    const walletAddress = this.activeWalletAccount?.address;
     if (!walletAddress) {
       throw new Error('No active wallet session');
     }
@@ -2369,7 +2486,7 @@ export class WalletClient implements OMSWalletClient {
     network: SolanaNetwork,
     feeOptions: FeeOption[]
   ): Promise<FeeOptionWithBalance[]> {
-    const walletAddress = this.walletAddress;
+    const walletAddress = this.activeWalletAccount?.address;
     if (!walletAddress) {
       throw new Error('No active wallet session');
     }
@@ -2404,6 +2521,56 @@ export class WalletClient implements OMSWalletClient {
       const balance = this.isNativeToken(feeOption)
         ? nativeBalance
         : balancesByMint.get(feeOption.token.contractAddress?.trim() ?? '');
+      const decimals = balance?.decimals ?? feeOption.token.decimals;
+
+      return {
+        feeOption,
+        selection: feeOptionSelection(feeOption, index),
+        available: this.formatTokenAmount(balance?.balance, decimals),
+        availableRaw: balance?.balance,
+        decimals
+      };
+    });
+  }
+
+  private async enrichTronFeeOptionsWithBalances(
+    network: TronNetwork,
+    feeOptions: FeeOption[]
+  ): Promise<FeeOptionWithBalance[]> {
+    const walletAddress = this.activeWalletAccount?.address;
+    if (!walletAddress) {
+      throw new Error('No active wallet session');
+    }
+
+    const contractAddresses = Array.from(
+      new Set(
+        feeOptions
+          .filter((option) => !this.isNativeToken(option))
+          .map((option) => option.token.contractAddress?.trim())
+          .filter((address): address is string => Boolean(address))
+      )
+    );
+    const balances = await this.indexerClient
+      .getTronBalances({
+        networks: [network],
+        walletAddress,
+        contractAddresses,
+        omitNativeBalances: !feeOptions.some((option) => this.isNativeToken(option))
+      })
+      .catch(() => undefined);
+    const nativeBalance = balances?.balances.find(
+      (balance) => balance.network === network && balance.assetType === 'native'
+    );
+    const balancesByContract = new Map(
+      balances?.balances
+        .filter((balance) => balance.network === network && balance.assetType === 'trc20')
+        .map((balance) => [balance.contractAddress, balance]) ?? []
+    );
+
+    return feeOptions.map((feeOption, index) => {
+      const balance = this.isNativeToken(feeOption)
+        ? nativeBalance
+        : balancesByContract.get(feeOption.token.contractAddress?.trim() ?? '');
       const decimals = balance?.decimals ?? feeOption.token.decimals;
 
       return {
@@ -2514,7 +2681,13 @@ export class WalletClient implements OMSWalletClient {
       });
     }
 
-    const session = this.session;
+    const session = this.activeSessionSnapshot();
+    if (!session) {
+      throw new OMSWalletSessionError({
+        operation,
+        message: 'No active wallet session'
+      });
+    }
     if (this.isSessionExpired(session)) {
       await this.expireSession(session);
       throw new OMSWalletSessionError({
@@ -2549,16 +2722,25 @@ export class WalletClient implements OMSWalletClient {
   }
 
   private async requireActiveEthereumSession(operation: WalletOperation): Promise<void> {
-    await this.requireActiveSession(operation);
-    if (!isAddress(this.activeWalletAddress!)) {
-      throw new Error('An active Ethereum wallet is required');
-    }
+    await this.requireActiveWalletType(WalletType.Ethereum, 'Ethereum', operation);
   }
 
   private async requireActiveSolanaSession(operation: WalletOperation): Promise<void> {
+    await this.requireActiveWalletType(WalletType.Solana, 'Solana', operation);
+  }
+
+  private async requireActiveTronSession(operation: WalletOperation): Promise<void> {
+    await this.requireActiveWalletType(WalletType.Tron, 'Tron', operation);
+  }
+
+  private async requireActiveWalletType(
+    type: WalletType,
+    label: string,
+    operation: WalletOperation
+  ): Promise<void> {
     await this.requireActiveSession(operation);
-    if (isAddress(this.activeWalletAddress!)) {
-      throw new Error('An active Solana wallet is required');
+    if (this.activeWalletAccount?.type !== type) {
+      throw new Error(`An active ${label} wallet is required`);
     }
   }
 
@@ -2604,39 +2786,43 @@ export class WalletClient implements OMSWalletClient {
     return new Promise((resolve) => setTimeout(resolve, ms));
   }
 
-  private isSessionExpired(session: OMSWalletSessionState): boolean {
-    if (!session.expiresAt) return false;
+  private activeSessionSnapshot(): SessionSnapshot | undefined {
+    if (!this.activeWalletAccount || !this.sessionExpiresAt || !this.sessionAuth) return undefined;
+    return {
+      wallet: cloneWalletAccount(this.activeWalletAccount),
+      expiresAt: this.sessionExpiresAt,
+      auth: { ...this.sessionAuth }
+    };
+  }
+
+  private isSessionExpired(session: SessionSnapshot): boolean {
     const expiresAtMs = Date.parse(session.expiresAt);
     return Number.isFinite(expiresAtMs) && expiresAtMs <= Date.now();
   }
 
   private sessionFromMetadata(
-    walletAddress: string | undefined,
+    wallet: WalletAccount | undefined,
     metadata: WalletSessionMetadata
-  ): OMSWalletSessionState {
+  ): SessionSnapshot {
     return {
-      walletAddress,
+      wallet: wallet ? cloneWalletAccount(wallet) : undefined,
       expiresAt: metadata.expiresAt,
-      auth: cloneSessionAuth(metadata.auth)
+      auth: { ...metadata.auth }
     };
   }
 
-  private async expireSession(session: OMSWalletSessionState): Promise<void> {
-    const expiredAt = session.expiresAt;
+  private async expireSession(session: SessionSnapshot): Promise<void> {
     try {
       await this.clearSession({ clearStorage: false });
     } catch {
       // Expiry notification should not depend on credential cleanup succeeding.
     }
-    if (expiredAt) {
-      this.notifySessionExpired({ session, expiredAt });
-    }
+    this.notifySessionExpired(sessionExpiredEvent(session));
   }
 
-  private scheduleSessionExpiry(session: OMSWalletSessionState): void {
+  private scheduleSessionExpiry(session: SessionSnapshot): void {
     this.clearSessionExpiryTimer();
 
-    if (!session.expiresAt) return;
     const expiresAtMs = Date.parse(session.expiresAt);
     if (!Number.isFinite(expiresAtMs)) return;
 
@@ -2656,7 +2842,7 @@ export class WalletClient implements OMSWalletClient {
     this.sessionExpiryTimer = undefined;
   }
 
-  private async expireSessionFromTimer(session: OMSWalletSessionState): Promise<void> {
+  private async expireSessionFromTimer(session: SessionSnapshot): Promise<void> {
     if (!this.isCurrentSessionSnapshot(session)) return;
     if (!this.isSessionExpired(session)) {
       this.scheduleSessionExpiry(session);
@@ -2665,10 +2851,10 @@ export class WalletClient implements OMSWalletClient {
     await this.expireSession(session);
   }
 
-  private isCurrentSessionSnapshot(session: OMSWalletSessionState): boolean {
-    if (session.walletAddress) {
+  private isCurrentSessionSnapshot(session: SessionSnapshot): boolean {
+    if (session.wallet) {
       return (
-        this.activeWalletAddress === session.walletAddress &&
+        this.activeWalletAccount?.id === session.wallet.id &&
         this.sessionExpiresAt === session.expiresAt
       );
     }
@@ -2681,7 +2867,6 @@ export class WalletClient implements OMSWalletClient {
 
   private scheduleStoredSessionExpiryNotification(snapshot: StoredSessionSnapshot): void {
     const session = snapshot.session;
-    const expiredAt = session.expiresAt;
     void Promise.resolve()
       .then(async () => {
         if (!this.matchesStoredSessionSnapshot(snapshot)) return;
@@ -2694,9 +2879,7 @@ export class WalletClient implements OMSWalletClient {
 
         if (!this.matchesStoredSessionSnapshot(snapshot)) return;
 
-        if (expiredAt) {
-          this.notifySessionExpired({ session, expiredAt });
-        }
+        this.notifySessionExpired(sessionExpiredEvent(session));
       })
       .catch(() => {});
   }
@@ -2784,6 +2967,10 @@ function createApiKeyFetch(publishableKey: string): Fetch {
   };
 }
 
+function isTronNetwork(network: SolanaNetwork | TronNetwork): network is TronNetwork {
+  return (Object.values(TronNetworks) as string[]).includes(network);
+}
+
 function isWalletType(value: unknown): value is WalletType {
   return typeof value === 'string' && Object.values(WalletType).includes(value as WalletType);
 }
@@ -2828,19 +3015,56 @@ function cloneSessionAuth(
   return auth ? { ...auth } : undefined;
 }
 
-function cloneSessionState(session: OMSWalletSessionState): OMSWalletSessionState {
+function cloneWalletAccount<T extends WalletAccount>(wallet: T): T {
+  return { ...wallet };
+}
+
+function sessionExpiredEvent(session: SessionSnapshot): OMSWalletSessionExpiredEvent {
   return {
-    walletAddress: session.walletAddress,
-    expiresAt: session.expiresAt,
-    auth: cloneSessionAuth(session.auth)
+    wallet: session.wallet ? cloneWalletAccount(session.wallet) : undefined,
+    session: { expiresAt: session.expiresAt, auth: { ...session.auth } },
+    expiredAt: session.expiresAt
   };
+}
+
+function parseStoredWalletAccount(value: unknown): WalletAccount | undefined {
+  if (!value || typeof value !== 'object') return undefined;
+  const wallet = value as Record<string, unknown>;
+  if (
+    typeof wallet.id !== 'string' ||
+    !wallet.id ||
+    typeof wallet.address !== 'string' ||
+    !wallet.address ||
+    !isWalletType(wallet.type) ||
+    !isWalletKeyOrigin(wallet.keyOrigin) ||
+    (wallet.reference !== undefined && typeof wallet.reference !== 'string')
+  ) {
+    return undefined;
+  }
+  if (wallet.type === WalletType.Ethereum && !isAddress(wallet.address)) {
+    return undefined;
+  }
+  return {
+    id: wallet.id,
+    type: wallet.type,
+    address: wallet.address,
+    ...(wallet.reference === undefined ? {} : { reference: wallet.reference }),
+    keyOrigin: wallet.keyOrigin
+  } as WalletAccount;
+}
+
+function isWalletKeyOrigin(value: unknown): value is WalletKeyOrigin {
+  return (
+    typeof value === 'string' && Object.values(WalletKeyOrigin).includes(value as WalletKeyOrigin)
+  );
 }
 
 function cloneSessionExpiredEvent(
   event: OMSWalletSessionExpiredEvent
 ): OMSWalletSessionExpiredEvent {
   return {
-    session: cloneSessionState(event.session),
+    wallet: event.wallet ? cloneWalletAccount(event.wallet) : undefined,
+    session: { expiresAt: event.session.expiresAt, auth: { ...event.session.auth } },
     expiredAt: event.expiredAt
   };
 }

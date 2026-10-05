@@ -42,6 +42,11 @@ When the active wallet is a Solana wallet, the example shows a Solana operations
 (`src/SolanaExample.tsx`) that signs and verifies a message, reads the Devnet SOL balance, and
 sends SOL or SPL transfers on Solana Devnet with fee-option selection.
 
+When the active wallet is a Tron wallet, the example shows a Tron operations panel
+(`src/TronExample.tsx`) that signs and verifies a message, reads the Nile TRX balance with
+`getTronBalances`, and sends TRX transfers on Tron Nile with fee-option selection. Tron is
+native-mode only, and transactions are often sponsored by the account's daily free bandwidth.
+
 The Amoy-only "ERC20 example" panel includes a WalletKit Dollar example using
 the demo WKUSD contract deployed on Polygon Amoy.
 

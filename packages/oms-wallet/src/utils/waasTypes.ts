@@ -47,6 +47,8 @@ export function toGeneratedNetworkFamily(walletType: PublicWalletType): Generate
       return GeneratedNetworkFamily.EVM;
     case 'solana':
       return GeneratedNetworkFamily.Solana;
+    case 'tron':
+      return GeneratedNetworkFamily.Tron;
   }
 }
 
@@ -58,6 +60,8 @@ export function fromGeneratedNetworkFamily(
       return 'ethereum';
     case GeneratedNetworkFamily.Solana:
       return 'solana';
+    case GeneratedNetworkFamily.Tron:
+      return 'tron';
     default:
       throw invalidResponseError(
         `Wallet response contains unsupported networkFamily: ${String(networkFamily)}`

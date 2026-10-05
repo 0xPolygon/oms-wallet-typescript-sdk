@@ -44,7 +44,7 @@ async function main() {
     const result = await omsWallet.wallet.completeEmailAuth({ code });
 
     console.log(`[step 2] ok (${Date.now() - t}ms)`);
-    console.log(`[step 2] wallet ${result.walletAddress}`);
+    console.log(`[step 2] wallet ${result.wallet.address}`);
     console.log(`[step 2] credential ${result.credential.credentialId}`);
   } catch (err) {
     console.error(`[step 2] FAILED (${Date.now() - t}ms):`, err);

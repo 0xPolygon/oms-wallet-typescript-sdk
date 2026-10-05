@@ -56,11 +56,11 @@ export const wagmiConfig = createConfig({
 
 ## Authentication
 
-The connector does not render authentication UI. Authenticate with the OMS Wallet SDK first, then call wagmi `connect` with the OMS Wallet connector once `omsWallet.wallet.walletAddress` is set.
+The connector does not render authentication UI. Authenticate with the OMS Wallet SDK first, then call wagmi `connect` with the OMS Wallet connector once `omsWallet.wallet.activeWallet` is set.
 
-The connector is Ethereum-only even though the core SDK also supports Solana wallets. Select an
-Ethereum wallet before connecting. Connecting or requesting accounts with an active Solana wallet
-rejects with `OMSWalletProviderRpcError` code `4100`.
+The connector is Ethereum-only even though the core SDK also supports Solana and Tron wallets.
+Select an Ethereum wallet before connecting. Connecting or requesting accounts with an active Solana
+or Tron wallet rejects with `OMSWalletProviderRpcError` code `4100`.
 
 Email example:
 
@@ -68,8 +68,8 @@ Email example:
 await omsWallet.wallet.startEmailAuth({ email })
 await omsWallet.wallet.completeEmailAuth({ code })
 
-if (!omsWallet.wallet.walletAddress) {
-  throw new Error('OMS auth completed without an active wallet.')
+if (omsWallet.wallet.activeWallet?.type !== 'ethereum') {
+  throw new Error('OMS auth completed without an active Ethereum wallet.')
 }
 
 await connect(wagmiConfig, {

@@ -1,6 +1,6 @@
 # OMS Wallet TypeScript SDK
 
-Build **non-custodial EVM and Solana wallet experiences in TypeScript** with OMS Wallet — email and
+Build **non-custodial EVM, Solana, and Tron wallet experiences in TypeScript** with OMS Wallet — email and
 OIDC sign-in, session restore, message signing, transaction submission, token-balance queries, and
 attested opt-in key import. Normal wallet creation never exposes a private key through the SDK;
 import flows accept caller-provided key material only when an application explicitly uses them.
@@ -17,7 +17,7 @@ packages exactly as an external app would.
 
 | Package | Published as | What it does |
 |---|---|---|
-| [`packages/oms-wallet`](packages/oms-wallet) | [`@polygonlabs/oms-wallet`](https://www.npmjs.com/package/@polygonlabs/oms-wallet) | The core SDK — email/OIDC authentication, EVM and Solana wallets, attested key import, signed remote access, transaction submission and status polling, access management, and EVM/Solana indexer balance queries. Ships dual CJS + ESM for browser and Node consumers. |
+| [`packages/oms-wallet`](packages/oms-wallet) | [`@polygonlabs/oms-wallet`](https://www.npmjs.com/package/@polygonlabs/oms-wallet) | The core SDK — email/OIDC authentication, EVM, Solana, and Tron wallets, attested key import, signed remote access, transaction submission and status polling, access management, and EVM/Solana/Tron balance queries. Ships dual CJS + ESM for browser and Node consumers. |
 | [`packages/oms-wallet-wagmi-connector`](packages/oms-wallet-wagmi-connector) | [`@polygonlabs/oms-wallet-wagmi-connector`](https://www.npmjs.com/package/@polygonlabs/oms-wallet-wagmi-connector) | Adapts an active Ethereum wallet from `@polygonlabs/oms-wallet` as a [wagmi](https://wagmi.sh) connector, so existing wagmi apps can use OMS Wallet as a connection option. |
 
 Both packages release **in lockstep** (a changesets `fixed` group), so they always share a version.
@@ -46,7 +46,7 @@ source, so no prior `pnpm build` is needed.
 
 | Example | What it shows | Run | Typecheck / build |
 |---|---|---|---|
-| [`examples/react`](examples/react) ([live demo](https://0xpolygon.github.io/oms-wallet-typescript-sdk/react-example/)) | Email, Google, and Apple sign-in, signing, transactions, balances, wallet management, Privy wallet import, and Solana | `pnpm dev:example` | `pnpm build:example` |
+| [`examples/react`](examples/react) ([live demo](https://0xpolygon.github.io/oms-wallet-typescript-sdk/react-example/)) | Email, Google, and Apple sign-in, signing, transactions, balances, wallet management, Privy wallet import, Solana, and Tron | `pnpm dev:example` | `pnpm build:example` |
 | [`examples/wagmi`](examples/wagmi) ([live demo](https://0xpolygon.github.io/oms-wallet-typescript-sdk/wagmi-example/)) | The wagmi connector with the MetaMask connector and the Trails widget | `pnpm dev:wagmi-example` | `pnpm build:wagmi-example` |
 | [`examples/trails-actions`](examples/trails-actions) ([live demo](https://0xpolygon.github.io/oms-wallet-typescript-sdk/trails-actions-example/)) | Trails swap, Earn deposit, and Earn withdrawal flows | `pnpm dev:trails-actions-example` | `pnpm build:trails-actions-example` |
 | [`examples/custom-google-redirect`](examples/custom-google-redirect) | Google as a custom OIDC provider with `providerRedirectUri: "http://localhost:5173"` (local only) | `pnpm dev:custom-google-redirect-example` | `pnpm build:custom-google-redirect-example` |
