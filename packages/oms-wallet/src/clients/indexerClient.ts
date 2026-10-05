@@ -536,8 +536,12 @@ interface IndexerClientEnvironment {
   tronRpcUrls?: Readonly<Record<TronNetwork, string>>;
 }
 
-// Interim Tron balance source: public, keyless TronGrid JSON-RPC (Tron nodes serve an
-// Ethereum-compatible JSON-RPC at /jsonrpc). Replaced by an OMS Tron indexer gateway later.
+// TODO(tron-indexer): interim Tron balance source. Public, keyless TronGrid JSON-RPC (Tron nodes
+// serve an Ethereum-compatible JSON-RPC at /jsonrpc). When the OMS Tron indexer gateway ships,
+// replace `tronRpcUrls`, `readTronNetworkBalances`, and `tronJsonRpcBatch` with a gateway call
+// shaped like `getSolanaBalances` (URL from the publishable key), keep the public
+// `GetTronBalancesParams`/`TronBalancesResult` shape, drop the "experimental" note in the README and
+// TSDoc, and replace the TronGrid transport tests in tests/indexerClient.test.ts.
 const defaultTronRpcUrls: Readonly<Record<TronNetwork, string>> = Object.freeze({
   [TronNetworks.mainnet]: 'https://api.trongrid.io',
   [TronNetworks.nile]: 'https://nile.trongrid.io'

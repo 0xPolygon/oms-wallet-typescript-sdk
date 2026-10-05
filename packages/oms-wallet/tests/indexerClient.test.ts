@@ -699,6 +699,7 @@ describe('IndexerClient', () => {
       retryable: true
     });
   });
+  // TODO(tron-indexer): TronGrid transport test; replace with a gateway test when the indexer ships.
   it('reads Tron TRX and TRC-20 balances through batched public JSON-RPC', async () => {
     const wallet = 'TNPeeaaFB7K9cmo4uQpcU32zGK8G1NYqeL';
     const walletHex = '0x8840e6c55b9ada326d211d818c34a994aeced808';
@@ -795,6 +796,7 @@ describe('IndexerClient', () => {
     });
   });
 
+  // TODO(tron-indexer): TronGrid transport test; replace with a gateway test when the indexer ships.
   it('reports Tron networks that fail as errors and defaults to mainnet and Nile', async () => {
     const fetchMock = vi.fn(async (input: RequestInfo | URL) =>
       input.toString().startsWith('https://api.trongrid.io')
