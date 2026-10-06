@@ -1,5 +1,14 @@
 # @polygonlabs/oms-wallet
 
+## 0.3.1
+
+### Patch Changes
+
+- [#103](https://github.com/0xPolygon/oms-wallet-typescript-sdk/pull/103) [`0b97509`](https://github.com/0xPolygon/oms-wallet-typescript-sdk/commit/0b975098deb0c49c4e28e600cdc2fc1a9ee767f5) Thanks [@tolgahan-arikan](https://github.com/tolgahan-arikan)! - Wallet import trusts the WaaS v1.1.1 enclave measurements on Staging and Production.
+  
+  - **Staging:** restores wallet import, which was failing with `OMS_ATTESTATION_VERIFICATION_FAILED` after the Staging enclave was upgraded.
+  - **Production:** trusts the v1.1.1 measurement alongside the current one, so wallet import keeps working when Production is upgraded. Update before that rollout to avoid import failures.
+
 ## 0.3.0
 
 ### Minor Changes
