@@ -799,7 +799,7 @@ describe('IndexerClient', () => {
   // TODO(tron-indexer): TronGrid transport test; replace with a gateway test when the indexer ships.
   it('reports Tron networks that fail as errors and defaults to mainnet and Nile', async () => {
     const fetchMock = vi.fn(async (input: RequestInfo | URL) =>
-      input.toString().startsWith('https://api.trongrid.io')
+      input.toString() === 'https://api.trongrid.io/jsonrpc'
         ? new Response(JSON.stringify([{ jsonrpc: '2.0', id: 0, result: '0x0' }]), { status: 200 })
         : new Response('rate limited', { status: 429 })
     );
