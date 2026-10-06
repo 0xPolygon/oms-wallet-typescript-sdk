@@ -43,9 +43,11 @@ When the active wallet is a Solana wallet, the example shows a Solana operations
 sends SOL or SPL transfers on Solana Devnet with fee-option selection.
 
 When the active wallet is a Tron wallet, the example shows a Tron operations panel
-(`src/TronExample.tsx`) that signs and verifies a message, reads the Nile TRX balance with
-`getTronBalances`, and sends TRX transfers on Tron Nile with fee-option selection. Tron is
-native-mode only, and transactions are often sponsored by the account's daily free bandwidth.
+(`src/TronExample.tsx`) that signs and verifies a message, reads the Nile TRX and USDT balances
+with `getTronBalances`, and sends TRX (`sendTronTransaction`) or TRC-20 tokens
+(`callTronContract`) on Tron Nile with fee-option selection. The
+[Nile faucet](https://nileex.io/join/getJoinPage) provides test TRX and USDT. Tron is native-mode
+only, and transactions are often sponsored by the account's daily free bandwidth.
 
 The Amoy-only "ERC20 example" panel includes a WalletKit Dollar example using
 the demo WKUSD contract deployed on Polygon Amoy.
