@@ -122,9 +122,9 @@ export function SolanaExample({ walletAddress }: { walletAddress: string }) {
 
       setTransactionSignature(transaction.txnHash ?? transaction.txnId);
       setTransferStatus(
-        transaction.statusResolution === 'timed-out'
-          ? 'Transaction submitted. Confirmation is still pending.'
-          : `Transfer ${transaction.status}.`
+        transaction.status === 'executed' || transaction.status === 'failed'
+          ? `Transfer ${transaction.status}.`
+          : 'Transaction submitted.'
       );
       await refreshBalance();
     } catch (error) {
