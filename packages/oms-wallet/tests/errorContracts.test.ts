@@ -473,7 +473,7 @@ describe('public API error contracts', () => {
             oms.wallet.callContract({
               network: Networks.polygon,
               contractAddress: '0x2222222222222222222222222222222222222222',
-              method: 'transfer(address,uint256)',
+              method: 'transfer',
               args: [
                 { type: 'address', value: '0x3333333333333333333333333333333333333333' },
                 { type: 'uint256', value: '1' }

@@ -260,7 +260,7 @@ if (false) {
     const trc20Transfer: CallTronContractParams = {
       network: TronNetworks.mainnet,
       contractAddress: 'TR7NHqjeKQxGTCi8q8ZY4pL8otSzgjLj6t',
-      method: 'transfer(address,uint256)',
+      method: 'transfer',
       args: [
         { type: 'address', value: 'TNPeeaaFB7K9cmo4uQpcU32zGK8G1NYqeL' },
         { type: 'uint256', value: '1000000' }

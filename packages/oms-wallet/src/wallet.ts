@@ -376,6 +376,7 @@ export interface OMSWalletClient {
   callContract(params: {
     network: Network;
     contractAddress: Address;
+    /** Function name only, e.g. `'transfer'`. The signature is built from the `args` types. */
     method: string;
     args?: Array<AbiArg>;
     mode?: TransactionMode;

@@ -1294,6 +1294,7 @@ export class WalletClient implements OMSWalletClient {
   async callTronContract(params: CallTronContractParams): Promise<SendTransactionResponse> {
     return this.runOperation(WalletOperation.callTronContract, async () => {
       await this.requireActiveTronSession(WalletOperation.callTronContract);
+      requireContractMethodName(params.method);
       const request: PrepareTronContractCallRequest = {
         network: params.network,
         walletId: this.walletId,
@@ -1326,6 +1327,7 @@ export class WalletClient implements OMSWalletClient {
   }): Promise<SendTransactionResponse> {
     return this.runOperation(WalletOperation.callContract, async () => {
       await this.requireActiveEthereumSession(WalletOperation.callContract);
+      requireContractMethodName(params.method);
       const request: PrepareEthereumContractCallRequest = {
         network: params.network.id.toString(),
         walletId: this.walletId,
@@ -2965,6 +2967,17 @@ function createApiKeyFetch(publishableKey: string): Fetch {
 
     return globalThis.fetch(input, { ...init, headers });
   };
+}
+
+// Mirrors the wallet service: it builds the signature from the arg types and accepts a bare name.
+const contractMethodNamePattern = /^[a-zA-Z_][a-zA-Z0-9_]*$/;
+
+function requireContractMethodName(method: string): void {
+  if (!contractMethodNamePattern.test(method)) {
+    throw new Error(
+      `method must be a function name such as 'transfer', not a signature; got '${method}'`
+    );
+  }
 }
 
 function isTronNetwork(network: SolanaNetwork | TronNetwork): network is TronNetwork {

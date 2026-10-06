@@ -180,7 +180,7 @@ describe('WalletClient transactions', () => {
           network: '137',
           walletId: 'wallet-id',
           contract: '0x1111111111111111111111111111111111111111',
-          method: 'mint(address,uint256)',
+          method: 'mint',
           args: [
             { type: 'address', value: '0x2222222222222222222222222222222222222222' },
             { type: 'uint256', value: '1' }
@@ -212,7 +212,7 @@ describe('WalletClient transactions', () => {
       wallet.callContract({
         network: Networks.polygon,
         contractAddress: '0x1111111111111111111111111111111111111111',
-        method: 'mint(address,uint256)',
+        method: 'mint',
         args: [
           { type: 'address', value: '0x2222222222222222222222222222222222222222' },
           { type: 'uint256', value: '1' }

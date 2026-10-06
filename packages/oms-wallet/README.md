@@ -537,7 +537,7 @@ const trxTransfer = await omsWallet.wallet.sendTronTransaction({
 const trc20Transfer = await omsWallet.wallet.callTronContract({
   network: TronNetworks.nile,
   contractAddress: 'TXYZopYRdj2D9XRtbG411XZZ3kM5VkAeBf',
-  method: 'transfer(address,uint256)',
+  method: 'transfer',
   args: [
     { type: 'address', value: 'TR7NHqjeKQxGTCi8q8ZY4pL8otSzgjLj6t' },
     { type: 'uint256', value: '1000000' },
@@ -659,13 +659,16 @@ import { parseUnits } from 'viem'
 const tx = await omsWallet.wallet.callContract({
   network: Networks.amoy,
   contractAddress: '0x3333333333333333333333333333333333333333',
-  method: 'transfer(address,uint256)',
+  method: 'transfer',
   args: [
     { type: 'address', value: '0x1111111111111111111111111111111111111111' },
     { type: 'uint256', value: parseUnits('0.001', 18).toString() },
   ],
 })
 ```
+
+Pass the function name only (`'transfer'`, not `'transfer(address,uint256)'`). The wallet service
+builds the signature from the `args` types, and the SDK rejects a full signature locally.
 
 `sendTransaction` and `callContract` prepare and execute the transaction, then poll the wallet API for
 the latest transaction status. The response includes `txnId`, `status`, and `txnHash`

@@ -140,7 +140,10 @@ export type CallTronContractParams = {
   network: TronNetwork;
   /** Base58Check contract address (`T…`). */
   contractAddress: string;
-  /** Function signature, e.g. `'transfer(address,uint256)'`. */
+  /**
+   * Function name only, e.g. `'transfer'`. The wallet service builds the signature from the
+   * `args` types.
+   */
   method: string;
   args?: Array<AbiArg>;
   selectFeeOption?: FeeOptionSelector;

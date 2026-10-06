@@ -14,6 +14,8 @@ Add Tron wallet support, and replace `walletAddress` with a typed `activeWallet`
 - **`indexer.getTronBalances`** (experimental) returns TRX and TRC-20 balances in the same shape as `getSolanaBalances`. It currently reads public Tron JSON-RPC, so TRC-20 balances are returned only for the `contractAddresses` you pass. `FeeOptionSelector.firstAvailable` uses it for Tron fees.
 - TRC-10 tokens are not supported.
 
+`callContract` and `callTronContract` now reject a full function signature as `method` (for example `'transfer(address,uint256)'`) with `OMS_VALIDATION_ERROR` before sending a request. Pass the bare function name (`'transfer'`); the wallet service builds the signature from the `args` types and already rejected full signatures with a generic invalid-request error.
+
 ### Breaking changes
 
 - **`wallet.activeWallet`** replaces `wallet.walletAddress`. It is the active `WalletAccount` or `undefined`, and narrowing on `type` gives Ethereum wallets a viem `Address`.

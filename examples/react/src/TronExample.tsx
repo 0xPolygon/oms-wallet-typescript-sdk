@@ -125,7 +125,7 @@ export function TronExample({ walletAddress }: { walletAddress: string }) {
         transaction = await omsWallet.wallet.callTronContract({
           ...options,
           contractAddress,
-          method: 'transfer(address,uint256)',
+          method: 'transfer',
           args: [
             { type: 'address', value: destination },
             { type: 'uint256', value: baseUnits.toString() }

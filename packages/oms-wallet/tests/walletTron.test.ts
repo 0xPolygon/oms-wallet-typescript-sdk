@@ -127,7 +127,7 @@ describe('WalletClient Tron', () => {
           network: 'tron:mainnet',
           walletId: 'wallet-id',
           contract: tronUsdt,
-          method: 'transfer(address,uint256)',
+          method: 'transfer',
           args: [
             { type: 'address', value: tronRecipient },
             { type: 'uint256', value: '1000000' }
@@ -149,7 +149,7 @@ describe('WalletClient Tron', () => {
       wallet.callTronContract({
         network: TronNetworks.mainnet,
         contractAddress: tronUsdt,
-        method: 'transfer(address,uint256)',
+        method: 'transfer',
         args: [
           { type: 'address', value: tronRecipient },
           { type: 'uint256', value: '1000000' }
@@ -157,6 +157,28 @@ describe('WalletClient Tron', () => {
         waitForStatus: false
       })
     ).resolves.toMatchObject({ txnId: 'txn-trc20' });
+  });
+
+  it('rejects a full function signature as the contract method before any request', async () => {
+    const fetchMock = vi.fn();
+    vi.stubGlobal('fetch', fetchMock);
+
+    await expect(
+      createTronWalletWithSession().callTronContract({
+        network: TronNetworks.nile,
+        contractAddress: tronUsdt,
+        method: 'transfer(address,uint256)',
+        args: [{ type: 'uint256', value: '1' }]
+      })
+    ).rejects.toMatchObject({ code: 'OMS_VALIDATION_ERROR', operation: 'wallet.callTronContract' });
+    await expect(
+      createWalletWithSession('0x9999999999999999999999999999999999999999').callContract({
+        network: Networks.polygon,
+        contractAddress: '0x1111111111111111111111111111111111111111',
+        method: 'transfer(address,uint256)'
+      })
+    ).rejects.toMatchObject({ code: 'OMS_VALIDATION_ERROR', operation: 'wallet.callContract' });
+    expect(fetchMock).not.toHaveBeenCalled();
   });
 
   it('acknowledges a sponsored Tron transaction with an empty fee option list', async () => {
