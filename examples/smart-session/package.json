@@ -22,11 +22,11 @@
     "deploy": "pnpm deploy:prepare && pnpm build && wrangler deploy --config wrangler.deploy.generated.json"
   },
   "dependencies": {
-    "@0xtrails/api": "0.17.1",
+    "@0xtrails/api": "0.18.6",
     "@polygonlabs/oms-wallet": "workspace:*",
     "react": "19.2.7",
     "react-dom": "19.2.7",
-    "viem": "^2.48.4"
+    "viem": "^2.55.0"
   },
   "devDependencies": {
     "@cloudflare/vitest-plugin": "1.1.0",

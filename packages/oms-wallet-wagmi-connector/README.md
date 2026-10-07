@@ -20,8 +20,8 @@ Peer dependencies:
 | Package | Range |
 |---|---|
 | `@polygonlabs/oms-wallet` | The same release version as this package (the two are versioned in lockstep) |
-| `@wagmi/core` | `>=3.5.0 <4` |
-| `viem` | `>=2.48.4 <3` |
+| `@wagmi/core` | `>=3.6.5 <4` |
+| `viem` | `>=2.55.0 <3` |
 
 This package is ESM-only and requires Node.js 22 or later.
 
