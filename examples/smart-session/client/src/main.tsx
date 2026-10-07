@@ -25,6 +25,7 @@ import {
   formatOidcProvider,
   hasOidcCallbackParams,
   isPendingWalletSelection,
+  switchToEthereumWallet,
   type OidcRedirectProvider
 } from '../../../shared/example-utils';
 import type { ApiError, ApprovalRequest, ClientConfig, RecipientScope } from '../../shared/api';
@@ -223,6 +224,7 @@ function App() {
     try {
       const config = await api<ClientConfig>('/api/client-config');
       const nextWallet = new OMSWallet({ publishableKey: config.publishableKey });
+      await switchToEthereumWallet(nextWallet.wallet);
       setOmsWallet(nextWallet);
 
       let redirectResult: PendingWalletSelection | WalletActivationResult | void = undefined;

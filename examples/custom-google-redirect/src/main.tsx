@@ -5,8 +5,10 @@ import './styles.css';
 import {
   formatSessionAuth,
   formatSessionExpiry,
+  activeEthereumAddress,
   hasOidcCallbackParams,
-  isPendingWalletSelection
+  isPendingWalletSelection,
+  switchToEthereumWallet
 } from '../../shared/example-utils';
 import {
   CUSTOM_GOOGLE_CLIENT_ID,
@@ -32,6 +34,15 @@ function App() {
   const [balances, setBalances] = useState<TokenBalance[] | null>(null);
   const [isBusy, setIsBusy] = useState(false);
   const callbackStarted = useRef(false);
+
+  useEffect(() => {
+    if (!omsWallet.wallet.activeWallet || activeEthereumAddress(omsWallet.wallet)) return;
+    void run('Switching to an Ethereum wallet...', async () => {
+      const wallet = await switchToEthereumWallet(omsWallet.wallet);
+      setWalletAddress(wallet?.address ?? '');
+      setStatus('Wallet session restored.');
+    });
+  }, []);
 
   useEffect(() => {
     if (!hasOidcCallbackParams()) return;

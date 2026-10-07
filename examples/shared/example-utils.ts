@@ -1,8 +1,11 @@
-import type {
-  FeeOptionWithBalance,
-  OMSWalletSessionAuth,
-  PendingWalletSelection,
-  WalletActivationResult
+import {
+  WalletType,
+  type FeeOptionWithBalance,
+  type OMSWallet,
+  type OMSWalletSessionAuth,
+  type PendingWalletSelection,
+  type WalletAccount,
+  type WalletActivationResult
 } from '@polygonlabs/oms-wallet';
 
 export type OidcRedirectProvider = 'google' | 'apple';
@@ -77,6 +80,28 @@ export function isPendingWalletSelection(
   result: PendingWalletSelection | WalletActivationResult
 ): result is PendingWalletSelection {
   return 'selectWallet' in result;
+}
+
+export function activeEthereumAddress(wallet: OMSWallet['wallet']): string | undefined {
+  const active = wallet.activeWallet;
+  return active?.type === WalletType.Ethereum ? active.address : undefined;
+}
+
+// The browser examples share localhost storage, so a restored session can have another
+// example's non-Ethereum wallet active. EVM-only examples switch back to an Ethereum wallet,
+// creating one if the account has none.
+export async function switchToEthereumWallet(
+  wallet: OMSWallet['wallet']
+): Promise<WalletAccount | undefined> {
+  const active = wallet.activeWallet;
+  if (!active || active.type === WalletType.Ethereum) return active;
+  const existing = (await wallet.listWallets()).find(
+    (account) => account.type === WalletType.Ethereum
+  );
+  const result = existing
+    ? await wallet.useWallet({ walletId: existing.id })
+    : await wallet.createWallet({ type: WalletType.Ethereum });
+  return result.wallet;
 }
 
 export function readStoredBoolean(key: string): boolean {

@@ -21,12 +21,14 @@ import {
   WalletSelectionPanel
 } from '../../shared/example-components';
 import {
+  activeEthereumAddress,
   formatOidcProvider,
   formatSessionAuth,
   formatSessionExpiry,
   formatWalletType,
   hasOidcCallbackParams,
   isPendingWalletSelection,
+  switchToEthereumWallet,
   type OidcRedirectProvider
 } from '../../shared/example-utils';
 import { useSessionPreferences } from '../../shared/use-session-preferences';
@@ -124,11 +126,12 @@ function App() {
   const [loadingAction, setLoadingAction] = useState<string | null>(null);
   const [walletCopyLabel, setWalletCopyLabel] = useState<'Copy' | 'Copied'>('Copy');
   const oidcCallbackStarted = useRef(false);
+  const sessionRestoreStarted = useRef(false);
   const feeSelection = useRef<FeeSelectionController | null>(null);
   const selectedFeeOption = useRef<FeeOptionWithBalance | null>(null);
   const walletCopyReset = useRef<number | null>(null);
 
-  const walletAddress = session ? omsWallet.wallet.activeWallet?.address : undefined;
+  const walletAddress = session ? activeEthereumAddress(omsWallet.wallet) : undefined;
   const isSignedIn = walletAddress != null;
   const isBusy = loadingAction != null;
   const {
@@ -251,11 +254,15 @@ function App() {
   }, []);
 
   useEffect(() => {
-    const restoredWallet = omsWallet.wallet.activeWallet;
-    if (restoredWallet) {
-      refreshSession();
-      setAuthStatus('Wallet session restored.');
-      appendLog(`Wallet ready: ${restoredWallet.address}`);
+    if (omsWallet.wallet.activeWallet) {
+      if (sessionRestoreStarted.current) return;
+      sessionRestoreStarted.current = true;
+      void runAction('Restore wallet session', async () => {
+        const restoredWallet = await switchToEthereumWallet(omsWallet.wallet);
+        refreshSession();
+        setAuthStatus('Wallet session restored.');
+        appendLog(`Wallet ready: ${restoredWallet?.address}`);
+      });
       return;
     }
 
@@ -264,7 +271,7 @@ function App() {
       oidcCallbackStarted.current = true;
       void completeOidcRedirect();
     }
-  }, [appendLog, refreshSession]);
+  }, [appendLog, refreshSession, runAction]);
 
   useEffect(() => {
     if (!walletAddress) {

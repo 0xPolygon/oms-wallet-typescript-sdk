@@ -3,7 +3,12 @@ import { createRoot } from 'react-dom/client';
 import { Auth0Provider, useAuth0 } from '@auth0/auth0-react';
 import { Networks, type TokenBalance } from '@polygonlabs/oms-wallet';
 import './styles.css';
-import { formatSessionAuth, formatSessionExpiry } from '../../shared/example-utils';
+import {
+  activeEthereumAddress,
+  formatSessionAuth,
+  formatSessionExpiry,
+  switchToEthereumWallet
+} from '../../shared/example-utils';
 import { AUTH0_CLIENT_ID, AUTH0_DOMAIN, AUTH0_ISSUER, AUTH0_REDIRECT_URI } from './config';
 import { omsWallet } from './omsWallet';
 
@@ -38,6 +43,15 @@ function App() {
   const [balances, setBalances] = useState<TokenBalance[] | null>(null);
   const [isBusy, setIsBusy] = useState(false);
   const omsSignInStarted = useRef(false);
+
+  useEffect(() => {
+    if (!omsWallet.wallet.activeWallet || activeEthereumAddress(omsWallet.wallet)) return;
+    void run('Switching to an Ethereum wallet...', async () => {
+      const wallet = await switchToEthereumWallet(omsWallet.wallet);
+      setWalletAddress(wallet?.address ?? '');
+      setStatus('Wallet session restored.');
+    });
+  }, []);
 
   useEffect(() => {
     if (isAuth0Loading || !isAuth0Authenticated || walletAddress || omsSignInStarted.current)

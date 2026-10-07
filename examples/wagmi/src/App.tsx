@@ -22,11 +22,13 @@ import {
   OidcButtons
 } from '../../shared/example-components';
 import {
+  activeEthereumAddress,
   formatOidcProvider,
   formatSessionAuth,
   hasOidcCallbackParams,
   shortAddress,
   shortHash,
+  switchToEthereumWallet,
   type OidcRedirectProvider
 } from '../../shared/example-utils';
 import { omsWallet } from './omsWallet';
@@ -67,6 +69,7 @@ export function App() {
   const signTypedData = useSignTypedData();
   const sendTransaction = useSendTransaction();
   const oidcCallbackStarted = useRef(false);
+  const sessionRestoreStarted = useRef(false);
   const [step, setStep] = useState<DemoStep>(
     account.status === 'connected' ? 'operations' : 'auth'
   );
@@ -93,7 +96,7 @@ export function App() {
   });
   const feeOptions = feeOptionSelection.feeOptions;
   const omsSession = omsWallet.wallet.session;
-  const activeOmsSessionAddress = omsWallet.wallet.activeWallet?.address;
+  const activeOmsSessionAddress = activeEthereumAddress(omsWallet.wallet);
   const showGoogleAuth =
     !activeOmsSessionAddress ||
     !(omsSession?.auth?.type === 'oidc' && omsSession?.auth.provider === 'google');
@@ -194,6 +197,16 @@ export function App() {
       setWalletStatus('Disconnected.');
       setAuthStep('email');
       setStep('auth');
+    });
+  }, []);
+
+  useEffect(() => {
+    if (!omsWallet.wallet.activeWallet || activeEthereumAddress(omsWallet.wallet)) return;
+    if (sessionRestoreStarted.current) return;
+    sessionRestoreStarted.current = true;
+    void runAuth('Switching to an Ethereum wallet...', async () => {
+      const wallet = await switchToEthereumWallet(omsWallet.wallet);
+      setAuthStatus(`Wallet session restored: ${wallet?.address}`);
     });
   }, []);
 
