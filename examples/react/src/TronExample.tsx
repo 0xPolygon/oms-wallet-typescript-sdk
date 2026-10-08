@@ -6,7 +6,7 @@ import {
 } from '@polygonlabs/oms-wallet';
 import { FeeOptionsPanel } from '../../shared/example-components';
 import { omsWallet } from './omsWallet';
-import { formatBaseUnits, parseDecimalBaseUnits } from './SolanaExample';
+import { parseDecimalBaseUnits } from './SolanaExample';
 
 const TRONSCAN_NILE_URL = 'https://nile.tronscan.org/#';
 const NILE_FAUCET_URL = 'https://nileex.io/join/getJoinPage';
@@ -23,8 +23,8 @@ type FeeSelectionController = {
 };
 
 export function TronExample({ walletAddress }: { walletAddress: string }) {
-  const [balance, setBalance] = useState<bigint | null>(null);
-  const [usdtBalance, setUsdtBalance] = useState<bigint | null>(null);
+  const [balance, setBalance] = useState<string | null>(null);
+  const [usdtBalance, setUsdtBalance] = useState<string | null>(null);
   const [balanceStatus, setBalanceStatus] = useState('');
   const [isBalanceLoading, setIsBalanceLoading] = useState(false);
   const [message, setMessage] = useState('Sign in to OMS Wallet');
@@ -195,18 +195,14 @@ export function TronExample({ walletAddress }: { walletAddress: string }) {
           <div className="balance-assets">
             <div className="balance-asset">
               <span>Nile TRX balance</span>
-              <strong>
-                {balance === null ? '—' : `${formatBaseUnits(balance, SUN_DECIMALS)} TRX`}
-              </strong>
+              <strong>{balance === null ? '—' : `${balance} TRX`}</strong>
               <a href={NILE_FAUCET_URL} target="_blank" rel="noreferrer">
                 Open TRX faucet
               </a>
             </div>
             <div className="balance-asset">
               <span>Nile USDT balance</span>
-              <strong>
-                {usdtBalance === null ? '—' : `${formatBaseUnits(usdtBalance, USDT_DECIMALS)} USDT`}
-              </strong>
+              <strong>{usdtBalance === null ? '—' : `${usdtBalance} USDT`}</strong>
               <a href={NILE_FAUCET_URL} target="_blank" rel="noreferrer">
                 Open USDT faucet
               </a>
@@ -370,8 +366,8 @@ export function TronExample({ walletAddress }: { walletAddress: string }) {
 }
 
 async function getNileBalances(address: string): Promise<{
-  trx: bigint;
-  usdt: bigint;
+  trx: string;
+  usdt: string;
   error?: string;
 }> {
   const result = await omsWallet.indexer.getTronBalances({
@@ -381,7 +377,7 @@ async function getNileBalances(address: string): Promise<{
   });
   const networkError = result.errors.find((error) => error.network === TronNetworks.nile);
   if (networkError) {
-    return { trx: 0n, usdt: 0n, error: networkError.reason };
+    return { trx: '0', usdt: '0', error: networkError.reason };
   }
 
   const nativeBalance = result.balances.find((asset) => asset.assetType === 'native');
@@ -389,17 +385,9 @@ async function getNileBalances(address: string): Promise<{
     (asset) => asset.assetType === 'fungible-token' && asset.contractAddress === NILE_USDT_CONTRACT
   );
   return {
-    trx: parseIndexerBalance(nativeBalance?.balance, 'TRX'),
-    usdt: parseIndexerBalance(usdtBalance?.balance, 'USDT')
+    trx: nativeBalance?.formattedBalance ?? '0',
+    usdt: usdtBalance?.formattedBalance ?? '0'
   };
-}
-
-function parseIndexerBalance(balance: string | undefined, symbol: string): bigint {
-  if (balance === undefined) return 0n;
-  if (!/^\d+$/.test(balance)) {
-    throw new Error(`Indexer returned an invalid ${symbol} balance`);
-  }
-  return BigInt(balance);
 }
 
 function parseTokenDecimals(value: string): number {

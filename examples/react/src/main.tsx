@@ -903,35 +903,16 @@ function App() {
             </div>
 
             {walletTab === 'ethereum' && activeWalletType !== WalletType.Ethereum && (
-              <section className="tool wallet-type-prompt">
-                <h2>
-                  {!walletInventoryLoaded
-                    ? walletInventoryError
-                      ? 'Unable to load wallets'
-                      : 'Loading wallets'
-                    : hasEvmWallet
-                      ? 'Use an EVM wallet'
-                      : 'Create an EVM wallet'}
-                </h2>
-                <button
-                  type="button"
-                  onClick={() =>
-                    void (walletInventoryLoaded
-                      ? activateWalletType(WalletType.Ethereum)
-                      : loadManagedWallets())
-                  }
-                  disabled={isBusy || (!walletInventoryLoaded && !walletInventoryError)}
-                >
-                  {!walletInventoryLoaded
-                    ? walletInventoryError
-                      ? 'Retry loading wallets'
-                      : 'Loading wallets...'
-                    : hasEvmWallet
-                      ? 'Use EVM wallet'
-                      : 'Create EVM wallet'}
-                </button>
-                {activeWalletStatus && <output>{activeWalletStatus}</output>}
-              </section>
+              <WalletTypePrompt
+                label="EVM"
+                hasWallet={hasEvmWallet}
+                inventoryLoaded={walletInventoryLoaded}
+                inventoryError={walletInventoryError}
+                isBusy={isBusy}
+                status={activeWalletStatus}
+                onActivate={() => void activateWalletType(WalletType.Ethereum)}
+                onLoadWallets={() => void loadManagedWallets()}
+              />
             )}
 
             {walletTab === 'ethereum' && activeWalletType === WalletType.Ethereum && (
@@ -1027,35 +1008,16 @@ function App() {
             )}
 
             {walletTab === 'solana' && activeWalletType !== WalletType.Solana && (
-              <section className="tool wallet-type-prompt">
-                <h2>
-                  {!walletInventoryLoaded
-                    ? walletInventoryError
-                      ? 'Unable to load wallets'
-                      : 'Loading wallets'
-                    : hasSolanaWallet
-                      ? 'Use a Solana wallet'
-                      : 'Create a Solana wallet'}
-                </h2>
-                <button
-                  type="button"
-                  onClick={() =>
-                    void (walletInventoryLoaded
-                      ? activateWalletType(WalletType.Solana)
-                      : loadManagedWallets())
-                  }
-                  disabled={isBusy || (!walletInventoryLoaded && !walletInventoryError)}
-                >
-                  {!walletInventoryLoaded
-                    ? walletInventoryError
-                      ? 'Retry loading wallets'
-                      : 'Loading wallets...'
-                    : hasSolanaWallet
-                      ? 'Use Solana wallet'
-                      : 'Create Solana wallet'}
-                </button>
-                {activeWalletStatus && <output>{activeWalletStatus}</output>}
-              </section>
+              <WalletTypePrompt
+                label="Solana"
+                hasWallet={hasSolanaWallet}
+                inventoryLoaded={walletInventoryLoaded}
+                inventoryError={walletInventoryError}
+                isBusy={isBusy}
+                status={activeWalletStatus}
+                onActivate={() => void activateWalletType(WalletType.Solana)}
+                onLoadWallets={() => void loadManagedWallets()}
+              />
             )}
 
             {walletTab === 'solana' && activeWalletType === WalletType.Solana && (
@@ -1063,35 +1025,16 @@ function App() {
             )}
 
             {walletTab === 'tron' && activeWalletType !== WalletType.Tron && (
-              <section className="tool wallet-type-prompt">
-                <h2>
-                  {!walletInventoryLoaded
-                    ? walletInventoryError
-                      ? 'Unable to load wallets'
-                      : 'Loading wallets'
-                    : hasTronWallet
-                      ? 'Use a Tron wallet'
-                      : 'Create a Tron wallet'}
-                </h2>
-                <button
-                  type="button"
-                  onClick={() =>
-                    void (walletInventoryLoaded
-                      ? activateWalletType(WalletType.Tron)
-                      : loadManagedWallets())
-                  }
-                  disabled={isBusy || (!walletInventoryLoaded && !walletInventoryError)}
-                >
-                  {!walletInventoryLoaded
-                    ? walletInventoryError
-                      ? 'Retry loading wallets'
-                      : 'Loading wallets...'
-                    : hasTronWallet
-                      ? 'Use Tron wallet'
-                      : 'Create Tron wallet'}
-                </button>
-                {activeWalletStatus && <output>{activeWalletStatus}</output>}
-              </section>
+              <WalletTypePrompt
+                label="Tron"
+                hasWallet={hasTronWallet}
+                inventoryLoaded={walletInventoryLoaded}
+                inventoryError={walletInventoryError}
+                isBusy={isBusy}
+                status={activeWalletStatus}
+                onActivate={() => void activateWalletType(WalletType.Tron)}
+                onLoadWallets={() => void loadManagedWallets()}
+              />
             )}
 
             {walletTab === 'tron' && activeWalletType === WalletType.Tron && (
@@ -1415,6 +1358,46 @@ function App() {
         />
       )}
     </main>
+  );
+}
+
+function WalletTypePrompt(props: {
+  label: string;
+  hasWallet: boolean;
+  inventoryLoaded: boolean;
+  inventoryError: string;
+  isBusy: boolean;
+  status: string;
+  onActivate: () => void;
+  onLoadWallets: () => void;
+}) {
+  const article = /^[AEIOU]/.test(props.label) ? 'an' : 'a';
+  return (
+    <section className="tool wallet-type-prompt">
+      <h2>
+        {!props.inventoryLoaded
+          ? props.inventoryError
+            ? 'Unable to load wallets'
+            : 'Loading wallets'
+          : props.hasWallet
+            ? `Use ${article} ${props.label} wallet`
+            : `Create ${article} ${props.label} wallet`}
+      </h2>
+      <button
+        type="button"
+        onClick={props.inventoryLoaded ? props.onActivate : props.onLoadWallets}
+        disabled={props.isBusy || (!props.inventoryLoaded && !props.inventoryError)}
+      >
+        {!props.inventoryLoaded
+          ? props.inventoryError
+            ? 'Retry loading wallets'
+            : 'Loading wallets...'
+          : props.hasWallet
+            ? `Use ${props.label} wallet`
+            : `Create ${props.label} wallet`}
+      </button>
+      {props.status && <output>{props.status}</output>}
+    </section>
   );
 }
 
