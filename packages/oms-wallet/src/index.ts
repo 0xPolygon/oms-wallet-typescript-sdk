@@ -142,7 +142,8 @@ export type {
   TronBalancesResult,
   TronNativeBalance,
   TronNetworkError,
-  TronTrc20Balance
+  TronFungibleTokenBalance,
+  TronVerificationStatus
 } from './clients/indexerClient.js';
 export type {
   AccessGrant,

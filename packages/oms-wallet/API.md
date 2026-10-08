@@ -1533,8 +1533,10 @@ export type SolanaVerificationSource = "jupiter" | "solflare-utl" | "none";
 export interface GetTronBalancesParams {
     walletAddress: string;
     networks?: TronNetwork[];
+    includeMetadata?: boolean;
     omitNativeBalances?: boolean;
     contractAddresses?: string[];
+    excludedContractAddresses?: string[];
 }
 ```
 
@@ -1551,7 +1553,7 @@ export interface TronBalancesResult {
 ### `TronBalance`
 
 ```typescript
-export type TronBalance = TronNativeBalance | TronTrc20Balance;
+export type TronBalance = TronNativeBalance | TronFungibleTokenBalance;
 ```
 
 ### `TronNativeBalance`
@@ -1565,15 +1567,22 @@ export interface TronNativeBalance {
     decimals: number;
     balance: string;
     formattedBalance: string;
+    imageUrl?: string;
+    metadataUri?: string;
+    verificationStatus: TronVerificationStatus;
+    verificationSource: string;
+    priceUSD?: string;
+    balanceUSD?: string;
     assetType: "native";
+    tokenStandard?: undefined;
     contractAddress?: undefined;
 }
 ```
 
-### `TronTrc20Balance`
+### `TronFungibleTokenBalance`
 
 ```typescript
-export interface TronTrc20Balance {
+export interface TronFungibleTokenBalance {
     network: TronNetwork;
     accountAddress: string;
     name: string;
@@ -1581,7 +1590,14 @@ export interface TronTrc20Balance {
     decimals: number;
     balance: string;
     formattedBalance: string;
-    assetType: "trc20";
+    imageUrl?: string;
+    metadataUri?: string;
+    verificationStatus: TronVerificationStatus;
+    verificationSource: string;
+    priceUSD?: string;
+    balanceUSD?: string;
+    assetType: "fungible-token";
+    tokenStandard: "trc20";
     contractAddress: string;
 }
 ```
@@ -1593,6 +1609,12 @@ export interface TronNetworkError {
     network: TronNetwork;
     reason: string;
 }
+```
+
+### `TronVerificationStatus`
+
+```typescript
+export type TronVerificationStatus = "verified" | "unverified" | "unknown";
 ```
 
 ### `GetTransactionHistoryParams`

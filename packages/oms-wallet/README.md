@@ -556,17 +556,22 @@ so prepared Tron transactions are often `sponsored` even without a relayer. When
 spent, WaaS quotes the TRX to burn as a single native fee option, which a fee selector receives like
 any other fee option.
 
-`getTronBalances` returns TRX and TRC-20 balances in the same shape as `getSolanaBalances`. It is
-experimental. Until the OMS Tron indexer is available, it reads balances from public Tron JSON-RPC
-(TronGrid), so TRC-20 balances are returned only for the contracts passed in `contractAddresses`.
-Failures on individual networks are reported in `errors`.
+Use `getTronBalances` for TRX and TRC-20 balances. Omit `networks` to query both Tron Mainnet and
+Nile, or pass either network explicitly. Results have the same shape as `getSolanaBalances`:
+precision-safe raw and formatted balance strings, with TRC-20 entries identified by
+`contractAddress`. Pass `contractAddresses` or `excludedContractAddresses` to filter tokens.
+Individual network failures are reported in `errors` without discarding balances returned by the
+other requested network.
 
 ```typescript
 const balances = await omsWallet.indexer.getTronBalances({
   walletAddress: wallet.address,
   networks: [TronNetworks.nile],
-  contractAddresses: ['TXYZopYRdj2D9XRtbG411XZZ3kM5VkAeBf'],
 })
+
+for (const balance of balances.balances) {
+  console.log(balance.network, balance.symbol, balance.formattedBalance)
+}
 ```
 
 ### Query Transaction History

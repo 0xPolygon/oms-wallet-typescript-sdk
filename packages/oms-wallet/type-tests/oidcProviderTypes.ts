@@ -633,11 +633,15 @@ void defaultClient.indexer.getSolanaBalances({
 const getTronBalancesParams: GetTronBalancesParams = {
   walletAddress: 'TNPeeaaFB7K9cmo4uQpcU32zGK8G1NYqeL',
   networks: [TronNetworks.nile],
-  contractAddresses: ['TXYZopYRdj2D9XRtbG411XZZ3kM5VkAeBf']
+  includeMetadata: true,
+  contractAddresses: ['TXYZopYRdj2D9XRtbG411XZZ3kM5VkAeBf'],
+  excludedContractAddresses: ['TR7NHqjeKQxGTCi8q8ZY4pL8otSzgjLj6t']
 };
 void defaultClient.indexer.getTronBalances(getTronBalancesParams).then(({ balances }) => {
   const balance: TronBalance | undefined = balances[0];
-  if (balance?.assetType === 'trc20') {
+  if (balance?.assetType === 'fungible-token') {
+    const tokenStandard: 'trc20' = balance.tokenStandard;
+    void tokenStandard;
     const contractAddress: string = balance.contractAddress;
     void contractAddress;
   }

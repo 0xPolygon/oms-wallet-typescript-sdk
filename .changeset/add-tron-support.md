@@ -11,7 +11,7 @@ Add Tron wallet support, and replace `walletAddress` with a typed `activeWallet`
 - Omitting `data` sends a plain TRX transfer. Passing `data: '0x'` calls the recipient contract's payable fallback.
 - Prepared Tron transactions are often sponsored by the account's free daily bandwidth, even without a relayer.
 - Sign and verify with **`signTronMessage`**, **`signTronTypedData`** (TIP-712), **`isValidTronMessageSignature`**, and **`isValidTronTypedDataSignature`**.
-- **`indexer.getTronBalances`** (experimental) returns TRX and TRC-20 balances in the same shape as `getSolanaBalances`. It currently reads public Tron JSON-RPC, so TRC-20 balances are returned only for the `contractAddresses` you pass. `FeeOptionSelector.firstAvailable` uses it for Tron fees.
+- **`indexer.getTronBalances`** returns TRX and TRC-20 balances on Tron Mainnet and Nile, in the same shape as `getSolanaBalances`. `FeeOptionSelector.firstAvailable` uses it for Tron fees.
 - TRC-10 tokens are not supported.
 
 `callContract` and `callTronContract` now reject a full function signature as `method` (for example `'transfer(address,uint256)'`) with `OMS_VALIDATION_ERROR` before sending a request. Pass the bare function name (`'transfer'`); the wallet service builds the signature from the `args` types and already rejected full signatures with a generic invalid-request error.

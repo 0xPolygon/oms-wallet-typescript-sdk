@@ -1,26 +1,18 @@
 // Minimal hand-written indexer gateway adapters for the SDK surface we expose.
 
-import type { Hex } from 'viem';
-
-import { decodeFunctionResult, encodeFunctionData, erc20Abi, hexToBigInt } from 'viem';
-
 import type { OMSWalletUpstreamError } from '../errors.js';
 import type { Network, SolanaNetwork, TronNetwork } from '../networks.js';
 
-import {
-  errorMessage,
-  OMSWalletRequestError,
-  OMSWalletResponseError,
-  OMSWalletValidationError
-} from '../errors.js';
+import { errorMessage, OMSWalletRequestError, OMSWalletResponseError } from '../errors.js';
 import { HttpClient } from '../httpClient.js';
 import { SolanaNetworks, TronNetworks } from '../networks.js';
 import { IndexerOperation } from '../operations.js';
-import { tronAddressToHex } from '../utils/tronAddress.js';
 
 const IndexerWebrpcHeaderValue = 'webrpc@v0.31.2;gen-typescript@v0.23.1;sequence-indexer@v0.4.0';
 const SolanaIndexerWebrpcHeaderValue =
   'webrpc@v0.31.2;gen-typescript@v0.23.1;solana-indexer-gateway@v1';
+const TronIndexerWebrpcHeaderValue =
+  'webrpc@v0.31.2;gen-typescript@v0.23.1;tron-indexer-gateway@v1';
 
 export type IndexerNetworkType = 'MAINNETS' | 'TESTNETS' | 'ALL';
 export type ContractVerificationStatus = 'VERIFIED' | 'UNVERIFIED' | 'ALL';
@@ -219,13 +211,15 @@ export interface GetTronBalancesParams {
   walletAddress: string;
   /** Defaults to Tron mainnet and Nile. */
   networks?: TronNetwork[];
+  includeMetadata?: boolean;
   omitNativeBalances?: boolean;
-  /**
-   * TRC-20 contracts (`T…`) to read balances for. Token discovery is not available yet, so only
-   * the listed contracts are returned.
-   */
+  /** Only return these TRC-20 contracts (`T…`). */
   contractAddresses?: string[];
+  /** Exclude these TRC-20 contracts (`T…`). */
+  excludedContractAddresses?: string[];
 }
+
+export type TronVerificationStatus = 'verified' | 'unverified' | 'unknown';
 
 export interface TronBalanceBase {
   network: TronNetwork;
@@ -236,19 +230,27 @@ export interface TronBalanceBase {
   /** Raw balance in the token's base units (sun for TRX). */
   balance: string;
   formattedBalance: string;
+  imageUrl?: string;
+  metadataUri?: string;
+  verificationStatus: TronVerificationStatus;
+  verificationSource: string;
+  priceUSD?: string;
+  balanceUSD?: string;
 }
 
 export interface TronNativeBalance extends TronBalanceBase {
   assetType: 'native';
+  tokenStandard?: undefined;
   contractAddress?: undefined;
 }
 
-export interface TronTrc20Balance extends TronBalanceBase {
-  assetType: 'trc20';
+export interface TronFungibleTokenBalance extends TronBalanceBase {
+  assetType: 'fungible-token';
+  tokenStandard: 'trc20';
   contractAddress: string;
 }
 
-export type TronBalance = TronNativeBalance | TronTrc20Balance;
+export type TronBalance = TronNativeBalance | TronFungibleTokenBalance;
 
 export interface TronNetworkError {
   network: TronNetwork;
@@ -500,6 +502,41 @@ interface SolanaBalanceRaw {
   balanceUSD?: unknown;
 }
 
+interface GetTronTokenBalancesDetailsRequest {
+  networks: TronNetwork[];
+  filter: {
+    accountAddresses: string[];
+    omitNativeBalances?: boolean;
+    contractWhitelist?: string[];
+    contractBlacklist?: string[];
+  };
+  omitMetadata: boolean;
+}
+
+interface GetTronTokenBalancesDetailsResponse {
+  balances?: unknown;
+  errors?: unknown;
+}
+
+interface TronBalanceRaw {
+  network?: unknown;
+  accountAddress?: unknown;
+  assetType?: unknown;
+  tokenStandard?: unknown;
+  contractAddress?: unknown;
+  name?: unknown;
+  symbol?: unknown;
+  decimals?: unknown;
+  balance?: unknown;
+  formattedBalance?: unknown;
+  imageUrl?: unknown;
+  metadataUri?: unknown;
+  verificationStatus?: unknown;
+  verificationSource?: unknown;
+  priceUSD?: unknown;
+  balanceUSD?: unknown;
+}
+
 interface SolanaNetworkErrorRaw {
   network?: unknown;
   reason?: unknown;
@@ -533,35 +570,12 @@ interface GetTransactionHistoryResponse {
 interface IndexerClientEnvironment {
   indexerGatewayUrl: string;
   solanaIndexerGatewayUrl: string;
-  tronRpcUrls?: Readonly<Record<TronNetwork, string>>;
-}
-
-// TODO(tron-indexer): interim Tron balance source. Public, keyless TronGrid JSON-RPC (Tron nodes
-// serve an Ethereum-compatible JSON-RPC at /jsonrpc). When the OMS Tron indexer gateway ships,
-// replace `tronRpcUrls`, `readTronNetworkBalances`, and `tronJsonRpcBatch` with a gateway call
-// shaped like `getSolanaBalances` (URL from the publishable key), keep the public
-// `GetTronBalancesParams`/`TronBalancesResult` shape, drop the "experimental" note in the README and
-// TSDoc, and replace the TronGrid transport tests in tests/indexerClient.test.ts.
-const defaultTronRpcUrls: Readonly<Record<TronNetwork, string>> = Object.freeze({
-  [TronNetworks.mainnet]: 'https://api.trongrid.io',
-  [TronNetworks.nile]: 'https://nile.trongrid.io'
-});
-
-const tronNativeDecimals = 6;
-
-interface JsonRpcResponse {
-  id?: unknown;
-  result?: unknown;
-  error?: { message?: unknown };
+  tronIndexerGatewayUrl: string;
 }
 
 export interface OMSWalletIndexerClient {
   getBalances(params: GetBalancesParams): Promise<BalancesResult>;
   getSolanaBalances(params: GetSolanaBalancesParams): Promise<SolanaBalancesResult>;
-  /**
-   * Experimental. Reads Tron balances. Currently backed by public Tron JSON-RPC, so TRC-20
-   * balances are only returned for `contractAddresses`; the result shape is stable.
-   */
   getTronBalances(params: GetTronBalancesParams): Promise<TronBalancesResult>;
   getTransactionHistory(params: GetTransactionHistoryParams): Promise<TransactionHistoryResult>;
 }
@@ -642,152 +656,32 @@ export class IndexerClient implements OMSWalletIndexerClient {
   }
 
   async getTronBalances(params: GetTronBalancesParams): Promise<TronBalancesResult> {
-    const operation = IndexerOperation.getTronBalances;
-    const accountHex = tronAddressToHex(params.walletAddress);
-    if (!accountHex) {
-      throw new OMSWalletValidationError({
-        operation,
-        message: 'walletAddress must be a valid Tron address'
-      });
-    }
-    const contracts = (params.contractAddresses ?? []).map((address) => {
-      const hex = tronAddressToHex(address);
-      if (!hex) {
-        throw new OMSWalletValidationError({
-          operation,
-          message: `contractAddresses contains an invalid Tron address: ${address}`
-        });
-      }
-      return { address: address.trim(), hex };
-    });
+    const request: GetTronTokenBalancesDetailsRequest = {
+      networks: params.networks ?? [TronNetworks.mainnet, TronNetworks.nile],
+      filter: {
+        accountAddresses: [params.walletAddress],
+        omitNativeBalances: params.omitNativeBalances,
+        contractWhitelist: nonEmpty(params.contractAddresses),
+        contractBlacklist: nonEmpty(params.excludedContractAddresses)
+      },
+      omitMetadata: params.includeMetadata === false
+    };
 
-    const networks = params.networks ?? [TronNetworks.mainnet, TronNetworks.nile];
-    const results = await Promise.all(
-      networks.map((network) =>
-        this.readTronNetworkBalances({
-          network,
-          accountAddress: params.walletAddress.trim(),
-          accountHex,
-          contracts,
-          omitNativeBalances: params.omitNativeBalances === true
-        })
-      )
+    const response = await this.postJson<GetTronTokenBalancesDetailsResponse>(
+      IndexerOperation.getTronBalances,
+      {
+        baseUrl: this.environment.tronIndexerGatewayUrl,
+        path: '/GetTokenBalancesDetails',
+        body: JSON.stringify(request),
+        headers: this.defaultHeaders(TronIndexerWebrpcHeaderValue)
+      }
     );
 
-    return {
-      status: 200,
-      balances: results.flatMap((result) => result.balances),
-      errors: results.flatMap((result) => (result.error ? [result.error] : []))
-    };
-  }
-
-  private async readTronNetworkBalances(params: {
-    network: TronNetwork;
-    accountAddress: string;
-    accountHex: Hex;
-    contracts: Array<{ address: string; hex: Hex }>;
-    omitNativeBalances: boolean;
-  }): Promise<{ balances: TronBalance[]; error?: TronNetworkError }> {
-    const calls: Array<{ method: string; params: unknown[] }> = [];
-    if (!params.omitNativeBalances) {
-      calls.push({ method: 'eth_getBalance', params: [params.accountHex, 'latest'] });
-    }
-    for (const contract of params.contracts) {
-      for (const data of [
-        encodeFunctionData({ abi: erc20Abi, functionName: 'balanceOf', args: [params.accountHex] }),
-        encodeFunctionData({ abi: erc20Abi, functionName: 'decimals' }),
-        encodeFunctionData({ abi: erc20Abi, functionName: 'symbol' }),
-        encodeFunctionData({ abi: erc20Abi, functionName: 'name' })
-      ]) {
-        calls.push({ method: 'eth_call', params: [{ to: contract.hex, data }, 'latest'] });
-      }
-    }
-    if (calls.length === 0) return { balances: [] };
-
-    try {
-      const results = await this.tronJsonRpcBatch(params.network, calls);
-      const balances: TronBalance[] = [];
-      let index = 0;
-      if (!params.omitNativeBalances) {
-        const balance = hexToBigInt(requiredHex(results[index++], 'eth_getBalance'));
-        balances.push({
-          network: params.network,
-          accountAddress: params.accountAddress,
-          assetType: 'native',
-          name: 'TRX',
-          symbol: 'TRX',
-          decimals: tronNativeDecimals,
-          balance: balance.toString(),
-          formattedBalance: formatUnitsString(balance, tronNativeDecimals)
-        });
-      }
-      for (const contract of params.contracts) {
-        const [balanceResult, decimalsResult, symbolResult, nameResult] = results.slice(
-          index,
-          index + 4
-        );
-        index += 4;
-        const balance = decodeFunctionResult({
-          abi: erc20Abi,
-          functionName: 'balanceOf',
-          data: requiredHex(balanceResult, 'balanceOf')
-        });
-        const decimals = decodeFunctionResult({
-          abi: erc20Abi,
-          functionName: 'decimals',
-          data: requiredHex(decimalsResult, 'decimals')
-        });
-        balances.push({
-          network: params.network,
-          accountAddress: params.accountAddress,
-          assetType: 'trc20',
-          contractAddress: contract.address,
-          name: optionalStringResult(nameResult, 'name') ?? '',
-          symbol: optionalStringResult(symbolResult, 'symbol') ?? '',
-          decimals,
-          balance: balance.toString(),
-          formattedBalance: formatUnitsString(balance, decimals)
-        });
-      }
-      return { balances };
-    } catch (error) {
-      return { balances: [], error: { network: params.network, reason: errorMessage(error) } };
-    }
-  }
-
-  private async tronJsonRpcBatch(
-    network: TronNetwork,
-    calls: Array<{ method: string; params: unknown[] }>
-  ): Promise<unknown[]> {
-    const url = (this.environment.tronRpcUrls ?? defaultTronRpcUrls)[network];
-    if (!url) throw new Error(`No Tron RPC endpoint configured for ${network}`);
-
-    // No Api-Key header: this is a public third-party endpoint.
-    const response = await this.client.postJson({
-      baseUrl: url,
-      path: '/jsonrpc',
-      body: JSON.stringify(
-        calls.map((call, id) => ({ jsonrpc: '2.0', id, method: call.method, params: call.params }))
-      )
-    });
-    if (response.statusCode < 200 || response.statusCode >= 300) {
-      throw new Error(`Tron RPC request failed with HTTP ${response.statusCode}`);
-    }
-    const payload = JSON.parse(response.body) as unknown;
-    if (!Array.isArray(payload)) throw new Error('Tron RPC returned a non-batch response');
-
-    const byId = new Map<unknown, JsonRpcResponse>();
-    for (const entry of payload as JsonRpcResponse[]) byId.set(entry?.id, entry);
-    return calls.map((call, id) => {
-      const entry = byId.get(id);
-      if (!entry) throw new Error(`Tron RPC response is missing ${call.method}`);
-      if (entry.error) {
-        throw new Error(
-          typeof entry.error.message === 'string' ? entry.error.message : `${call.method} failed`
-        );
-      }
-      return entry.result;
-    });
+    return this.decodeResponse(IndexerOperation.getTronBalances, response.statusCode, () => ({
+      status: response.statusCode,
+      balances: requiredArray(response.payload.balances, 'balances').map(mapTronBalance),
+      errors: requiredArray(response.payload.errors, 'errors').map(mapTronNetworkError)
+    }));
   }
 
   async getTransactionHistory(
@@ -931,33 +825,6 @@ export class IndexerClient implements OMSWalletIndexerClient {
   }
 }
 
-function requiredHex(value: unknown, field: string): Hex {
-  if (typeof value !== 'string' || !/^0x[0-9a-fA-F]*$/.test(value) || value === '0x') {
-    throw new Error(`Tron RPC returned an invalid ${field} result`);
-  }
-  return value as Hex;
-}
-
-function optionalStringResult(value: unknown, functionName: 'name' | 'symbol'): string | undefined {
-  try {
-    return decodeFunctionResult({
-      abi: erc20Abi,
-      functionName,
-      data: requiredHex(value, functionName)
-    });
-  } catch {
-    // Some TRC-20 contracts omit or mis-encode name/symbol; balances are still usable.
-    return undefined;
-  }
-}
-
-function formatUnitsString(value: bigint, decimals: number): string {
-  const divisor = 10n ** BigInt(decimals);
-  const whole = value / divisor;
-  const fraction = (value % divisor).toString().padStart(decimals, '0').replace(/0+$/, '');
-  return fraction ? `${whole}.${fraction}` : whole.toString();
-}
-
 function flattenGatewayResults<T>(groups: Array<{ results?: T[] }> | undefined): T[] {
   return groups?.flatMap((group) => group.results ?? []) ?? [];
 }
@@ -1024,6 +891,61 @@ function mapSolanaNetworkError(value: unknown): SolanaNetworkError {
 
 function mapSolanaNetwork(value: unknown, path: string): SolanaNetwork {
   return requiredStringUnion(value, path, [SolanaNetworks.mainnet, SolanaNetworks.devnet] as const);
+}
+
+function mapTronBalance(value: unknown): TronBalance {
+  const raw = asObject(value, 'balances[]') as TronBalanceRaw;
+  const assetType = requiredStringUnion(raw.assetType, 'balances[].assetType', [
+    'native',
+    'fungible-token'
+  ] as const);
+  const base: TronBalanceBase = {
+    network: mapTronNetwork(raw.network, 'balances[].network'),
+    accountAddress: requiredString(raw.accountAddress, 'balances[].accountAddress'),
+    name: requiredString(raw.name, 'balances[].name'),
+    symbol: requiredString(raw.symbol, 'balances[].symbol'),
+    decimals: requiredNumber(raw.decimals, 'balances[].decimals'),
+    balance: requiredString(raw.balance, 'balances[].balance'),
+    formattedBalance: requiredString(raw.formattedBalance, 'balances[].formattedBalance'),
+    imageUrl: optionalNonEmptyString(raw.imageUrl, 'balances[].imageUrl'),
+    metadataUri: optionalNonEmptyString(raw.metadataUri, 'balances[].metadataUri'),
+    verificationStatus: requiredStringUnion(
+      raw.verificationStatus,
+      'balances[].verificationStatus',
+      ['verified', 'unverified', 'unknown'] as const
+    ),
+    verificationSource: requiredString(raw.verificationSource, 'balances[].verificationSource'),
+    priceUSD: optionalString(raw.priceUSD, 'balances[].priceUSD'),
+    balanceUSD: optionalString(raw.balanceUSD, 'balances[].balanceUSD')
+  };
+
+  if (assetType === 'native') {
+    if (raw.tokenStandard != null || raw.contractAddress != null) {
+      throw new TypeError('native balances must not include tokenStandard or contractAddress');
+    }
+    return { ...base, assetType };
+  }
+
+  return {
+    ...base,
+    assetType,
+    tokenStandard: requiredStringUnion(raw.tokenStandard, 'balances[].tokenStandard', [
+      'trc20'
+    ] as const),
+    contractAddress: requiredString(raw.contractAddress, 'balances[].contractAddress')
+  };
+}
+
+function mapTronNetworkError(value: unknown): TronNetworkError {
+  const raw = asObject(value, 'errors[]') as SolanaNetworkErrorRaw;
+  return {
+    network: mapTronNetwork(raw.network, 'errors[].network'),
+    reason: requiredString(raw.reason, 'errors[].reason')
+  };
+}
+
+function mapTronNetwork(value: unknown, path: string): TronNetwork {
+  return requiredStringUnion(value, path, [TronNetworks.mainnet, TronNetworks.nile] as const);
 }
 
 function mapNativeTokenBalance(raw: NativeTokenBalanceRaw): NativeTokenBalance {

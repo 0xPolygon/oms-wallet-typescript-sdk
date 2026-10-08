@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
-import { Networks, OMSWallet, SolanaNetworks } from '../src';
+import { Networks, OMSWallet, SolanaNetworks, TronNetworks } from '../src';
 import { parsePublishableKey } from '../src/publishableKey';
 import { MemoryStorageManager } from '../src/storageManager';
 
@@ -56,6 +56,7 @@ describe('OMSWallet publishable key routing', () => {
       walletApiUrl: apiUrl,
       indexerGatewayUrl: `${apiUrl}/v1/IndexerGateway/`,
       solanaIndexerGatewayUrl: `${apiUrl}/v1/SolanaIndexerGateway/`,
+      tronIndexerGatewayUrl: `${apiUrl}/v1/TronIndexerGateway/`,
       walletImportTrustedPcr0s: pcr0s
     });
   });
@@ -76,7 +77,10 @@ describe('OMSWallet publishable key routing', () => {
         });
       }
 
-      if (url.endsWith('/v1/SolanaIndexerGateway/GetTokenBalancesDetails')) {
+      if (
+        url.endsWith('/v1/SolanaIndexerGateway/GetTokenBalancesDetails') ||
+        url.endsWith('/v1/TronIndexerGateway/GetTokenBalancesDetails')
+      ) {
         return jsonResponse({ balances: [], errors: [] });
       }
 
@@ -114,6 +118,12 @@ describe('OMSWallet publishable key routing', () => {
         walletAddress: 'solana-wallet'
       })
     ).resolves.toEqual({ status: 200, balances: [], errors: [] });
+    await expect(
+      oms.indexer.getTronBalances({
+        networks: [TronNetworks.mainnet],
+        walletAddress: 'TW39NT9SCCv7aomYYXgh4wcUWag4XtVe2H'
+      })
+    ).resolves.toEqual({ status: 200, balances: [], errors: [] });
 
     expect(fetchMock.mock.calls[0][0].toString()).toBe(
       'https://api.stg.polygon-dev.technology/v1/WaasPublic/IsValidMessageSignature'
@@ -123,6 +133,9 @@ describe('OMSWallet publishable key routing', () => {
     );
     expect(fetchMock.mock.calls[2][0].toString()).toBe(
       'https://api.stg.polygon-dev.technology/v1/SolanaIndexerGateway/GetTokenBalancesDetails'
+    );
+    expect(fetchMock.mock.calls[3][0].toString()).toBe(
+      'https://api.stg.polygon-dev.technology/v1/TronIndexerGateway/GetTokenBalancesDetails'
     );
   });
 

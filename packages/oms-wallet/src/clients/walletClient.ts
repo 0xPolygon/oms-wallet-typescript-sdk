@@ -2557,6 +2557,7 @@ export class WalletClient implements OMSWalletClient {
         networks: [network],
         walletAddress,
         contractAddresses,
+        includeMetadata: false,
         omitNativeBalances: !feeOptions.some((option) => this.isNativeToken(option))
       })
       .catch(() => undefined);
@@ -2565,7 +2566,7 @@ export class WalletClient implements OMSWalletClient {
     );
     const balancesByContract = new Map(
       balances?.balances
-        .filter((balance) => balance.network === network && balance.assetType === 'trc20')
+        .filter((balance) => balance.network === network && balance.assetType === 'fungible-token')
         .map((balance) => [balance.contractAddress, balance]) ?? []
     );
 

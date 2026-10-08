@@ -230,12 +230,29 @@ describe('WalletClient Tron', () => {
           expiresAt: '2099-01-01T00:00:00Z'
         });
       }
-      if (url === 'https://nile.trongrid.io/jsonrpc') {
-        expect(body).toEqual([
-          { jsonrpc: '2.0', id: 0, method: 'eth_getBalance', params: [tronWalletHex, 'latest'] }
-        ]);
-        expect(init?.headers).not.toHaveProperty('Api-Key');
-        return jsonResponse([{ jsonrpc: '2.0', id: 0, result: '0x1e8480' }]);
+      if (url === 'https://tron-indexer.example/GetTokenBalancesDetails') {
+        expect(body).toEqual({
+          networks: ['tron:nile'],
+          filter: { accountAddresses: [tronWalletAddress], omitNativeBalances: false },
+          omitMetadata: true
+        });
+        return jsonResponse({
+          balances: [
+            {
+              network: 'tron:nile',
+              accountAddress: tronWalletAddress,
+              assetType: 'native',
+              name: 'Tron',
+              symbol: 'TRX',
+              decimals: 6,
+              balance: '2000000',
+              formattedBalance: '2',
+              verificationStatus: 'unknown',
+              verificationSource: 'none'
+            }
+          ],
+          errors: []
+        });
       }
       if (url.endsWith('/Execute')) {
         expect(body).toEqual({ txnId: 'txn-burn', feeOption: { token: 'TRX', index: 0 } });
@@ -431,7 +448,8 @@ function createWalletWithSession(
     environment: {
       walletApiUrl: 'https://wallet.example',
       indexerGatewayUrl: 'https://indexer.example',
-      solanaIndexerGatewayUrl: 'https://solana-indexer.example'
+      solanaIndexerGatewayUrl: 'https://solana-indexer.example',
+      tronIndexerGatewayUrl: 'https://tron-indexer.example'
     },
     storage: new MemoryStorageManager(),
     credentialSigner: new MockSigner()

@@ -386,7 +386,7 @@ async function getNileBalances(address: string): Promise<{
 
   const nativeBalance = result.balances.find((asset) => asset.assetType === 'native');
   const usdtBalance = result.balances.find(
-    (asset) => asset.assetType === 'trc20' && asset.contractAddress === NILE_USDT_CONTRACT
+    (asset) => asset.assetType === 'fungible-token' && asset.contractAddress === NILE_USDT_CONTRACT
   );
   return {
     trx: parseIndexerBalance(nativeBalance?.balance, 'TRX'),

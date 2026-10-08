@@ -175,13 +175,14 @@ export interface GetTronBalancesParams {
     walletAddress: string;
     /** Defaults to Tron mainnet and Nile. */
     networks?: TronNetwork[];
+    includeMetadata?: boolean;
     omitNativeBalances?: boolean;
-    /**
-     * TRC-20 contracts (`T…`) to read balances for. Token discovery is not available yet, so only
-     * the listed contracts are returned.
-     */
+    /** Only return these TRC-20 contracts (`T…`). */
     contractAddresses?: string[];
+    /** Exclude these TRC-20 contracts (`T…`). */
+    excludedContractAddresses?: string[];
 }
+export type TronVerificationStatus = 'verified' | 'unverified' | 'unknown';
 export interface TronBalanceBase {
     network: TronNetwork;
     accountAddress: string;
@@ -191,16 +192,24 @@ export interface TronBalanceBase {
     /** Raw balance in the token's base units (sun for TRX). */
     balance: string;
     formattedBalance: string;
+    imageUrl?: string;
+    metadataUri?: string;
+    verificationStatus: TronVerificationStatus;
+    verificationSource: string;
+    priceUSD?: string;
+    balanceUSD?: string;
 }
 export interface TronNativeBalance extends TronBalanceBase {
     assetType: 'native';
+    tokenStandard?: undefined;
     contractAddress?: undefined;
 }
-export interface TronTrc20Balance extends TronBalanceBase {
-    assetType: 'trc20';
+export interface TronFungibleTokenBalance extends TronBalanceBase {
+    assetType: 'fungible-token';
+    tokenStandard: 'trc20';
     contractAddress: string;
 }
-export type TronBalance = TronNativeBalance | TronTrc20Balance;
+export type TronBalance = TronNativeBalance | TronFungibleTokenBalance;
 export interface TronNetworkError {
     network: TronNetwork;
     reason: string;
@@ -256,15 +265,11 @@ export interface TransactionHistoryResult {
 interface IndexerClientEnvironment {
     indexerGatewayUrl: string;
     solanaIndexerGatewayUrl: string;
-    tronRpcUrls?: Readonly<Record<TronNetwork, string>>;
+    tronIndexerGatewayUrl: string;
 }
 export interface OMSWalletIndexerClient {
     getBalances(params: GetBalancesParams): Promise<BalancesResult>;
     getSolanaBalances(params: GetSolanaBalancesParams): Promise<SolanaBalancesResult>;
-    /**
-     * Experimental. Reads Tron balances. Currently backed by public Tron JSON-RPC, so TRC-20
-     * balances are only returned for `contractAddresses`; the result shape is stable.
-     */
     getTronBalances(params: GetTronBalancesParams): Promise<TronBalancesResult>;
     getTransactionHistory(params: GetTransactionHistoryParams): Promise<TransactionHistoryResult>;
 }
@@ -279,8 +284,6 @@ export declare class IndexerClient implements OMSWalletIndexerClient {
     getBalances(params: GetBalancesParams): Promise<BalancesResult>;
     getSolanaBalances(params: GetSolanaBalancesParams): Promise<SolanaBalancesResult>;
     getTronBalances(params: GetTronBalancesParams): Promise<TronBalancesResult>;
-    private readTronNetworkBalances;
-    private tronJsonRpcBatch;
     getTransactionHistory(params: GetTransactionHistoryParams): Promise<TransactionHistoryResult>;
     private postJson;
     private chainScope;
@@ -460,7 +463,7 @@ export { AuthMode, TransactionMode, TransactionStatus, WalletImportCipherSuite, 
 export { OMSWalletRequestError, OMSWalletResponseError, OMSWalletError, OMSWalletSessionError, OMSWalletTransactionError, OMSWalletSelectionError, OMSWalletValidationError, OMSWalletStorageError, isOMSWalletError, type OMSWalletErrorCode, type OMSWalletUpstreamError } from './errors.js';
 export type { ExecutedRemoteTransaction, ExecuteRemoteTransactionParams, ListRemoteAccessSessionsParams, PreparedRemoteTransaction, PrepareRemoteTransactionParams, RegisteredRemoteCredential, RegisterRemoteCredentialParams, RemoteAccessSessionPage, RevokeRemoteCredentialParams } from './types/remoteAccess.js';
 export type { CompleteEmailAuthParams, CompleteEmailAuthResult, CompleteOidcIdTokenAuthResult, CompleteOidcRedirectAuthParams, CompleteOidcRedirectAuthResult, EncryptedWalletImportKeyMaterial, GetIdTokenParams, ImportEncryptedWalletParams, ImportWalletParams, IsValidMessageSignatureParams, IsValidSolanaMessageSignatureParams, IsValidTypedDataSignatureParams, IsValidTronMessageSignatureParams, IsValidTronTypedDataSignatureParams, OMSWalletEmailSessionAuth, OMSWalletOidcSessionAuth, OMSWalletOidcSessionAuthFlow, OMSWalletSessionAuth, OMSWalletSessionExpiredEvent, OMSWalletSessionExpiredListener, OMSWalletSession, WalletAccount, EthereumWalletAccount, SolanaWalletAccount, TronWalletAccount, PendingWalletSelection, SignInWithOidcIdTokenParams, SignMessageParams, SignSolanaMessageParams, SignInWithOidcRedirectParams, SignTypedDataParams, SignTronMessageParams, SignTronTypedDataParams, StartEmailAuthParams, StartOidcRedirectAuthParams, StartOidcRedirectAuthResult, WalletActivationResult, WalletImportRecipientKey, WalletSelectionBehavior, OMSWalletClient } from './wallet.js';
-export type { BalancesResult, ContractVerificationStatus, ContractTokenBalance, GetBalancesParams, GetSolanaBalancesParams, GetTronBalancesParams, GetTransactionHistoryParams, IndexerNetworkType, MetadataOptions, NativeTokenBalance, OMSWalletIndexerClient, SolanaBalance, SolanaBalancesResult, SolanaFungibleTokenBalance, SolanaNativeBalance, SolanaNetworkError, SolanaVerificationSource, SolanaVerificationStatus, SortBy, TokenContractInfo, TokenBalance, TokenBalancesPage, TokenBalancesPageRequest, TokenMetadata, TokenMetadataAsset, Transaction, TransactionHistoryResult, TransactionTransfer, TronBalance, TronBalancesResult, TronNativeBalance, TronNetworkError, TronTrc20Balance } from './clients/indexerClient.js';
+export type { BalancesResult, ContractVerificationStatus, ContractTokenBalance, GetBalancesParams, GetSolanaBalancesParams, GetTronBalancesParams, GetTransactionHistoryParams, IndexerNetworkType, MetadataOptions, NativeTokenBalance, OMSWalletIndexerClient, SolanaBalance, SolanaBalancesResult, SolanaFungibleTokenBalance, SolanaNativeBalance, SolanaNetworkError, SolanaVerificationSource, SolanaVerificationStatus, SortBy, TokenContractInfo, TokenBalance, TokenBalancesPage, TokenBalancesPageRequest, TokenMetadata, TokenMetadataAsset, Transaction, TransactionHistoryResult, TransactionTransfer, TronBalance, TronBalancesResult, TronNativeBalance, TronNetworkError, TronFungibleTokenBalance, TronVerificationStatus } from './clients/indexerClient.js';
 export type { AccessGrant, AccessGrantPage, AuthorizeRemoteAccessParams, AuthorizedRemoteAccess, DirectAccessGrant, ListAccessParams, RemoteAccessGrant, RemoteAccessSession, RemoteCredentialMetadata, RevokeAccessParams, SmartSessionGrant, SmartSessionGrantUsage, WalletCredential } from './types/accessGrant.js';
 export type { FeeOptionWithBalance, SendContractTransactionParams, SendDataTransactionParams, SendNativeTransactionParams, SendSolanaTransferParams, SendTransactionBase, SendTransactionParams, SendTransactionResponse, SendTronTransactionParams, CallTronContractParams, TransactionStatusPollingOptions } from './types/transactionTypes.js';
 export { FeeOptionSelector, feeOptionSelection } from './types/transactionTypes.js';
