@@ -15,6 +15,7 @@ import { WalletImportCipherSuite } from '../src/types/waas';
 import { base64DecodeBytes, base64EncodeBytes } from '../src/utils/base64';
 import { sealWalletImportPrivateKey, walletImportPlaintext } from '../src/walletImport';
 import { testWalletAccount } from './fixtures/walletAccount.js';
+import { jsonResponse } from './fixtures/helpers.js';
 
 class MockSigner implements CredentialSigner {
   readonly signingAlgorithm = 'ecdsa-p256-sha256';
@@ -275,11 +276,4 @@ function createWalletWithSession(): WalletClientImpl {
     }
   );
   return wallet;
-}
-
-function jsonResponse(body: unknown): Response {
-  return new Response(JSON.stringify(body), {
-    status: 200,
-    headers: { 'Content-Type': 'application/json' }
-  });
 }

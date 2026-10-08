@@ -14,6 +14,7 @@ import {
   redirectUriFromCurrentUrl
 } from '../src/utils/oidcRedirect';
 import { testWalletAccount } from './fixtures/walletAccount.js';
+import { jsonResponse, requestCount, testCredential, testEnvironment } from './fixtures/helpers.js';
 
 const expectedDefaultGoogleClientId =
   '913882656162-7l4ofa0ou2hqo90umlkenhdop1f5inba.apps.googleusercontent.com';
@@ -1344,36 +1345,8 @@ function createWalletClient(
   });
 }
 
-function testEnvironment() {
-  return {
-    walletApiUrl: 'https://wallet.example',
-    indexerGatewayUrl: 'https://indexer.example',
-    solanaIndexerGatewayUrl: 'https://solana-indexer.example'
-  };
-}
-
 function authorizationState(result: { authorizationUrl: string }): string {
   const state = new URL(result.authorizationUrl).searchParams.get('state');
   if (!state) throw new Error('Authorization URL is missing state');
   return state;
-}
-
-function jsonResponse(body: unknown): Response {
-  return new Response(JSON.stringify(body), {
-    status: 200,
-    headers: { 'Content-Type': 'application/json' }
-  });
-}
-
-function requestCount(fetchMock: ReturnType<typeof vi.fn>, endpoint: string): number {
-  return fetchMock.mock.calls.filter(([input]) => input.toString().endsWith(endpoint)).length;
-}
-
-function testCredential() {
-  return {
-    type: 'direct',
-    credentialId: '0x' + '11'.repeat(32),
-    expiresAt: '2099-01-01T00:00:00Z',
-    isCaller: true
-  };
 }

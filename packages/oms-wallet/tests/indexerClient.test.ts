@@ -2,6 +2,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import { IndexerClientImpl } from '../src/clients/indexerClient';
 import { Networks, SolanaNetworks, TronNetworks } from '../src/networks';
+import { testEnvironment } from './fixtures/helpers.js';
 
 afterEach(() => {
   vi.restoreAllMocks();
@@ -915,13 +916,3 @@ describe('IndexerClient', () => {
     });
   });
 });
-
-function testEnvironment() {
-  return {
-    walletApiUrl: 'https://wallet.example',
-    apiRpcUrl: 'https://api.example',
-    indexerGatewayUrl: 'https://indexer.example',
-    solanaIndexerGatewayUrl: 'https://solana-indexer.example',
-    tronIndexerGatewayUrl: 'https://tron-indexer.example'
-  };
-}

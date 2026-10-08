@@ -3,6 +3,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import { Networks, OMSWallet, SolanaNetworks, TronNetworks } from '../src';
 import { parsePublishableKey } from '../src/publishableKey';
 import { MemoryStorageManager } from '../src/storageManager';
+import { jsonResponse } from './fixtures/helpers.js';
 
 const walletAddress = '0x9999999999999999999999999999999999999999';
 
@@ -149,10 +150,3 @@ describe('OMSWallet publishable key routing', () => {
     ).toThrow('Invalid publishableKey.');
   });
 });
-
-function jsonResponse(body: unknown): Response {
-  return new Response(JSON.stringify(body), {
-    status: 200,
-    headers: { 'Content-Type': 'application/json' }
-  });
-}

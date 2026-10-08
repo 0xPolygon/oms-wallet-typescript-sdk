@@ -5,6 +5,7 @@ import type { CredentialSigner } from '../src/credentialSigner';
 import { Networks } from '../src/networks';
 import { feeOptionSelection } from '../src/types/transactionTypes';
 import { TransactionStatus } from '../src/types/waas';
+import { jsonResponse } from './fixtures/helpers.js';
 
 class MockSigner implements CredentialSigner {
   readonly signingAlgorithm = 'ecdsa-p256k-eip191';
@@ -301,13 +302,6 @@ function createClient(): RemoteAccessClient {
   return new RemoteAccessClient({
     publishableKey: 'pk_dev_sdbx_project_key',
     credentialSigner: new MockSigner()
-  });
-}
-
-function jsonResponse(body: unknown): Response {
-  return new Response(JSON.stringify(body), {
-    status: 200,
-    headers: { 'Content-Type': 'application/json' }
   });
 }
 

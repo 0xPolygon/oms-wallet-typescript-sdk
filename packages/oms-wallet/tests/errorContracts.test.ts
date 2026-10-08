@@ -17,6 +17,7 @@ import {
   type StorageManager
 } from '../src';
 import { testWalletAccount } from './fixtures/walletAccount.js';
+import { jsonResponse } from './fixtures/helpers.js';
 
 class MockSigner implements CredentialSigner {
   readonly signingAlgorithm = 'ecdsa-p256-sha256';
@@ -2033,13 +2034,6 @@ function encodeTestOidcState(payload: {
   }
 
   return btoa(binary).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
-}
-
-function jsonResponse(body: unknown, status = 200): Response {
-  return new Response(JSON.stringify(body), {
-    status,
-    headers: { 'Content-Type': 'application/json' }
-  });
 }
 
 function stringOrNull(value: unknown): string | null {

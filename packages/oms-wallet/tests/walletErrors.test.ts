@@ -1,30 +1,10 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import { WalletClientImpl } from '../src/clients/walletClient';
-import type { CredentialSigner } from '../src/credentialSigner';
 import { toOMSWalletError } from '../src/errors';
 import { AddressAlreadyImportedError } from '../src/generated/waas.gen';
 import { MemoryStorageManager } from '../src/storageManager';
-
-class MockSigner implements CredentialSigner {
-  readonly signingAlgorithm = 'ecdsa-p256-sha256';
-
-  async credentialId(): Promise<string> {
-    return '0x04' + '11'.repeat(64);
-  }
-
-  async nextNonce(): Promise<string> {
-    return '42';
-  }
-
-  async sign(): Promise<string> {
-    return '0x' + '22'.repeat(64);
-  }
-
-  async hasCredential(): Promise<boolean> {
-    return true;
-  }
-}
+import { MockSigner, jsonResponse, testEnvironment } from './fixtures/helpers.js';
 
 afterEach(() => {
   vi.restoreAllMocks();
@@ -197,20 +177,5 @@ function seedEmailAuthAttempt(wallet: WalletClientImpl): void {
     verifier: 'verifier-1',
     challenge: 'challenge-1',
     sessionLifetimeSeconds: 604_800
-  };
-}
-
-function jsonResponse(body: unknown, status = 200): Response {
-  return new Response(JSON.stringify(body), {
-    status,
-    headers: { 'Content-Type': 'application/json' }
-  });
-}
-
-function testEnvironment() {
-  return {
-    walletApiUrl: 'https://wallet.example',
-    indexerGatewayUrl: 'https://indexer.example',
-    solanaIndexerGatewayUrl: 'https://solana-indexer.example'
   };
 }

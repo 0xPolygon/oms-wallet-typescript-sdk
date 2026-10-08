@@ -1,37 +1,17 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import { WalletClientImpl } from '../src/clients/walletClient';
-import type { CredentialSigner } from '../src/credentialSigner';
 import { Networks, TronNetworks } from '../src/networks';
 import { MemoryStorageManager } from '../src/storageManager';
 import { FeeOptionSelector } from '../src/types/transactionTypes';
 import { TransactionStatus, WalletType } from '../src/types/waas';
 import { testWalletAccount } from './fixtures/walletAccount.js';
+import { MockSigner, jsonResponse } from './fixtures/helpers.js';
 
 const tronWalletAddress = 'TNPeeaaFB7K9cmo4uQpcU32zGK8G1NYqeL';
 const tronWalletHex = '0x8840e6c55b9ada326d211d818c34a994aeced808';
 const tronRecipient = 'TR7NHqjeKQxGTCi8q8ZY4pL8otSzgjLj6t';
 const tronUsdt = 'TXYZopYRdj2D9XRtbG411XZZ3kM5VkAeBf';
-
-class MockSigner implements CredentialSigner {
-  readonly signingAlgorithm = 'ecdsa-p256-sha256';
-
-  async credentialId(): Promise<string> {
-    return '0x04' + '11'.repeat(64);
-  }
-
-  async nextNonce(): Promise<string> {
-    return '42';
-  }
-
-  async sign(): Promise<string> {
-    return '0x' + '22'.repeat(64);
-  }
-
-  async hasCredential(): Promise<boolean> {
-    return true;
-  }
-}
 
 afterEach(() => {
   vi.restoreAllMocks();
@@ -461,11 +441,4 @@ function createWalletWithSession(
     signerKeyType: 'ecdsa-p256-sha256'
   });
   return wallet;
-}
-
-function jsonResponse(body: unknown, status = 200): Response {
-  return new Response(JSON.stringify(body), {
-    status,
-    headers: { 'Content-Type': 'application/json' }
-  });
 }

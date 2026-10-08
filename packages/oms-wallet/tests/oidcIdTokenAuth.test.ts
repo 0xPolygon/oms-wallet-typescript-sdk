@@ -7,6 +7,7 @@ import { MemoryStorageManager } from '../src/storageManager';
 import { oidcIdTokenHandleHash } from '../src/utils/oidcIdToken';
 import { base64UrlEncodeString } from '../src/utils/oidcRedirect';
 import { Constants } from '../src/utils/constants';
+import { jsonResponse, requestCount, testCredential, testEnvironment } from './fixtures/helpers.js';
 
 class MockSigner implements CredentialSigner {
   readonly signingAlgorithm = 'ecdsa-p256-sha256';
@@ -356,25 +357,6 @@ function createWalletClient(
   });
 }
 
-function testEnvironment() {
-  return {
-    walletApiUrl: 'https://wallet.example',
-    indexerGatewayUrl: 'https://indexer.example',
-    solanaIndexerGatewayUrl: 'https://solana-indexer.example'
-  };
-}
-
-function jsonResponse(body: unknown): Response {
-  return new Response(JSON.stringify(body), {
-    status: 200,
-    headers: { 'Content-Type': 'application/json' }
-  });
-}
-
-function requestCount(fetchMock: ReturnType<typeof vi.fn>, endpoint: string): number {
-  return fetchMock.mock.calls.filter(([input]) => input.toString().endsWith(endpoint)).length;
-}
-
 async function waitForRequest(
   fetchMock: ReturnType<typeof vi.fn>,
   endpoint: string
@@ -384,15 +366,6 @@ async function waitForRequest(
     await new Promise((resolve) => setTimeout(resolve, 0));
   }
   throw new Error(`Timed out waiting for ${endpoint}`);
-}
-
-function testCredential() {
-  return {
-    type: 'direct',
-    credentialId: '0x' + '11'.repeat(32),
-    expiresAt: '2099-01-01T00:00:00Z',
-    isCaller: true
-  };
 }
 
 function fakeJwt(payload: Record<string, unknown>): string {

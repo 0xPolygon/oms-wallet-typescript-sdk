@@ -1,31 +1,11 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import { WalletClientImpl } from '../src/clients/walletClient';
-import type { CredentialSigner } from '../src/credentialSigner';
 import { Networks } from '../src/networks';
 import { MemoryStorageManager } from '../src/storageManager';
 import { WalletType } from '../src/types/waas';
 import { testWalletAccount } from './fixtures/walletAccount.js';
-
-class MockSigner implements CredentialSigner {
-  readonly signingAlgorithm = 'ecdsa-p256-sha256';
-
-  async credentialId(): Promise<string> {
-    return '0x04' + '11'.repeat(64);
-  }
-
-  async nextNonce(): Promise<string> {
-    return '42';
-  }
-
-  async sign(): Promise<string> {
-    return '0x' + '22'.repeat(64);
-  }
-
-  async hasCredential(): Promise<boolean> {
-    return true;
-  }
-}
+import { MockSigner, jsonResponse, requestCount, testEnvironment } from './fixtures/helpers.js';
 
 afterEach(() => {
   vi.restoreAllMocks();
@@ -666,13 +646,6 @@ function createWalletWithSession(): WalletClientImpl {
   return wallet;
 }
 
-function jsonResponse(body: unknown): Response {
-  return new Response(JSON.stringify(body), {
-    status: 200,
-    headers: { 'Content-Type': 'application/json' }
-  });
-}
-
 function testCredential(seed = '11', isCaller = true) {
   return {
     type: 'direct',
@@ -680,18 +653,6 @@ function testCredential(seed = '11', isCaller = true) {
     expiresAt: '2099-01-01T00:00:00Z',
     isCaller
   };
-}
-
-function testEnvironment() {
-  return {
-    walletApiUrl: 'https://wallet.example',
-    indexerGatewayUrl: 'https://indexer.example',
-    solanaIndexerGatewayUrl: 'https://solana-indexer.example'
-  };
-}
-
-function requestCount(fetchMock: ReturnType<typeof vi.fn>, endpoint: string): number {
-  return fetchMock.mock.calls.filter(([input]) => input.toString().endsWith(endpoint)).length;
 }
 
 async function waitForRequest(
