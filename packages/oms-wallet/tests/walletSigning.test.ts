@@ -410,6 +410,30 @@ describe('WalletClient signature verification target', () => {
 
   it.each(
     verificationCalls.flatMap((call) =>
+      ['', '   '].map((walletAddress) => ({
+        ...call,
+        walletAddress,
+        description: walletAddress ? 'a whitespace-only' : 'an empty'
+      }))
+    )
+  )(
+    '$label rejects $description walletAddress before any request',
+    async ({ label, walletType, walletAddress, verify }) => {
+      const { fetchMock } = recordVerificationRequests();
+      const wallet = createWalletWithSession(addressFor[walletType], walletType);
+
+      await expect(verify(wallet, walletAddress)).rejects.toMatchObject({
+        name: 'OMSWalletValidationError',
+        code: 'OMS_VALIDATION_ERROR',
+        operation: `wallet.${label}`,
+        message: 'walletAddress must not be empty'
+      });
+      expect(fetchMock).not.toHaveBeenCalled();
+    }
+  );
+
+  it.each(
+    verificationCalls.flatMap((call) =>
       (['ethereum', 'solana', 'tron'] as const)
         .filter((activeType) => activeType !== call.walletType)
         .map((activeType) => ({ ...call, activeType }))

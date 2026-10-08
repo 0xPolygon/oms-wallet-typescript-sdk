@@ -31,7 +31,7 @@ Add Tron wallet support, replace `walletAddress` with a typed `activeWallet`, an
 - Session-expired events now include the expired `wallet`.
 - Wallet responses whose Ethereum address is not a valid hex address now fail with `OMS_INVALID_RESPONSE` instead of being passed through as an `Address`.
 - Sessions saved by 0.3.x are discarded on load, so users sign in once after upgrading.
-- Signature verification methods no longer take `walletId`. Pass `walletAddress`, or omit it to verify against the active wallet's address. An omitted address with no active session now throws `OMSWalletSessionError`, and with an active wallet of another family throws `OMSWalletValidationError`, before any request.
+- Signature verification methods no longer take `walletId`. Pass `walletAddress`, or omit it to verify against the active wallet's address. An omitted address with no active session now throws `OMSWalletSessionError`, and with an active wallet of another family throws `OMSWalletValidationError`, before any request. A given but empty or whitespace-only `walletAddress` now throws `OMSWalletValidationError` instead of falling back to the active wallet.
 - **`createWallet`** and **`importEncryptedWallet`** take `walletType` instead of `type`.
 - `FeeToken.logoURL` and `FeeToken.tokenID` are renamed to **`logoUrl`** and **`tokenId`**.
 - `upstreamError.code` is always a string; numeric WebRPC codes are stringified (for example `'7313'`).

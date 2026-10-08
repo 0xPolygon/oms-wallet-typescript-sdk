@@ -83,6 +83,10 @@ Ethereum wallet, it throws `OMSWalletValidationError` instead of a backend error
 `walletAddress` still works while signed out. As with other wallet operations, an expired session
 found this way is cleared and your `onSessionExpired` listeners are called.
 
+An empty or whitespace-only `walletAddress` now throws `OMSWalletValidationError`
+(`walletAddress must not be empty`) before any request. Previously `""` silently fell back to the
+active wallet's address. Omit `walletAddress` to verify against the active wallet.
+
 ### `walletType` replaces `type` for wallet creation and encrypted import
 
 `createWallet` and `ImportEncryptedWalletParams` take `walletType`, matching the auth methods.

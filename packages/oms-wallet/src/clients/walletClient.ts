@@ -116,6 +116,7 @@ import { createAttestedFetch } from '../attestation.js';
 import { WebCryptoP256CredentialSigner } from '../credentialSigner.js';
 import {
   OMSWalletSessionError,
+  OMSWalletValidationError,
   OMSWalletStorageError,
   OMSWalletTransactionError,
   OMSWalletSelectionError,
@@ -2802,7 +2803,8 @@ export class WalletClientImpl implements WalletClient {
 
   /**
    * Returns the address a signature is verified against: `walletAddress` when given (no session is
-   * needed for the public verification request), otherwise the active wallet's address.
+   * needed for the public verification request), otherwise the active wallet's address. A given
+   * but empty or whitespace-only `walletAddress` is rejected rather than treated as omitted.
    */
   private async signatureVerificationAddress(
     walletAddress: string | undefined,
@@ -2810,7 +2812,15 @@ export class WalletClientImpl implements WalletClient {
     label: string,
     operation: WalletOperation
   ): Promise<string> {
-    if (walletAddress) return walletAddress;
+    if (walletAddress !== undefined && walletAddress !== null) {
+      if (!walletAddress.trim()) {
+        throw new OMSWalletValidationError({
+          operation,
+          message: 'walletAddress must not be empty'
+        });
+      }
+      return walletAddress;
+    }
 
     const session = this.activeSessionSnapshot();
     if (!session?.wallet) {
