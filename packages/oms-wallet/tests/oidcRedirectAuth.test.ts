@@ -778,7 +778,7 @@ describe('WalletClient OIDC redirect auth', () => {
 
   it('defaults callbackUrl from the current browser URL and cleans callback params', async () => {
     const redirectAuthStorage = new MemoryStorageManager();
-    const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+    const fetchMock = vi.fn(async (input: RequestInfo | URL) => {
       const url = input.toString();
 
       if (url.endsWith('/CommitVerifier')) {

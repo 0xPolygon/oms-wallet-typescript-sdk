@@ -11,7 +11,7 @@ import {
   type Storage
 } from '@wagmi/core';
 import { describe, expect, it, vi } from 'vitest';
-import { http, type Address, type Chain, type Hex } from 'viem';
+import { http, type Chain, type Hex } from 'viem';
 
 import { OMSWalletTransactionError } from '@polygonlabs/oms-wallet';
 import {

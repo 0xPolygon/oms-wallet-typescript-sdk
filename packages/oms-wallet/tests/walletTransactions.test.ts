@@ -950,9 +950,8 @@ describe('WalletClient transactions', () => {
 
   it('firstAvailable requires an affordable fee option', async () => {
     const usdcAddress = '0x2222222222222222222222222222222222222222';
-    const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+    const fetchMock = vi.fn(async (input: RequestInfo | URL) => {
       const url = input.toString();
-      const body = init?.body ? JSON.parse(init.body as string) : undefined;
 
       if (url.endsWith('/PrepareEthereumTransaction')) {
         return jsonResponse({

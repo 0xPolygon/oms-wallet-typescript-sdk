@@ -10,7 +10,6 @@ import {
   OmsRelayOidcProviders,
   SessionStorageManager,
   WalletImportCipherSuite,
-  WalletType,
   WebCryptoP256CredentialSigner,
   isOMSWalletError,
   type CredentialSigner,
