@@ -915,10 +915,12 @@ describe('WalletClient session storage', () => {
     storage.set(
       Constants.sessionStorageKey,
       JSON.stringify({
-        version: 1,
+        version: 2,
         scope: omsSessionScope,
-        wallet: { id: 'wallet-id', address: '0x1111111111111111111111111111111111111111' },
-        expiresAt: '2099-01-01T00:00:00Z'
+        wallet: testWalletAccount('wallet-id', '0x1111111111111111111111111111111111111111'),
+        expiresAt: '2099-01-01T00:00:00Z',
+        signerCredentialId: '0x04' + '11'.repeat(64),
+        signerKeyType: 'ecdsa-p256-sha256'
       })
     );
 
