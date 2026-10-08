@@ -21,7 +21,7 @@ const DEFAULT_MESSAGE = 'hello from OMS Wallet';
 const BALANCE_NETWORKS = [Networks.polygon, Networks.base, Networks.arbitrum];
 
 function App() {
-  const restoredWalletAddress = omsWallet.wallet.activeWallet?.address ?? '';
+  const restoredWalletAddress = activeEthereumAddress(omsWallet.wallet) ?? '';
   const [walletAddress, setWalletAddress] = useState(restoredWalletAddress);
   const [status, setStatus] = useState(
     restoredWalletAddress

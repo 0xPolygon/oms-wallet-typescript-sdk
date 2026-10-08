@@ -22,6 +22,7 @@ import {
   WalletSelectionPanel
 } from '../../../shared/example-components';
 import {
+  activeEthereumAddress,
   formatOidcProvider,
   hasOidcCallbackParams,
   isPendingWalletSelection,
@@ -116,7 +117,7 @@ function App() {
   const [approvalAction, setApprovalAction] = useState<ApprovalAction>(null);
   const [isBusy, setIsBusy] = useState(false);
   const initializationStarted = useRef(false);
-  const walletAddress = omsWallet?.wallet.activeWallet?.address ?? '';
+  const walletAddress = (omsWallet && activeEthereumAddress(omsWallet.wallet)) ?? '';
   const sessionAuth = omsWallet?.wallet.session?.auth;
   const loginMethod =
     sessionAuth?.type === 'email'
@@ -224,7 +225,12 @@ function App() {
     try {
       const config = await api<ClientConfig>('/api/client-config');
       const nextWallet = new OMSWallet({ publishableKey: config.publishableKey });
-      await switchToEthereumWallet(nextWallet.wallet);
+      try {
+        await switchToEthereumWallet(nextWallet.wallet);
+      } catch (error) {
+        // Keep going so the client is still set up and a pending redirect sign-in completes.
+        console.error('Could not switch to an Ethereum wallet.', error);
+      }
       setOmsWallet(nextWallet);
 
       let redirectResult: PendingWalletSelection | WalletActivationResult | void = undefined;

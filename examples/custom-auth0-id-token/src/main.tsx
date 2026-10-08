@@ -26,7 +26,7 @@ function App() {
     logout: logoutFromAuth0,
     user: auth0User
   } = useAuth0();
-  const restoredWalletAddress = omsWallet.wallet.activeWallet?.address ?? '';
+  const restoredWalletAddress = activeEthereumAddress(omsWallet.wallet) ?? '';
   const [walletAddress, setWalletAddress] = useState(restoredWalletAddress);
   const [status, setStatus] = useState(
     restoredWalletAddress
@@ -42,23 +42,32 @@ function App() {
   const [lastTransactionExplorerUrl, setLastTransactionExplorerUrl] = useState('');
   const [balances, setBalances] = useState<TokenBalance[] | null>(null);
   const [isBusy, setIsBusy] = useState(false);
+  const [isSwitchingWallet, setIsSwitchingWallet] = useState(
+    Boolean(omsWallet.wallet.activeWallet) && !restoredWalletAddress
+  );
   const omsSignInStarted = useRef(false);
 
   useEffect(() => {
-    if (!omsWallet.wallet.activeWallet || activeEthereumAddress(omsWallet.wallet)) return;
+    if (!isSwitchingWallet) return;
     void run('Switching to an Ethereum wallet...', async () => {
       const wallet = await switchToEthereumWallet(omsWallet.wallet);
       setWalletAddress(wallet?.address ?? '');
       setStatus('Wallet session restored.');
-    });
+    }).then(() => setIsSwitchingWallet(false));
   }, []);
 
   useEffect(() => {
-    if (isAuth0Loading || !isAuth0Authenticated || walletAddress || omsSignInStarted.current)
+    if (
+      isAuth0Loading ||
+      !isAuth0Authenticated ||
+      walletAddress ||
+      isSwitchingWallet ||
+      omsSignInStarted.current
+    )
       return;
     omsSignInStarted.current = true;
     void signInToOmsWithAuth0IdToken();
-  }, [isAuth0Authenticated, isAuth0Loading, walletAddress]);
+  }, [isAuth0Authenticated, isAuth0Loading, walletAddress, isSwitchingWallet]);
 
   async function run(label: string, action: () => Promise<void>) {
     setIsBusy(true);
