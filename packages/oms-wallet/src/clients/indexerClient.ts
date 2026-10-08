@@ -537,7 +537,8 @@ interface TronBalanceRaw {
   balanceUSD?: unknown;
 }
 
-interface SolanaNetworkErrorRaw {
+// Raw `errors[]` entry shared by the Solana and Tron indexer gateways.
+interface GatewayNetworkErrorRaw {
   network?: unknown;
   reason?: unknown;
 }
@@ -882,7 +883,7 @@ function mapSolanaBalance(value: unknown): SolanaBalance {
 }
 
 function mapSolanaNetworkError(value: unknown): SolanaNetworkError {
-  const raw = asObject(value, 'errors[]') as SolanaNetworkErrorRaw;
+  const raw = asObject(value, 'errors[]') as GatewayNetworkErrorRaw;
   return {
     network: mapSolanaNetwork(raw.network, 'errors[].network'),
     reason: requiredString(raw.reason, 'errors[].reason')
@@ -937,7 +938,7 @@ function mapTronBalance(value: unknown): TronBalance {
 }
 
 function mapTronNetworkError(value: unknown): TronNetworkError {
-  const raw = asObject(value, 'errors[]') as SolanaNetworkErrorRaw;
+  const raw = asObject(value, 'errors[]') as GatewayNetworkErrorRaw;
   return {
     network: mapTronNetwork(raw.network, 'errors[].network'),
     reason: requiredString(raw.reason, 'errors[].reason')

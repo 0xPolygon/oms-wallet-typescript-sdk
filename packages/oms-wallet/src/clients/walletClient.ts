@@ -368,7 +368,10 @@ export class WalletClientImpl implements WalletClient {
   private sessionRevision = 0;
   private dispatchingSessionExpiredEvent = false;
 
-  private walletId: string;
+  /** The active wallet's ID, or `''` without an active wallet. */
+  private get walletId(): string {
+    return this.activeWalletAccount?.id ?? '';
+  }
 
   constructor(params: {
     publishableKey: string;
@@ -396,7 +399,6 @@ export class WalletClientImpl implements WalletClient {
       };
 
       if (this.isSessionExpired(restoredSession)) {
-        this.walletId = '';
         this.activeWalletAccount = undefined;
         this.sessionExpiresAt = undefined;
         this.sessionAuth = undefined;
@@ -405,7 +407,6 @@ export class WalletClientImpl implements WalletClient {
           session: restoredSession
         });
       } else {
-        this.walletId = record.wallet.id;
         this.activeWalletAccount = record.wallet;
         this.sessionExpiresAt = restoredSession.expiresAt;
         this.sessionAuth = restoredSession.auth;
@@ -414,7 +415,6 @@ export class WalletClientImpl implements WalletClient {
         this.scheduleSessionExpiry(restoredSession);
       }
     } else {
-      this.walletId = '';
       this.activeWalletAccount = undefined;
       this.sessionExpiresAt = undefined;
       this.sessionAuth = undefined;
@@ -1051,7 +1051,6 @@ export class WalletClientImpl implements WalletClient {
         storageFailure = error;
       }
     }
-    this.walletId = '';
     this.activeWalletAccount = undefined;
     this.sessionExpiresAt = undefined;
     this.sessionAuth = undefined;
@@ -1776,7 +1775,6 @@ export class WalletClientImpl implements WalletClient {
     }
 
     this.latestSessionExpiredEvent = undefined;
-    this.walletId = wallet.id;
     this.activeWalletAccount = cloneWalletAccount(wallet);
     this.sessionExpiresAt = metadata.expiresAt;
     this.sessionAuth = cloneSessionAuth(metadata.auth);
@@ -2538,67 +2536,73 @@ export class WalletClientImpl implements WalletClient {
     });
   }
 
-  private async enrichSolanaFeeOptionsWithBalances(
+  private enrichSolanaFeeOptionsWithBalances(
     network: SolanaNetwork,
     feeOptions: FeeOption[]
   ): Promise<FeeOptionWithBalance[]> {
-    const walletAddress = this.activeWalletAccount?.address;
-    if (!walletAddress) {
-      throw new Error('No active wallet session');
-    }
-
-    const mintAddresses = Array.from(
-      new Set(
-        feeOptions
-          .filter((option) => !this.isNativeToken(option))
-          .map((option) => option.token.contractAddress?.trim())
-          .filter((address): address is string => Boolean(address))
-      )
+    return this.enrichGatewayFeeOptionsWithBalances(
+      feeOptions,
+      async (walletAddress, tokenAddresses, omitNativeBalances) => {
+        const result = await this.indexerClient.getSolanaBalances({
+          networks: [network],
+          walletAddress,
+          mintAddresses: tokenAddresses,
+          includeMetadata: false,
+          omitNativeBalances
+        });
+        return result.balances
+          .filter((balance) => balance.network === network)
+          .map((balance) => ({ ...balance, tokenAddress: balance.mintAddress }));
+      }
     );
-    const balances = await this.indexerClient
-      .getSolanaBalances({
-        networks: [network],
-        walletAddress,
-        mintAddresses,
-        includeMetadata: false,
-        omitNativeBalances: !feeOptions.some((option) => this.isNativeToken(option))
-      })
-      .catch(() => undefined);
-    const nativeBalance = balances?.balances.find(
-      (balance) => balance.network === network && balance.assetType === 'native'
-    );
-    const balancesByMint = new Map(
-      balances?.balances
-        .filter((balance) => balance.network === network && balance.assetType === 'fungible-token')
-        .map((balance) => [balance.mintAddress, balance]) ?? []
-    );
-
-    return feeOptions.map((feeOption, index) => {
-      const balance = this.isNativeToken(feeOption)
-        ? nativeBalance
-        : balancesByMint.get(feeOption.token.contractAddress?.trim() ?? '');
-      const decimals = balance?.decimals ?? feeOption.token.decimals;
-
-      return {
-        feeOption,
-        selection: feeOptionSelection(feeOption, index),
-        available: this.formatTokenAmount(balance?.balance, decimals),
-        availableRaw: balance?.balance,
-        decimals
-      };
-    });
   }
 
-  private async enrichTronFeeOptionsWithBalances(
+  private enrichTronFeeOptionsWithBalances(
     network: TronNetwork,
     feeOptions: FeeOption[]
+  ): Promise<FeeOptionWithBalance[]> {
+    return this.enrichGatewayFeeOptionsWithBalances(
+      feeOptions,
+      async (walletAddress, tokenAddresses, omitNativeBalances) => {
+        const result = await this.indexerClient.getTronBalances({
+          networks: [network],
+          walletAddress,
+          contractAddresses: tokenAddresses,
+          includeMetadata: false,
+          omitNativeBalances
+        });
+        return result.balances
+          .filter((balance) => balance.network === network)
+          .map((balance) => ({ ...balance, tokenAddress: balance.contractAddress }));
+      }
+    );
+  }
+
+  /**
+   * Shared by the Solana and Tron families: `fetchBalances` returns the network's balances, with
+   * `tokenAddress` set to the mint or contract address of fungible-token entries.
+   */
+  private async enrichGatewayFeeOptionsWithBalances(
+    feeOptions: FeeOption[],
+    fetchBalances: (
+      walletAddress: string,
+      tokenAddresses: string[],
+      omitNativeBalances: boolean
+    ) => Promise<
+      Array<{
+        assetType: 'native' | 'fungible-token';
+        tokenAddress: string | undefined;
+        balance: string;
+        decimals: number;
+      }>
+    >
   ): Promise<FeeOptionWithBalance[]> {
     const walletAddress = this.activeWalletAccount?.address;
     if (!walletAddress) {
       throw new Error('No active wallet session');
     }
 
-    const contractAddresses = Array.from(
+    const tokenAddresses = Array.from(
       new Set(
         feeOptions
           .filter((option) => !this.isNativeToken(option))
@@ -2606,28 +2610,22 @@ export class WalletClientImpl implements WalletClient {
           .filter((address): address is string => Boolean(address))
       )
     );
-    const balances = await this.indexerClient
-      .getTronBalances({
-        networks: [network],
-        walletAddress,
-        contractAddresses,
-        includeMetadata: false,
-        omitNativeBalances: !feeOptions.some((option) => this.isNativeToken(option))
-      })
-      .catch(() => undefined);
-    const nativeBalance = balances?.balances.find(
-      (balance) => balance.network === network && balance.assetType === 'native'
-    );
-    const balancesByContract = new Map(
-      balances?.balances
-        .filter((balance) => balance.network === network && balance.assetType === 'fungible-token')
-        .map((balance) => [balance.contractAddress, balance]) ?? []
+    const balances = await fetchBalances(
+      walletAddress,
+      tokenAddresses,
+      !feeOptions.some((option) => this.isNativeToken(option))
+    ).catch(() => undefined);
+    const nativeBalance = balances?.find((balance) => balance.assetType === 'native');
+    const balancesByToken = new Map(
+      balances
+        ?.filter((balance) => balance.assetType === 'fungible-token')
+        .map((balance) => [balance.tokenAddress, balance]) ?? []
     );
 
     return feeOptions.map((feeOption, index) => {
       const balance = this.isNativeToken(feeOption)
         ? nativeBalance
-        : balancesByContract.get(feeOption.token.contractAddress?.trim() ?? '');
+        : balancesByToken.get(feeOption.token.contractAddress?.trim() ?? '');
       const decimals = balance?.decimals ?? feeOption.token.decimals;
 
       return {
@@ -2730,14 +2728,10 @@ export class WalletClientImpl implements WalletClient {
     }
   }
 
-  private async requireActiveSession(operation: WalletOperation): Promise<void> {
-    if (!this.walletId) {
-      throw new OMSWalletSessionError({
-        operation,
-        message: 'No active wallet session'
-      });
-    }
-
+  private async requireActiveSession(
+    operation: WalletOperation,
+    { requireCredential = true }: { requireCredential?: boolean } = {}
+  ): Promise<void> {
     const session = this.activeSessionSnapshot();
     if (!session) {
       throw new OMSWalletSessionError({
@@ -2753,6 +2747,7 @@ export class WalletClientImpl implements WalletClient {
         message: 'Wallet session expired'
       });
     }
+    if (!requireCredential) return;
 
     if (this.credentialSigner.hasCredential && !(await this.credentialSigner.hasCredential())) {
       await this.clearSession({ operation });
@@ -2793,12 +2788,14 @@ export class WalletClientImpl implements WalletClient {
   private async requireActiveWalletType(
     type: WalletType,
     label: string,
-    operation: WalletOperation
-  ): Promise<void> {
-    await this.requireActiveSession(operation);
+    operation: WalletOperation,
+    options?: { requireCredential?: boolean }
+  ): Promise<WalletAccount> {
+    await this.requireActiveSession(operation, options);
     if (this.activeWalletAccount?.type !== type) {
       throw new Error(`An active ${label} wallet is required`);
     }
+    return this.activeWalletAccount;
   }
 
   /**
@@ -2822,25 +2819,11 @@ export class WalletClientImpl implements WalletClient {
       return walletAddress;
     }
 
-    const session = this.activeSessionSnapshot();
-    if (!session?.wallet) {
-      throw new OMSWalletSessionError({
-        operation,
-        message: 'No active wallet session'
-      });
-    }
-    if (this.isSessionExpired(session)) {
-      await this.expireSession(session);
-      throw new OMSWalletSessionError({
-        code: 'OMS_SESSION_EXPIRED',
-        operation,
-        message: 'Wallet session expired'
-      });
-    }
-    if (session.wallet.type !== type) {
-      throw new Error(`An active ${label} wallet is required`);
-    }
-    return session.wallet.address;
+    // The public verification request needs no credential, only the active wallet's address.
+    const wallet = await this.requireActiveWalletType(type, label, operation, {
+      requireCredential: false
+    });
+    return wallet.address;
   }
 
   private isNativeToken(feeOption: FeeOption): boolean {
