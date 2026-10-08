@@ -1495,10 +1495,8 @@ export class WalletClientImpl implements WalletClient {
   }
 
   /**
-   * Creates a new wallet of the requested type for the authenticated user.
-   *
-   * The wallet ID and address are persisted to storage so the session can be
-   * restored when the configured credential signer is also available.
+   * Requests a new wallet of the requested type from WaaS for the authenticated user. Does not
+   * activate or persist it.
    */
   private async requestCreateWallet(type: WalletType, reference?: string): Promise<WalletAccount> {
     const params: CreateWalletRequest = {
@@ -1561,9 +1559,7 @@ export class WalletClientImpl implements WalletClient {
   }
 
   /**
-   * Loads an existing wallet by its server-side ID.
-   *
-   * The wallet ID and address are persisted to storage.
+   * Requests an existing wallet by its server-side ID from WaaS. Does not activate or persist it.
    */
   private async requestUseWallet(walletId: string): Promise<WalletAccount> {
     const params: UseWalletRequest = { walletId };
@@ -1943,13 +1939,7 @@ export class WalletClientImpl implements WalletClient {
     context: ActiveWalletActivationContext,
     operation: WalletOperation
   ): Promise<void> {
-    await this.requireActiveSession(operation);
-    if (this.walletId !== context.walletId) {
-      throw new OMSWalletSessionError({
-        operation,
-        message: 'Active wallet session changed'
-      });
-    }
+    await this.requireSameActiveWalletSession(context.walletId, operation);
   }
 
   private async requireSameActiveWalletSession(
@@ -2286,7 +2276,7 @@ export class WalletClientImpl implements WalletClient {
         consumed: parsed.consumed
       };
     } catch (error) {
-      throw error instanceof Error ? error : new Error('Pending OIDC redirect auth is invalid');
+      throw new Error('Pending OIDC redirect auth is invalid', { cause: error });
     }
   }
 

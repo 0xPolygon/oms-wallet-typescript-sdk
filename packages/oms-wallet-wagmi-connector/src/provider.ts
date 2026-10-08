@@ -47,7 +47,7 @@ export class OMSWalletProvider {
     private readonly connectWallet: (parameters?: {
       isReconnecting?: boolean;
     }) => Promise<readonly Address[]>,
-    private readonly isDisconnected: () => MaybePromise<boolean>
+    private readonly accounts: () => Promise<readonly Address[]>
   ) {}
 
   on(event: ProviderEvent, listener: ProviderListener): this {
@@ -94,20 +94,6 @@ export class OMSWalletProvider {
       default:
         throw unsupportedMethod(method);
     }
-  }
-
-  private async accounts(): Promise<readonly Address[]> {
-    if (await this.isDisconnected()) {
-      return [];
-    }
-    const activeWallet = (await this.getOmsWallet()).wallet.activeWallet;
-    if (!activeWallet) {
-      return [];
-    }
-    if (activeWallet.type !== 'ethereum' || !isAddress(activeWallet.address)) {
-      throw new OMSWalletProviderRpcError(4100, 'The active OMS wallet is not an Ethereum wallet.');
-    }
-    return [getAddress(activeWallet.address)];
   }
 
   private async requireAccount(): Promise<Address> {

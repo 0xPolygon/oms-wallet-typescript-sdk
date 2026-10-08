@@ -172,7 +172,7 @@ export function omsWalletConnector(parameters: OMSWalletConnectorParameters) {
         getNetworks,
         (nextChainId) => Boolean(chainById(nextChainId)),
         connectWallet,
-        isManuallyDisconnected
+        accounts
       );
 
     const connector = {
