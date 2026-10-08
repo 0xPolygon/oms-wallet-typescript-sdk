@@ -10,6 +10,8 @@ The connector reads the active account from the SDK's `wallet.activeWallet` inst
 `@polygonlabs/oms-wallet` 0.4.0. An active Tron wallet is rejected with `OMSWalletProviderRpcError`
 code `4100`, as an active Solana wallet already is.
 
+The connector now requires `@wagmi/core` `>=3.6.5` and `viem` `>=2.55.0` as peer dependencies.
+
 ## 0.3.0
 
 The connector is Ethereum-only and now rejects an active Solana wallet explicitly instead of

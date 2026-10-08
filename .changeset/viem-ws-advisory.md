@@ -1,5 +1,6 @@
 ---
 "@polygonlabs/oms-wallet": patch
+"@polygonlabs/oms-wallet-wagmi-connector": patch
 ---
 
 Require viem `2.55.0` or newer, so installs no longer resolve the `ws` version affected by GHSA-96hv-2xvq-fx4p.

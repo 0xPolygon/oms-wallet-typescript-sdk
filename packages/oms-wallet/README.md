@@ -529,10 +529,13 @@ const isValid = await omsWallet.wallet.isValidTronMessageSignature({
   signature,
 })
 
+// Replace with the Base58Check (`T…`) address that should receive the funds.
+const recipient = '<recipient T… address>'
+
 // TRX transfer. Values are in sun (1 TRX = 1,000,000 sun).
 const trxTransfer = await omsWallet.wallet.sendTronTransaction({
   network: TronNetworks.nile,
-  to: 'TR7NHqjeKQxGTCi8q8ZY4pL8otSzgjLj6t',
+  to: recipient,
   value: 1_000_000n,
 })
 
@@ -542,7 +545,7 @@ const trc20Transfer = await omsWallet.wallet.callTronContract({
   contractAddress: 'TXYZopYRdj2D9XRtbG411XZZ3kM5VkAeBf',
   method: 'transfer',
   args: [
-    { type: 'address', value: 'TR7NHqjeKQxGTCi8q8ZY4pL8otSzgjLj6t' },
+    { type: 'address', value: recipient },
     { type: 'uint256', value: '1000000' },
   ],
 })

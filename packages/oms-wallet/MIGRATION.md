@@ -104,8 +104,9 @@ await omsWallet.wallet.importEncryptedWallet({ walletType: WalletType.Solana, ke
 
 TypeScript rejects `type` in an object literal. Untyped JavaScript that still passes
 `createWallet({ type })` silently creates an Ethereum wallet, the default, so search for these calls.
-`importEncryptedWallet({ type })` from untyped JavaScript sends no wallet type, and the wallet API
-rejects it with an `UnsupportedWalletType` request error.
+`importEncryptedWallet({ type })` from untyped JavaScript sends no wallet type and is rejected:
+during a pending manual wallet selection with a local `OMSWalletValidationError` before any request,
+otherwise by the wallet API with an `UnsupportedWalletType` request error.
 
 ### Fee token fields use `logoUrl` and `tokenId`
 
