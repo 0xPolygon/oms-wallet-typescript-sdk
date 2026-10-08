@@ -1,7 +1,7 @@
 import { Aes256Gcm, CipherSuite, DhkemP256HkdfSha256, HkdfSha256 } from '@hpke/core';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
-import { WalletClient } from '../src/clients/walletClient';
+import { WalletClientImpl } from '../src/clients/walletClient';
 import type { CredentialSigner } from '../src/credentialSigner';
 import type {
   GetRecipientKeyRequest,
@@ -155,7 +155,7 @@ describe('wallet import', () => {
       cipherSuite: WalletImportCipherSuite.P256Sha256ChaCha20Poly1305
     });
     const result = await wallet.importEncryptedWallet({
-      type: 'ethereum',
+      walletType: 'ethereum',
       reference: 'Privy wallet',
       keyMaterial: {
         keyId: recipient.keyId,
@@ -206,7 +206,7 @@ describe('wallet import', () => {
   });
 
   it('activates an imported first wallet during manual wallet selection', async () => {
-    const wallet = new WalletClient({
+    const wallet = new WalletClientImpl({
       publishableKey: 'publishable-key',
       projectId: 'project-id',
       environment: {
@@ -239,7 +239,7 @@ describe('wallet import', () => {
 
     await expect(
       wallet.importEncryptedWallet({
-        type: 'ethereum',
+        walletType: 'ethereum',
         keyMaterial: {
           keyId: 'key-1',
           cipherSuite: 'p256-sha256-aes256gcm',
@@ -253,8 +253,8 @@ describe('wallet import', () => {
   });
 });
 
-function createWalletWithSession(): WalletClient {
-  const wallet = new WalletClient({
+function createWalletWithSession(): WalletClientImpl {
+  const wallet = new WalletClientImpl({
     publishableKey: 'publishable-key',
     projectId: 'project-id',
     environment: {

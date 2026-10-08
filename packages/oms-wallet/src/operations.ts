@@ -36,6 +36,7 @@ export const WalletOperation = {
   inspectRemoteCredential: 'wallet.inspectRemoteCredential',
   authorizeRemoteAccess: 'wallet.authorizeRemoteAccess',
   listAccess: 'wallet.listAccess',
+  listAccessPage: 'wallet.listAccessPage',
   listAccessPages: 'wallet.listAccessPages',
   getRemoteAccessSession: 'wallet.getRemoteAccessSession',
   getRemoteAccessSessionUsage: 'wallet.getRemoteAccessSessionUsage',
@@ -69,4 +70,5 @@ export const RemoteAccessOperation = {
 export type RemoteAccessOperation =
   (typeof RemoteAccessOperation)[keyof typeof RemoteAccessOperation];
 
+/** Operation identifiers reported in `OMSWalletError.operation`. */
 export type OMSWalletOperation = WalletOperation | IndexerOperation | RemoteAccessOperation;

@@ -83,8 +83,8 @@ console.log('Balances:', balances)
 
 | Property | Type | Description |
 |---|---|---|
-| `omsWallet.wallet` | `OMSWalletClient` | Authentication, signing, and transaction submission. |
-| `omsWallet.indexer` | `OMSWalletIndexerClient` | Read token balances and on-chain state. |
+| `omsWallet.wallet` | `WalletClient` | Authentication, signing, and transaction submission. |
+| `omsWallet.indexer` | `IndexerClient` | Read token balances and on-chain state. |
 
 ## Security Model
 
@@ -206,7 +206,7 @@ to present its own wallet picker after the token is verified.
 
 Email and OIDC auth both persist the active wallet session in the configured SDK storage. The versioned session record is scoped to the publishable key project and API environment. A client rejects and clears a stored session when either scope differs. Browser storage defaults to `localStorage` when available; non-browser runtimes fall back to in-memory storage unless you provide a custom `StorageManager`. Browser signing defaults to a non-extractable WebCrypto P-256 credential using `ecdsa-p256-sha256`. Completed auth requests ask the wallet API for a one-week session lifetime.
 
-Pass `sessionLifetimeSeconds` to `startEmailAuth`, `signInWithOidcIdToken`, `startOidcRedirectAuth`, `completeOidcRedirectAuth`, or `signInWithOidcRedirect` to request a different session lifetime. Values must be integer seconds from `1` through `2592000` (30 days). For OIDC redirects, values passed at start are stored with the pending redirect state and used on callback completion unless completion overrides them.
+Pass `sessionLifetimeSeconds` to `startEmailAuth`, `signInWithOidcIdToken`, `startOidcRedirectAuth`, `completeOidcRedirectAuth`, or `signInWithOidcRedirect` to request a different session lifetime. Values must be integer seconds from `1` through `2592000` (30 days), exported as `MAX_SESSION_LIFETIME_SECONDS`; the one-week default is exported as `DEFAULT_SESSION_LIFETIME_SECONDS`. For OIDC redirects, values passed at start are stored with the pending redirect state and used on callback completion unless completion overrides them.
 
 Use `omsWallet.wallet.activeWallet` for the active wallet. It has the same shape as the entries `listWallets()` returns and is `undefined` when signed out. Narrow on `type` to get the address type for that wallet family; Ethereum addresses are typed as viem `Address`. Use `omsWallet.wallet.session` for credential expiry and structured auth metadata. It is defined exactly when `activeWallet` is.
 
@@ -327,7 +327,7 @@ const privyExport = await response.json() as {
 }
 
 await omsWallet.wallet.importEncryptedWallet({
-  type: WalletType.Ethereum,
+  walletType: WalletType.Ethereum,
   keyMaterial: {
     keyId: recipient.keyId,
     cipherSuite: recipient.cipherSuite,
@@ -346,9 +346,12 @@ For cross-origin browser use, the WaaS deployment must include `X-Attestation-Do
 
 ### Sign and Verify EVM Messages
 
-EVM message signing and verification require an Ethereum wallet. Signing requires a network;
-verification can omit it for EOA signatures but requires it for smart-wallet signatures. Narrow the
-active wallet account before passing its address to the verification method:
+EVM message signing requires an active Ethereum wallet and a network. Verification can omit the
+network for EOA signatures but requires it for smart-wallet signatures. Every `isValid…Signature`
+method verifies against `walletAddress`, which needs no session, or against the active wallet's
+address when `walletAddress` is omitted. Omitting it without an active session throws
+`OMSWalletSessionError`; omitting it while the active wallet belongs to another family throws
+`OMSWalletValidationError` before any request.
 
 ```typescript
 import { Networks, WalletType } from '@polygonlabs/oms-wallet'
@@ -459,7 +462,7 @@ message verification:
 ```typescript
 import { WalletType } from '@polygonlabs/oms-wallet'
 
-const { wallet } = await omsWallet.wallet.createWallet({ type: WalletType.Solana })
+const { wallet } = await omsWallet.wallet.createWallet({ walletType: WalletType.Solana })
 
 const signature = await omsWallet.wallet.signSolanaMessage({
   message: 'some message to sign',
@@ -509,7 +512,7 @@ Pass `contractAddresses` to filter balances to specific token contracts. Omit `n
 ### Tron Wallets
 
 Tron wallets are EOAs and always execute in native mode, so the Tron methods take no `mode`
-parameter. Create one with `createWallet({ type: WalletType.Tron })`, sign in with
+parameter. Create one with `createWallet({ walletType: WalletType.Tron })`, sign in with
 `walletType: WalletType.Tron`, or import a secp256k1 private key with `type: 'tron'`. Tron addresses
 are Base58Check strings (`T…`). Supported networks are `TronNetworks.mainnet` and
 `TronNetworks.nile`. TRC-10 tokens are not supported.
@@ -517,7 +520,7 @@ are Base58Check strings (`T…`). Supported networks are `TronNetworks.mainnet` 
 ```typescript
 import { TronNetworks, WalletType } from '@polygonlabs/oms-wallet'
 
-const { wallet } = await omsWallet.wallet.createWallet({ type: WalletType.Tron })
+const { wallet } = await omsWallet.wallet.createWallet({ walletType: WalletType.Tron })
 
 const signature = await omsWallet.wallet.signTronMessage({ message: 'some message to sign' })
 const isValid = await omsWallet.wallet.isValidTronMessageSignature({
@@ -557,9 +560,10 @@ spent, WaaS quotes the TRX to burn as a single native fee option, which a fee se
 any other fee option.
 
 Use `getTronBalances` for TRX and TRC-20 balances. Omit `networks` to query both Tron Mainnet and
-Nile, or pass either network explicitly. Results have the same shape as `getSolanaBalances`:
-precision-safe raw and formatted balance strings, with TRC-20 entries identified by
-`contractAddress`. Pass `contractAddresses` or `excludedContractAddresses` to filter tokens.
+Nile, or pass either network explicitly. Results have the same structure as `getSolanaBalances`
+(`status`, `balances`, and per-network `errors`) with precision-safe raw and formatted balance
+strings. Token entries differ: TRC-20 entries have `tokenStandard: 'trc20'` and `contractAddress`,
+where Solana SPL entries have `tokenProgram` and `mintAddress`. Pass `contractAddresses` or `excludedContractAddresses` to filter tokens.
 Individual network failures are reported in `errors` without discarding balances returned by the
 other requested network.
 
@@ -601,7 +605,9 @@ Install `viem` when using `parseUnits` for transaction values:
 pnpm add viem
 ```
 
-`sendTransaction` has three overloaded signatures to cover the most common patterns.
+`sendTransaction` has four overloaded signatures: native transfers, raw `data` calls, ABI-encoded
+contract calls, and one that accepts the `SendTransactionParams` union. The examples below cover the
+first three.
 
 #### First Testnet Transfer
 
@@ -752,6 +758,8 @@ const tx = await omsWallet.wallet.sendTransaction({
 
 | Publishable key prefix | API base URL |
 |---|---|
+| `pk_local_sdbx_` | `https://sandbox-api.local.polygon-dev.technology` |
+| `pk_local_live_` | `https://api.local.polygon-dev.technology` |
 | `pk_dev_sdbx_` | `https://sandbox-api.dev.polygon-dev.technology` |
 | `pk_dev_live_` | `https://api.dev.polygon-dev.technology` |
 | `pk_stg_sdbx_` | `https://sandbox-api.stg.polygon-dev.technology` |
@@ -802,7 +810,7 @@ OIDC redirect auth uses separate transient storage for verifier/state data. In b
 
 ### Networks
 
-The SDK exports `Networks`, `findNetworkById(id)`, and `findNetworkByName(name)` for the networks currently configured by OMS. Each network has `id`, `name`, `nativeTokenSymbol`, `explorerUrl`, and `displayName`. `name` is the registry/routing slug, while `displayName` is the user-facing label. `Network` is a closed SDK type: use a `Networks` value or a successful lookup result.
+The SDK exports `Networks`, `findNetworkById(chainId)`, and `findNetworkByName(name)` for the networks currently configured by OMS. Each network has `id`, `name`, `nativeTokenSymbol`, `explorerUrl`, and `displayName`. `name` is the registry/routing slug, while `displayName` is the user-facing label. `Network` is a closed SDK type: use a `Networks` value or a successful lookup result.
 
 The `network` parameter on all transaction and signing methods accepts a `Network` from the SDK registry:
 
@@ -840,7 +848,7 @@ Solana and Tron networks are string identifiers rather than `Network` values: `S
 
 ### Errors
 
-Public methods throw `OMSWalletError` subclasses with stable SDK fields such as `code`, `operation`, `status`, and `retryable`. When a failure comes from a remote OMS service response or transport failure, the error also includes `upstreamError` with normalized wallet API or indexer details for logging and service-specific troubleshooting. For `OMSWalletError` values, branch application logic on the SDK-level `code`.
+Public methods throw `OMSWalletError` subclasses with stable SDK fields such as `code`, `operation`, `status`, and `retryable`. When a failure comes from a remote OMS service response or transport failure, the error also includes `upstreamError` with normalized wallet API or indexer details for logging and service-specific troubleshooting. For `OMSWalletError` values, branch application logic on the SDK-level `code`. `upstreamError.code` is a string; numeric WebRPC codes are stringified (for example `'7313'`). `operation` values are exported as the `WalletOperation`, `IndexerOperation`, and `RemoteAccessOperation` constants, typed `OMSWalletOperation`.
 
 For transaction writes, `OMS_TRANSACTION_EXECUTION_UNCONFIRMED` means the SDK has a `txnId` from preparation, but the execute request failed before the SDK could confirm whether the transaction was submitted; do not blindly resend the same write. `OMS_TRANSACTION_STATUS_LOOKUP_FAILED` means the transaction was submitted but status polling failed, so retry status lookup with the returned `txnId`. `retryable` describes the failed SDK operation, not the whole user intent.
 
@@ -879,6 +887,12 @@ for (const grant of grants) {
 for await (const page of omsWallet.wallet.listAccessPages({ pageSize: 25 })) {
   console.log('Page:', page.grants)
 }
+
+// Or read one page at a time, passing the previous page's cursor to continue.
+const firstPage = await omsWallet.wallet.listAccessPage({ pageSize: 25 })
+const nextPage = firstPage.page?.cursor
+  ? await omsWallet.wallet.listAccessPage({ pageSize: 25, cursor: firstPage.page.cursor })
+  : undefined
 
 await omsWallet.wallet.revokeAccess({ credentialId: grants[0].credentialId })
 ```

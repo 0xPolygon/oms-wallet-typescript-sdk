@@ -58,6 +58,105 @@ on load and users sign in once after upgrading.
 `WalletType` gained `Tron` and `WalletAccount` gained `TronWalletAccount`. Exhaustive `switch`
 statements over either need a `tron` case.
 
+### Signature verification takes an address, not a wallet ID
+
+`walletId` was removed from `IsValidMessageSignatureParams`, `IsValidTypedDataSignatureParams`,
+`IsValidSolanaMessageSignatureParams`, `IsValidTronMessageSignatureParams`, and
+`IsValidTronTypedDataSignatureParams`. Pass `walletAddress`, or omit it to verify against the active
+wallet's address. Requests now always send `networkFamily` and `walletAddress` and never a wallet ID.
+
+```typescript
+// Before
+await omsWallet.wallet.isValidMessageSignature({ walletId, message, signature })
+
+// After
+await omsWallet.wallet.isValidMessageSignature({ walletAddress, message, signature })
+// or, for the active wallet
+await omsWallet.wallet.isValidMessageSignature({ message, signature })
+```
+
+When `walletAddress` is omitted, the SDK now checks the active wallet locally before sending a
+request. Without an active session it throws `OMSWalletSessionError` (`OMS_SESSION_MISSING`, or
+`OMS_SESSION_EXPIRED` for an expired session) instead of a backend request error. If the
+active wallet belongs to another family, for example `isValidSolanaMessageSignature` with an active
+Ethereum wallet, it throws `OMSWalletValidationError` instead of a backend error. Passing
+`walletAddress` still works while signed out. As with other wallet operations, an expired session
+found this way is cleared and your `onSessionExpired` listeners are called.
+
+### `walletType` replaces `type` for wallet creation and encrypted import
+
+`createWallet` and `ImportEncryptedWalletParams` take `walletType`, matching the auth methods.
+`ImportWalletParams` keeps its `type` discriminant.
+
+```typescript
+// Before
+await omsWallet.wallet.createWallet({ type: WalletType.Tron })
+await omsWallet.wallet.importEncryptedWallet({ type: WalletType.Solana, keyMaterial })
+
+// After
+await omsWallet.wallet.createWallet({ walletType: WalletType.Tron })
+await omsWallet.wallet.importEncryptedWallet({ walletType: WalletType.Solana, keyMaterial })
+```
+
+TypeScript rejects `type` in an object literal. Untyped JavaScript that still passes
+`createWallet({ type })` silently creates an Ethereum wallet, the default, so search for these calls.
+`importEncryptedWallet({ type })` from untyped JavaScript sends no wallet type, and the wallet API
+rejects it with an `UnsupportedWalletType` request error.
+
+### Fee token fields use `logoUrl` and `tokenId`
+
+`FeeToken` (now exported) renamed `logoURL` to `logoUrl` and `tokenID` to `tokenId`. Fee options
+passed to `selectFeeOption` and returned by `RemoteAccessClient.prepareTransaction` no longer carry
+the old keys at runtime.
+
+```typescript
+// Before
+const icon = option.feeOption.token.logoURL
+
+// After
+const icon = option.feeOption.token.logoUrl
+```
+
+### `upstreamError.code` is a string
+
+`OMSWalletUpstreamError.code` is now `string | undefined`. Numeric WebRPC codes are stringified, so
+code that compares or switches on numbers must compare strings.
+
+```typescript
+// Before
+if (error.upstreamError?.code === 7313) {}
+
+// After
+if (error.upstreamError?.code === '7313') {}
+```
+
+TypeScript flags direct `===` comparisons with a number, but not `switch` cases, `Number(...)`
+conversions, or serialized logs, which now see a string.
+
+### `AuthMode` lists only OIDC redirect modes
+
+`AuthMode.OTP` and `AuthMode.IDToken` were removed; no SDK parameter accepted them. `AuthMode` now
+contains `AuthCode` and `AuthCodePKCE`, the same values as `OidcAuthMode`.
+
+### Client interfaces renamed
+
+`OMSWalletClient` is now `WalletClient` and `OMSWalletIndexerClient` is now `IndexerClient`. They
+remain the types of `omsWallet.wallet` and `omsWallet.indexer`.
+
+```typescript
+// Before
+import type { OMSWalletClient, OMSWalletIndexerClient } from '@polygonlabs/oms-wallet'
+
+// After
+import type { WalletClient, IndexerClient } from '@polygonlabs/oms-wallet'
+```
+
+### Access pages include paging metadata
+
+`AccessGrantPage` gained an optional `page` (`limit`, `cursor`), so pages yielded by
+`listAccessPages` now include it when WaaS returns paging data. Use the new `listAccessPage` to read
+one page and resume from `page.cursor`. Update deep-equality assertions on yielded pages.
+
 ### Wagmi connector
 
 `@polygonlabs/oms-wallet-wagmi-connector` now reads `wallet.activeWallet` instead of

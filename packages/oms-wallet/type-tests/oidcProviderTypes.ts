@@ -1,6 +1,11 @@
 import {
   AuthMode,
+  DEFAULT_SESSION_LIFETIME_SECONDS,
+  IndexerOperation,
+  MAX_SESSION_LIFETIME_SECONDS,
   Networks,
+  RemoteAccessOperation,
+  WalletOperation,
   SolanaNetworks,
   TronNetworks,
   RemoteAccessClient,
@@ -39,7 +44,12 @@ import {
   type GetTransactionHistoryParams,
   type IndexerNetworkType,
   type OMSWalletParams,
-  type OMSWalletIndexerClient,
+  type IndexerClient,
+  type WalletClient,
+  type AccessGrantPage,
+  type FeeToken,
+  type ListAccessPageParams,
+  type OMSWalletOperation,
   type OidcAuthMode,
   type CustomOidcProviderConfig,
   type OmsRelayOidcProvider,
@@ -227,7 +237,9 @@ if (false) {
     });
     void activatedOidcIdTokenAuth.wallet.address;
 
-    const tronWallet = await wallet.createWallet({ type: WalletType.Tron });
+    const tronWallet = await wallet.createWallet({ walletType: WalletType.Tron });
+    // @ts-expect-error createWallet takes walletType, not type.
+    void wallet.createWallet({ type: WalletType.Tron });
     if (tronWallet.wallet.type === WalletType.Tron) {
       const address: string = tronWallet.wallet.address;
       void wallet.isValidTronMessageSignature({
@@ -241,6 +253,24 @@ if (false) {
         signature: '0xsignature'
       });
     }
+    // Omitting walletAddress verifies against the active wallet.
+    void wallet.isValidTronMessageSignature({ message: 'hello', signature: '0xsignature' });
+    void wallet.isValidTronTypedDataSignature({ typedData: {}, signature: '0xsignature' });
+    void wallet.isValidMessageSignature({ message: 'hello', signature: '0xsignature' });
+    void wallet.isValidTypedDataSignature({ typedData: {}, signature: '0xsignature' });
+    void wallet.isValidSolanaMessageSignature({ message: 'hello', signature: 'signature' });
+    // @ts-expect-error signature verification no longer takes walletId.
+    void wallet.isValidMessageSignature({ walletId: 'id', message: 'hello', signature: '0x' });
+    // @ts-expect-error signature verification no longer takes walletId.
+    void wallet.isValidTronMessageSignature({ walletId: 'id', message: 'hello', signature: '0x' });
+
+    const accessPage: AccessGrantPage = await wallet.listAccessPage({ pageSize: 20 });
+    const accessPageParams: ListAccessPageParams = {
+      pageSize: 20,
+      cursor: accessPage.page?.cursor,
+      type: 'remote'
+    };
+    void wallet.listAccessPage(accessPageParams);
     void wallet.signTronMessage({ message: 'Sign in to Example' });
     void wallet.signTronTypedData({ typedData: {} });
     const trxTransfer: SendTronTransactionParams = {
@@ -269,7 +299,7 @@ if (false) {
     void wallet.callTronContract(trc20Transfer);
     void wallet.importWallet({ type: 'tron', privateKey: '11'.repeat(32) });
 
-    const solanaWallet = await wallet.createWallet({ type: WalletType.Solana });
+    const solanaWallet = await wallet.createWallet({ walletType: WalletType.Solana });
     const origin: WalletKeyOrigin = solanaWallet.wallet.keyOrigin;
     void origin;
     if (solanaWallet.wallet.type === WalletType.Solana) {
@@ -334,6 +364,11 @@ if (false) {
       ciphertext: 'base64'
     };
     void configuredOmsWallet.wallet.importEncryptedWallet({
+      walletType: WalletType.Solana,
+      keyMaterial: encryptedKey
+    });
+    void configuredOmsWallet.wallet.importEncryptedWallet({
+      // @ts-expect-error importEncryptedWallet takes walletType, not type.
       type: WalletType.Solana,
       keyMaterial: encryptedKey
     });
@@ -398,6 +433,38 @@ const omsWalletParams: OMSWalletParams = { publishableKey: 'pk_dev_sdbx_project_
 void omsWalletParams;
 const oidcAuthMode: OidcAuthMode = AuthMode.AuthCodePKCE;
 void oidcAuthMode;
+// @ts-expect-error AuthMode only lists OIDC redirect auth modes.
+void AuthMode.OTP;
+const defaultSessionLifetime: 604800 = DEFAULT_SESSION_LIFETIME_SECONDS;
+const maxSessionLifetime: 2592000 = MAX_SESSION_LIFETIME_SECONDS;
+void defaultSessionLifetime;
+void maxSessionLifetime;
+const walletClient: WalletClient = defaultClient.wallet;
+void walletClient;
+const operations: OMSWalletOperation[] = [
+  WalletOperation.listAccessPage,
+  IndexerOperation.getTronBalances,
+  RemoteAccessOperation.listSessions
+];
+void operations;
+const feeToken: FeeToken = {
+  network: 'amoy',
+  name: 'USD Coin',
+  symbol: 'USDC',
+  type: 'ERC20',
+  logoUrl: 'https://example.com/usdc.png',
+  tokenId: 'usdc'
+};
+void feeToken;
+const legacyFeeToken: FeeToken = {
+  network: 'amoy',
+  name: 'USD Coin',
+  symbol: 'USDC',
+  type: 'ERC20',
+  // @ts-expect-error FeeToken uses tokenId, not tokenID.
+  tokenID: 'usdc'
+};
+void legacyFeeToken;
 const unsubscribeSessionExpired: () => void = defaultClient.wallet.onSessionExpired(
   ({ wallet, session }) => {
     void wallet?.address;
@@ -546,10 +613,16 @@ const transactionHistoryResult: TransactionHistoryResult = {
 const upstreamError: OMSWalletUpstreamError = {
   service: 'waas',
   name: 'CommitmentConsumed',
-  code: 7008,
+  code: '7008',
   message: 'The authentication commitment has already been used',
   status: 400
 };
+const numericUpstreamError: OMSWalletUpstreamError = {
+  service: 'waas',
+  // @ts-expect-error upstream codes are strings; numeric WebRPC codes are stringified.
+  code: 7008
+};
+void numericUpstreamError;
 const sdkError = undefined as unknown as OMSWalletError;
 const maybeUpstreamError: OMSWalletUpstreamError | undefined = sdkError.upstreamError;
 const transactionExecutionCode: OMSWalletErrorCode = 'OMS_TRANSACTION_EXECUTION_UNCONFIRMED';
@@ -653,7 +726,7 @@ void defaultClient.indexer.getTronBalances({
 });
 const tronNetwork: TronNetwork = TronNetworks.mainnet;
 void tronNetwork;
-const indexerClient: OMSWalletIndexerClient = defaultClient.indexer;
+const indexerClient: IndexerClient = defaultClient.indexer;
 void indexerClient;
 const transactionHistoryParams: GetTransactionHistoryParams = {
   walletAddress: '0x9999999999999999999999999999999999999999',

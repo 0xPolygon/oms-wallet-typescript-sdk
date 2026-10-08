@@ -573,14 +573,14 @@ interface IndexerClientEnvironment {
   tronIndexerGatewayUrl: string;
 }
 
-export interface OMSWalletIndexerClient {
+export interface IndexerClient {
   getBalances(params: GetBalancesParams): Promise<BalancesResult>;
   getSolanaBalances(params: GetSolanaBalancesParams): Promise<SolanaBalancesResult>;
   getTronBalances(params: GetTronBalancesParams): Promise<TronBalancesResult>;
   getTransactionHistory(params: GetTransactionHistoryParams): Promise<TransactionHistoryResult>;
 }
 
-export class IndexerClient implements OMSWalletIndexerClient {
+export class IndexerClientImpl implements IndexerClient {
   private readonly publishableKey: string;
   private readonly environment: IndexerClientEnvironment;
   private readonly client: HttpClient;
@@ -1241,7 +1241,7 @@ function indexerRequestFailure(error: unknown): OMSWalletUpstreamError {
   return {
     service: 'indexer',
     name: error instanceof Error ? error.name : stringField(error, 'name'),
-    code: numberOrStringField(error, 'code'),
+    code: codeField(error),
     message: errorMessage(error),
     status
   };
@@ -1255,7 +1255,7 @@ function indexerResponseError(
   return {
     service: 'indexer',
     name: stringField(payload, 'name') ?? stringField(payload, 'error'),
-    code: numberOrStringField(payload, 'code'),
+    code: codeField(payload),
     message: gatewayErrorMessage(payload) ?? fallbackMessage,
     status
   };
@@ -1277,9 +1277,11 @@ function numberField(source: unknown, key: string): number | undefined {
   return typeof value === 'number' ? value : undefined;
 }
 
-function numberOrStringField(source: unknown, key: string): number | string | undefined {
-  const value = objectField(source, key);
-  return typeof value === 'number' || typeof value === 'string' ? value : undefined;
+/** Reads an upstream `code`, stringifying numeric codes. */
+function codeField(source: unknown): string | undefined {
+  const value = objectField(source, 'code');
+  if (typeof value === 'number') return String(value);
+  return typeof value === 'string' ? value : undefined;
 }
 
 function objectField(source: unknown, key: string): unknown {

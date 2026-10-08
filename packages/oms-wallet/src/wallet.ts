@@ -7,6 +7,7 @@ import type {
   AccessGrantPage,
   AuthorizeRemoteAccessParams,
   AuthorizedRemoteAccess,
+  ListAccessPageParams,
   ListAccessParams,
   RemoteAccessSession,
   RemoteCredentialMetadata,
@@ -157,7 +158,7 @@ export interface EncryptedWalletImportKeyMaterial {
 }
 
 export interface ImportEncryptedWalletParams {
-  type: WalletType;
+  walletType: WalletType;
   keyMaterial: EncryptedWalletImportKeyMaterial;
   reference?: string;
 }
@@ -208,6 +209,11 @@ export interface OMSWalletSession {
   readonly auth: OMSWalletSessionAuth;
 }
 
+/** Session lifetime requested when `sessionLifetimeSeconds` is omitted (one week). */
+export const DEFAULT_SESSION_LIFETIME_SECONDS = 604_800;
+/** Largest accepted `sessionLifetimeSeconds` (30 days). */
+export const MAX_SESSION_LIFETIME_SECONDS = 2_592_000;
+
 export interface OMSWalletSessionExpiredEvent {
   /**
    * The wallet that was active when the session expired. `undefined` when the credential expired
@@ -252,39 +258,37 @@ export interface GetIdTokenParams {
 
 export interface IsValidMessageSignatureParams {
   network?: Network;
+  /** Address to verify against. Omit to use the active Ethereum wallet's address. */
   walletAddress?: Address;
-  walletId?: string;
   message: string;
   signature: string;
 }
 
 export interface IsValidSolanaMessageSignatureParams {
+  /** Address to verify against. Omit to use the active Solana wallet's address. */
   walletAddress?: string;
-  walletId?: string;
   message: string;
   signature: string;
 }
 
 export interface IsValidTypedDataSignatureParams {
   network?: Network;
+  /** Address to verify against. Omit to use the active Ethereum wallet's address. */
   walletAddress?: Address;
-  walletId?: string;
   typedData: unknown;
   signature: string;
 }
 
 export interface IsValidTronMessageSignatureParams {
-  /** Base58Check address (`T…`). */
+  /** Base58Check address (`T…`) to verify against. Omit to use the active Tron wallet's address. */
   walletAddress?: string;
-  walletId?: string;
   message: string;
   signature: string;
 }
 
 export interface IsValidTronTypedDataSignatureParams {
-  /** Base58Check address (`T…`). */
+  /** Base58Check address (`T…`) to verify against. Omit to use the active Tron wallet's address. */
   walletAddress?: string;
-  walletId?: string;
   typedData: unknown;
   signature: string;
 }
@@ -301,7 +305,7 @@ export type SignInWithOidcRedirectParams = OidcRedirectAuthParamsBase & {
       }
   );
 
-export interface OMSWalletClient {
+export interface WalletClient {
   /** The active wallet, or `undefined` when signed out. Same shape as `listWallets()` entries. */
   readonly activeWallet: WalletAccount | undefined;
   /** Expiry and auth metadata for the active session; defined exactly when `activeWallet` is. */
@@ -344,7 +348,10 @@ export interface OMSWalletClient {
   signOut(): Promise<void>;
   listWallets(): Promise<Array<WalletAccount>>;
   useWallet(params: { walletId: string }): Promise<WalletActivationResult>;
-  createWallet(params?: { type?: WalletType; reference?: string }): Promise<WalletActivationResult>;
+  createWallet(params?: {
+    walletType?: WalletType;
+    reference?: string;
+  }): Promise<WalletActivationResult>;
   importWallet(params: ImportWalletParams): Promise<WalletActivationResult>;
   getWalletImportRecipientKey(params: {
     cipherSuite: WalletImportCipherSuite;
@@ -388,6 +395,8 @@ export interface OMSWalletClient {
   inspectRemoteCredential(params: { credentialId: string }): Promise<RemoteCredentialMetadata>;
   authorizeRemoteAccess(params: AuthorizeRemoteAccessParams): Promise<AuthorizedRemoteAccess>;
   listAccess(params?: ListAccessParams): Promise<AccessGrant[]>;
+  /** Returns one access page. Pass the previous page's `page.cursor` to continue. */
+  listAccessPage(params?: ListAccessPageParams): Promise<AccessGrantPage>;
   listAccessPages(params?: ListAccessParams): AsyncIterable<AccessGrantPage>;
   getRemoteAccessSession(params: { sessionId: string }): Promise<RemoteAccessSession>;
   getRemoteAccessSessionUsage(params: {

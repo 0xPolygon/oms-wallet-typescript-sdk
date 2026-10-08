@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
-import { IndexerClient } from '../src/clients/indexerClient';
+import { IndexerClientImpl } from '../src/clients/indexerClient';
 import { Networks, SolanaNetworks, TronNetworks } from '../src/networks';
 
 afterEach(() => {
@@ -81,7 +81,7 @@ describe('IndexerClient', () => {
     );
     vi.stubGlobal('fetch', fetchMock);
 
-    const indexer = new IndexerClient({
+    const indexer = new IndexerClientImpl({
       publishableKey: 'publishable-key',
       environment: testEnvironment()
     });
@@ -170,7 +170,7 @@ describe('IndexerClient', () => {
     );
     vi.stubGlobal('fetch', fetchMock);
 
-    const indexer = new IndexerClient({
+    const indexer = new IndexerClientImpl({
       publishableKey: 'publishable-key',
       environment: testEnvironment()
     });
@@ -240,7 +240,7 @@ describe('IndexerClient', () => {
     );
     vi.stubGlobal('fetch', fetchMock);
 
-    const indexer = new IndexerClient({
+    const indexer = new IndexerClientImpl({
       publishableKey: 'publishable-key',
       environment: testEnvironment()
     });
@@ -316,7 +316,7 @@ describe('IndexerClient', () => {
     );
     vi.stubGlobal('fetch', fetchMock);
 
-    const indexer = new IndexerClient({
+    const indexer = new IndexerClientImpl({
       publishableKey: 'publishable-key',
       environment: testEnvironment()
     });
@@ -358,7 +358,7 @@ describe('IndexerClient', () => {
       )
     );
 
-    const indexer = new IndexerClient({
+    const indexer = new IndexerClientImpl({
       publishableKey: 'publishable-key',
       environment: testEnvironment()
     });
@@ -411,7 +411,7 @@ describe('IndexerClient', () => {
     );
     vi.stubGlobal('fetch', fetchMock);
 
-    const indexer = new IndexerClient({
+    const indexer = new IndexerClientImpl({
       publishableKey: 'publishable-key',
       environment: testEnvironment()
     });
@@ -482,7 +482,7 @@ describe('IndexerClient', () => {
       )
     );
 
-    const indexer = new IndexerClient({
+    const indexer = new IndexerClientImpl({
       publishableKey: 'publishable-key',
       environment: testEnvironment()
     });
@@ -522,7 +522,7 @@ describe('IndexerClient', () => {
       )
     );
 
-    const indexer = new IndexerClient({
+    const indexer = new IndexerClientImpl({
       publishableKey: 'publishable-key',
       environment: testEnvironment()
     });
@@ -551,7 +551,7 @@ describe('IndexerClient', () => {
     vi.stubGlobal('fetch', fetchMock);
     vi.stubGlobal('location', { origin: 'http://app.example' });
 
-    const indexer = new IndexerClient({
+    const indexer = new IndexerClientImpl({
       publishableKey: 'publishable-key',
       environment: testEnvironment()
     });
@@ -581,7 +581,7 @@ describe('IndexerClient', () => {
       )
     );
 
-    const indexer = new IndexerClient({
+    const indexer = new IndexerClientImpl({
       publishableKey: 'publishable-key',
       environment: testEnvironment()
     });
@@ -597,7 +597,7 @@ describe('IndexerClient', () => {
       status: 400,
       upstreamError: {
         name: 'WebrpcEndpoint',
-        code: 0,
+        code: '0',
         message: 'InvalidCredentials 1003: omsx-api: invalid credentials, requestId: req_123',
         service: 'indexer',
         status: 400
@@ -609,7 +609,7 @@ describe('IndexerClient', () => {
     const fetchMock = vi.fn(async () => new Response('not-json', { status: 200 }));
     vi.stubGlobal('fetch', fetchMock);
 
-    const indexer = new IndexerClient({
+    const indexer = new IndexerClientImpl({
       publishableKey: 'publishable-key',
       environment: testEnvironment()
     });
@@ -661,7 +661,7 @@ describe('IndexerClient', () => {
       )
     );
 
-    const indexer = new IndexerClient({
+    const indexer = new IndexerClientImpl({
       publishableKey: 'publishable-key',
       environment: testEnvironment()
     });
@@ -679,7 +679,7 @@ describe('IndexerClient', () => {
       vi.fn(async () => new Response('<html>Bad Gateway</html>', { status: 502 }))
     );
 
-    const indexer = new IndexerClient({
+    const indexer = new IndexerClientImpl({
       publishableKey: 'publishable-key',
       environment: testEnvironment()
     });
@@ -750,7 +750,7 @@ describe('IndexerClient', () => {
     );
     vi.stubGlobal('fetch', fetchMock);
 
-    const indexer = new IndexerClient({
+    const indexer = new IndexerClientImpl({
       publishableKey: 'publishable-key',
       environment: testEnvironment()
     });
@@ -828,7 +828,7 @@ describe('IndexerClient', () => {
     );
     vi.stubGlobal('fetch', fetchMock);
 
-    const indexer = new IndexerClient({
+    const indexer = new IndexerClientImpl({
       publishableKey: 'publishable-key',
       environment: testEnvironment()
     });
@@ -870,7 +870,7 @@ describe('IndexerClient', () => {
       )
     );
 
-    const indexer = new IndexerClient({
+    const indexer = new IndexerClientImpl({
       publishableKey: 'publishable-key',
       environment: testEnvironment()
     });
@@ -901,7 +901,7 @@ describe('IndexerClient', () => {
       )
     );
 
-    const indexer = new IndexerClient({
+    const indexer = new IndexerClientImpl({
       publishableKey: 'publishable-key',
       environment: testEnvironment()
     });

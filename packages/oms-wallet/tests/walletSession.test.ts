@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
-import { WalletClient } from '../src/clients/walletClient';
+import { WalletClientImpl } from '../src/clients/walletClient';
 import type { CredentialSigner } from '../src/credentialSigner';
 import { Networks } from '../src/networks';
 import { OMSWallet } from '../src/omsWallet';
@@ -40,7 +40,7 @@ afterEach(() => {
 });
 
 function seedEmailAuthAttempt(
-  wallet: WalletClient,
+  wallet: WalletClientImpl,
   verifier = 'verifier-1',
   challenge = 'challenge-1',
   sessionLifetimeSeconds = 604_800,
@@ -125,7 +125,7 @@ describe('WalletClient session storage', () => {
     const storage = new MemoryStorageManager();
     seedStoredSession(storage);
 
-    const wallet = new WalletClient({
+    const wallet = new WalletClientImpl({
       publishableKey: 'publishable-key',
       projectId: 'project-id',
       environment: testEnvironment(),
@@ -147,7 +147,7 @@ describe('WalletClient session storage', () => {
     const storage = new MemoryStorageManager();
     const signer = new MockSigner();
     const onSessionExpired = vi.fn();
-    const wallet = new WalletClient({
+    const wallet = new WalletClientImpl({
       publishableKey: 'publishable-key',
       projectId: 'project-id',
       environment: testEnvironment(),
@@ -216,7 +216,7 @@ describe('WalletClient session storage', () => {
       (event.session?.auth as any).email = 'mutated@example.com';
     });
     const secondListener = vi.fn();
-    const wallet = new WalletClient({
+    const wallet = new WalletClientImpl({
       publishableKey: 'publishable-key',
       projectId: 'project-id',
       environment: testEnvironment(),
@@ -263,7 +263,7 @@ describe('WalletClient session storage', () => {
     const registeringListener = vi.fn(() => {
       wallet.onSessionExpired(reentrantListener);
     });
-    const wallet = new WalletClient({
+    const wallet = new WalletClientImpl({
       publishableKey: 'publishable-key',
       projectId: 'project-id',
       environment: testEnvironment(),
@@ -299,7 +299,7 @@ describe('WalletClient session storage', () => {
     const storage = new MemoryStorageManager();
     const signer = new MockSigner();
     const onSessionExpired = vi.fn();
-    const wallet = new WalletClient({
+    const wallet = new WalletClientImpl({
       publishableKey: 'publishable-key',
       projectId: 'project-id',
       environment: testEnvironment(),
@@ -332,7 +332,7 @@ describe('WalletClient session storage', () => {
     const signer = new MockSigner();
     signer.clear.mockRejectedValueOnce(new Error('clear failed'));
     const onSessionExpired = vi.fn();
-    const wallet = new WalletClient({
+    const wallet = new WalletClientImpl({
       publishableKey: 'publishable-key',
       projectId: 'project-id',
       environment: testEnvironment(),
@@ -480,7 +480,7 @@ describe('WalletClient session storage', () => {
     const storage = new MemoryStorageManager();
     const signer = new MockSigner();
     const onSessionExpired = vi.fn();
-    const wallet = new WalletClient({
+    const wallet = new WalletClientImpl({
       publishableKey: 'publishable-key',
       projectId: 'project-id',
       environment: testEnvironment(),
@@ -527,7 +527,7 @@ describe('WalletClient session storage', () => {
 
     const signer = new MockSigner();
     const onSessionExpired = vi.fn();
-    const wallet = new WalletClient({
+    const wallet = new WalletClientImpl({
       publishableKey: 'publishable-key',
       projectId: 'project-id',
       environment: testEnvironment(),
@@ -560,7 +560,7 @@ describe('WalletClient session storage', () => {
 
     const signer = new MockSigner();
     const onSessionExpired = vi.fn();
-    const wallet = new WalletClient({
+    const wallet = new WalletClientImpl({
       publishableKey: 'publishable-key',
       projectId: 'project-id',
       environment: testEnvironment(),
@@ -638,7 +638,7 @@ describe('WalletClient session storage', () => {
     vi.stubGlobal('fetch', fetchMock);
     vi.spyOn(RequestUtils, 'hashEmailAuthAnswer').mockResolvedValue('answer');
 
-    const wallet = new WalletClient({
+    const wallet = new WalletClientImpl({
       publishableKey: 'publishable-key',
       projectId: 'project-id',
       environment: testEnvironment(),
@@ -679,7 +679,7 @@ describe('WalletClient session storage', () => {
       Constants.redirectAuthStorageKey,
       JSON.stringify({ verifier: 'old-verifier' })
     );
-    const wallet = new WalletClient({
+    const wallet = new WalletClientImpl({
       publishableKey: 'publishable-key',
       projectId: 'project-id',
       environment: testEnvironment(),
@@ -734,7 +734,7 @@ describe('WalletClient session storage', () => {
     });
     vi.stubGlobal('fetch', fetchMock);
 
-    const wallet = new WalletClient({
+    const wallet = new WalletClientImpl({
       publishableKey: 'publishable-key',
       projectId: 'project-id',
       environment: testEnvironment(),
@@ -861,7 +861,7 @@ describe('WalletClient session storage', () => {
       signerCredentialId: '0x04' + '33'.repeat(64)
     });
     const signer = new MockSigner();
-    const wallet = new WalletClient({
+    const wallet = new WalletClientImpl({
       publishableKey: 'publishable-key',
       projectId: 'project-id',
       environment: testEnvironment(),
@@ -984,7 +984,7 @@ describe('WalletClient session storage', () => {
     });
     vi.stubGlobal('fetch', fetchMock);
 
-    const wallet = new WalletClient({
+    const wallet = new WalletClientImpl({
       publishableKey: 'publishable-key',
       projectId: 'project-id',
       environment: testEnvironment(),
@@ -1026,7 +1026,7 @@ describe('WalletClient session storage', () => {
       '0xsigned'
     );
 
-    const restoredWallet = new WalletClient({
+    const restoredWallet = new WalletClientImpl({
       publishableKey: 'publishable-key',
       projectId: 'project-id',
       environment: testEnvironment(),
@@ -1053,7 +1053,7 @@ describe('WalletClient session storage', () => {
       throw new Error(`Unexpected request: ${url}`);
     });
     vi.stubGlobal('fetch', fetchMock);
-    const wallet = new WalletClient({
+    const wallet = new WalletClientImpl({
       publishableKey: 'publishable-key',
       projectId: 'project-id',
       environment: testEnvironment(),
@@ -1105,7 +1105,7 @@ describe('WalletClient session storage', () => {
     });
     vi.stubGlobal('fetch', fetchMock);
 
-    const wallet = new WalletClient({
+    const wallet = new WalletClientImpl({
       publishableKey: 'publishable-key',
       projectId: 'project-id',
       environment: testEnvironment(),
@@ -1137,7 +1137,7 @@ describe('WalletClient session storage', () => {
     });
     vi.stubGlobal('fetch', fetchMock);
 
-    const wallet = new WalletClient({
+    const wallet = new WalletClientImpl({
       publishableKey: 'publishable-key',
       projectId: 'project-id',
       environment: testEnvironment(),
@@ -1206,7 +1206,7 @@ describe('WalletClient session storage', () => {
     });
     vi.stubGlobal('fetch', fetchMock);
 
-    const wallet = new WalletClient({
+    const wallet = new WalletClientImpl({
       publishableKey: 'publishable-key',
       projectId: 'project-id',
       environment: testEnvironment(),
@@ -1269,7 +1269,7 @@ describe('WalletClient session storage', () => {
     });
     vi.stubGlobal('fetch', fetchMock);
 
-    const wallet = new WalletClient({
+    const wallet = new WalletClientImpl({
       publishableKey: 'publishable-key',
       projectId: 'project-id',
       environment: testEnvironment(),
@@ -1324,7 +1324,7 @@ describe('WalletClient session storage', () => {
     });
     vi.stubGlobal('fetch', fetchMock);
 
-    const wallet = new WalletClient({
+    const wallet = new WalletClientImpl({
       publishableKey: 'publishable-key',
       projectId: 'project-id',
       environment: testEnvironment(),
@@ -1383,7 +1383,7 @@ describe('WalletClient session storage', () => {
     vi.stubGlobal('fetch', fetchMock);
 
     const storage = new MemoryStorageManager();
-    const wallet = new WalletClient({
+    const wallet = new WalletClientImpl({
       publishableKey: 'publishable-key',
       projectId: 'project-id',
       environment: testEnvironment(),
@@ -1459,7 +1459,7 @@ describe('WalletClient session storage', () => {
     });
     vi.stubGlobal('fetch', fetchMock);
 
-    const wallet = new WalletClient({
+    const wallet = new WalletClientImpl({
       publishableKey: 'publishable-key',
       projectId: 'project-id',
       environment: testEnvironment(),
@@ -1506,7 +1506,7 @@ describe('WalletClient session storage', () => {
     });
     vi.stubGlobal('fetch', fetchMock);
 
-    const wallet = new WalletClient({
+    const wallet = new WalletClientImpl({
       publishableKey: 'publishable-key',
       projectId: 'project-id',
       environment: testEnvironment(),
@@ -1569,7 +1569,7 @@ describe('WalletClient session storage', () => {
     });
     vi.stubGlobal('fetch', fetchMock);
 
-    const wallet = new WalletClient({
+    const wallet = new WalletClientImpl({
       publishableKey: 'publishable-key',
       projectId: 'project-id',
       environment: testEnvironment(),
@@ -1623,7 +1623,7 @@ describe('WalletClient session storage', () => {
     });
     vi.stubGlobal('fetch', fetchMock);
 
-    const wallet = new WalletClient({
+    const wallet = new WalletClientImpl({
       publishableKey: 'publishable-key',
       projectId: 'project-id',
       environment: testEnvironment(),
@@ -1668,7 +1668,7 @@ describe('WalletClient session storage', () => {
     });
     vi.stubGlobal('fetch', fetchMock);
 
-    const wallet = new WalletClient({
+    const wallet = new WalletClientImpl({
       publishableKey: 'publishable-key',
       projectId: 'project-id',
       environment: testEnvironment(),
@@ -1716,7 +1716,7 @@ describe('WalletClient session storage', () => {
     });
     vi.stubGlobal('fetch', fetchMock);
 
-    const wallet = new WalletClient({
+    const wallet = new WalletClientImpl({
       publishableKey: 'publishable-key',
       projectId: 'project-id',
       environment: testEnvironment(),
@@ -1731,7 +1731,7 @@ describe('WalletClient session storage', () => {
       .spyOn(wallet as any, 'requestImportWallet')
       .mockReturnValue(importedWallet.promise);
     const importParams = {
-      type: WalletType.Ethereum,
+      walletType: WalletType.Ethereum,
       keyMaterial: {
         keyId: 'key-1',
         cipherSuite: 'p256-sha256-aes256gcm' as const,
@@ -1791,7 +1791,7 @@ describe('WalletClient session storage', () => {
     });
     vi.stubGlobal('fetch', fetchMock);
 
-    const wallet = new WalletClient({
+    const wallet = new WalletClientImpl({
       publishableKey: 'publishable-key',
       projectId: 'project-id',
       environment: testEnvironment(),
@@ -1841,7 +1841,7 @@ describe('WalletClient session storage', () => {
     });
     vi.stubGlobal('fetch', fetchMock);
 
-    const wallet = new WalletClient({
+    const wallet = new WalletClientImpl({
       publishableKey: 'publishable-key',
       projectId: 'project-id',
       environment: testEnvironment(),
@@ -1897,7 +1897,7 @@ describe('WalletClient session storage', () => {
     });
     vi.stubGlobal('fetch', fetchMock);
 
-    const wallet = new WalletClient({
+    const wallet = new WalletClientImpl({
       publishableKey: 'publishable-key',
       projectId: 'project-id',
       environment: testEnvironment(),
@@ -1916,7 +1916,7 @@ describe('WalletClient session storage', () => {
       message: 'No active wallet session'
     });
     await expect(
-      wallet.createWallet({ type: WalletType.Ethereum, reference: 'fresh' })
+      wallet.createWallet({ walletType: WalletType.Ethereum, reference: 'fresh' })
     ).rejects.toMatchObject({
       code: 'OMS_SESSION_MISSING',
       operation: 'wallet.createWallet',
@@ -1932,7 +1932,7 @@ describe('WalletClient session storage', () => {
     });
     vi.stubGlobal('fetch', fetchMock);
 
-    const wallet = new WalletClient({
+    const wallet = new WalletClientImpl({
       publishableKey: 'publishable-key',
       projectId: 'project-id',
       environment: testEnvironment(),
@@ -1949,7 +1949,7 @@ describe('WalletClient session storage', () => {
       message: 'No active wallet session'
     });
     await expect(
-      wallet.createWallet({ type: WalletType.Ethereum, reference: 'fresh' })
+      wallet.createWallet({ walletType: WalletType.Ethereum, reference: 'fresh' })
     ).rejects.toMatchObject({
       code: 'OMS_SESSION_MISSING',
       message: 'No active wallet session'
@@ -1975,7 +1975,7 @@ describe('WalletClient session storage', () => {
     });
     vi.stubGlobal('fetch', fetchMock);
 
-    const wallet = new WalletClient({
+    const wallet = new WalletClientImpl({
       publishableKey: 'publishable-key',
       projectId: 'project-id',
       environment: testEnvironment(),
@@ -2030,7 +2030,7 @@ describe('WalletClient session storage', () => {
     vi.stubGlobal('fetch', fetchMock);
 
     const storage = new MemoryStorageManager();
-    const wallet = new WalletClient({
+    const wallet = new WalletClientImpl({
       publishableKey: 'publishable-key',
       projectId: 'project-id',
       environment: testEnvironment(),
@@ -2083,7 +2083,7 @@ describe('WalletClient session storage', () => {
     });
     vi.stubGlobal('fetch', fetchMock);
 
-    const wallet = new WalletClient({
+    const wallet = new WalletClientImpl({
       publishableKey: 'publishable-key',
       projectId: 'project-id',
       environment: testEnvironment(),
@@ -2100,7 +2100,10 @@ describe('WalletClient session storage', () => {
       }
     );
 
-    const result = await wallet.createWallet({ type: WalletType.Ethereum, reference: 'fresh' });
+    const result = await wallet.createWallet({
+      walletType: WalletType.Ethereum,
+      reference: 'fresh'
+    });
 
     expect(result).toEqual({
       wallet: expectedWallet('wallet-new', WalletType.Ethereum, '33', 'fresh')

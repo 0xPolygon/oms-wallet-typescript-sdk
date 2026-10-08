@@ -71,7 +71,7 @@ describe('public API error contracts', () => {
             "status": null,
             "txnId": null,
             "upstreamError": {
-              "code": -1,
+              "code": "-1",
               "message": "request failed",
               "name": "WebrpcRequestFailed",
               "service": "waas",
@@ -153,7 +153,7 @@ describe('public API error contracts', () => {
             "status": 400,
             "txnId": null,
             "upstreamError": {
-              "code": 7008,
+              "code": "7008",
               "message": "The authentication commitment has already been used",
               "name": "CommitmentConsumed",
               "service": "waas",
@@ -188,7 +188,7 @@ describe('public API error contracts', () => {
             "status": 502,
             "txnId": null,
             "upstreamError": {
-              "code": -5,
+              "code": "-5",
               "message": "bad response",
               "name": "WebrpcBadResponse",
               "service": "waas",
@@ -481,6 +481,7 @@ describe('public API error contracts', () => {
             })
         ],
         ['wallet.listAccess', () => oms.wallet.listAccess()],
+        ['wallet.listAccessPage', () => oms.wallet.listAccessPage()],
         ['wallet.listAccessPages', () => iterateAccessPages(oms.wallet.listAccessPages())],
         ['wallet.revokeAccess', () => oms.wallet.revokeAccess({ credentialId: 'credential-1' })]
       ])
@@ -589,6 +590,19 @@ describe('public API error contracts', () => {
                 "upstreamError": null,
               },
               "label": "wallet.listAccess",
+            },
+            {
+              "error": {
+                "code": "OMS_SESSION_MISSING",
+                "message": "No active wallet session",
+                "name": "OMSWalletSessionError",
+                "operation": "wallet.listAccessPage",
+                "retryable": null,
+                "status": null,
+                "txnId": null,
+                "upstreamError": null,
+              },
+              "label": "wallet.listAccessPage",
             },
             {
               "error": {
@@ -1000,7 +1014,7 @@ describe('public API error contracts', () => {
                 "status": null,
                 "txnId": null,
                 "upstreamError": {
-                  "code": -1,
+                  "code": "-1",
                   "message": "request failed",
                   "name": "WebrpcRequestFailed",
                   "service": "waas",
@@ -1019,7 +1033,7 @@ describe('public API error contracts', () => {
                 "status": null,
                 "txnId": null,
                 "upstreamError": {
-                  "code": -1,
+                  "code": "-1",
                   "message": "request failed",
                   "name": "WebrpcRequestFailed",
                   "service": "waas",
@@ -1038,7 +1052,7 @@ describe('public API error contracts', () => {
                 "status": null,
                 "txnId": null,
                 "upstreamError": {
-                  "code": -1,
+                  "code": "-1",
                   "message": "request failed",
                   "name": "WebrpcRequestFailed",
                   "service": "waas",
@@ -1085,7 +1099,7 @@ describe('public API error contracts', () => {
             "status": 404,
             "txnId": null,
             "upstreamError": {
-              "code": 7308,
+              "code": "7308",
               "message": "Transaction not found",
               "name": "TransactionNotFound",
               "service": "waas",
@@ -1181,7 +1195,7 @@ describe('public API error contracts', () => {
             "status": null,
             "txnId": "txn-execute",
             "upstreamError": {
-              "code": -1,
+              "code": "-1",
               "message": "request failed",
               "name": "WebrpcRequestFailed",
               "service": "waas",
@@ -1236,7 +1250,7 @@ describe('public API error contracts', () => {
             "status": null,
             "txnId": "txn-1",
             "upstreamError": {
-              "code": -1,
+              "code": "-1",
               "message": "request failed",
               "name": "WebrpcRequestFailed",
               "service": "waas",
@@ -1299,7 +1313,7 @@ describe('public API error contracts', () => {
             "status": 404,
             "txnId": "txn-404",
             "upstreamError": {
-              "code": 7308,
+              "code": "7308",
               "message": "Transaction not found",
               "name": "TransactionNotFound",
               "service": "waas",
@@ -1335,6 +1349,7 @@ describe('public API error contracts', () => {
     await expect(
       publicErrors([
         ['wallet.listAccess', () => oms.wallet.listAccess()],
+        ['wallet.listAccessPage', () => oms.wallet.listAccessPage()],
         ['wallet.listAccessPages', () => iterateAccessPages(oms.wallet.listAccessPages())],
         ['wallet.revokeAccess', () => oms.wallet.revokeAccess({ credentialId: 'credential-1' })]
       ])
@@ -1350,7 +1365,7 @@ describe('public API error contracts', () => {
                 "status": 401,
                 "txnId": null,
                 "upstreamError": {
-                  "code": 7207,
+                  "code": "7207",
                   "message": "Unauthorized",
                   "name": "Unauthorized",
                   "service": "waas",
@@ -1364,12 +1379,31 @@ describe('public API error contracts', () => {
                 "code": "OMS_REQUEST_FAILED",
                 "message": "Unauthorized",
                 "name": "OMSWalletRequestError",
+                "operation": "wallet.listAccessPage",
+                "retryable": false,
+                "status": 401,
+                "txnId": null,
+                "upstreamError": {
+                  "code": "7207",
+                  "message": "Unauthorized",
+                  "name": "Unauthorized",
+                  "service": "waas",
+                  "status": 401,
+                },
+              },
+              "label": "wallet.listAccessPage",
+            },
+            {
+              "error": {
+                "code": "OMS_REQUEST_FAILED",
+                "message": "Unauthorized",
+                "name": "OMSWalletRequestError",
                 "operation": "wallet.listAccessPages",
                 "retryable": false,
                 "status": 401,
                 "txnId": null,
                 "upstreamError": {
-                  "code": 7207,
+                  "code": "7207",
                   "message": "Unauthorized",
                   "name": "Unauthorized",
                   "service": "waas",
@@ -1388,7 +1422,7 @@ describe('public API error contracts', () => {
                 "status": 401,
                 "txnId": null,
                 "upstreamError": {
-                  "code": 7207,
+                  "code": "7207",
                   "message": "Unauthorized",
                   "name": "Unauthorized",
                   "service": "waas",
@@ -1786,7 +1820,7 @@ describe('public API error contracts', () => {
       upstreamError: {
         service: 'waas',
         name: 'WebrpcBadResponse',
-        code: -5,
+        code: '-5',
         message: 'bad response',
         status: 502
       }
@@ -1805,7 +1839,7 @@ describe('public API error contracts', () => {
             "status": 502,
             "txnId": null,
             "upstreamError": {
-              "code": -5,
+              "code": "-5",
               "message": "bad response",
               "name": "WebrpcBadResponse",
               "service": "waas",

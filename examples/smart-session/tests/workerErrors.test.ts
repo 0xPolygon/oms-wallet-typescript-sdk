@@ -20,7 +20,7 @@ test('serializes the complete public WaaS error details', () => {
     upstreamError: {
       service: 'waas',
       name: 'TransactionFailed',
-      code: 7000,
+      code: '7000',
       message: 'Transaction failed',
       status: 400
     },
@@ -39,7 +39,7 @@ test('serializes the complete public WaaS error details', () => {
     upstreamError: {
       service: 'waas',
       name: 'TransactionFailed',
-      code: 7000,
+      code: '7000',
       message: 'Transaction failed',
       status: 400
     }

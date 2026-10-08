@@ -38,7 +38,7 @@ export namespace FeeOptionSelector {
 }
 
 export function feeOptionSelection(feeOption: FeeOption, index?: number): FeeOptionSelection {
-  const tokenIdentifier = feeOption.token.tokenID?.trim();
+  const tokenIdentifier = feeOption.token.tokenId?.trim();
   return {
     token: tokenIdentifier && tokenIdentifier.length > 0 ? tokenIdentifier : feeOption.token.symbol,
     ...(index === undefined ? {} : { index })

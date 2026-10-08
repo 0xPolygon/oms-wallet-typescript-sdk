@@ -502,7 +502,7 @@ function App() {
     await run(`Creating ${formatWalletType(type)} wallet...`, setActiveWalletStatus, async () => {
       const reference = newWalletReference.trim();
       const result = await omsWallet.wallet.createWallet({
-        type,
+        walletType: type,
         reference: reference || undefined
       });
       setWalletAddress(result.wallet.address);
@@ -592,7 +592,7 @@ function App() {
         );
 
         const result = await omsWallet.wallet.importEncryptedWallet({
-          type: WalletType.Ethereum,
+          walletType: WalletType.Ethereum,
           reference: privyWalletReference.trim() || undefined,
           keyMaterial: {
             keyId: recipient.keyId,
@@ -640,7 +640,7 @@ function App() {
       const existing = wallets.find((wallet) => wallet.type === type);
       const result = existing
         ? await omsWallet.wallet.useWallet({ walletId: existing.id })
-        : await omsWallet.wallet.createWallet({ type });
+        : await omsWallet.wallet.createWallet({ walletType: type });
 
       setWalletAddress(result.wallet.address);
       setWalletTab(result.wallet.type);

@@ -40,6 +40,7 @@ import type {
   AccessGrantPage,
   AuthorizeRemoteAccessParams,
   AuthorizedRemoteAccess,
+  ListAccessPageParams,
   ListAccessParams,
   RemoteCredentialMetadata,
   RevokeAccessParams,
@@ -85,7 +86,7 @@ import type {
   ImportEncryptedWalletParams,
   ImportWalletParams,
   ManualWalletSelectionParams,
-  OMSWalletClient,
+  WalletClient,
   OMSWalletEmailSessionAuth,
   OMSWalletOidcSessionAuth,
   OMSWalletOidcSessionAuthFlow,
@@ -177,13 +178,14 @@ import {
   fromGeneratedRemoteCredentialMetadata,
   fromGeneratedWallet
 } from '../utils/walletResponse.js';
+import { DEFAULT_SESSION_LIFETIME_SECONDS, MAX_SESSION_LIFETIME_SECONDS } from '../wallet.js';
 import {
   requireBase64,
   sealWalletImportPrivateKey,
   validateWalletImportReference,
   walletImportPlaintext
 } from '../walletImport.js';
-import { IndexerClient } from './indexerClient.js';
+import { IndexerClientImpl } from './indexerClient.js';
 
 interface PendingOidcRedirectAuth {
   verifier: string;
@@ -336,14 +338,14 @@ class PendingWalletSelectionImpl implements PendingWalletSelection {
   }
 }
 
-export class WalletClient implements OMSWalletClient {
+export class WalletClientImpl implements WalletClient {
   private readonly client: WaasClient;
   private readonly walletImportClient?: WaasClient;
   private readonly publicClient: WaasPublicClient;
   private readonly storage: StorageManager;
   private readonly redirectAuthStorage?: StorageManager;
   private readonly credentialSigner: CredentialSigner;
-  private readonly indexerClient: IndexerClient;
+  private readonly indexerClient: IndexerClientImpl;
   private readonly environment: OMSWalletEnvironment;
   private readonly projectId: string;
   private readonly sessionExpiredListeners = new Set<OMSWalletSessionExpiredListener>();
@@ -435,7 +437,7 @@ export class WalletClient implements OMSWalletClient {
       params.environment.walletApiUrl,
       createApiKeyFetch(params.publishableKey)
     );
-    this.indexerClient = new IndexerClient({
+    this.indexerClient = new IndexerClientImpl({
       publishableKey: params.publishableKey,
       environment: params.environment
     });
@@ -916,12 +918,12 @@ export class WalletClient implements OMSWalletClient {
   }
 
   async createWallet(
-    params: { type?: WalletType; reference?: string } = {}
+    params: { walletType?: WalletType; reference?: string } = {}
   ): Promise<WalletActivationResult> {
     return this.runOperation(WalletOperation.createWallet, async () => {
       const context = await this.activeWalletActivationContext(WalletOperation.createWallet);
       const wallet = await this.requestCreateWallet(
-        params.type ?? WalletType.Ethereum,
+        params.walletType ?? WalletType.Ethereum,
         params.reference
       );
       await this.requireActiveWalletActivationContextStillActive(
@@ -951,7 +953,7 @@ export class WalletClient implements OMSWalletClient {
           privateKey.fill(0);
         }
         const wallet = await this.requestImportWallet({
-          type: params.type,
+          walletType: params.type,
           reference: params.reference,
           keyMaterial: {
             keyId: recipientKey.keyId,
@@ -984,7 +986,7 @@ export class WalletClient implements OMSWalletClient {
   ): Promise<WalletActivationResult> {
     return this.runOperation(WalletOperation.importEncryptedWallet, async () => {
       const context = await this.walletImportActivationContext(
-        params.type,
+        params.walletType,
         WalletOperation.importEncryptedWallet
       );
       return this.runWalletImportActivation(
@@ -1115,8 +1117,12 @@ export class WalletClient implements OMSWalletClient {
       const request: IsValidMessageSignatureRequest = {
         network: params.network?.id.toString(),
         networkFamily: GeneratedNetworkFamily.EVM,
-        walletAddress: params.walletAddress,
-        walletId: params.walletId ?? (params.walletAddress ? undefined : this.activeWalletId()),
+        walletAddress: await this.signatureVerificationAddress(
+          params.walletAddress,
+          WalletType.Ethereum,
+          'Ethereum',
+          WalletOperation.isValidMessageSignature
+        ),
         message: params.message,
         signature: params.signature
       };
@@ -1131,8 +1137,12 @@ export class WalletClient implements OMSWalletClient {
     return this.runOperation(WalletOperation.isValidSolanaMessageSignature, async () => {
       const request: IsValidMessageSignatureRequest = {
         networkFamily: GeneratedNetworkFamily.Solana,
-        walletAddress: params.walletAddress,
-        walletId: params.walletId ?? (params.walletAddress ? undefined : this.activeWalletId()),
+        walletAddress: await this.signatureVerificationAddress(
+          params.walletAddress,
+          WalletType.Solana,
+          'Solana',
+          WalletOperation.isValidSolanaMessageSignature
+        ),
         message: params.message,
         signature: params.signature
       };
@@ -1145,8 +1155,13 @@ export class WalletClient implements OMSWalletClient {
     return this.runOperation(WalletOperation.isValidTypedDataSignature, async () => {
       const request: IsValidTypedDataSignatureRequest = {
         network: params.network?.id.toString(),
-        walletAddress: params.walletAddress,
-        walletId: params.walletId ?? (params.walletAddress ? undefined : this.activeWalletId()),
+        networkFamily: GeneratedNetworkFamily.EVM,
+        walletAddress: await this.signatureVerificationAddress(
+          params.walletAddress,
+          WalletType.Ethereum,
+          'Ethereum',
+          WalletOperation.isValidTypedDataSignature
+        ),
         typedData: normalizeJsonBigInts(params.typedData),
         signature: params.signature
       };
@@ -1185,8 +1200,12 @@ export class WalletClient implements OMSWalletClient {
     return this.runOperation(WalletOperation.isValidTronMessageSignature, async () => {
       const request: IsValidMessageSignatureRequest = {
         networkFamily: GeneratedNetworkFamily.Tron,
-        walletAddress: params.walletAddress,
-        walletId: params.walletId ?? (params.walletAddress ? undefined : this.activeWalletId()),
+        walletAddress: await this.signatureVerificationAddress(
+          params.walletAddress,
+          WalletType.Tron,
+          'Tron',
+          WalletOperation.isValidTronMessageSignature
+        ),
         message: params.message,
         signature: params.signature
       };
@@ -1201,8 +1220,12 @@ export class WalletClient implements OMSWalletClient {
     return this.runOperation(WalletOperation.isValidTronTypedDataSignature, async () => {
       const request: IsValidTypedDataSignatureRequest = {
         networkFamily: GeneratedNetworkFamily.Tron,
-        walletAddress: params.walletAddress,
-        walletId: params.walletId ?? (params.walletAddress ? undefined : this.activeWalletId()),
+        walletAddress: await this.signatureVerificationAddress(
+          params.walletAddress,
+          WalletType.Tron,
+          'Tron',
+          WalletOperation.isValidTronTypedDataSignature
+        ),
         typedData: normalizeJsonBigInts(params.typedData),
         signature: params.signature
       };
@@ -1402,6 +1425,19 @@ export class WalletClient implements OMSWalletClient {
     });
   }
 
+  async listAccessPage(params: ListAccessPageParams = {}): Promise<AccessGrantPage> {
+    return this.runOperation(WalletOperation.listAccessPage, async () => {
+      await this.requireActiveSession(WalletOperation.listAccessPage);
+      const walletId = this.walletId;
+      return this.requestListAccessPage(
+        walletId,
+        params,
+        params.cursor || undefined,
+        WalletOperation.listAccessPage
+      );
+    });
+  }
+
   async *listAccessPages(params: ListAccessParams = {}): AsyncIterable<AccessGrantPage> {
     try {
       yield* this.listAccessPagesUnchecked(params, WalletOperation.listAccessPages);
@@ -1509,7 +1545,7 @@ export class WalletClient implements OMSWalletClient {
       ciphertext: requireBase64(params.keyMaterial.ciphertext, 'keyMaterial.ciphertext')
     } as unknown as HPKEPayload;
     const response = await client.importWallet({
-      networkFamily: toGeneratedNetworkFamily(params.type),
+      networkFamily: toGeneratedNetworkFamily(params.walletType),
       format: GeneratedKeyFormat.PrivateKey,
       keyMaterial,
       reference: params.reference
@@ -1632,21 +1668,38 @@ export class WalletClient implements OMSWalletClient {
 
     let cursor: string | undefined;
     do {
-      await this.requireSameActiveWalletSession(walletId, operation);
-      const page = this.buildListAccessPage(params.pageSize, cursor);
-      const request: ListAccessRequest = {
-        walletId,
-        page,
-        type: this.toGeneratedCredentialType(params.type)
-      };
-      const response = await this.client.listAccess(request);
-      await this.requireSameActiveWalletSession(walletId, operation);
-
-      cursor = response.page?.cursor || undefined;
-      yield {
-        grants: response.credentials.map(fromGeneratedAccessGrant)
-      };
+      const page = await this.requestListAccessPage(walletId, params, cursor, operation);
+      cursor = page.page?.cursor;
+      yield page;
     } while (cursor);
+  }
+
+  private async requestListAccessPage(
+    walletId: string,
+    params: ListAccessParams,
+    cursor: string | undefined,
+    operation: WalletOperation
+  ): Promise<AccessGrantPage> {
+    await this.requireSameActiveWalletSession(walletId, operation);
+    const request: ListAccessRequest = {
+      walletId,
+      page: this.buildListAccessPage(params.pageSize, cursor),
+      type: this.toGeneratedCredentialType(params.type)
+    };
+    const response = await this.client.listAccess(request);
+    await this.requireSameActiveWalletSession(walletId, operation);
+
+    const grants = response.credentials.map(fromGeneratedAccessGrant);
+    const limit = response.page?.limit;
+    const nextCursor = response.page?.cursor || undefined;
+    if (limit === undefined && nextCursor === undefined) return { grants };
+    return {
+      grants,
+      page: {
+        ...(limit === undefined ? {} : { limit }),
+        ...(nextCursor === undefined ? {} : { cursor: nextCursor })
+      }
+    };
   }
 
   private buildListAccessPage(
@@ -2747,14 +2800,43 @@ export class WalletClient implements OMSWalletClient {
     }
   }
 
-  private activeWalletId(): string | undefined {
-    return this.walletId || undefined;
+  /**
+   * Returns the address a signature is verified against: `walletAddress` when given (no session is
+   * needed for the public verification request), otherwise the active wallet's address.
+   */
+  private async signatureVerificationAddress(
+    walletAddress: string | undefined,
+    type: WalletType,
+    label: string,
+    operation: WalletOperation
+  ): Promise<string> {
+    if (walletAddress) return walletAddress;
+
+    const session = this.activeSessionSnapshot();
+    if (!session?.wallet) {
+      throw new OMSWalletSessionError({
+        operation,
+        message: 'No active wallet session'
+      });
+    }
+    if (this.isSessionExpired(session)) {
+      await this.expireSession(session);
+      throw new OMSWalletSessionError({
+        code: 'OMS_SESSION_EXPIRED',
+        operation,
+        message: 'Wallet session expired'
+      });
+    }
+    if (session.wallet.type !== type) {
+      throw new Error(`An active ${label} wallet is required`);
+    }
+    return session.wallet.address;
   }
 
   private isNativeToken(feeOption: FeeOption): boolean {
     return (
       feeOption.token.type.toLowerCase() === 'native' ||
-      (!feeOption.token.contractAddress && !feeOption.token.tokenID)
+      (!feeOption.token.contractAddress && !feeOption.token.tokenId)
     );
   }
 
@@ -3142,8 +3224,6 @@ function normalizeJsonBigInts<T>(value: T): T {
   ) as T;
 }
 
-const DEFAULT_SESSION_LIFETIME_SECONDS = 604_800;
-const MAX_SESSION_LIFETIME_SECONDS = 30 * 24 * 60 * 60;
 const MAX_SESSION_EXPIRY_TIMER_MS = 2_147_483_647;
 const GOOGLE_ISSUER = 'https://accounts.google.com';
 const APPLE_ISSUER = 'https://appleid.apple.com';

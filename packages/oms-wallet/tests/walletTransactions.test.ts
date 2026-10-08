@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
-import { WalletClient } from '../src/clients/walletClient';
+import { WalletClientImpl } from '../src/clients/walletClient';
 import type { CredentialSigner } from '../src/credentialSigner';
 import { TransactionMode, TransactionStatus } from '../src/types/waas';
 import { Networks, SolanaNetworks } from '../src/networks';
@@ -748,7 +748,7 @@ describe('WalletClient transactions', () => {
       operation: 'wallet.sendSolanaTransfer',
       status: 400,
       upstreamError: {
-        code: 7312,
+        code: '7312',
         name: 'UnsupportedAsset',
         message: 'Unsupported asset'
       }
@@ -1319,7 +1319,7 @@ describe('WalletClient transactions', () => {
     });
     vi.stubGlobal('fetch', fetchMock);
 
-    const wallet = new WalletClient({
+    const wallet = new WalletClientImpl({
       publishableKey: 'publishable-key',
       projectId: 'project-id',
       environment: testEnvironment(),
@@ -1382,8 +1382,8 @@ describe('WalletClient transactions', () => {
 function createWalletWithSession(
   storage: MemoryStorageManager,
   walletAddress: string
-): WalletClient {
-  const wallet = new WalletClient({
+): WalletClientImpl {
+  const wallet = new WalletClientImpl({
     publishableKey: 'publishable-key',
     projectId: 'project-id',
     environment: testEnvironment(),

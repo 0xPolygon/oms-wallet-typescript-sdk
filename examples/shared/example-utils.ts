@@ -100,7 +100,7 @@ export async function switchToEthereumWallet(
   );
   const result = existing
     ? await wallet.useWallet({ walletId: existing.id })
-    : await wallet.createWallet({ type: WalletType.Ethereum });
+    : await wallet.createWallet({ walletType: WalletType.Ethereum });
   return result.wallet;
 }
 

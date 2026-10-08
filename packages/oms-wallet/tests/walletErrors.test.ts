@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
-import { WalletClient } from '../src/clients/walletClient';
+import { WalletClientImpl } from '../src/clients/walletClient';
 import type { CredentialSigner } from '../src/credentialSigner';
 import { toOMSWalletError } from '../src/errors';
 import { AddressAlreadyImportedError } from '../src/generated/waas.gen';
@@ -33,7 +33,7 @@ afterEach(() => {
 
 describe('WalletClient errors', () => {
   it('wraps local validation failures separately from request failures', async () => {
-    const wallet = new WalletClient({
+    const wallet = new WalletClientImpl({
       publishableKey: 'publishable-key',
       projectId: 'project-id',
       environment: testEnvironment(),
@@ -59,7 +59,7 @@ describe('WalletClient errors', () => {
       vi.fn(async () => new Response('<html>Bad Gateway</html>', { status: 502 }))
     );
 
-    const wallet = new WalletClient({
+    const wallet = new WalletClientImpl({
       publishableKey: 'publishable-key',
       projectId: 'project-id',
       environment: testEnvironment(),
@@ -94,7 +94,7 @@ describe('WalletClient errors', () => {
     });
     vi.stubGlobal('fetch', fetchMock);
 
-    const wallet = new WalletClient({
+    const wallet = new WalletClientImpl({
       publishableKey: 'publishable-key',
       projectId: 'project-id',
       environment: testEnvironment(),
@@ -120,7 +120,7 @@ describe('WalletClient errors', () => {
   it('validates requested session lifetimes before auth requests', async () => {
     const fetchMock = vi.fn();
     vi.stubGlobal('fetch', fetchMock);
-    const wallet = new WalletClient({
+    const wallet = new WalletClientImpl({
       publishableKey: 'publishable-key',
       projectId: 'project-id',
       environment: testEnvironment(),
@@ -192,7 +192,7 @@ describe('WalletClient errors', () => {
   });
 });
 
-function seedEmailAuthAttempt(wallet: WalletClient): void {
+function seedEmailAuthAttempt(wallet: WalletClientImpl): void {
   (wallet as any).activeEmailAuthAttempt = {
     verifier: 'verifier-1',
     challenge: 'challenge-1',

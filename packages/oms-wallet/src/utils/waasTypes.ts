@@ -133,8 +133,13 @@ export function fromGeneratedTransactionStatusResponse(
 }
 
 export function fromGeneratedFeeOption(feeOption: GeneratedFeeOption): FeeOption {
+  const { logoURL, tokenID, ...token } = feeOption.token;
   return {
-    token: { ...feeOption.token },
+    token: {
+      ...token,
+      ...(logoURL === undefined ? {} : { logoUrl: logoURL }),
+      ...(tokenID === undefined ? {} : { tokenId: tokenID })
+    },
     value: feeOption.value,
     displayValue: feeOption.displayValue
   };

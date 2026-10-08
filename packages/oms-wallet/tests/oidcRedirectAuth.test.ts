@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
-import { WalletClient } from '../src/clients/walletClient';
+import { WalletClientImpl } from '../src/clients/walletClient';
 import type { CredentialSigner } from '../src/credentialSigner';
 import { OMSWallet } from '../src/omsWallet';
 import type { OMSWalletEnvironment } from '../src/omsEnvironment';
@@ -224,7 +224,7 @@ describe('WalletClient OIDC redirect auth', () => {
     vi.stubGlobal('fetch', fetchMock);
 
     const storage = new MemoryStorageManager();
-    const wallet = new WalletClient({
+    const wallet = new WalletClientImpl({
       publishableKey: 'publishable-key',
       projectId: 'project-id',
       environment: testEnvironment(),
@@ -1292,7 +1292,7 @@ describe('WalletClient OIDC redirect auth', () => {
 
   it('does not clear an existing session when redirect storage preflight fails', async () => {
     const storage = new MemoryStorageManager();
-    const wallet = new WalletClient({
+    const wallet = new WalletClientImpl({
       publishableKey: 'publishable-key',
       projectId: 'project-id',
       environment: testEnvironment(),
@@ -1332,9 +1332,9 @@ function createWalletClient(
     credentialSigner?: CredentialSigner;
     projectId?: string;
   } = {}
-): WalletClient {
+): WalletClientImpl {
   const environment = params.environment ?? testEnvironment();
-  return new WalletClient({
+  return new WalletClientImpl({
     publishableKey: 'publishable-key',
     projectId: params.projectId ?? 'project-id',
     environment,

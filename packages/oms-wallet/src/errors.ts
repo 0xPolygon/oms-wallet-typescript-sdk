@@ -22,7 +22,8 @@ export type OMSWalletErrorCode =
 export interface OMSWalletUpstreamError {
   service: 'waas' | 'indexer';
   name?: string;
-  code?: number | string;
+  /** Upstream error code. Numeric WebRPC codes are stringified, for example `'7313'`. */
+  code?: string;
   message?: string;
   status?: number;
 }
@@ -326,7 +327,7 @@ function upstreamErrorFromError(
   return {
     service,
     name,
-    code,
+    code: code === undefined ? undefined : String(code),
     message: errorMessage(error),
     status
   };

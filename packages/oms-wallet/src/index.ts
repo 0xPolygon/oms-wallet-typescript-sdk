@@ -1,5 +1,6 @@
 export { OMSWallet } from './omsWallet.js';
 export type { OMSWalletParams } from './omsWallet.js';
+export { DEFAULT_SESSION_LIFETIME_SECONDS, MAX_SESSION_LIFETIME_SECONDS } from './wallet.js';
 export { RemoteAccessClient } from './clients/remoteAccessClient.js';
 export type { RemoteAccessClientParams } from './clients/remoteAccessClient.js';
 export {
@@ -41,6 +42,7 @@ export {
   type AbiArg,
   type FeeOption,
   type FeeOptionSelection,
+  type FeeToken,
   type TransactionStatusResponse
 } from './types/waas.js';
 export {
@@ -56,6 +58,12 @@ export {
   type OMSWalletErrorCode,
   type OMSWalletUpstreamError
 } from './errors.js';
+export {
+  IndexerOperation,
+  RemoteAccessOperation,
+  WalletOperation,
+  type OMSWalletOperation
+} from './operations.js';
 export type {
   ExecutedRemoteTransaction,
   ExecuteRemoteTransactionParams,
@@ -107,7 +115,7 @@ export type {
   WalletActivationResult,
   WalletImportRecipientKey,
   WalletSelectionBehavior,
-  OMSWalletClient
+  WalletClient
 } from './wallet.js';
 export type {
   BalancesResult,
@@ -120,7 +128,7 @@ export type {
   IndexerNetworkType,
   MetadataOptions,
   NativeTokenBalance,
-  OMSWalletIndexerClient,
+  IndexerClient,
   SolanaBalance,
   SolanaBalancesResult,
   SolanaFungibleTokenBalance,
@@ -151,6 +159,7 @@ export type {
   AuthorizeRemoteAccessParams,
   AuthorizedRemoteAccess,
   DirectAccessGrant,
+  ListAccessPageParams,
   ListAccessParams,
   RemoteAccessGrant,
   RemoteAccessSession,

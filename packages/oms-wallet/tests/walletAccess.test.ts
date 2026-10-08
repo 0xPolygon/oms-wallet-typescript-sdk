@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
-import { WalletClient } from '../src/clients/walletClient';
+import { WalletClientImpl } from '../src/clients/walletClient';
 import type { CredentialSigner } from '../src/credentialSigner';
 import { Networks } from '../src/networks';
 import { MemoryStorageManager } from '../src/storageManager';
@@ -67,6 +67,71 @@ describe('WalletClient access management', () => {
       { walletId: 'wallet-id', page: { limit: 2 } },
       { walletId: 'wallet-id', page: { limit: 2, cursor: 'cursor-2' } }
     ]);
+  });
+
+  it('reads one access page and resumes from its cursor', async () => {
+    const requests: unknown[] = [];
+    const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = input.toString();
+
+      if (url.endsWith('/ListAccess')) {
+        requests.push(JSON.parse(init?.body as string));
+        if (requests.length === 1) {
+          return jsonResponse({
+            credentials: [testCredential('11')],
+            page: { limit: 1, cursor: 'cursor-2' }
+          });
+        }
+        return jsonResponse({
+          credentials: [testCredential('22', false)],
+          page: { limit: 1, cursor: '' }
+        });
+      }
+
+      throw new Error(`Unexpected request: ${url}`);
+    });
+    vi.stubGlobal('fetch', fetchMock);
+
+    const wallet = createWalletWithSession();
+
+    const first = await wallet.listAccessPage({ pageSize: 1, type: 'direct' });
+    expect(first).toEqual({
+      grants: [testCredential('11')],
+      page: { limit: 1, cursor: 'cursor-2' }
+    });
+
+    const second = await wallet.listAccessPage({
+      pageSize: 1,
+      type: 'direct',
+      cursor: first.page?.cursor
+    });
+    expect(second).toEqual({
+      grants: [testCredential('22', false)],
+      page: { limit: 1 }
+    });
+    expect(requests).toEqual([
+      { walletId: 'wallet-id', page: { limit: 1 }, type: 'direct' },
+      { walletId: 'wallet-id', page: { limit: 1, cursor: 'cursor-2' }, type: 'direct' }
+    ]);
+  });
+
+  it('requires an active session to read an access page', async () => {
+    const fetchMock = vi.fn();
+    vi.stubGlobal('fetch', fetchMock);
+    const wallet = new WalletClientImpl({
+      publishableKey: 'publishable-key',
+      projectId: 'project-id',
+      environment: testEnvironment(),
+      storage: new MemoryStorageManager(),
+      credentialSigner: new MockSigner()
+    });
+
+    await expect(wallet.listAccessPage()).rejects.toMatchObject({
+      name: 'OMSWalletSessionError',
+      code: 'OMS_SESSION_MISSING',
+      operation: 'wallet.listAccessPage'
+    });
+    expect(fetchMock).not.toHaveBeenCalled();
   });
 
   it('yields wallet access pages for paginated callers', async () => {
@@ -284,7 +349,7 @@ describe('WalletClient access management', () => {
 
     const wallet = createWalletWithSession();
 
-    await expect(wallet.createWallet({ type: WalletType.Solana })).resolves.toEqual({
+    await expect(wallet.createWallet({ walletType: WalletType.Solana })).resolves.toEqual({
       wallet: {
         id: 'solana-wallet-id',
         type: 'solana',
@@ -459,7 +524,7 @@ describe('WalletClient access management', () => {
 
     await expect(iterator.next()).resolves.toEqual({
       done: false,
-      value: { grants: [testCredential('11')] }
+      value: { grants: [testCredential('11')], page: { cursor: 'cursor-2' } }
     });
 
     const secondPage = iterator.next();
@@ -581,8 +646,8 @@ describe('WalletClient access management', () => {
   });
 });
 
-function createWalletWithSession(): WalletClient {
-  const wallet = new WalletClient({
+function createWalletWithSession(): WalletClientImpl {
+  const wallet = new WalletClientImpl({
     publishableKey: 'publishable-key',
     projectId: 'project-id',
     environment: testEnvironment(),

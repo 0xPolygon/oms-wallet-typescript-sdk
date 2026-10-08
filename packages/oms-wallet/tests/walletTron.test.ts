@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
-import { WalletClient } from '../src/clients/walletClient';
+import { WalletClientImpl } from '../src/clients/walletClient';
 import type { CredentialSigner } from '../src/credentialSigner';
 import { Networks, TronNetworks } from '../src/networks';
 import { MemoryStorageManager } from '../src/storageManager';
@@ -343,7 +343,7 @@ describe('WalletClient Tron', () => {
       },
       {
         networkFamily: 'tron',
-        walletId: 'wallet-id',
+        walletAddress: tronWalletAddress,
         typedData: { primaryType: 'Mail' },
         signature: '0xsig'
       }
@@ -410,7 +410,7 @@ describe('WalletClient Tron', () => {
     );
     const wallet = createWalletWithSession('0x9999999999999999999999999999999999999999');
 
-    const result = await wallet.createWallet({ type: WalletType.Tron });
+    const result = await wallet.createWallet({ walletType: WalletType.Tron });
 
     const expected = {
       id: 'wallet-tron',
@@ -434,15 +434,15 @@ function sponsoredPrepareResponse(txnId: string) {
   };
 }
 
-function createTronWalletWithSession(): WalletClient {
+function createTronWalletWithSession(): WalletClientImpl {
   return createWalletWithSession(tronWalletAddress, 'tron');
 }
 
 function createWalletWithSession(
   walletAddress: string,
   type?: 'ethereum' | 'solana' | 'tron'
-): WalletClient {
-  const wallet = new WalletClient({
+): WalletClientImpl {
+  const wallet = new WalletClientImpl({
     publishableKey: 'publishable-key',
     projectId: 'project-id',
     environment: {

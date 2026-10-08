@@ -560,7 +560,7 @@ describe('omsWalletConnector', () => {
         upstreamError: expect.objectContaining({
           service: 'waas',
           name: 'WebrpcRequestFailed',
-          code: -1
+          code: '-1'
         })
       })
     });
@@ -596,7 +596,7 @@ describe('omsWalletConnector', () => {
             upstreamError: expect.objectContaining({
               service: 'waas',
               name: 'WebrpcRequestFailed',
-              code: -1
+              code: '-1'
             })
           })
         })
@@ -1067,7 +1067,7 @@ function createTransactionExecutionError(): OMSWalletTransactionError {
     upstreamError: {
       service: 'waas',
       name: 'WebrpcRequestFailed',
-      code: -1,
+      code: '-1',
       message: 'request failed'
     },
     message: 'Transaction execution failed before status could be confirmed'

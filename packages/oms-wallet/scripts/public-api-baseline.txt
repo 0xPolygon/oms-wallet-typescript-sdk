@@ -267,13 +267,13 @@ interface IndexerClientEnvironment {
     solanaIndexerGatewayUrl: string;
     tronIndexerGatewayUrl: string;
 }
-export interface OMSWalletIndexerClient {
+export interface IndexerClient {
     getBalances(params: GetBalancesParams): Promise<BalancesResult>;
     getSolanaBalances(params: GetSolanaBalancesParams): Promise<SolanaBalancesResult>;
     getTronBalances(params: GetTronBalancesParams): Promise<TronBalancesResult>;
     getTransactionHistory(params: GetTransactionHistoryParams): Promise<TransactionHistoryResult>;
 }
-export declare class IndexerClient implements OMSWalletIndexerClient {
+export declare class IndexerClientImpl implements IndexerClient {
     private readonly publishableKey;
     private readonly environment;
     private readonly client;
@@ -382,7 +382,8 @@ export type OMSWalletErrorCode = 'OMS_HTTP_ERROR' | 'OMS_INVALID_RESPONSE' | 'OM
 export interface OMSWalletUpstreamError {
     service: 'waas' | 'indexer';
     name?: string;
-    code?: number | string;
+    /** Upstream error code. Numeric WebRPC codes are stringified, for example `'7313'`. */
+    code?: string;
     message?: string;
     status?: number;
 }
@@ -453,18 +454,20 @@ export {};
 ## index.d.ts
 export { OMSWallet } from './omsWallet.js';
 export type { OMSWalletParams } from './omsWallet.js';
+export { DEFAULT_SESSION_LIFETIME_SECONDS, MAX_SESSION_LIFETIME_SECONDS } from './wallet.js';
 export { RemoteAccessClient } from './clients/remoteAccessClient.js';
 export type { RemoteAccessClientParams } from './clients/remoteAccessClient.js';
 export { OmsRelayOidcProviders, type CustomOidcProviderConfig, type OmsRelayOidcProvider } from './oidc.js';
 export { EthereumPrivateKeyCredentialSigner, WebCryptoP256CredentialSigner, type CredentialSigningAlgorithm, type CredentialSigner } from './credentialSigner.js';
 export { LocalStorageManager, MemoryStorageManager, SessionStorageManager, createDefaultStorage, type StorageManager } from './storageManager.js';
 export { Networks, SolanaNetworks, TronNetworks, findNetworkById, findNetworkByName, type Network, type SolanaNetwork, type TronNetwork } from './networks.js';
-export { AuthMode, TransactionMode, TransactionStatus, WalletImportCipherSuite, WalletKeyOrigin, WalletType, type OidcAuthMode, type AbiArg, type FeeOption, type FeeOptionSelection, type TransactionStatusResponse } from './types/waas.js';
+export { AuthMode, TransactionMode, TransactionStatus, WalletImportCipherSuite, WalletKeyOrigin, WalletType, type OidcAuthMode, type AbiArg, type FeeOption, type FeeOptionSelection, type FeeToken, type TransactionStatusResponse } from './types/waas.js';
 export { OMSWalletRequestError, OMSWalletResponseError, OMSWalletError, OMSWalletSessionError, OMSWalletTransactionError, OMSWalletSelectionError, OMSWalletValidationError, OMSWalletStorageError, isOMSWalletError, type OMSWalletErrorCode, type OMSWalletUpstreamError } from './errors.js';
+export { IndexerOperation, RemoteAccessOperation, WalletOperation, type OMSWalletOperation } from './operations.js';
 export type { ExecutedRemoteTransaction, ExecuteRemoteTransactionParams, ListRemoteAccessSessionsParams, PreparedRemoteTransaction, PrepareRemoteTransactionParams, RegisteredRemoteCredential, RegisterRemoteCredentialParams, RemoteAccessSessionPage, RevokeRemoteCredentialParams } from './types/remoteAccess.js';
-export type { CompleteEmailAuthParams, CompleteEmailAuthResult, CompleteOidcIdTokenAuthResult, CompleteOidcRedirectAuthParams, CompleteOidcRedirectAuthResult, EncryptedWalletImportKeyMaterial, GetIdTokenParams, ImportEncryptedWalletParams, ImportWalletParams, IsValidMessageSignatureParams, IsValidSolanaMessageSignatureParams, IsValidTypedDataSignatureParams, IsValidTronMessageSignatureParams, IsValidTronTypedDataSignatureParams, OMSWalletEmailSessionAuth, OMSWalletOidcSessionAuth, OMSWalletOidcSessionAuthFlow, OMSWalletSessionAuth, OMSWalletSessionExpiredEvent, OMSWalletSessionExpiredListener, OMSWalletSession, WalletAccount, EthereumWalletAccount, SolanaWalletAccount, TronWalletAccount, PendingWalletSelection, SignInWithOidcIdTokenParams, SignMessageParams, SignSolanaMessageParams, SignInWithOidcRedirectParams, SignTypedDataParams, SignTronMessageParams, SignTronTypedDataParams, StartEmailAuthParams, StartOidcRedirectAuthParams, StartOidcRedirectAuthResult, WalletActivationResult, WalletImportRecipientKey, WalletSelectionBehavior, OMSWalletClient } from './wallet.js';
-export type { BalancesResult, ContractVerificationStatus, ContractTokenBalance, GetBalancesParams, GetSolanaBalancesParams, GetTronBalancesParams, GetTransactionHistoryParams, IndexerNetworkType, MetadataOptions, NativeTokenBalance, OMSWalletIndexerClient, SolanaBalance, SolanaBalancesResult, SolanaFungibleTokenBalance, SolanaNativeBalance, SolanaNetworkError, SolanaVerificationSource, SolanaVerificationStatus, SortBy, TokenContractInfo, TokenBalance, TokenBalancesPage, TokenBalancesPageRequest, TokenMetadata, TokenMetadataAsset, Transaction, TransactionHistoryResult, TransactionTransfer, TronBalance, TronBalancesResult, TronNativeBalance, TronNetworkError, TronFungibleTokenBalance, TronVerificationStatus } from './clients/indexerClient.js';
-export type { AccessGrant, AccessGrantPage, AuthorizeRemoteAccessParams, AuthorizedRemoteAccess, DirectAccessGrant, ListAccessParams, RemoteAccessGrant, RemoteAccessSession, RemoteCredentialMetadata, RevokeAccessParams, SmartSessionGrant, SmartSessionGrantUsage, WalletCredential } from './types/accessGrant.js';
+export type { CompleteEmailAuthParams, CompleteEmailAuthResult, CompleteOidcIdTokenAuthResult, CompleteOidcRedirectAuthParams, CompleteOidcRedirectAuthResult, EncryptedWalletImportKeyMaterial, GetIdTokenParams, ImportEncryptedWalletParams, ImportWalletParams, IsValidMessageSignatureParams, IsValidSolanaMessageSignatureParams, IsValidTypedDataSignatureParams, IsValidTronMessageSignatureParams, IsValidTronTypedDataSignatureParams, OMSWalletEmailSessionAuth, OMSWalletOidcSessionAuth, OMSWalletOidcSessionAuthFlow, OMSWalletSessionAuth, OMSWalletSessionExpiredEvent, OMSWalletSessionExpiredListener, OMSWalletSession, WalletAccount, EthereumWalletAccount, SolanaWalletAccount, TronWalletAccount, PendingWalletSelection, SignInWithOidcIdTokenParams, SignMessageParams, SignSolanaMessageParams, SignInWithOidcRedirectParams, SignTypedDataParams, SignTronMessageParams, SignTronTypedDataParams, StartEmailAuthParams, StartOidcRedirectAuthParams, StartOidcRedirectAuthResult, WalletActivationResult, WalletImportRecipientKey, WalletSelectionBehavior, WalletClient } from './wallet.js';
+export type { BalancesResult, ContractVerificationStatus, ContractTokenBalance, GetBalancesParams, GetSolanaBalancesParams, GetTronBalancesParams, GetTransactionHistoryParams, IndexerNetworkType, MetadataOptions, NativeTokenBalance, IndexerClient, SolanaBalance, SolanaBalancesResult, SolanaFungibleTokenBalance, SolanaNativeBalance, SolanaNetworkError, SolanaVerificationSource, SolanaVerificationStatus, SortBy, TokenContractInfo, TokenBalance, TokenBalancesPage, TokenBalancesPageRequest, TokenMetadata, TokenMetadataAsset, Transaction, TransactionHistoryResult, TransactionTransfer, TronBalance, TronBalancesResult, TronNativeBalance, TronNetworkError, TronFungibleTokenBalance, TronVerificationStatus } from './clients/indexerClient.js';
+export type { AccessGrant, AccessGrantPage, AuthorizeRemoteAccessParams, AuthorizedRemoteAccess, DirectAccessGrant, ListAccessPageParams, ListAccessParams, RemoteAccessGrant, RemoteAccessSession, RemoteCredentialMetadata, RevokeAccessParams, SmartSessionGrant, SmartSessionGrantUsage, WalletCredential } from './types/accessGrant.js';
 export type { FeeOptionWithBalance, SendContractTransactionParams, SendDataTransactionParams, SendNativeTransactionParams, SendSolanaTransferParams, SendTransactionBase, SendTransactionParams, SendTransactionResponse, SendTronTransactionParams, CallTronContractParams, TransactionStatusPollingOptions } from './types/transactionTypes.js';
 export { FeeOptionSelector, feeOptionSelection } from './types/transactionTypes.js';
 
@@ -650,10 +653,10 @@ export declare function resolveOidcProviderConfig(provider: OidcProviderConfig):
 export {};
 
 ## omsWallet.d.ts
-import type { OMSWalletIndexerClient } from './clients/indexerClient.js';
+import type { IndexerClient } from './clients/indexerClient.js';
 import type { CredentialSigner } from './credentialSigner.js';
 import type { StorageManager } from './storageManager.js';
-import type { OMSWalletClient } from './wallet.js';
+import type { WalletClient } from './wallet.js';
 export interface OMSWalletParams {
     publishableKey: string;
     storage?: StorageManager;
@@ -661,8 +664,8 @@ export interface OMSWalletParams {
     credentialSigner?: CredentialSigner;
 }
 export declare class OMSWallet {
-    readonly wallet: OMSWalletClient;
-    readonly indexer: OMSWalletIndexerClient;
+    readonly wallet: WalletClient;
+    readonly indexer: IndexerClient;
     constructor(params: OMSWalletParams);
 }
 
@@ -704,6 +707,7 @@ export declare const WalletOperation: {
     readonly inspectRemoteCredential: "wallet.inspectRemoteCredential";
     readonly authorizeRemoteAccess: "wallet.authorizeRemoteAccess";
     readonly listAccess: "wallet.listAccess";
+    readonly listAccessPage: "wallet.listAccessPage";
     readonly listAccessPages: "wallet.listAccessPages";
     readonly getRemoteAccessSession: "wallet.getRemoteAccessSession";
     readonly getRemoteAccessSessionUsage: "wallet.getRemoteAccessSessionUsage";
@@ -730,6 +734,7 @@ export declare const RemoteAccessOperation: {
     readonly getSessionUsage: "remoteAccess.getSessionUsage";
 };
 export type RemoteAccessOperation = (typeof RemoteAccessOperation)[keyof typeof RemoteAccessOperation];
+/** Operation identifiers reported in `OMSWalletError.operation`. */
 export type OMSWalletOperation = WalletOperation | IndexerOperation | RemoteAccessOperation;
 
 ## storageManager.d.ts
@@ -803,8 +808,17 @@ export interface ListAccessParams {
     pageSize?: number;
     type?: AccessGrant['type'];
 }
+export interface ListAccessPageParams extends ListAccessParams {
+    /** `page.cursor` from the previous `AccessGrantPage`. Omit for the first page. */
+    cursor?: string;
+}
 export interface AccessGrantPage {
     grants: AccessGrant[];
+    /** Paging metadata from WaaS. `cursor` is absent on the last page. */
+    page?: {
+        limit?: number;
+        cursor?: string;
+    };
 }
 export interface AuthorizeRemoteAccessParams {
     credentialId: string;
@@ -984,9 +998,8 @@ export type CallTronContractParams = {
 };
 
 ## types/waas.d.ts
+/** OIDC redirect auth modes accepted by `CustomOidcProviderConfig.authMode`. */
 export declare const AuthMode: Readonly<{
-    readonly OTP: "otp";
-    readonly IDToken: "id-token";
     readonly AuthCode: "auth-code";
     readonly AuthCodePKCE: "auth-code-pkce";
 }>;
@@ -1037,9 +1050,9 @@ export interface FeeToken {
     symbol: string;
     type: string;
     decimals?: number;
-    logoURL?: string;
+    logoUrl?: string;
     contractAddress?: string;
-    tokenID?: string;
+    tokenId?: string;
 }
 export interface FeeOption {
     token: FeeToken;
@@ -1055,7 +1068,7 @@ export interface FeeOptionSelection {
 import type { Abi, Address, ContractFunctionName } from 'viem';
 import type { Network } from './networks.js';
 import type { CustomOidcProviderConfig, OmsRelayOidcProvider } from './oidc.js';
-import type { AccessGrant, AccessGrantPage, AuthorizeRemoteAccessParams, AuthorizedRemoteAccess, ListAccessParams, RemoteAccessSession, RemoteCredentialMetadata, RevokeAccessParams, SmartSessionGrantUsage, WalletCredential } from './types/accessGrant.js';
+import type { AccessGrant, AccessGrantPage, AuthorizeRemoteAccessParams, AuthorizedRemoteAccess, ListAccessPageParams, ListAccessParams, RemoteAccessSession, RemoteCredentialMetadata, RevokeAccessParams, SmartSessionGrantUsage, WalletCredential } from './types/accessGrant.js';
 import type { FeeOptionSelector, SendContractTransactionParams, SendDataTransactionParams, SendNativeTransactionParams, SendSolanaTransferParams, SendTransactionParams, SendTronTransactionParams, CallTronContractParams, SendTransactionResponse, TransactionStatusPollingOptions } from './types/transactionTypes.js';
 import type { AbiArg, TransactionMode, TransactionStatusResponse, WalletImportCipherSuite, WalletKeyOrigin, WalletType } from './types/waas.js';
 interface OidcRedirectAuthParamsBase {
@@ -1165,7 +1178,7 @@ export interface EncryptedWalletImportKeyMaterial {
     readonly ciphertext: string;
 }
 export interface ImportEncryptedWalletParams {
-    type: WalletType;
+    walletType: WalletType;
     keyMaterial: EncryptedWalletImportKeyMaterial;
     reference?: string;
 }
@@ -1209,6 +1222,10 @@ export interface OMSWalletSession {
     readonly expiresAt: string;
     readonly auth: OMSWalletSessionAuth;
 }
+/** Session lifetime requested when `sessionLifetimeSeconds` is omitted (one week). */
+export declare const DEFAULT_SESSION_LIFETIME_SECONDS = 604800;
+/** Largest accepted `sessionLifetimeSeconds` (30 days). */
+export declare const MAX_SESSION_LIFETIME_SECONDS = 2592000;
 export interface OMSWalletSessionExpiredEvent {
     /**
      * The wallet that was active when the session expired. `undefined` when the credential expired
@@ -1243,35 +1260,33 @@ export interface GetIdTokenParams {
 }
 export interface IsValidMessageSignatureParams {
     network?: Network;
+    /** Address to verify against. Omit to use the active Ethereum wallet's address. */
     walletAddress?: Address;
-    walletId?: string;
     message: string;
     signature: string;
 }
 export interface IsValidSolanaMessageSignatureParams {
+    /** Address to verify against. Omit to use the active Solana wallet's address. */
     walletAddress?: string;
-    walletId?: string;
     message: string;
     signature: string;
 }
 export interface IsValidTypedDataSignatureParams {
     network?: Network;
+    /** Address to verify against. Omit to use the active Ethereum wallet's address. */
     walletAddress?: Address;
-    walletId?: string;
     typedData: unknown;
     signature: string;
 }
 export interface IsValidTronMessageSignatureParams {
-    /** Base58Check address (`T…`). */
+    /** Base58Check address (`T…`) to verify against. Omit to use the active Tron wallet's address. */
     walletAddress?: string;
-    walletId?: string;
     message: string;
     signature: string;
 }
 export interface IsValidTronTypedDataSignatureParams {
-    /** Base58Check address (`T…`). */
+    /** Base58Check address (`T…`) to verify against. Omit to use the active Tron wallet's address. */
     walletAddress?: string;
-    walletId?: string;
     typedData: unknown;
     signature: string;
 }
@@ -1287,7 +1302,7 @@ export type SignInWithOidcRedirectParams = OidcRedirectAuthParamsBase & {
     omsRelayReturnUri?: never;
     authorizeParams?: Record<string, string>;
 });
-export interface OMSWalletClient {
+export interface WalletClient {
     /** The active wallet, or `undefined` when signed out. Same shape as `listWallets()` entries. */
     readonly activeWallet: WalletAccount | undefined;
     /** Expiry and auth metadata for the active session; defined exactly when `activeWallet` is. */
@@ -1312,7 +1327,7 @@ export interface OMSWalletClient {
         walletId: string;
     }): Promise<WalletActivationResult>;
     createWallet(params?: {
-        type?: WalletType;
+        walletType?: WalletType;
         reference?: string;
     }): Promise<WalletActivationResult>;
     importWallet(params: ImportWalletParams): Promise<WalletActivationResult>;
@@ -1357,6 +1372,8 @@ export interface OMSWalletClient {
     }): Promise<RemoteCredentialMetadata>;
     authorizeRemoteAccess(params: AuthorizeRemoteAccessParams): Promise<AuthorizedRemoteAccess>;
     listAccess(params?: ListAccessParams): Promise<AccessGrant[]>;
+    /** Returns one access page. Pass the previous page's `page.cursor` to continue. */
+    listAccessPage(params?: ListAccessPageParams): Promise<AccessGrantPage>;
     listAccessPages(params?: ListAccessParams): AsyncIterable<AccessGrantPage>;
     getRemoteAccessSession(params: {
         sessionId: string;

@@ -1,8 +1,8 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
-import { WalletClient } from '../src/clients/walletClient';
+import { WalletClientImpl } from '../src/clients/walletClient';
 import type { CredentialSigner } from '../src/credentialSigner';
-import { AuthMode, WalletType } from '../src/types/waas';
+import { WalletType } from '../src/types/waas';
 import { MemoryStorageManager } from '../src/storageManager';
 import { oidcIdTokenHandleHash } from '../src/utils/oidcIdToken';
 import { base64UrlEncodeString } from '../src/utils/oidcRedirect';
@@ -41,7 +41,7 @@ describe('WalletClient OIDC ID-token auth', () => {
       if (url.endsWith('/CommitVerifier')) {
         expect(body).toEqual({
           identityType: 'oidc',
-          authMode: AuthMode.IDToken,
+          authMode: 'id-token',
           metadata: {
             iss: 'https://accounts.google.com',
             aud: 'google-client-id',
@@ -58,7 +58,7 @@ describe('WalletClient OIDC ID-token auth', () => {
       if (url.endsWith('/CompleteAuth')) {
         expect(body).toEqual({
           identityType: 'oidc',
-          authMode: AuthMode.IDToken,
+          authMode: 'id-token',
           verifier: 'oidc-verifier-1',
           answer: idToken,
           lifetime: 604_800
@@ -345,8 +345,8 @@ function createWalletClient(
     storage?: MemoryStorageManager;
     redirectAuthStorage?: MemoryStorageManager;
   } = {}
-): WalletClient {
-  return new WalletClient({
+): WalletClientImpl {
+  return new WalletClientImpl({
     publishableKey: 'publishable-key',
     projectId: 'project-id',
     environment: testEnvironment(),
