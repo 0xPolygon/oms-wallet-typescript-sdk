@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
+  DEFAULT_SESSION_LIFETIME_SECONDS,
   OmsRelayOidcProviders,
   FeeOptionSelector,
   type FeeOptionSelection,
@@ -25,14 +26,13 @@ import {
   formatOidcProvider,
   formatSessionAuth,
   formatSessionExpiry,
-  formatWalletType,
   hasOidcCallbackParams,
   isPendingWalletSelection,
   switchToEthereumWallet,
   type OidcRedirectProvider
 } from '../../shared/example-utils';
 import { useSessionPreferences } from '../../shared/use-session-preferences';
-import { TEST_SESSION_LIFETIME_SECONDS, omsWallet } from './omsWallet';
+import { omsWallet } from './omsWallet';
 import {
   DEFAULT_DEPOSIT_USDC_AMOUNT,
   DEFAULT_EARN_POL_AMOUNT,
@@ -144,7 +144,7 @@ function App() {
   } = useSessionPreferences({
     manualWalletSelectionKey: MANUAL_WALLET_SELECTION_KEY,
     sessionLifetimeSecondsKey: SESSION_LIFETIME_SECONDS_KEY,
-    defaultSessionLifetimeSeconds: TEST_SESSION_LIFETIME_SECONDS
+    defaultSessionLifetimeSeconds: DEFAULT_SESSION_LIFETIME_SECONDS
   });
   const hasVisibleWithdrawStatus = earnPositions.some((position) => withdrawStatuses[position.id]);
   const showEarnPositionsStatus =

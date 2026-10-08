@@ -1,6 +1,7 @@
 import React, { useEffect, useRef, useState } from 'react';
 import { createRoot } from 'react-dom/client';
 import {
+  DEFAULT_SESSION_LIFETIME_SECONDS,
   Networks,
   WalletType,
   WalletImportCipherSuite,
@@ -42,7 +43,7 @@ import {
   selectDemoEnvironment,
   type DemoEnvironmentId
 } from './config';
-import { TEST_SESSION_LIFETIME_SECONDS, omsWallet } from './omsWallet';
+import { omsWallet } from './omsWallet';
 import { WalletKitDollarExample } from './WalletKitDollarExample';
 import { SolanaExample } from './SolanaExample';
 import { TronExample } from './TronExample';
@@ -141,7 +142,7 @@ function App() {
   } = useSessionPreferences({
     manualWalletSelectionKey: MANUAL_WALLET_SELECTION_KEY,
     sessionLifetimeSecondsKey: SESSION_LIFETIME_SECONDS_KEY,
-    defaultSessionLifetimeSeconds: TEST_SESSION_LIFETIME_SECONDS
+    defaultSessionLifetimeSeconds: DEFAULT_SESSION_LIFETIME_SECONDS
   });
 
   useEffect(() => {
