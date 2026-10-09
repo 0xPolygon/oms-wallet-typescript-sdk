@@ -34,6 +34,7 @@ export function SolanaExample({ walletAddress }: { walletAddress: string }) {
   const [recipient, setRecipient] = useState('');
   const [amount, setAmount] = useState('0.001');
   const [transactionSignature, setTransactionSignature] = useState('');
+  const [transactionId, setTransactionId] = useState('');
   const [transferStatus, setTransferStatus] = useState('');
   const [feeOptions, setFeeOptions] = useState<FeeOptionWithBalance[]>([]);
   const [isBusy, setIsBusy] = useState(false);
@@ -96,6 +97,7 @@ export function SolanaExample({ walletAddress }: { walletAddress: string }) {
     setIsBusy(true);
     setTransferStatus('Preparing relayed transfer...');
     setTransactionSignature('');
+    setTransactionId('');
     try {
       const asset =
         assetType === 'SOL' ? 'SOL' : splTokenType === 'USDC' ? DEVNET_USDC_MINT : mint.trim();
@@ -120,7 +122,8 @@ export function SolanaExample({ walletAddress }: { walletAddress: string }) {
         statusPolling: { timeoutMs: 120_000 }
       });
 
-      setTransactionSignature(transaction.txnHash ?? transaction.txnId);
+      setTransactionSignature(transaction.txnHash ?? '');
+      setTransactionId(transaction.txnId);
       setTransferStatus(
         transaction.status === 'executed' || transaction.status === 'failed'
           ? `Transfer ${transaction.status}.`
@@ -359,19 +362,23 @@ export function SolanaExample({ walletAddress }: { walletAddress: string }) {
           >
             Send on Solana Devnet
           </button>
-          {transactionSignature && (
+          {(transactionSignature || transactionId) && (
             <div className="result-block">
               <p className="result labeled-result">
-                <span className="result-label">Transaction signature</span>
-                <code className="result-value">{transactionSignature}</code>
+                <span className="result-label">
+                  {transactionSignature ? 'Transaction signature' : 'Transaction ID'}
+                </span>
+                <code className="result-value">{transactionSignature || transactionId}</code>
               </p>
-              <a
-                href={solanaTransactionExplorerUrl(transactionSignature)}
-                target="_blank"
-                rel="noreferrer"
-              >
-                View on Solana Explorer
-              </a>
+              {transactionSignature && (
+                <a
+                  href={solanaTransactionExplorerUrl(transactionSignature)}
+                  target="_blank"
+                  rel="noreferrer"
+                >
+                  View on Solana Explorer
+                </a>
+              )}
             </div>
           )}
           {transferStatus && <output>{transferStatus}</output>}

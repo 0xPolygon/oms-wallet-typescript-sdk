@@ -37,6 +37,7 @@ export function TronExample({ walletAddress }: { walletAddress: string }) {
   const [recipient, setRecipient] = useState('');
   const [amount, setAmount] = useState('1');
   const [transactionHash, setTransactionHash] = useState('');
+  const [transactionId, setTransactionId] = useState('');
   const [transferStatus, setTransferStatus] = useState('');
   const [feeOptions, setFeeOptions] = useState<FeeOptionWithBalance[]>([]);
   const [isBusy, setIsBusy] = useState(false);
@@ -99,6 +100,7 @@ export function TronExample({ walletAddress }: { walletAddress: string }) {
     setIsBusy(true);
     setTransferStatus('Preparing transfer...');
     setTransactionHash('');
+    setTransactionId('');
     try {
       const options = {
         network: TronNetworks.nile,
@@ -133,7 +135,8 @@ export function TronExample({ walletAddress }: { walletAddress: string }) {
         });
       }
 
-      setTransactionHash(transaction.txnHash ?? transaction.txnId);
+      setTransactionHash(transaction.txnHash ?? '');
+      setTransactionId(transaction.txnId);
       setTransferStatus(
         transaction.status === 'executed' || transaction.status === 'failed'
           ? `Transfer ${transaction.status}.`
@@ -335,19 +338,23 @@ export function TronExample({ walletAddress }: { walletAddress: string }) {
           >
             Send on Tron Nile
           </button>
-          {transactionHash && (
+          {(transactionHash || transactionId) && (
             <div className="result-block">
               <p className="result labeled-result">
-                <span className="result-label">Transaction hash</span>
-                <code className="result-value">{transactionHash}</code>
+                <span className="result-label">
+                  {transactionHash ? 'Transaction hash' : 'Transaction ID'}
+                </span>
+                <code className="result-value">{transactionHash || transactionId}</code>
               </p>
-              <a
-                href={tronTransactionExplorerUrl(transactionHash)}
-                target="_blank"
-                rel="noreferrer"
-              >
-                View on Tronscan
-              </a>
+              {transactionHash && (
+                <a
+                  href={tronTransactionExplorerUrl(transactionHash)}
+                  target="_blank"
+                  rel="noreferrer"
+                >
+                  View on Tronscan
+                </a>
+              )}
             </div>
           )}
           {transferStatus && <output>{transferStatus}</output>}
