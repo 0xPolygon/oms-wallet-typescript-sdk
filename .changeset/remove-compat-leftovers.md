@@ -1,6 +1,6 @@
 ---
-"@polygonlabs/oms-wallet": patch
-"@polygonlabs/oms-wallet-wagmi-connector": patch
+"@polygonlabs/oms-wallet": minor
+"@polygonlabs/oms-wallet-wagmi-connector": minor
 ---
 
 Indexer responses, pending OIDC redirects, and the wagmi connector's wallet type now accept only the current shapes.

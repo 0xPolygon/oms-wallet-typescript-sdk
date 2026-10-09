@@ -9,12 +9,13 @@ This note documents the wallet session expiry flow for maintainers. Public API b
 - Active sessions can expire from the timer or from a protected wallet operation checking the session before use.
 - Pending manual wallet selection uses the same auth metadata and expiry timer before a wallet is activated.
 - `signOut()` or a new auth flow clears or replaces stored session metadata, which cancels stale expired-session replay.
+- Records that are not version 2 (SDK 0.3.x), are malformed, or have a different scope are deleted on load and never replayed.
 
 ## Flow
 
 ```mermaid
 flowchart TD
-  A["WalletClient constructor"] --> B{"Stored wallet id and address?"}
+  A["WalletClient constructor"] --> B{"Valid version 2 record with wallet and matching scope?"}
   B -- "No" --> C["Start signed out"]
 
   B -- "Yes" --> D["Build restored session snapshot"]

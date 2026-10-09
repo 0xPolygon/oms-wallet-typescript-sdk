@@ -53,6 +53,12 @@ wallet selection was still pending.
 Saved sessions now record the wallet's type. Sessions saved by 0.3.x do not, so 0.4.0 discards them
 on load and users sign in once after upgrading.
 
+### Invalid Ethereum wallet addresses are rejected
+
+A wallet returned by WaaS (auth, `listWallets`, `useWallet`, `createWallet`, import) whose Ethereum
+address is not a valid hex address now fails with `OMSWalletResponseError` (`OMS_INVALID_RESPONSE`)
+instead of being returned as a viem `Address`. Checksum casing is not enforced.
+
 ### Exhaustive wallet-type checks
 
 `WalletType` gained `Tron` and `WalletAccount` gained `TronWalletAccount`. Exhaustive `switch`
@@ -138,6 +144,13 @@ if (error.upstreamError?.code === '7313') {}
 TypeScript flags direct `===` comparisons with a number, but not `switch` cases, `Number(...)`
 conversions, or serialized logs, which now see a string.
 
+### `callContract` rejects full function signatures
+
+`callContract` (and the new `callTronContract`) now throws `OMSWalletValidationError`
+(`OMS_VALIDATION_ERROR`) before any request when `method` is not a bare function name, for example
+`'transfer(address,uint256)'`. Pass `'transfer'`; the wallet service builds the signature from the
+`args` types. Previously the request reached WaaS and failed with a request error.
+
 ### `AuthMode` lists only OIDC redirect modes
 
 `AuthMode.OTP` and `AuthMode.IDToken` were removed; no SDK parameter accepted them. `AuthMode` now
@@ -155,6 +168,14 @@ import type { OMSWalletClient, OMSWalletIndexerClient } from '@polygonlabs/oms-w
 // After
 import type { WalletClient, IndexerClient } from '@polygonlabs/oms-wallet'
 ```
+
+### Stricter indexer and redirect-state parsing
+
+Indexer responses are read only with the gateway's field names (`balance`, `tokenIds` on transfers,
+`tokenId` on token metadata and metadata assets). Test doubles that still return the old alternate
+spellings now fail with `OMS_INVALID_RESPONSE`. A pending OIDC redirect record without a valid
+`walletType` is rejected with `Pending OIDC redirect auth is invalid` instead of continuing with an
+Ethereum wallet.
 
 ### Access pages include paging metadata
 

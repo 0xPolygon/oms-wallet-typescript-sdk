@@ -557,6 +557,9 @@ address values may be Base58Check.
 Omitting `data` from `sendTronTransaction` sends a plain TRX transfer. Passing `data`, even `'0x'`,
 makes the transaction a contract call: `'0x'` calls the recipient contract's payable fallback.
 
+Tron transactions report `status: 'pending'` with a `txnHash` until the block is solidified (about a
+minute), so status polling returns as soon as the hash is available (`statusResolution: 'resolved'`).
+
 Every Tron account gets a daily free bandwidth allowance (600 points, about two TRX transfers),
 so prepared Tron transactions are often `sponsored` even without a relayer. When the allowance is
 spent, WaaS quotes the TRX to burn as a single native fee option, which a fee selector receives like
