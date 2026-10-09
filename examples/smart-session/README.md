@@ -76,10 +76,9 @@ apps:
 pnpm dev
 ```
 
-If you initialized D1 with an older version of the example schema, delete the example's local
-`.wrangler/state/v3/d1` directory before running `pnpm dev` again. Remote schema changes require a
-new migration after deployment. Network and asset additions do not change the schema: the Worker's
-runtime configuration is the allowlist, while D1 stores the validated identifiers as text.
+Remote schema changes require a new migration after deployment. Network and asset additions do not
+change the schema: the Worker's runtime configuration is the allowlist, while D1 stores the
+validated identifiers as text.
 
 Open:
 

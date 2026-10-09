@@ -396,7 +396,7 @@ describe('IndexerClient', () => {
                         contractType: 'NATIVE',
                         from: '0x1111111111111111111111111111111111111111',
                         to: '0x9999999999999999999999999999999999999999',
-                        tokenIDs: ['0'],
+                        tokenIds: ['0'],
                         amounts: ['1'],
                         logIndex: 0
                       }

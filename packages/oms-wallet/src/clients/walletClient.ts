@@ -2244,6 +2244,7 @@ export class WalletClientImpl implements WalletClient {
         typeof parsed.verifier !== 'string' ||
         typeof parsed.nonce !== 'string' ||
         !isOidcAuthMode(parsed.authMode) ||
+        !isWalletType(parsed.walletType) ||
         typeof parsed.signerCredentialId !== 'string' ||
         !isCredentialSigningAlgorithm(signerKeyType) ||
         typeof parsed.expectedCallbackUri !== 'string' ||
@@ -2260,7 +2261,7 @@ export class WalletClientImpl implements WalletClient {
         authMode: parsed.authMode,
         provider: typeof parsed.provider === 'string' ? parsed.provider : undefined,
         providerLabel: typeof parsed.providerLabel === 'string' ? parsed.providerLabel : undefined,
-        walletType: isWalletType(parsed.walletType) ? parsed.walletType : WalletType.Ethereum,
+        walletType: parsed.walletType,
         walletSelection: isWalletSelectionBehavior(parsed.walletSelection)
           ? parsed.walletSelection
           : undefined,

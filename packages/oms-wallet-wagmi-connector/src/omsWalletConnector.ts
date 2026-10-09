@@ -124,7 +124,7 @@ export function omsWalletConnector(parameters: OMSWalletConnectorParameters) {
     };
 
     const subscribeSessionExpired = (omsWallet: OMSWalletLike): void => {
-      unsubscribeSessionExpired ??= omsWallet.wallet.onSessionExpired?.(() => {
+      unsubscribeSessionExpired ??= omsWallet.wallet.onSessionExpired(() => {
         void setManuallyDisconnected(true);
         config.emitter.emit('disconnect');
         provider?.emit('disconnect');

@@ -54,7 +54,7 @@ export interface WalletLike {
   sendTransaction(
     params: OMSWalletSendDataTransactionParams
   ): Promise<OMSWalletSendTransactionResponse>;
-  onSessionExpired?(listener: (event: unknown) => void | Promise<void>): () => void;
+  onSessionExpired(listener: (event: unknown) => void | Promise<void>): () => void;
 }
 
 export interface OMSWalletLike {

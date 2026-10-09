@@ -334,7 +334,6 @@ interface NativeTokenBalanceRaw {
   name?: unknown;
   symbol?: unknown;
   balance?: unknown;
-  balanceWei?: unknown;
   balanceUSD?: unknown;
   priceUSD?: unknown;
   priceUpdatedAt?: unknown;
@@ -380,7 +379,6 @@ interface TokenMetadataRaw {
   chainId?: unknown;
   contractAddress?: unknown;
   tokenId?: unknown;
-  tokenID?: unknown;
   source?: unknown;
   name?: unknown;
   description?: unknown;
@@ -405,7 +403,6 @@ interface TokenMetadataAssetRaw {
   id?: unknown;
   collectionId?: unknown;
   tokenId?: unknown;
-  tokenID?: unknown;
   url?: unknown;
   metadataField?: unknown;
   name?: unknown;
@@ -433,7 +430,6 @@ interface TransactionTransferRaw {
   from?: unknown;
   to?: unknown;
   tokenIds?: unknown;
-  tokenIDs?: unknown;
   amounts?: unknown;
   logIndex?: unknown;
   amountsUSD?: unknown;
@@ -955,7 +951,7 @@ function mapNativeTokenBalance(raw: NativeTokenBalanceRaw): NativeTokenBalance {
     accountAddress: requiredString(raw.accountAddress, 'nativeBalances[].accountAddress'),
     name: requiredString(raw.name, 'nativeBalances[].name'),
     symbol: requiredString(raw.symbol, 'nativeBalances[].symbol'),
-    balance: requiredString(raw.balance ?? raw.balanceWei, 'nativeBalances[].balance'),
+    balance: requiredString(raw.balance, 'nativeBalances[].balance'),
     balanceUSD: optionalString(raw.balanceUSD, 'nativeBalances[].balanceUSD'),
     priceUSD: optionalString(raw.priceUSD, 'nativeBalances[].priceUSD'),
     priceUpdatedAt: optionalString(raw.priceUpdatedAt, 'nativeBalances[].priceUpdatedAt'),
@@ -1007,10 +1003,7 @@ function mapTransactionTransfer(value: unknown): TransactionTransfer {
     contractType: requiredString(raw.contractType, 'transactions[].transfers[].contractType'),
     from: requiredString(raw.from, 'transactions[].transfers[].from'),
     to: requiredString(raw.to, 'transactions[].transfers[].to'),
-    tokenIds: optionalStringArray(
-      raw.tokenIds ?? raw.tokenIDs,
-      'transactions[].transfers[].tokenIds'
-    ),
+    tokenIds: optionalStringArray(raw.tokenIds, 'transactions[].transfers[].tokenIds'),
     amounts: requiredStringArray(raw.amounts, 'transactions[].transfers[].amounts'),
     logIndex: requiredNumber(raw.logIndex, 'transactions[].transfers[].logIndex'),
     amountsUSD: optionalStringArray(raw.amountsUSD, 'transactions[].transfers[].amountsUSD'),
@@ -1078,7 +1071,7 @@ function mapTokenMetadata(value: unknown): TokenMetadata {
   return {
     chainId: optionalNumber(raw.chainId, 'tokenMetadata.chainId'),
     contractAddress: optionalString(raw.contractAddress, 'tokenMetadata.contractAddress'),
-    tokenId: requiredString(raw.tokenId ?? raw.tokenID, 'tokenMetadata.tokenId'),
+    tokenId: requiredString(raw.tokenId, 'tokenMetadata.tokenId'),
     source: requiredString(raw.source, 'tokenMetadata.source'),
     name: requiredString(raw.name, 'tokenMetadata.name'),
     description: optionalString(raw.description, 'tokenMetadata.description'),
@@ -1105,7 +1098,7 @@ function mapTokenMetadataAsset(value: unknown): TokenMetadataAsset {
   return {
     id: optionalNumber(raw.id, 'tokenMetadata.assets[].id'),
     collectionId: optionalNumber(raw.collectionId, 'tokenMetadata.assets[].collectionId'),
-    tokenId: optionalString(raw.tokenId ?? raw.tokenID, 'tokenMetadata.assets[].tokenId'),
+    tokenId: optionalString(raw.tokenId, 'tokenMetadata.assets[].tokenId'),
     url: optionalString(raw.url, 'tokenMetadata.assets[].url'),
     metadataField: optionalString(raw.metadataField, 'tokenMetadata.assets[].metadataField'),
     name: optionalString(raw.name, 'tokenMetadata.assets[].name'),
