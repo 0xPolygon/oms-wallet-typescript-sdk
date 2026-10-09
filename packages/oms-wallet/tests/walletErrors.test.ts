@@ -1,30 +1,10 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
-import { WalletClient } from '../src/clients/walletClient';
-import type { CredentialSigner } from '../src/credentialSigner';
+import { WalletClientImpl } from '../src/clients/walletClient';
 import { toOMSWalletError } from '../src/errors';
 import { AddressAlreadyImportedError } from '../src/generated/waas.gen';
 import { MemoryStorageManager } from '../src/storageManager';
-
-class MockSigner implements CredentialSigner {
-  readonly signingAlgorithm = 'ecdsa-p256-sha256';
-
-  async credentialId(): Promise<string> {
-    return '0x04' + '11'.repeat(64);
-  }
-
-  async nextNonce(): Promise<string> {
-    return '42';
-  }
-
-  async sign(): Promise<string> {
-    return '0x' + '22'.repeat(64);
-  }
-
-  async hasCredential(): Promise<boolean> {
-    return true;
-  }
-}
+import { MockSigner, jsonResponse, testEnvironment } from './fixtures/helpers.js';
 
 afterEach(() => {
   vi.restoreAllMocks();
@@ -33,7 +13,7 @@ afterEach(() => {
 
 describe('WalletClient errors', () => {
   it('wraps local validation failures separately from request failures', async () => {
-    const wallet = new WalletClient({
+    const wallet = new WalletClientImpl({
       publishableKey: 'publishable-key',
       projectId: 'project-id',
       environment: testEnvironment(),
@@ -59,7 +39,7 @@ describe('WalletClient errors', () => {
       vi.fn(async () => new Response('<html>Bad Gateway</html>', { status: 502 }))
     );
 
-    const wallet = new WalletClient({
+    const wallet = new WalletClientImpl({
       publishableKey: 'publishable-key',
       projectId: 'project-id',
       environment: testEnvironment(),
@@ -94,7 +74,7 @@ describe('WalletClient errors', () => {
     });
     vi.stubGlobal('fetch', fetchMock);
 
-    const wallet = new WalletClient({
+    const wallet = new WalletClientImpl({
       publishableKey: 'publishable-key',
       projectId: 'project-id',
       environment: testEnvironment(),
@@ -120,7 +100,7 @@ describe('WalletClient errors', () => {
   it('validates requested session lifetimes before auth requests', async () => {
     const fetchMock = vi.fn();
     vi.stubGlobal('fetch', fetchMock);
-    const wallet = new WalletClient({
+    const wallet = new WalletClientImpl({
       publishableKey: 'publishable-key',
       projectId: 'project-id',
       environment: testEnvironment(),
@@ -192,25 +172,10 @@ describe('WalletClient errors', () => {
   });
 });
 
-function seedEmailAuthAttempt(wallet: WalletClient): void {
+function seedEmailAuthAttempt(wallet: WalletClientImpl): void {
   (wallet as any).activeEmailAuthAttempt = {
     verifier: 'verifier-1',
     challenge: 'challenge-1',
     sessionLifetimeSeconds: 604_800
-  };
-}
-
-function jsonResponse(body: unknown, status = 200): Response {
-  return new Response(JSON.stringify(body), {
-    status,
-    headers: { 'Content-Type': 'application/json' }
-  });
-}
-
-function testEnvironment() {
-  return {
-    walletApiUrl: 'https://wallet.example',
-    indexerGatewayUrl: 'https://indexer.example',
-    solanaIndexerGatewayUrl: 'https://solana-indexer.example'
   };
 }

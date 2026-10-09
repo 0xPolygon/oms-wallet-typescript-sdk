@@ -1,15 +1,21 @@
 import type { ImportWalletParams } from './wallet.js';
 
+import { decodeBase58 } from './utils/base58.js';
 import { base64DecodeBytes, base64EncodeBytes, toArrayBuffer } from './utils/base64.js';
 
 const secp256k1Order = 0xfffffffffffffffffffffffffffffffebaaedce6af48a03bbfd25e8cd0364141n;
-const base58Alphabet = '123456789ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz';
 
 export function walletImportPlaintext(params: ImportWalletParams): Uint8Array {
   validateWalletImportReference(params.reference);
-  return params.type === 'ethereum'
-    ? ethereumPrivateKeyPlaintext(params.privateKey)
-    : solanaPrivateKeyPlaintext(params.privateKey);
+  switch (params.type) {
+    case 'ethereum':
+      return secp256k1PrivateKeyPlaintext(params.privateKey, 'Ethereum');
+    case 'tron':
+      // Tron uses the same secp256k1 private key as Ethereum.
+      return secp256k1PrivateKeyPlaintext(params.privateKey, 'Tron');
+    case 'solana':
+      return solanaPrivateKeyPlaintext(params.privateKey);
+  }
 }
 
 export function validateWalletImportReference(reference: string | undefined): void {
@@ -52,24 +58,26 @@ export function requireBase64(value: string, field: string): string {
   }
 }
 
-function ethereumPrivateKeyPlaintext(value: string | Uint8Array): Uint8Array {
+function secp256k1PrivateKeyPlaintext(value: string | Uint8Array, label: string): Uint8Array {
   if (typeof value === 'string') {
     const privateKey = trimAsciiWhitespace(value);
     if (!/^(?:0x)?[0-9a-fA-F]{64}$/.test(privateKey)) {
-      throw new Error('Ethereum privateKey must be 32 bytes or 64 hexadecimal characters');
+      throw new Error(`${label} privateKey must be 32 bytes or 64 hexadecimal characters`);
     }
-    requireValidSecp256k1Scalar(hexToBytes(privateKey.replace(/^0x/, '')));
+    requireValidSecp256k1Scalar(hexToBytes(privateKey.replace(/^0x/, '')), label);
     return new TextEncoder().encode(privateKey);
   }
-  if (value.length !== 32) throw new Error('Ethereum privateKey must contain exactly 32 bytes');
-  requireValidSecp256k1Scalar(value);
+  if (value.length !== 32) throw new Error(`${label} privateKey must contain exactly 32 bytes`);
+  requireValidSecp256k1Scalar(value, label);
   return Uint8Array.from(value);
 }
 
 function solanaPrivateKeyPlaintext(value: string | Uint8Array): Uint8Array {
   if (typeof value === 'string') {
     const privateKey = trimAsciiWhitespace(value);
+    if (!privateKey) throw new Error('Solana privateKey is required');
     const decoded = decodeBase58(privateKey);
+    if (!decoded) throw new Error('Solana privateKey must be base58 encoded');
     if (decoded.length !== 32 && decoded.length !== 64) {
       throw new Error('Solana privateKey must decode to a 32-byte seed or 64-byte keypair');
     }
@@ -84,33 +92,12 @@ function solanaPrivateKeyPlaintext(value: string | Uint8Array): Uint8Array {
   return Uint8Array.from(value);
 }
 
-function requireValidSecp256k1Scalar(bytes: Uint8Array): void {
+function requireValidSecp256k1Scalar(bytes: Uint8Array, label: string): void {
   let scalar = 0n;
   for (const byte of bytes) scalar = (scalar << 8n) | BigInt(byte);
   if (scalar === 0n || scalar >= secp256k1Order) {
-    throw new Error('Ethereum privateKey is outside the valid secp256k1 scalar range');
+    throw new Error(`${label} privateKey is outside the valid secp256k1 scalar range`);
   }
-}
-
-function decodeBase58(value: string): Uint8Array {
-  if (!value) throw new Error('Solana privateKey is required');
-  let decoded = 0n;
-  for (const character of value) {
-    const index = base58Alphabet.indexOf(character);
-    if (index < 0) throw new Error('Solana privateKey must be base58 encoded');
-    decoded = decoded * 58n + BigInt(index);
-  }
-
-  const bytes: number[] = [];
-  while (decoded > 0n) {
-    bytes.push(Number(decoded & 0xffn));
-    decoded >>= 8n;
-  }
-  bytes.reverse();
-  for (let index = 0; index < value.length && value[index] === '1'; index += 1) {
-    bytes.unshift(0);
-  }
-  return Uint8Array.from(bytes);
 }
 
 function hexToBytes(value: string): Uint8Array {

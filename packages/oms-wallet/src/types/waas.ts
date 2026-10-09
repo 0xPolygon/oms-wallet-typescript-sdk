@@ -1,6 +1,5 @@
+/** OIDC redirect auth modes accepted by `CustomOidcProviderConfig.authMode`. */
 export const AuthMode = Object.freeze({
-  OTP: 'otp',
-  IDToken: 'id-token',
   AuthCode: 'auth-code',
   AuthCodePKCE: 'auth-code-pkce'
 } as const);
@@ -10,7 +9,8 @@ export type OidcAuthMode = typeof AuthMode.AuthCode | typeof AuthMode.AuthCodePK
 
 export const WalletType = Object.freeze({
   Ethereum: 'ethereum',
-  Solana: 'solana'
+  Solana: 'solana',
+  Tron: 'tron'
 } as const);
 
 export type WalletType = (typeof WalletType)[keyof typeof WalletType];
@@ -65,9 +65,9 @@ export interface FeeToken {
   symbol: string;
   type: string;
   decimals?: number;
-  logoURL?: string;
+  logoUrl?: string;
   contractAddress?: string;
-  tokenID?: string;
+  tokenId?: string;
 }
 
 export interface FeeOption {

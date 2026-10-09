@@ -1,6 +1,6 @@
 # OMS Wallet TypeScript SDK
 
-Build non-custodial EVM and Solana wallet experiences in TypeScript with OMS Wallet: email and OIDC
+Build non-custodial EVM, Solana, and Tron wallet experiences in TypeScript with OMS Wallet: email and OIDC
 auth, session restore, message signing, transaction submission, attested opt-in key import, smart
 sessions, and token balance queries.
 
@@ -45,7 +45,7 @@ The SDK derives the wallet API and indexer endpoints from the publishable key pr
 ## Quick Start
 
 ```typescript
-import { Networks, OMSWallet } from '@polygonlabs/oms-wallet'
+import { Networks, OMSWallet, WalletType } from '@polygonlabs/oms-wallet'
 
 const omsWallet = new OMSWallet({
   publishableKey: 'your-publishable-key',
@@ -55,10 +55,11 @@ const omsWallet = new OMSWallet({
 await omsWallet.wallet.startEmailAuth({ email: 'user@example.com' })
 
 // 2. User enters the code from their inbox.
-const { walletAddress } = await omsWallet.wallet.completeEmailAuth({ code: '123456' })
+const { wallet } = await omsWallet.wallet.completeEmailAuth({ code: '123456' })
+if (wallet.type !== WalletType.Ethereum) throw new Error('Expected an Ethereum wallet')
 
 // 3. The wallet is ready
-console.log('Wallet address:', walletAddress)
+console.log('Wallet address:', wallet.address)
 
 // 4. Prove the wallet can sign without moving funds.
 const signature = await omsWallet.wallet.signMessage({
@@ -69,7 +70,7 @@ console.log('Signature:', signature)
 
 // 5. Read balances from the chains your app needs.
 const balances = await omsWallet.indexer.getBalances({
-  walletAddress,
+  walletAddress: wallet.address,
   networks: [Networks.polygon, Networks.base, Networks.arbitrum],
   includeMetadata: true,
 })
@@ -82,8 +83,8 @@ console.log('Balances:', balances)
 
 | Property | Type | Description |
 |---|---|---|
-| `omsWallet.wallet` | `OMSWalletClient` | Authentication, signing, and transaction submission. |
-| `omsWallet.indexer` | `OMSWalletIndexerClient` | Read token balances and on-chain state. |
+| `omsWallet.wallet` | `WalletClient` | Authentication, signing, and transaction submission. |
+| `omsWallet.indexer` | `IndexerClient` | Read token balances and on-chain state. |
 
 ## Security Model
 
@@ -102,7 +103,7 @@ OMS supports email-based OTP, OIDC ID-token auth, and OIDC authorization-code re
 Email OTP is a two-step flow:
 
 1. **`startEmailAuth({ email, sessionLifetimeSeconds? })`** — validates the requested session lifetime, clears any active session, and sends a one-time code to the user's inbox.
-2. **`completeEmailAuth({ code })`** — verifies the code, then automatically loads an existing wallet or creates a new one if none exists. Returns `{ walletAddress, wallet, wallets, credential }`.
+2. **`completeEmailAuth({ code })`** — verifies the code, then automatically loads an existing wallet or creates a new one if none exists. Returns `{ wallet, wallets, credential }`.
 
 Use manual wallet selection when the app needs to present wallet choices:
 
@@ -134,8 +135,8 @@ void omsWallet.wallet.signInWithOidcRedirect({ provider: OmsRelayOidcProviders.a
 
 // On the callback page:
 const result = await omsWallet.wallet.completeOidcRedirectAuth()
-if (result && 'walletAddress' in result) {
-  console.log('Wallet address:', result.walletAddress)
+if (result && 'wallet' in result) {
+  console.log('Wallet address:', result.wallet.address)
 }
 ```
 
@@ -151,8 +152,8 @@ window.location.assign(authorizationUrl)
 
 // On the callback route:
 const result = await omsWallet.wallet.completeOidcRedirectAuth()
-if (result && 'walletAddress' in result) {
-  console.log('Wallet address:', result.walletAddress)
+if (result && 'wallet' in result) {
+  console.log('Wallet address:', result.wallet.address)
 }
 ```
 
@@ -195,7 +196,7 @@ const result = await omsWallet.wallet.signInWithOidcIdToken({
   audience: 'YOUR_WEB_CLIENT_ID',
 })
 
-console.log('Wallet address:', result.walletAddress)
+console.log('Wallet address:', result.wallet.address)
 ```
 
 Use `walletSelection: 'manual'` with `signInWithOidcIdToken` when your app needs
@@ -205,22 +206,30 @@ to present its own wallet picker after the token is verified.
 
 Email and OIDC auth both persist the active wallet session in the configured SDK storage. The versioned session record is scoped to the publishable key project and API environment. A client rejects and clears a stored session when either scope differs. Browser storage defaults to `localStorage` when available; non-browser runtimes fall back to in-memory storage unless you provide a custom `StorageManager`. Browser signing defaults to a non-extractable WebCrypto P-256 credential using `ecdsa-p256-sha256`. Completed auth requests ask the wallet API for a one-week session lifetime.
 
-Pass `sessionLifetimeSeconds` to `startEmailAuth`, `signInWithOidcIdToken`, `startOidcRedirectAuth`, `completeOidcRedirectAuth`, or `signInWithOidcRedirect` to request a different session lifetime. Values must be integer seconds from `1` through `2592000` (30 days). For OIDC redirects, values passed at start are stored with the pending redirect state and used on callback completion unless completion overrides them.
+Pass `sessionLifetimeSeconds` to `startEmailAuth`, `signInWithOidcIdToken`, `startOidcRedirectAuth`, `completeOidcRedirectAuth`, or `signInWithOidcRedirect` to request a different session lifetime. Values must be integer seconds from `1` through `2592000` (30 days), exported as `MAX_SESSION_LIFETIME_SECONDS`; the one-week default is exported as `DEFAULT_SESSION_LIFETIME_SECONDS`. For OIDC redirects, values passed at start are stored with the pending redirect state and used on callback completion unless completion overrides them.
 
-Use `omsWallet.wallet.walletAddress` when you only need the active wallet address. Use `omsWallet.wallet.session` when you also need credential expiry or structured auth metadata.
+Use `omsWallet.wallet.activeWallet` for the active wallet. It has the same shape as the entries `listWallets()` returns and is `undefined` when signed out. Narrow on `type` to get the address type for that wallet family; Ethereum addresses are typed as viem `Address`. Use `omsWallet.wallet.session` for credential expiry and structured auth metadata. It is defined exactly when `activeWallet` is.
 
 ```typescript
-const walletAddress = omsWallet.wallet.walletAddress
-const { expiresAt, auth } = omsWallet.wallet.session
-const accountEmail = auth?.email
-const authLabel = auth?.type === 'oidc'
-  ? auth.providerLabel ?? auth.provider ?? auth.issuer
-  : auth?.type === 'email'
+import { WalletType } from '@polygonlabs/oms-wallet'
+
+const activeWallet = omsWallet.wallet.activeWallet
+if (!activeWallet) {
+  // Show sign-in.
+} else if (activeWallet.type === WalletType.Ethereum) {
+  console.log('EVM address:', activeWallet.address) // viem Address
+}
+
+const session = omsWallet.wallet.session
+const accountEmail = session?.auth.email
+const authLabel = session?.auth.type === 'oidc'
+  ? session.auth.providerLabel ?? session.auth.provider ?? session.auth.issuer
+  : session?.auth.type === 'email'
     ? 'Email'
     : 'Unknown'
 ```
 
-The `session` value is a readonly snapshot. Changing the returned object does not update SDK state or persisted session metadata.
+`activeWallet` and `session` return readonly snapshots. Changing a returned object does not update SDK state or persisted session metadata.
 
 Use `omsWallet.wallet.getIdToken({ ttlSeconds, customClaims })` to request an ID token for the active wallet session.
 
@@ -233,9 +242,10 @@ const omsWallet = new OMSWallet({
   publishableKey: 'your-publishable-key',
 })
 
-const unsubscribe = omsWallet.wallet.onSessionExpired(({ session }) => {
+const unsubscribe = omsWallet.wallet.onSessionExpired(({ wallet, session }) => {
   // Use the expired session metadata to populate and display your reauthentication UI.
-  console.info('Session expired:', session)
+  // `wallet` is undefined when the credential expired during a pending manual wallet selection.
+  console.info('Session expired:', wallet?.address, session.auth)
 })
 ```
 
@@ -281,8 +291,8 @@ console.log(wallet.keyOrigin === WalletKeyOrigin.Imported)
 
 The high-level method validates the key locally, fetches an attested recipient key, verifies the
 Nitro certificate chain, PCR0, freshness, nonce, signature, and request/response binding, and HPKE
-encrypts the private key before sending it. EVM keys can be 32 raw bytes or hexadecimal text;
-Solana keys can be a 32-byte seed, 64-byte keypair, or unambiguous base58 text. Pass raw bytes when
+encrypts the private key before sending it. EVM and Tron keys (both secp256k1) can be 32 raw bytes
+or hexadecimal text; Solana keys can be a 32-byte seed, 64-byte keypair, or unambiguous base58 text. Pass raw bytes when
 a valid base58 encoding is itself exactly 32 or 64 characters, because those string lengths are
 rejected as ambiguous. Imported keys are never stored by the SDK. Import also works while a manual
 wallet selection is pending, provided its wallet type matches the pending selection.
@@ -317,7 +327,7 @@ const privyExport = await response.json() as {
 }
 
 await omsWallet.wallet.importEncryptedWallet({
-  type: WalletType.Ethereum,
+  walletType: WalletType.Ethereum,
   keyMaterial: {
     keyId: recipient.keyId,
     cipherSuite: recipient.cipherSuite,
@@ -336,16 +346,17 @@ For cross-origin browser use, the WaaS deployment must include `X-Attestation-Do
 
 ### Sign and Verify EVM Messages
 
-EVM message signing and verification require an Ethereum wallet. Signing requires a network;
-verification can omit it for EOA signatures but requires it for smart-wallet signatures. Narrow the
-active wallet account before passing its address to the verification method:
+EVM message signing requires an active Ethereum wallet and a network. Verification can omit the
+network for EOA signatures but requires it for smart-wallet signatures. Every `isValid…Signature`
+method verifies against `walletAddress`, which needs no session, or against the active wallet's
+address when `walletAddress` is omitted. Omitting it without an active session throws
+`OMSWalletSessionError`; omitting it while the active wallet belongs to another family throws
+`OMSWalletValidationError` before any request.
 
 ```typescript
 import { Networks, WalletType } from '@polygonlabs/oms-wallet'
 
-const activeWallet = (await omsWallet.wallet.listWallets()).find(
-  (wallet) => wallet.address === omsWallet.wallet.walletAddress,
-)
+const activeWallet = omsWallet.wallet.activeWallet
 if (activeWallet?.type !== WalletType.Ethereum) {
   throw new Error('An Ethereum wallet is required')
 }
@@ -380,9 +391,7 @@ const typedData = {
   message: { orderId: 1042n, amount: 1_000_000n },
 } as const
 
-const activeWallet = (await omsWallet.wallet.listWallets()).find(
-  (wallet) => wallet.address === omsWallet.wallet.walletAddress,
-)
+const activeWallet = omsWallet.wallet.activeWallet
 if (activeWallet?.type !== WalletType.Ethereum) {
   throw new Error('An Ethereum wallet is required')
 }
@@ -403,12 +412,12 @@ const isValid = await omsWallet.wallet.isValidTypedDataSignature({
 ### Query Balances
 
 ```typescript
-const { walletAddress } = omsWallet.wallet
-if (!walletAddress) throw new Error('No active wallet session')
+const activeWallet = omsWallet.wallet.activeWallet
+if (activeWallet?.type !== WalletType.Ethereum) throw new Error('No active Ethereum wallet')
 
 const result = await omsWallet.indexer.getBalances({
   networks: [Networks.polygon, Networks.base, Networks.arbitrum],
-  walletAddress,
+  walletAddress: activeWallet.address,
   includeMetadata: true,
 })
 
@@ -453,7 +462,7 @@ message verification:
 ```typescript
 import { WalletType } from '@polygonlabs/oms-wallet'
 
-const { wallet } = await omsWallet.wallet.createWallet({ type: WalletType.Solana })
+const { wallet } = await omsWallet.wallet.createWallet({ walletType: WalletType.Solana })
 
 const signature = await omsWallet.wallet.signSolanaMessage({
   message: 'some message to sign',
@@ -500,14 +509,89 @@ only the rent for a newly created token account is paid through the returned fee
 
 Pass `contractAddresses` to filter balances to specific token contracts. Omit `networks` to query mainnets by default, or pass `networkType: 'TESTNETS'` / `'ALL'`. With `includeMetadata: true`, ERC-20 decimals are available as `contractInfo.decimals`. The response is paginated; pass `page` when requesting later pages.
 
+### Tron Wallets
+
+Tron wallets are EOAs and always execute in native mode, so the Tron methods take no `mode`
+parameter. Create one with `createWallet({ walletType: WalletType.Tron })`, sign in with
+`walletType: WalletType.Tron`, or import a secp256k1 private key with `type: 'tron'`. Tron addresses
+are Base58Check strings (`T…`). Supported networks are `TronNetworks.mainnet` and
+`TronNetworks.nile`. TRC-10 tokens are not supported.
+
+```typescript
+import { TronNetworks, WalletType } from '@polygonlabs/oms-wallet'
+
+const { wallet } = await omsWallet.wallet.createWallet({ walletType: WalletType.Tron })
+
+const signature = await omsWallet.wallet.signTronMessage({ message: 'some message to sign' })
+const isValid = await omsWallet.wallet.isValidTronMessageSignature({
+  walletAddress: wallet.address,
+  message: 'some message to sign',
+  signature,
+})
+
+// Replace with the Base58Check (`T…`) address that should receive the funds.
+const recipient = '<recipient T… address>'
+
+// TRX transfer. Values are in sun (1 TRX = 1,000,000 sun).
+const trxTransfer = await omsWallet.wallet.sendTronTransaction({
+  network: TronNetworks.nile,
+  to: recipient,
+  value: 1_000_000n,
+})
+
+// TRC-20 transfer. The wallet service ABI-encodes the call; address arguments accept `T…`.
+const trc20Transfer = await omsWallet.wallet.callTronContract({
+  network: TronNetworks.nile,
+  contractAddress: 'TXYZopYRdj2D9XRtbG411XZZ3kM5VkAeBf',
+  method: 'transfer',
+  args: [
+    { type: 'address', value: recipient },
+    { type: 'uint256', value: '1000000' },
+  ],
+})
+```
+
+`signTronTypedData` and `isValidTronTypedDataSignature` sign and verify TIP-712 typed data, whose
+address values may be Base58Check.
+
+Omitting `data` from `sendTronTransaction` sends a plain TRX transfer. Passing `data`, even `'0x'`,
+makes the transaction a contract call: `'0x'` calls the recipient contract's payable fallback.
+
+Tron transactions report `status: 'pending'` with a `txnHash` until the block is solidified (about a
+minute), so status polling returns as soon as the hash is available (`statusResolution: 'resolved'`).
+
+Every Tron account gets a daily free bandwidth allowance (600 points, about two TRX transfers),
+so prepared Tron transactions are often `sponsored` even without a relayer. When the allowance is
+spent, WaaS quotes the TRX to burn as a single native fee option, which a fee selector receives like
+any other fee option.
+
+Use `getTronBalances` for TRX and TRC-20 balances. Omit `networks` to query both Tron Mainnet and
+Nile, or pass either network explicitly. Results have the same structure as `getSolanaBalances`
+(`status`, `balances`, and per-network `errors`) with precision-safe raw and formatted balance
+strings. Token entries differ: TRC-20 entries have `tokenStandard: 'trc20'` and `contractAddress`,
+where Solana SPL entries have `tokenProgram` and `mintAddress`. Pass `contractAddresses` or `excludedContractAddresses` to filter tokens.
+Individual network failures are reported in `errors` without discarding balances returned by the
+other requested network.
+
+```typescript
+const balances = await omsWallet.indexer.getTronBalances({
+  walletAddress: wallet.address,
+  networks: [TronNetworks.nile],
+})
+
+for (const balance of balances.balances) {
+  console.log(balance.network, balance.symbol, balance.formattedBalance)
+}
+```
+
 ### Query Transaction History
 
 ```typescript
-const { walletAddress } = omsWallet.wallet
-if (!walletAddress) throw new Error('No active wallet session')
+const activeWallet = omsWallet.wallet.activeWallet
+if (activeWallet?.type !== WalletType.Ethereum) throw new Error('No active Ethereum wallet')
 
 const history = await omsWallet.indexer.getTransactionHistory({
-  walletAddress,
+  walletAddress: activeWallet.address,
   networks: [Networks.polygon, Networks.base, Networks.arbitrum],
   includeMetadata: true,
 })
@@ -527,7 +611,9 @@ Install `viem` when using `parseUnits` for transaction values:
 pnpm add viem
 ```
 
-`sendTransaction` has three overloaded signatures to cover the most common patterns.
+`sendTransaction` has four overloaded signatures: native transfers, raw `data` calls, ABI-encoded
+contract calls, and one that accepts the `SendTransactionParams` union. The examples below cover the
+first three.
 
 #### First Testnet Transfer
 
@@ -590,13 +676,16 @@ import { parseUnits } from 'viem'
 const tx = await omsWallet.wallet.callContract({
   network: Networks.amoy,
   contractAddress: '0x3333333333333333333333333333333333333333',
-  method: 'transfer(address,uint256)',
+  method: 'transfer',
   args: [
     { type: 'address', value: '0x1111111111111111111111111111111111111111' },
     { type: 'uint256', value: parseUnits('0.001', 18).toString() },
   ],
 })
 ```
+
+Pass the function name only (`'transfer'`, not `'transfer(address,uint256)'`). The wallet service
+builds the signature from the `args` types, and the SDK rejects a full signature locally.
 
 `sendTransaction` and `callContract` prepare and execute the transaction, then poll the wallet API for
 the latest transaction status. The response includes `txnId`, `status`, and `txnHash`
@@ -641,11 +730,11 @@ await omsWallet.wallet.sendTransaction({
 
 If the wallet API returns fee options, pass a selector to choose one. The
 selector receives `FeeOptionWithBalance` values. For Ethereum fees, `balance`
-contains the matching `TokenBalance` when available. For both Ethereum and Solana fees,
+contains the matching `TokenBalance` when available. For Ethereum, Solana, and Tron fees,
 `available` is formatted with the token decimals, `availableRaw` keeps the raw integer
 value, and `decimals` is the token decimal count used for formatting. Use
 `FeeOptionSelector.firstAvailable` to choose the first option the wallet can
-pay on Ethereum or Solana, or return `option.selection` from a custom selector. A
+pay on Ethereum, Solana, or Tron, or return `option.selection` from a custom selector. A
 sponsored transaction invokes the selector with an empty array. Resolve with `undefined`
 after acknowledging the free fee, or throw to stop execution.
 `FeeOptionSelector.firstAvailable` returns `undefined` for that empty array and continues
@@ -675,6 +764,8 @@ const tx = await omsWallet.wallet.sendTransaction({
 
 | Publishable key prefix | API base URL |
 |---|---|
+| `pk_local_sdbx_` | `https://sandbox-api.local.polygon-dev.technology` |
+| `pk_local_live_` | `https://api.local.polygon-dev.technology` |
 | `pk_dev_sdbx_` | `https://sandbox-api.dev.polygon-dev.technology` |
 | `pk_dev_live_` | `https://api.dev.polygon-dev.technology` |
 | `pk_stg_sdbx_` | `https://sandbox-api.stg.polygon-dev.technology` |
@@ -725,7 +816,7 @@ OIDC redirect auth uses separate transient storage for verifier/state data. In b
 
 ### Networks
 
-The SDK exports `Networks`, `findNetworkById(id)`, and `findNetworkByName(name)` for the networks currently configured by OMS. Each network has `id`, `name`, `nativeTokenSymbol`, `explorerUrl`, and `displayName`. `name` is the registry/routing slug, while `displayName` is the user-facing label. `Network` is a closed SDK type: use a `Networks` value or a successful lookup result.
+The SDK exports `Networks`, `findNetworkById(chainId)`, and `findNetworkByName(name)` for the networks currently configured by OMS. Each network has `id`, `name`, `nativeTokenSymbol`, `explorerUrl`, and `displayName`. `name` is the registry/routing slug, while `displayName` is the user-facing label. `Network` is a closed SDK type: use a `Networks` value or a successful lookup result.
 
 The `network` parameter on all transaction and signing methods accepts a `Network` from the SDK registry:
 
@@ -757,9 +848,13 @@ console.log(findNetworkById(80002)) // Networks.amoy
 | `Networks.avalancheTestnet` | 43113 | `avalanche-testnet` | Avalanche Testnet | AVAX | `https://subnets-test.avax.network/c-chain` |
 | `Networks.katana` | 747474 | `katana` | Katana | ETH | `https://katanascan.com` |
 
+Solana and Tron networks are string identifiers rather than `Network` values: `SolanaNetworks.mainnet`
+(`'solana:mainnet'`), `SolanaNetworks.devnet` (`'solana:devnet'`), `TronNetworks.mainnet`
+(`'tron:mainnet'`), and `TronNetworks.nile` (`'tron:nile'`).
+
 ### Errors
 
-Public methods throw `OMSWalletError` subclasses with stable SDK fields such as `code`, `operation`, `status`, and `retryable`. When a failure comes from a remote OMS service response or transport failure, the error also includes `upstreamError` with normalized wallet API or indexer details for logging and service-specific troubleshooting. For `OMSWalletError` values, branch application logic on the SDK-level `code`.
+Public methods throw `OMSWalletError` subclasses with stable SDK fields such as `code`, `operation`, `status`, and `retryable`. When a failure comes from a remote OMS service response or transport failure, the error also includes `upstreamError` with normalized wallet API or indexer details for logging and service-specific troubleshooting. For `OMSWalletError` values, branch application logic on the SDK-level `code`. `upstreamError.code` is a string; numeric WebRPC codes are stringified (for example `'7313'`). `operation` values are exported as the `WalletOperation`, `IndexerOperation`, and `RemoteAccessOperation` constants, typed `OMSWalletOperation`.
 
 For transaction writes, `OMS_TRANSACTION_EXECUTION_UNCONFIRMED` means the SDK has a `txnId` from preparation, but the execute request failed before the SDK could confirm whether the transaction was submitted; do not blindly resend the same write. `OMS_TRANSACTION_STATUS_LOOKUP_FAILED` means the transaction was submitted but status polling failed, so retry status lookup with the returned `txnId`. `retryable` describes the failed SDK operation, not the whole user intent.
 
@@ -798,6 +893,12 @@ for (const grant of grants) {
 for await (const page of omsWallet.wallet.listAccessPages({ pageSize: 25 })) {
   console.log('Page:', page.grants)
 }
+
+// Or read one page at a time, passing the previous page's cursor to continue.
+const firstPage = await omsWallet.wallet.listAccessPage({ pageSize: 25 })
+const nextPage = firstPage.page?.cursor
+  ? await omsWallet.wallet.listAccessPage({ pageSize: 25, cursor: firstPage.page.cursor })
+  : undefined
 
 await omsWallet.wallet.revokeAccess({ credentialId: grants[0].credentialId })
 ```
@@ -913,7 +1014,7 @@ Runnable examples live in the
 
 | Example | What it shows | Live demo |
 |---|---|---|
-| [`react`](https://github.com/0xPolygon/oms-wallet-typescript-sdk/tree/master/examples/react) | Email, Google, and Apple sign-in, signing, transactions, balances, wallet management, Privy wallet import, and Solana | [Live demo](https://0xpolygon.github.io/oms-wallet-typescript-sdk/react-example/) |
+| [`react`](https://github.com/0xPolygon/oms-wallet-typescript-sdk/tree/master/examples/react) | Email, Google, and Apple sign-in, signing, transactions, balances, wallet management, Privy wallet import, Solana, and Tron | [Live demo](https://0xpolygon.github.io/oms-wallet-typescript-sdk/react-example/) |
 | [`wagmi`](https://github.com/0xPolygon/oms-wallet-typescript-sdk/tree/master/examples/wagmi) | The wagmi connector with the MetaMask connector and the Trails widget | [Live demo](https://0xpolygon.github.io/oms-wallet-typescript-sdk/wagmi-example/) |
 | [`trails-actions`](https://github.com/0xPolygon/oms-wallet-typescript-sdk/tree/master/examples/trails-actions) | Trails swap, Earn deposit, and Earn withdrawal flows | [Live demo](https://0xpolygon.github.io/oms-wallet-typescript-sdk/trails-actions-example/) |
 | [`custom-google-redirect`](https://github.com/0xPolygon/oms-wallet-typescript-sdk/tree/master/examples/custom-google-redirect) | Google as a custom OIDC provider with a localhost redirect URI | Local only |

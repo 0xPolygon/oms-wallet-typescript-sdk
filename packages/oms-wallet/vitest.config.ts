@@ -4,6 +4,6 @@ import 'dotenv/config';
 export default defineConfig({
   test: {
     fileParallelism: false,
-    include: ['tests/**/*.ts']
+    include: ['tests/**/*.test.ts']
   }
 });

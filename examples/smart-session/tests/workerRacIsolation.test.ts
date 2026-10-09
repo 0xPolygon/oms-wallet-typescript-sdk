@@ -68,7 +68,7 @@ vi.mock('../worker/rac.js', () => ({
             upstreamError: {
               service: 'waas',
               name: 'PreconditionFailed',
-              code: 7206,
+              code: '7206',
               message: 'Precondition failed; try again with a higher nonce value',
               status: 412
             }

@@ -1,5 +1,6 @@
 export { OMSWallet } from './omsWallet.js';
 export type { OMSWalletParams } from './omsWallet.js';
+export { DEFAULT_SESSION_LIFETIME_SECONDS, MAX_SESSION_LIFETIME_SECONDS } from './wallet.js';
 export { RemoteAccessClient } from './clients/remoteAccessClient.js';
 export type { RemoteAccessClientParams } from './clients/remoteAccessClient.js';
 export {
@@ -23,10 +24,12 @@ export {
 export {
   Networks,
   SolanaNetworks,
+  TronNetworks,
   findNetworkById,
   findNetworkByName,
   type Network,
-  type SolanaNetwork
+  type SolanaNetwork,
+  type TronNetwork
 } from './networks.js';
 export {
   AuthMode,
@@ -39,6 +42,7 @@ export {
   type AbiArg,
   type FeeOption,
   type FeeOptionSelection,
+  type FeeToken,
   type TransactionStatusResponse
 } from './types/waas.js';
 export {
@@ -54,6 +58,12 @@ export {
   type OMSWalletErrorCode,
   type OMSWalletUpstreamError
 } from './errors.js';
+export {
+  IndexerOperation,
+  RemoteAccessOperation,
+  WalletOperation,
+  type OMSWalletOperation
+} from './operations.js';
 export type {
   ExecutedRemoteTransaction,
   ExecuteRemoteTransactionParams,
@@ -78,29 +88,34 @@ export type {
   IsValidMessageSignatureParams,
   IsValidSolanaMessageSignatureParams,
   IsValidTypedDataSignatureParams,
+  IsValidTronMessageSignatureParams,
+  IsValidTronTypedDataSignatureParams,
   OMSWalletEmailSessionAuth,
   OMSWalletOidcSessionAuth,
   OMSWalletOidcSessionAuthFlow,
   OMSWalletSessionAuth,
   OMSWalletSessionExpiredEvent,
   OMSWalletSessionExpiredListener,
-  OMSWalletSessionState,
+  OMSWalletSession,
   WalletAccount,
   EthereumWalletAccount,
   SolanaWalletAccount,
+  TronWalletAccount,
   PendingWalletSelection,
   SignInWithOidcIdTokenParams,
   SignMessageParams,
   SignSolanaMessageParams,
   SignInWithOidcRedirectParams,
   SignTypedDataParams,
+  SignTronMessageParams,
+  SignTronTypedDataParams,
   StartEmailAuthParams,
   StartOidcRedirectAuthParams,
   StartOidcRedirectAuthResult,
   WalletActivationResult,
   WalletImportRecipientKey,
   WalletSelectionBehavior,
-  OMSWalletClient
+  WalletClient
 } from './wallet.js';
 export type {
   BalancesResult,
@@ -108,11 +123,12 @@ export type {
   ContractTokenBalance,
   GetBalancesParams,
   GetSolanaBalancesParams,
+  GetTronBalancesParams,
   GetTransactionHistoryParams,
   IndexerNetworkType,
   MetadataOptions,
   NativeTokenBalance,
-  OMSWalletIndexerClient,
+  IndexerClient,
   SolanaBalance,
   SolanaBalancesResult,
   SolanaFungibleTokenBalance,
@@ -129,7 +145,13 @@ export type {
   TokenMetadataAsset,
   Transaction,
   TransactionHistoryResult,
-  TransactionTransfer
+  TransactionTransfer,
+  TronBalance,
+  TronBalancesResult,
+  TronNativeBalance,
+  TronNetworkError,
+  TronFungibleTokenBalance,
+  TronVerificationStatus
 } from './clients/indexerClient.js';
 export type {
   AccessGrant,
@@ -137,6 +159,7 @@ export type {
   AuthorizeRemoteAccessParams,
   AuthorizedRemoteAccess,
   DirectAccessGrant,
+  ListAccessPageParams,
   ListAccessParams,
   RemoteAccessGrant,
   RemoteAccessSession,
@@ -155,6 +178,8 @@ export type {
   SendTransactionBase,
   SendTransactionParams,
   SendTransactionResponse,
+  SendTronTransactionParams,
+  CallTronContractParams,
   TransactionStatusPollingOptions
 } from './types/transactionTypes.js';
 export { FeeOptionSelector, feeOptionSelection } from './types/transactionTypes.js';

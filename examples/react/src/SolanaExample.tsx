@@ -34,6 +34,7 @@ export function SolanaExample({ walletAddress }: { walletAddress: string }) {
   const [recipient, setRecipient] = useState('');
   const [amount, setAmount] = useState('0.001');
   const [transactionSignature, setTransactionSignature] = useState('');
+  const [transactionId, setTransactionId] = useState('');
   const [transferStatus, setTransferStatus] = useState('');
   const [feeOptions, setFeeOptions] = useState<FeeOptionWithBalance[]>([]);
   const [isBusy, setIsBusy] = useState(false);
@@ -96,6 +97,7 @@ export function SolanaExample({ walletAddress }: { walletAddress: string }) {
     setIsBusy(true);
     setTransferStatus('Preparing relayed transfer...');
     setTransactionSignature('');
+    setTransactionId('');
     try {
       const asset =
         assetType === 'SOL' ? 'SOL' : splTokenType === 'USDC' ? DEVNET_USDC_MINT : mint.trim();
@@ -120,11 +122,12 @@ export function SolanaExample({ walletAddress }: { walletAddress: string }) {
         statusPolling: { timeoutMs: 120_000 }
       });
 
-      setTransactionSignature(transaction.txnHash ?? transaction.txnId);
+      setTransactionSignature(transaction.txnHash ?? '');
+      setTransactionId(transaction.txnId);
       setTransferStatus(
-        transaction.statusResolution === 'timed-out'
-          ? 'Transaction submitted. Confirmation is still pending.'
-          : `Transfer ${transaction.status}.`
+        transaction.status === 'executed' || transaction.status === 'failed'
+          ? `Transfer ${transaction.status}.`
+          : 'Transaction submitted.'
       );
       await refreshBalance();
     } catch (error) {
@@ -359,19 +362,23 @@ export function SolanaExample({ walletAddress }: { walletAddress: string }) {
           >
             Send on Solana Devnet
           </button>
-          {transactionSignature && (
+          {(transactionSignature || transactionId) && (
             <div className="result-block">
               <p className="result labeled-result">
-                <span className="result-label">Transaction signature</span>
-                <code className="result-value">{transactionSignature}</code>
+                <span className="result-label">
+                  {transactionSignature ? 'Transaction signature' : 'Transaction ID'}
+                </span>
+                <code className="result-value">{transactionSignature || transactionId}</code>
               </p>
-              <a
-                href={solanaTransactionExplorerUrl(transactionSignature)}
-                target="_blank"
-                rel="noreferrer"
-              >
-                View on Solana Explorer
-              </a>
+              {transactionSignature && (
+                <a
+                  href={solanaTransactionExplorerUrl(transactionSignature)}
+                  target="_blank"
+                  rel="noreferrer"
+                >
+                  View on Solana Explorer
+                </a>
+              )}
             </div>
           )}
           {transferStatus && <output>{transferStatus}</output>}
@@ -426,7 +433,7 @@ function errorMessage(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
 }
 
-function parseDecimalBaseUnits(value: string, decimals: number, label: string): bigint {
+export function parseDecimalBaseUnits(value: string, decimals: number, label: string): bigint {
   const normalized = value.trim();
   if (!/^\d+(\.\d+)?$/.test(normalized)) {
     throw new Error(`${label} must be a positive decimal value.`);
@@ -455,7 +462,7 @@ function parseTokenDecimals(value: string): number {
   return parsed;
 }
 
-function formatBaseUnits(value: bigint, decimals: number): string {
+export function formatBaseUnits(value: bigint, decimals: number): string {
   const divisor = 10n ** BigInt(decimals);
   const whole = value / divisor;
   const fraction = (value % divisor).toString().padStart(decimals, '0').replace(/0+$/, '');

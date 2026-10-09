@@ -1,7 +1,8 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
-import { IndexerClient } from '../src/clients/indexerClient';
-import { Networks, SolanaNetworks } from '../src/networks';
+import { IndexerClientImpl } from '../src/clients/indexerClient';
+import { Networks, SolanaNetworks, TronNetworks } from '../src/networks';
+import { testEnvironment } from './fixtures/helpers.js';
 
 afterEach(() => {
   vi.restoreAllMocks();
@@ -81,7 +82,7 @@ describe('IndexerClient', () => {
     );
     vi.stubGlobal('fetch', fetchMock);
 
-    const indexer = new IndexerClient({
+    const indexer = new IndexerClientImpl({
       publishableKey: 'publishable-key',
       environment: testEnvironment()
     });
@@ -170,7 +171,7 @@ describe('IndexerClient', () => {
     );
     vi.stubGlobal('fetch', fetchMock);
 
-    const indexer = new IndexerClient({
+    const indexer = new IndexerClientImpl({
       publishableKey: 'publishable-key',
       environment: testEnvironment()
     });
@@ -240,7 +241,7 @@ describe('IndexerClient', () => {
     );
     vi.stubGlobal('fetch', fetchMock);
 
-    const indexer = new IndexerClient({
+    const indexer = new IndexerClientImpl({
       publishableKey: 'publishable-key',
       environment: testEnvironment()
     });
@@ -316,7 +317,7 @@ describe('IndexerClient', () => {
     );
     vi.stubGlobal('fetch', fetchMock);
 
-    const indexer = new IndexerClient({
+    const indexer = new IndexerClientImpl({
       publishableKey: 'publishable-key',
       environment: testEnvironment()
     });
@@ -358,7 +359,7 @@ describe('IndexerClient', () => {
       )
     );
 
-    const indexer = new IndexerClient({
+    const indexer = new IndexerClientImpl({
       publishableKey: 'publishable-key',
       environment: testEnvironment()
     });
@@ -395,7 +396,7 @@ describe('IndexerClient', () => {
                         contractType: 'NATIVE',
                         from: '0x1111111111111111111111111111111111111111',
                         to: '0x9999999999999999999999999999999999999999',
-                        tokenIDs: ['0'],
+                        tokenIds: ['0'],
                         amounts: ['1'],
                         logIndex: 0
                       }
@@ -411,7 +412,7 @@ describe('IndexerClient', () => {
     );
     vi.stubGlobal('fetch', fetchMock);
 
-    const indexer = new IndexerClient({
+    const indexer = new IndexerClientImpl({
       publishableKey: 'publishable-key',
       environment: testEnvironment()
     });
@@ -482,7 +483,7 @@ describe('IndexerClient', () => {
       )
     );
 
-    const indexer = new IndexerClient({
+    const indexer = new IndexerClientImpl({
       publishableKey: 'publishable-key',
       environment: testEnvironment()
     });
@@ -522,7 +523,7 @@ describe('IndexerClient', () => {
       )
     );
 
-    const indexer = new IndexerClient({
+    const indexer = new IndexerClientImpl({
       publishableKey: 'publishable-key',
       environment: testEnvironment()
     });
@@ -551,7 +552,7 @@ describe('IndexerClient', () => {
     vi.stubGlobal('fetch', fetchMock);
     vi.stubGlobal('location', { origin: 'http://app.example' });
 
-    const indexer = new IndexerClient({
+    const indexer = new IndexerClientImpl({
       publishableKey: 'publishable-key',
       environment: testEnvironment()
     });
@@ -581,7 +582,7 @@ describe('IndexerClient', () => {
       )
     );
 
-    const indexer = new IndexerClient({
+    const indexer = new IndexerClientImpl({
       publishableKey: 'publishable-key',
       environment: testEnvironment()
     });
@@ -597,7 +598,7 @@ describe('IndexerClient', () => {
       status: 400,
       upstreamError: {
         name: 'WebrpcEndpoint',
-        code: 0,
+        code: '0',
         message: 'InvalidCredentials 1003: omsx-api: invalid credentials, requestId: req_123',
         service: 'indexer',
         status: 400
@@ -609,7 +610,7 @@ describe('IndexerClient', () => {
     const fetchMock = vi.fn(async () => new Response('not-json', { status: 200 }));
     vi.stubGlobal('fetch', fetchMock);
 
-    const indexer = new IndexerClient({
+    const indexer = new IndexerClientImpl({
       publishableKey: 'publishable-key',
       environment: testEnvironment()
     });
@@ -661,7 +662,7 @@ describe('IndexerClient', () => {
       )
     );
 
-    const indexer = new IndexerClient({
+    const indexer = new IndexerClientImpl({
       publishableKey: 'publishable-key',
       environment: testEnvironment()
     });
@@ -679,7 +680,7 @@ describe('IndexerClient', () => {
       vi.fn(async () => new Response('<html>Bad Gateway</html>', { status: 502 }))
     );
 
-    const indexer = new IndexerClient({
+    const indexer = new IndexerClientImpl({
       publishableKey: 'publishable-key',
       environment: testEnvironment()
     });
@@ -698,13 +699,220 @@ describe('IndexerClient', () => {
       retryable: true
     });
   });
-});
+  it('requests Tron balances through TronIndexerGateway and normalizes metadata', async () => {
+    const wallet = 'TW39NT9SCCv7aomYYXgh4wcUWag4XtVe2H';
+    const fetchMock = vi.fn(
+      async () =>
+        new Response(
+          JSON.stringify({
+            balances: [
+              {
+                network: 'tron:nile',
+                accountAddress: wallet,
+                assetType: 'fungible-token',
+                contractAddress: 'TXYZopYRdj2D9XRtbG411XZZ3kM5VkAeBf',
+                tokenStandard: 'trc20',
+                name: 'Tether USD',
+                symbol: 'USDT',
+                decimals: 6,
+                balance: '999000000',
+                formattedBalance: '999',
+                imageUrl: null,
+                metadataUri: null,
+                verificationStatus: 'unknown',
+                verificationSource: 'none',
+                priceUSD: null,
+                balanceUSD: null
+              },
+              {
+                network: 'tron:nile',
+                accountAddress: wallet,
+                assetType: 'native',
+                contractAddress: null,
+                tokenStandard: null,
+                name: 'Tron',
+                symbol: 'TRX',
+                decimals: 6,
+                balance: '983121000',
+                formattedBalance: '983.121',
+                imageUrl: '',
+                metadataUri: null,
+                verificationStatus: 'unknown',
+                verificationSource: 'none',
+                priceUSD: '0.27',
+                balanceUSD: '265.44'
+              }
+            ],
+            errors: [{ network: 'tron:mainnet', reason: 'RPC unavailable' }],
+            coverages: [{ network: 'tron:nile', tokenSymbols: ['USDT'], nativeIncluded: true }]
+          }),
+          { status: 200 }
+        )
+    );
+    vi.stubGlobal('fetch', fetchMock);
 
-function testEnvironment() {
-  return {
-    walletApiUrl: 'https://wallet.example',
-    apiRpcUrl: 'https://api.example',
-    indexerGatewayUrl: 'https://indexer.example',
-    solanaIndexerGatewayUrl: 'https://solana-indexer.example'
-  };
-}
+    const indexer = new IndexerClientImpl({
+      publishableKey: 'publishable-key',
+      environment: testEnvironment()
+    });
+
+    const result = await indexer.getTronBalances({
+      walletAddress: wallet,
+      networks: [TronNetworks.nile],
+      omitNativeBalances: false,
+      contractAddresses: ['TXYZopYRdj2D9XRtbG411XZZ3kM5VkAeBf'],
+      excludedContractAddresses: ['TR7NHqjeKQxGTCi8q8ZY4pL8otSzgjLj6t'],
+      includeMetadata: false
+    });
+
+    const [url, init] = fetchMock.mock.calls[0] as unknown as [string, RequestInit];
+    expect(url).toBe('https://tron-indexer.example/GetTokenBalancesDetails');
+    expect(init.headers).toMatchObject({
+      'Api-Key': 'publishable-key',
+      Webrpc: 'webrpc@v0.31.2;gen-typescript@v0.23.1;tron-indexer-gateway@v1'
+    });
+    expect(JSON.parse(init.body as string)).toEqual({
+      networks: ['tron:nile'],
+      filter: {
+        accountAddresses: [wallet],
+        omitNativeBalances: false,
+        contractWhitelist: ['TXYZopYRdj2D9XRtbG411XZZ3kM5VkAeBf'],
+        contractBlacklist: ['TR7NHqjeKQxGTCi8q8ZY4pL8otSzgjLj6t']
+      },
+      omitMetadata: true
+    });
+    expect(result).toEqual({
+      status: 200,
+      balances: [
+        {
+          network: 'tron:nile',
+          accountAddress: wallet,
+          assetType: 'fungible-token',
+          tokenStandard: 'trc20',
+          contractAddress: 'TXYZopYRdj2D9XRtbG411XZZ3kM5VkAeBf',
+          name: 'Tether USD',
+          symbol: 'USDT',
+          decimals: 6,
+          balance: '999000000',
+          formattedBalance: '999',
+          imageUrl: undefined,
+          metadataUri: undefined,
+          verificationStatus: 'unknown',
+          verificationSource: 'none',
+          priceUSD: undefined,
+          balanceUSD: undefined
+        },
+        {
+          network: 'tron:nile',
+          accountAddress: wallet,
+          assetType: 'native',
+          name: 'Tron',
+          symbol: 'TRX',
+          decimals: 6,
+          balance: '983121000',
+          formattedBalance: '983.121',
+          imageUrl: undefined,
+          metadataUri: undefined,
+          verificationStatus: 'unknown',
+          verificationSource: 'none',
+          priceUSD: '0.27',
+          balanceUSD: '265.44'
+        }
+      ],
+      errors: [{ network: 'tron:mainnet', reason: 'RPC unavailable' }]
+    });
+  });
+
+  it('defaults Tron balance queries to the SDK-supported networks', async () => {
+    const fetchMock = vi.fn(
+      async () => new Response(JSON.stringify({ balances: [], errors: [] }), { status: 200 })
+    );
+    vi.stubGlobal('fetch', fetchMock);
+
+    const indexer = new IndexerClientImpl({
+      publishableKey: 'publishable-key',
+      environment: testEnvironment()
+    });
+
+    await indexer.getTronBalances({ walletAddress: 'TW39NT9SCCv7aomYYXgh4wcUWag4XtVe2H' });
+
+    expect(JSON.parse(fetchMock.mock.calls[0][1]?.body as string)).toEqual({
+      networks: [TronNetworks.mainnet, TronNetworks.nile],
+      filter: { accountAddresses: ['TW39NT9SCCv7aomYYXgh4wcUWag4XtVe2H'] },
+      omitMetadata: false
+    });
+  });
+
+  it('rejects Tron balance responses for unsupported networks', async () => {
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(
+        async () =>
+          new Response(
+            JSON.stringify({
+              balances: [
+                {
+                  network: 'tron:shasta',
+                  accountAddress: 'TW39NT9SCCv7aomYYXgh4wcUWag4XtVe2H',
+                  assetType: 'native',
+                  name: 'Tron',
+                  symbol: 'TRX',
+                  decimals: 6,
+                  balance: '0',
+                  formattedBalance: '0',
+                  verificationStatus: 'unknown',
+                  verificationSource: 'none'
+                }
+              ],
+              errors: []
+            }),
+            { status: 200 }
+          )
+      )
+    );
+
+    const indexer = new IndexerClientImpl({
+      publishableKey: 'publishable-key',
+      environment: testEnvironment()
+    });
+
+    await expect(
+      indexer.getTronBalances({ walletAddress: 'TW39NT9SCCv7aomYYXgh4wcUWag4XtVe2H' })
+    ).rejects.toMatchObject({
+      code: 'OMS_INVALID_RESPONSE',
+      operation: 'indexer.getTronBalances',
+      status: 200
+    });
+  });
+
+  it('surfaces Tron gateway request errors with upstream details', async () => {
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(
+        async () =>
+          new Response(
+            JSON.stringify({
+              code: -4,
+              message: 'invalid Tron address: 0x1234',
+              name: 'WebrpcBadRequest',
+              status: 400
+            }),
+            { status: 400 }
+          )
+      )
+    );
+
+    const indexer = new IndexerClientImpl({
+      publishableKey: 'publishable-key',
+      environment: testEnvironment()
+    });
+
+    await expect(indexer.getTronBalances({ walletAddress: '0x1234' })).rejects.toMatchObject({
+      code: 'OMS_HTTP_ERROR',
+      operation: 'indexer.getTronBalances',
+      status: 400,
+      retryable: false,
+      upstreamError: { service: 'indexer', status: 400, message: 'invalid Tron address: 0x1234' }
+    });
+  });
+});

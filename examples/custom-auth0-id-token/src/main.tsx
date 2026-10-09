@@ -3,7 +3,12 @@ import { createRoot } from 'react-dom/client';
 import { Auth0Provider, useAuth0 } from '@auth0/auth0-react';
 import { Networks, type TokenBalance } from '@polygonlabs/oms-wallet';
 import './styles.css';
-import { formatSessionAuth, formatSessionExpiry } from '../../shared/example-utils';
+import {
+  activeEthereumAddress,
+  formatSessionAuth,
+  formatSessionExpiry,
+  switchToEthereumWallet
+} from '../../shared/example-utils';
 import { AUTH0_CLIENT_ID, AUTH0_DOMAIN, AUTH0_ISSUER, AUTH0_REDIRECT_URI } from './config';
 import { omsWallet } from './omsWallet';
 
@@ -21,7 +26,7 @@ function App() {
     logout: logoutFromAuth0,
     user: auth0User
   } = useAuth0();
-  const restoredWalletAddress = omsWallet.wallet.walletAddress ?? '';
+  const restoredWalletAddress = activeEthereumAddress(omsWallet.wallet) ?? '';
   const [walletAddress, setWalletAddress] = useState(restoredWalletAddress);
   const [status, setStatus] = useState(
     restoredWalletAddress
@@ -37,14 +42,32 @@ function App() {
   const [lastTransactionExplorerUrl, setLastTransactionExplorerUrl] = useState('');
   const [balances, setBalances] = useState<TokenBalance[] | null>(null);
   const [isBusy, setIsBusy] = useState(false);
+  const [isSwitchingWallet, setIsSwitchingWallet] = useState(
+    Boolean(omsWallet.wallet.activeWallet) && !restoredWalletAddress
+  );
   const omsSignInStarted = useRef(false);
 
   useEffect(() => {
-    if (isAuth0Loading || !isAuth0Authenticated || walletAddress || omsSignInStarted.current)
+    if (!isSwitchingWallet) return;
+    void run('Switching to an Ethereum wallet...', async () => {
+      const wallet = await switchToEthereumWallet(omsWallet.wallet);
+      setWalletAddress(wallet?.address ?? '');
+      setStatus('Wallet session restored.');
+    }).then(() => setIsSwitchingWallet(false));
+  }, []);
+
+  useEffect(() => {
+    if (
+      isAuth0Loading ||
+      !isAuth0Authenticated ||
+      walletAddress ||
+      isSwitchingWallet ||
+      omsSignInStarted.current
+    )
       return;
     omsSignInStarted.current = true;
     void signInToOmsWithAuth0IdToken();
-  }, [isAuth0Authenticated, isAuth0Loading, walletAddress]);
+  }, [isAuth0Authenticated, isAuth0Loading, walletAddress, isSwitchingWallet]);
 
   async function run(label: string, action: () => Promise<void>) {
     setIsBusy(true);
@@ -81,7 +104,7 @@ function App() {
         providerLabel: 'Auth0'
       });
 
-      setWalletAddress(result.walletAddress);
+      setWalletAddress(result.wallet.address);
       setStatus('OMS Wallet sign-in with the Auth0-issued ID token is complete.');
     } catch (error) {
       omsSignInStarted.current = false;
@@ -234,7 +257,7 @@ function App() {
               </div>
               <div>
                 <dt>Sign-in method</dt>
-                <dd>{formatSessionAuth(omsWallet.wallet.session.auth)}</dd>
+                <dd>{formatSessionAuth(omsWallet.wallet.session?.auth)}</dd>
               </div>
               <div>
                 <dt>Auth0 user</dt>
@@ -242,7 +265,7 @@ function App() {
               </div>
               <div>
                 <dt>Session expires</dt>
-                <dd>{formatSessionExpiry(omsWallet.wallet.session.expiresAt)}</dd>
+                <dd>{formatSessionExpiry(omsWallet.wallet.session?.expiresAt)}</dd>
               </div>
             </dl>
 

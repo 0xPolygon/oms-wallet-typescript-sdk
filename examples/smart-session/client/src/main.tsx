@@ -22,9 +22,11 @@ import {
   WalletSelectionPanel
 } from '../../../shared/example-components';
 import {
+  activeEthereumAddress,
   formatOidcProvider,
   hasOidcCallbackParams,
   isPendingWalletSelection,
+  switchToEthereumWallet,
   type OidcRedirectProvider
 } from '../../../shared/example-utils';
 import type { ApiError, ApprovalRequest, ClientConfig, RecipientScope } from '../../shared/api';
@@ -115,8 +117,8 @@ function App() {
   const [approvalAction, setApprovalAction] = useState<ApprovalAction>(null);
   const [isBusy, setIsBusy] = useState(false);
   const initializationStarted = useRef(false);
-  const walletAddress = omsWallet?.wallet.walletAddress ?? '';
-  const sessionAuth = omsWallet?.wallet.session.auth;
+  const walletAddress = (omsWallet && activeEthereumAddress(omsWallet.wallet)) ?? '';
+  const sessionAuth = omsWallet?.wallet.session?.auth;
   const loginMethod =
     sessionAuth?.type === 'email'
       ? 'Email'
@@ -223,6 +225,12 @@ function App() {
     try {
       const config = await api<ClientConfig>('/api/client-config');
       const nextWallet = new OMSWallet({ publishableKey: config.publishableKey });
+      try {
+        await switchToEthereumWallet(nextWallet.wallet);
+      } catch (error) {
+        // Keep going so the client is still set up and a pending redirect sign-in completes.
+        console.error('Could not switch to an Ethereum wallet.', error);
+      }
       setOmsWallet(nextWallet);
 
       let redirectResult: PendingWalletSelection | WalletActivationResult | void = undefined;
@@ -245,7 +253,7 @@ function App() {
 
       if (nextApproval && nextApproval.status !== 'pending') {
         clearApprovalRequest();
-        if (nextWallet.wallet.walletAddress) {
+        if (nextWallet.wallet.activeWallet?.address) {
           setStep('wallet');
           await Promise.all([
             loadPortfolio(nextWallet),
@@ -268,7 +276,7 @@ function App() {
       }
 
       if (!approvalToken) {
-        if (nextWallet.wallet.walletAddress) {
+        if (nextWallet.wallet.activeWallet?.address) {
           setStep('wallet');
           setStatus('');
           await Promise.all([loadPortfolio(nextWallet), loadApprovedSessions(nextWallet)]);
@@ -278,7 +286,7 @@ function App() {
         return;
       }
 
-      if (nextWallet.wallet.walletAddress) {
+      if (nextWallet.wallet.activeWallet?.address) {
         setStep('wallet');
         setStatus('');
         await loadPortfolio(nextWallet);
@@ -465,7 +473,7 @@ function App() {
     wallet = omsWallet,
     { background = false }: { background?: boolean } = {}
   ): Promise<void> {
-    const address = wallet?.wallet.walletAddress;
+    const address = wallet?.wallet.activeWallet?.address;
     if (!wallet || !address) {
       setPortfolio(null);
       setPortfolioStatus('');
@@ -532,7 +540,7 @@ function App() {
     wallet = omsWallet,
     { loadingLabel = 'Loading approved smart sessions…' }: { loadingLabel?: string } = {}
   ): Promise<boolean> {
-    if (!wallet?.wallet.walletAddress) {
+    if (!wallet?.wallet.activeWallet?.address) {
       setApprovedSessions([]);
       setApprovedSessionsStatus('');
       setApprovedSessionsLoading(false);

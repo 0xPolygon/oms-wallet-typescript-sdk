@@ -1,12 +1,13 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
-import { WalletClient } from '../src/clients/walletClient';
+import { WalletClientImpl } from '../src/clients/walletClient';
 import type { CredentialSigner } from '../src/credentialSigner';
-import { AuthMode, WalletType } from '../src/types/waas';
+import { WalletType } from '../src/types/waas';
 import { MemoryStorageManager } from '../src/storageManager';
 import { oidcIdTokenHandleHash } from '../src/utils/oidcIdToken';
 import { base64UrlEncodeString } from '../src/utils/oidcRedirect';
 import { Constants } from '../src/utils/constants';
+import { jsonResponse, requestCount, testCredential, testEnvironment } from './fixtures/helpers.js';
 
 class MockSigner implements CredentialSigner {
   readonly signingAlgorithm = 'ecdsa-p256-sha256';
@@ -41,7 +42,7 @@ describe('WalletClient OIDC ID-token auth', () => {
       if (url.endsWith('/CommitVerifier')) {
         expect(body).toEqual({
           identityType: 'oidc',
-          authMode: AuthMode.IDToken,
+          authMode: 'id-token',
           metadata: {
             iss: 'https://accounts.google.com',
             aud: 'google-client-id',
@@ -58,7 +59,7 @@ describe('WalletClient OIDC ID-token auth', () => {
       if (url.endsWith('/CompleteAuth')) {
         expect(body).toEqual({
           identityType: 'oidc',
-          authMode: AuthMode.IDToken,
+          authMode: 'id-token',
           verifier: 'oidc-verifier-1',
           answer: idToken,
           lifetime: 604_800
@@ -103,10 +104,10 @@ describe('WalletClient OIDC ID-token auth', () => {
     });
 
     expect(result).toMatchObject({
-      walletAddress: '0x1111111111111111111111111111111111111111',
+      wallet: { address: '0x1111111111111111111111111111111111111111' },
       credential: testCredential()
     });
-    expect(wallet.session.auth).toEqual({
+    expect(wallet.session?.auth).toEqual({
       type: 'oidc',
       flow: 'id-token',
       issuer: 'https://accounts.google.com',
@@ -115,7 +116,7 @@ describe('WalletClient OIDC ID-token auth', () => {
       email: 'user@example.com'
     });
     expect(JSON.parse(storage.get(Constants.sessionStorageKey) ?? 'null').auth).toEqual(
-      wallet.session.auth
+      wallet.session?.auth
     );
     expect(requestCount(fetchMock, '/CommitVerifier')).toBe(1);
     expect(requestCount(fetchMock, '/CompleteAuth')).toBe(1);
@@ -187,11 +188,11 @@ describe('WalletClient OIDC ID-token auth', () => {
         keyOrigin: 'enclave'
       }
     ]);
-    expect(wallet.session.auth).toBeUndefined();
+    expect(wallet.session?.auth).toBeUndefined();
 
     await selection.selectWallet({ walletId: 'wallet-id' });
 
-    expect(wallet.session.auth).toEqual({
+    expect(wallet.session?.auth).toEqual({
       type: 'oidc',
       flow: 'id-token',
       issuer: 'https://idp.example',
@@ -335,7 +336,7 @@ describe('WalletClient OIDC ID-token auth', () => {
       operation: 'wallet.signInWithOidcIdToken',
       message: 'Wallet session changed while auth was in flight'
     });
-    expect(wallet.walletAddress).toBeUndefined();
+    expect(wallet.activeWallet?.address).toBeUndefined();
     expect(storage.get(Constants.sessionStorageKey)).toBeNull();
   });
 });
@@ -345,8 +346,8 @@ function createWalletClient(
     storage?: MemoryStorageManager;
     redirectAuthStorage?: MemoryStorageManager;
   } = {}
-): WalletClient {
-  return new WalletClient({
+): WalletClientImpl {
+  return new WalletClientImpl({
     publishableKey: 'publishable-key',
     projectId: 'project-id',
     environment: testEnvironment(),
@@ -354,25 +355,6 @@ function createWalletClient(
     redirectAuthStorage: params.redirectAuthStorage,
     credentialSigner: new MockSigner()
   });
-}
-
-function testEnvironment() {
-  return {
-    walletApiUrl: 'https://wallet.example',
-    indexerGatewayUrl: 'https://indexer.example',
-    solanaIndexerGatewayUrl: 'https://solana-indexer.example'
-  };
-}
-
-function jsonResponse(body: unknown): Response {
-  return new Response(JSON.stringify(body), {
-    status: 200,
-    headers: { 'Content-Type': 'application/json' }
-  });
-}
-
-function requestCount(fetchMock: ReturnType<typeof vi.fn>, endpoint: string): number {
-  return fetchMock.mock.calls.filter(([input]) => input.toString().endsWith(endpoint)).length;
 }
 
 async function waitForRequest(
@@ -384,15 +366,6 @@ async function waitForRequest(
     await new Promise((resolve) => setTimeout(resolve, 0));
   }
   throw new Error(`Timed out waiting for ${endpoint}`);
-}
-
-function testCredential() {
-  return {
-    type: 'direct',
-    credentialId: '0x' + '11'.repeat(32),
-    expiresAt: '2099-01-01T00:00:00Z',
-    isCaller: true
-  };
 }
 
 function fakeJwt(payload: Record<string, unknown>): string {

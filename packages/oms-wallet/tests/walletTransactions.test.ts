@@ -1,31 +1,12 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
-import { WalletClient } from '../src/clients/walletClient';
-import type { CredentialSigner } from '../src/credentialSigner';
+import { WalletClientImpl } from '../src/clients/walletClient';
 import { TransactionMode, TransactionStatus } from '../src/types/waas';
 import { Networks, SolanaNetworks } from '../src/networks';
 import { MemoryStorageManager } from '../src/storageManager';
 import { FeeOptionSelector } from '../src/types/transactionTypes';
-
-class MockSigner implements CredentialSigner {
-  readonly signingAlgorithm = 'ecdsa-p256-sha256';
-
-  async credentialId(): Promise<string> {
-    return '0x04' + '11'.repeat(64);
-  }
-
-  async nextNonce(): Promise<string> {
-    return '42';
-  }
-
-  async sign(): Promise<string> {
-    return '0x' + '22'.repeat(64);
-  }
-
-  async hasCredential(): Promise<boolean> {
-    return true;
-  }
-}
+import { testWalletAccount } from './fixtures/walletAccount.js';
+import { MockSigner, jsonResponse, testEnvironment } from './fixtures/helpers.js';
 
 afterEach(() => {
   vi.restoreAllMocks();
@@ -179,7 +160,7 @@ describe('WalletClient transactions', () => {
           network: '137',
           walletId: 'wallet-id',
           contract: '0x1111111111111111111111111111111111111111',
-          method: 'mint(address,uint256)',
+          method: 'mint',
           args: [
             { type: 'address', value: '0x2222222222222222222222222222222222222222' },
             { type: 'uint256', value: '1' }
@@ -211,7 +192,7 @@ describe('WalletClient transactions', () => {
       wallet.callContract({
         network: Networks.polygon,
         contractAddress: '0x1111111111111111111111111111111111111111',
-        method: 'mint(address,uint256)',
+        method: 'mint',
         args: [
           { type: 'address', value: '0x2222222222222222222222222222222222222222' },
           { type: 'uint256', value: '1' }
@@ -747,7 +728,7 @@ describe('WalletClient transactions', () => {
       operation: 'wallet.sendSolanaTransfer',
       status: 400,
       upstreamError: {
-        code: 7312,
+        code: '7312',
         name: 'UnsupportedAsset',
         message: 'Unsupported asset'
       }
@@ -969,9 +950,8 @@ describe('WalletClient transactions', () => {
 
   it('firstAvailable requires an affordable fee option', async () => {
     const usdcAddress = '0x2222222222222222222222222222222222222222';
-    const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+    const fetchMock = vi.fn(async (input: RequestInfo | URL) => {
       const url = input.toString();
-      const body = init?.body ? JSON.parse(init.body as string) : undefined;
 
       if (url.endsWith('/PrepareEthereumTransaction')) {
         return jsonResponse({
@@ -1318,7 +1298,7 @@ describe('WalletClient transactions', () => {
     });
     vi.stubGlobal('fetch', fetchMock);
 
-    const wallet = new WalletClient({
+    const wallet = new WalletClientImpl({
       publishableKey: 'publishable-key',
       projectId: 'project-id',
       environment: testEnvironment(),
@@ -1381,34 +1361,19 @@ describe('WalletClient transactions', () => {
 function createWalletWithSession(
   storage: MemoryStorageManager,
   walletAddress: string
-): WalletClient {
-  const wallet = new WalletClient({
+): WalletClientImpl {
+  const wallet = new WalletClientImpl({
     publishableKey: 'publishable-key',
     projectId: 'project-id',
     environment: testEnvironment(),
     storage,
     credentialSigner: new MockSigner()
   });
-  (wallet as any).persistSession('wallet-id', walletAddress, {
+  (wallet as any).persistSession(testWalletAccount('wallet-id', walletAddress), {
     expiresAt: '2099-01-01T00:00:00Z',
     auth: { type: 'email', email: 'user@example.com' },
     signerCredentialId: '0x04' + '11'.repeat(64),
     signerKeyType: 'ecdsa-p256-sha256'
   });
   return wallet;
-}
-
-function jsonResponse(body: unknown, status = 200): Response {
-  return new Response(JSON.stringify(body), {
-    status,
-    headers: { 'Content-Type': 'application/json' }
-  });
-}
-
-function testEnvironment() {
-  return {
-    walletApiUrl: 'https://wallet.example',
-    indexerGatewayUrl: 'https://indexer.example',
-    solanaIndexerGatewayUrl: 'https://solana-indexer.example'
-  };
 }

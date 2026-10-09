@@ -1,7 +1,7 @@
 import { Aes256Gcm, CipherSuite, DhkemP256HkdfSha256, HkdfSha256 } from '@hpke/core';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
-import { WalletClient } from '../src/clients/walletClient';
+import { WalletClientImpl } from '../src/clients/walletClient';
 import type { CredentialSigner } from '../src/credentialSigner';
 import type {
   GetRecipientKeyRequest,
@@ -14,6 +14,8 @@ import { MemoryStorageManager } from '../src/storageManager';
 import { WalletImportCipherSuite } from '../src/types/waas';
 import { base64DecodeBytes, base64EncodeBytes } from '../src/utils/base64';
 import { sealWalletImportPrivateKey, walletImportPlaintext } from '../src/walletImport';
+import { testWalletAccount } from './fixtures/walletAccount.js';
+import { jsonResponse } from './fixtures/helpers.js';
 
 class MockSigner implements CredentialSigner {
   readonly signingAlgorithm = 'ecdsa-p256-sha256';
@@ -64,6 +66,23 @@ describe('wallet import', () => {
     );
 
     expect(new Uint8Array(opened)).toEqual(plaintext);
+  });
+
+  it('accepts secp256k1 hex keys for Tron imports and rejects invalid ones', () => {
+    const privateKey = `0x${'01'.repeat(32)}`;
+
+    expect(walletImportPlaintext({ type: 'tron', privateKey })).toEqual(
+      new TextEncoder().encode(privateKey)
+    );
+    expect(walletImportPlaintext({ type: 'tron', privateKey: new Uint8Array(32).fill(1) })).toEqual(
+      new Uint8Array(32).fill(1)
+    );
+    expect(() => walletImportPlaintext({ type: 'tron', privateKey: '0x1234' })).toThrow(
+      'Tron privateKey must be 32 bytes or 64 hexadecimal characters'
+    );
+    expect(() => walletImportPlaintext({ type: 'tron', privateKey: '00'.repeat(32) })).toThrow(
+      'Tron privateKey is outside the valid secp256k1 scalar range'
+    );
   });
 
   it('serializes HPKE bytes as base64 strings on the WaaS wire', async () => {
@@ -137,7 +156,7 @@ describe('wallet import', () => {
       cipherSuite: WalletImportCipherSuite.P256Sha256ChaCha20Poly1305
     });
     const result = await wallet.importEncryptedWallet({
-      type: 'ethereum',
+      walletType: 'ethereum',
       reference: 'Privy wallet',
       keyMaterial: {
         keyId: recipient.keyId,
@@ -169,12 +188,15 @@ describe('wallet import', () => {
       storage: new MemoryStorageManager(),
       credentialSigner: new MockSigner()
     });
-    (oms.wallet as any).persistSession('wallet-id', '0x1111111111111111111111111111111111111111', {
-      expiresAt: '2099-01-01T00:00:00Z',
-      auth: { type: 'email', email: 'user@example.com' },
-      signerCredentialId: `0x04${'11'.repeat(64)}`,
-      signerKeyType: 'ecdsa-p256-sha256'
-    });
+    (oms.wallet as any).persistSession(
+      testWalletAccount('wallet-id', '0x1111111111111111111111111111111111111111'),
+      {
+        expiresAt: '2099-01-01T00:00:00Z',
+        auth: { type: 'email', email: 'user@example.com' },
+        signerCredentialId: `0x04${'11'.repeat(64)}`,
+        signerKeyType: 'ecdsa-p256-sha256'
+      }
+    );
 
     await expect(
       oms.wallet.getWalletImportRecipientKey({
@@ -185,7 +207,7 @@ describe('wallet import', () => {
   });
 
   it('activates an imported first wallet during manual wallet selection', async () => {
-    const wallet = new WalletClient({
+    const wallet = new WalletClientImpl({
       publishableKey: 'publishable-key',
       projectId: 'project-id',
       environment: {
@@ -218,7 +240,7 @@ describe('wallet import', () => {
 
     await expect(
       wallet.importEncryptedWallet({
-        type: 'ethereum',
+        walletType: 'ethereum',
         keyMaterial: {
           keyId: 'key-1',
           cipherSuite: 'p256-sha256-aes256gcm',
@@ -227,14 +249,13 @@ describe('wallet import', () => {
         }
       })
     ).resolves.toMatchObject({
-      walletAddress: '0x1111111111111111111111111111111111111111',
       wallet: { id: 'wallet-imported', keyOrigin: 'imported' }
     });
   });
 });
 
-function createWalletWithSession(): WalletClient {
-  const wallet = new WalletClient({
+function createWalletWithSession(): WalletClientImpl {
+  const wallet = new WalletClientImpl({
     publishableKey: 'publishable-key',
     projectId: 'project-id',
     environment: {
@@ -245,18 +266,14 @@ function createWalletWithSession(): WalletClient {
     storage: new MemoryStorageManager(),
     credentialSigner: new MockSigner()
   });
-  (wallet as any).persistSession('wallet-id', '0x1111111111111111111111111111111111111111', {
-    expiresAt: '2099-01-01T00:00:00Z',
-    auth: { type: 'email', email: 'user@example.com' },
-    signerCredentialId: `0x04${'11'.repeat(64)}`,
-    signerKeyType: 'ecdsa-p256-sha256'
-  });
+  (wallet as any).persistSession(
+    testWalletAccount('wallet-id', '0x1111111111111111111111111111111111111111'),
+    {
+      expiresAt: '2099-01-01T00:00:00Z',
+      auth: { type: 'email', email: 'user@example.com' },
+      signerCredentialId: `0x04${'11'.repeat(64)}`,
+      signerKeyType: 'ecdsa-p256-sha256'
+    }
+  );
   return wallet;
-}
-
-function jsonResponse(body: unknown): Response {
-  return new Response(JSON.stringify(body), {
-    status: 200,
-    headers: { 'Content-Type': 'application/json' }
-  });
 }

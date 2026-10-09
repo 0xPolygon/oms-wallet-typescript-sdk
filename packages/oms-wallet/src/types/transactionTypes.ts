@@ -1,8 +1,14 @@
 import type { Abi, Address, ContractFunctionName, EncodeFunctionDataParameters, Hex } from 'viem';
 
 import type { TokenBalance } from '../clients/indexerClient.js';
-import type { Network, SolanaNetwork } from '../networks.js';
-import type { FeeOption, FeeOptionSelection, TransactionMode, TransactionStatus } from './waas.js';
+import type { Network, SolanaNetwork, TronNetwork } from '../networks.js';
+import type {
+  AbiArg,
+  FeeOption,
+  FeeOptionSelection,
+  TransactionMode,
+  TransactionStatus
+} from './waas.js';
 
 export type FeeOptionWithBalance = {
   feeOption: FeeOption;
@@ -32,7 +38,7 @@ export namespace FeeOptionSelector {
 }
 
 export function feeOptionSelection(feeOption: FeeOption, index?: number): FeeOptionSelection {
-  const tokenIdentifier = feeOption.token.tokenID?.trim();
+  const tokenIdentifier = feeOption.token.tokenId?.trim();
   return {
     token: tokenIdentifier && tokenIdentifier.length > 0 ? tokenIdentifier : feeOption.token.symbol,
     ...(index === undefined ? {} : { index })
@@ -103,6 +109,43 @@ export type SendSolanaTransferParams = {
   to: string;
   amount: bigint;
   mode?: TransactionMode;
+  selectFeeOption?: FeeOptionSelector;
+  waitForStatus?: boolean;
+  statusPolling?: TransactionStatusPollingOptions;
+};
+
+/**
+ * A Tron transaction. Tron wallets are EOAs and always execute in native mode.
+ *
+ * Omitting `data` sends a plain TRX transfer. Passing `data` (including `'0x'`) makes the
+ * transaction a contract call; `'0x'` calls the contract's payable fallback.
+ */
+export type SendTronTransactionParams = {
+  network: TronNetwork;
+  /** Base58Check recipient address (`T…`). */
+  to: string;
+  /** Amount in sun (1 TRX = 1,000,000 sun). Defaults to `0n`. */
+  value?: bigint;
+  data?: Hex;
+  selectFeeOption?: FeeOptionSelector;
+  waitForStatus?: boolean;
+  statusPolling?: TransactionStatusPollingOptions;
+};
+
+/**
+ * A Tron contract call, ABI-encoded by the wallet service. Address-typed arguments accept
+ * Base58Check (`T…`) addresses.
+ */
+export type CallTronContractParams = {
+  network: TronNetwork;
+  /** Base58Check contract address (`T…`). */
+  contractAddress: string;
+  /**
+   * Function name only, e.g. `'transfer'`. The wallet service builds the signature from the
+   * `args` types.
+   */
+  method: string;
+  args?: Array<AbiArg>;
   selectFeeOption?: FeeOptionSelector;
   waitForStatus?: boolean;
   statusPolling?: TransactionStatusPollingOptions;

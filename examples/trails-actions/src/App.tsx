@@ -1,11 +1,12 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
+  DEFAULT_SESSION_LIFETIME_SECONDS,
   OmsRelayOidcProviders,
   FeeOptionSelector,
   type FeeOptionSelection,
   type FeeOptionWithBalance,
   type OMSWalletSessionExpiredEvent,
-  type OMSWalletSessionState,
+  type OMSWalletSession,
   type WalletAccount,
   type PendingWalletSelection,
   type SendTransactionResponse,
@@ -21,16 +22,17 @@ import {
   WalletSelectionPanel
 } from '../../shared/example-components';
 import {
+  activeEthereumAddress,
   formatOidcProvider,
   formatSessionAuth,
   formatSessionExpiry,
-  formatWalletType,
   hasOidcCallbackParams,
   isPendingWalletSelection,
+  switchToEthereumWallet,
   type OidcRedirectProvider
 } from '../../shared/example-utils';
 import { useSessionPreferences } from '../../shared/use-session-preferences';
-import { TEST_SESSION_LIFETIME_SECONDS, omsWallet } from './omsWallet';
+import { omsWallet } from './omsWallet';
 import {
   DEFAULT_DEPOSIT_USDC_AMOUNT,
   DEFAULT_EARN_POL_AMOUNT,
@@ -86,7 +88,7 @@ type SignedInDataRefresh = {
 };
 
 function App() {
-  const [session, setSession] = useState<OMSWalletSessionState>(omsWallet.wallet.session);
+  const [session, setSession] = useState<OMSWalletSession | undefined>(omsWallet.wallet.session);
   const [authStep, setAuthStep] = useState<AuthStep>('email');
   const [email, setEmail] = useState('');
   const [code, setCode] = useState('');
@@ -124,11 +126,12 @@ function App() {
   const [loadingAction, setLoadingAction] = useState<string | null>(null);
   const [walletCopyLabel, setWalletCopyLabel] = useState<'Copy' | 'Copied'>('Copy');
   const oidcCallbackStarted = useRef(false);
+  const sessionRestoreStarted = useRef(false);
   const feeSelection = useRef<FeeSelectionController | null>(null);
   const selectedFeeOption = useRef<FeeOptionWithBalance | null>(null);
   const walletCopyReset = useRef<number | null>(null);
 
-  const walletAddress = session.walletAddress;
+  const walletAddress = session ? activeEthereumAddress(omsWallet.wallet) : undefined;
   const isSignedIn = walletAddress != null;
   const isBusy = loadingAction != null;
   const {
@@ -141,7 +144,7 @@ function App() {
   } = useSessionPreferences({
     manualWalletSelectionKey: MANUAL_WALLET_SELECTION_KEY,
     sessionLifetimeSecondsKey: SESSION_LIFETIME_SECONDS_KEY,
-    defaultSessionLifetimeSeconds: TEST_SESSION_LIFETIME_SECONDS
+    defaultSessionLifetimeSeconds: DEFAULT_SESSION_LIFETIME_SECONDS
   });
   const hasVisibleWithdrawStatus = earnPositions.some((position) => withdrawStatuses[position.id]);
   const showEarnPositionsStatus =
@@ -251,10 +254,15 @@ function App() {
   }, []);
 
   useEffect(() => {
-    if (omsWallet.wallet.walletAddress) {
-      const restored = refreshSession();
-      setAuthStatus('Wallet session restored.');
-      appendLog(`Wallet ready: ${restored.walletAddress}`);
+    if (omsWallet.wallet.activeWallet) {
+      if (sessionRestoreStarted.current) return;
+      sessionRestoreStarted.current = true;
+      void runAction('Restore wallet session', async () => {
+        const restoredWallet = await switchToEthereumWallet(omsWallet.wallet);
+        refreshSession();
+        setAuthStatus('Wallet session restored.');
+        appendLog(`Wallet ready: ${restoredWallet?.address}`);
+      });
       return;
     }
 
@@ -263,7 +271,7 @@ function App() {
       oidcCallbackStarted.current = true;
       void completeOidcRedirect();
     }
-  }, [appendLog, refreshSession]);
+  }, [appendLog, refreshSession, runAction]);
 
   useEffect(() => {
     if (!walletAddress) {
@@ -282,11 +290,11 @@ function App() {
 
   const sessionDetails = useMemo(
     () => [
-      { label: 'Auth', value: formatSessionAuth(session.auth) },
-      { label: 'Account', value: session.auth?.email ?? 'Unavailable' },
-      { label: 'Expires', value: formatSessionExpiry(session.expiresAt) }
+      { label: 'Auth', value: formatSessionAuth(session?.auth) },
+      { label: 'Account', value: session?.auth.email ?? 'Unavailable' },
+      { label: 'Expires', value: formatSessionExpiry(session?.expiresAt) }
     ],
-    [session.auth, session.expiresAt]
+    [session?.auth, session?.expiresAt]
   );
 
   function startEmailAuth() {
@@ -365,10 +373,11 @@ function App() {
           return;
         }
 
-        const restored = refreshSession();
-        if (restored.walletAddress) {
+        refreshSession();
+        const restoredWallet = omsWallet.wallet.activeWallet;
+        if (restoredWallet) {
           setRedirectStatus('Redirect login complete.');
-          appendLog(`Wallet ready: ${restored.walletAddress}`);
+          appendLog(`Wallet ready: ${restoredWallet.address}`);
         }
       },
       (error) => {
@@ -393,7 +402,7 @@ function App() {
     setAuthStatus(status);
     setRedirectStatus('');
     setSession(omsWallet.wallet.session);
-    appendLog(`Wallet ready: ${result.walletAddress}`);
+    appendLog(`Wallet ready: ${result.wallet.address}`);
   }
 
   function showSessionExpired(event: OMSWalletSessionExpiredEvent) {

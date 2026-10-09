@@ -1,16 +1,18 @@
 // Minimal hand-written indexer gateway adapters for the SDK surface we expose.
 
 import type { OMSWalletUpstreamError } from '../errors.js';
-import type { Network, SolanaNetwork } from '../networks.js';
+import type { Network, SolanaNetwork, TronNetwork } from '../networks.js';
 
 import { errorMessage, OMSWalletRequestError, OMSWalletResponseError } from '../errors.js';
 import { HttpClient } from '../httpClient.js';
-import { SolanaNetworks } from '../networks.js';
+import { SolanaNetworks, TronNetworks } from '../networks.js';
 import { IndexerOperation } from '../operations.js';
 
 const IndexerWebrpcHeaderValue = 'webrpc@v0.31.2;gen-typescript@v0.23.1;sequence-indexer@v0.4.0';
 const SolanaIndexerWebrpcHeaderValue =
   'webrpc@v0.31.2;gen-typescript@v0.23.1;solana-indexer-gateway@v1';
+const TronIndexerWebrpcHeaderValue =
+  'webrpc@v0.31.2;gen-typescript@v0.23.1;tron-indexer-gateway@v1';
 
 export type IndexerNetworkType = 'MAINNETS' | 'TESTNETS' | 'ALL';
 export type ContractVerificationStatus = 'VERIFIED' | 'UNVERIFIED' | 'ALL';
@@ -204,6 +206,63 @@ export interface SolanaBalancesResult {
   errors: SolanaNetworkError[];
 }
 
+export interface GetTronBalancesParams {
+  /** Base58Check wallet address (`T…`). */
+  walletAddress: string;
+  /** Defaults to Tron mainnet and Nile. */
+  networks?: TronNetwork[];
+  includeMetadata?: boolean;
+  omitNativeBalances?: boolean;
+  /** Only return these TRC-20 contracts (`T…`). */
+  contractAddresses?: string[];
+  /** Exclude these TRC-20 contracts (`T…`). */
+  excludedContractAddresses?: string[];
+}
+
+export type TronVerificationStatus = 'verified' | 'unverified' | 'unknown';
+
+export interface TronBalanceBase {
+  network: TronNetwork;
+  accountAddress: string;
+  name: string;
+  symbol: string;
+  decimals: number;
+  /** Raw balance in the token's base units (sun for TRX). */
+  balance: string;
+  formattedBalance: string;
+  imageUrl?: string;
+  metadataUri?: string;
+  verificationStatus: TronVerificationStatus;
+  verificationSource: string;
+  priceUSD?: string;
+  balanceUSD?: string;
+}
+
+export interface TronNativeBalance extends TronBalanceBase {
+  assetType: 'native';
+  tokenStandard?: undefined;
+  contractAddress?: undefined;
+}
+
+export interface TronFungibleTokenBalance extends TronBalanceBase {
+  assetType: 'fungible-token';
+  tokenStandard: 'trc20';
+  contractAddress: string;
+}
+
+export type TronBalance = TronNativeBalance | TronFungibleTokenBalance;
+
+export interface TronNetworkError {
+  network: TronNetwork;
+  reason: string;
+}
+
+export interface TronBalancesResult {
+  status: number;
+  balances: TronBalance[];
+  errors: TronNetworkError[];
+}
+
 export interface TransactionTransfer {
   transferType: string;
   contractAddress: string;
@@ -275,7 +334,6 @@ interface NativeTokenBalanceRaw {
   name?: unknown;
   symbol?: unknown;
   balance?: unknown;
-  balanceWei?: unknown;
   balanceUSD?: unknown;
   priceUSD?: unknown;
   priceUpdatedAt?: unknown;
@@ -321,7 +379,6 @@ interface TokenMetadataRaw {
   chainId?: unknown;
   contractAddress?: unknown;
   tokenId?: unknown;
-  tokenID?: unknown;
   source?: unknown;
   name?: unknown;
   description?: unknown;
@@ -346,7 +403,6 @@ interface TokenMetadataAssetRaw {
   id?: unknown;
   collectionId?: unknown;
   tokenId?: unknown;
-  tokenID?: unknown;
   url?: unknown;
   metadataField?: unknown;
   name?: unknown;
@@ -374,7 +430,6 @@ interface TransactionTransferRaw {
   from?: unknown;
   to?: unknown;
   tokenIds?: unknown;
-  tokenIDs?: unknown;
   amounts?: unknown;
   logIndex?: unknown;
   amountsUSD?: unknown;
@@ -443,7 +498,43 @@ interface SolanaBalanceRaw {
   balanceUSD?: unknown;
 }
 
-interface SolanaNetworkErrorRaw {
+interface GetTronTokenBalancesDetailsRequest {
+  networks: TronNetwork[];
+  filter: {
+    accountAddresses: string[];
+    omitNativeBalances?: boolean;
+    contractWhitelist?: string[];
+    contractBlacklist?: string[];
+  };
+  omitMetadata: boolean;
+}
+
+interface GetTronTokenBalancesDetailsResponse {
+  balances?: unknown;
+  errors?: unknown;
+}
+
+interface TronBalanceRaw {
+  network?: unknown;
+  accountAddress?: unknown;
+  assetType?: unknown;
+  tokenStandard?: unknown;
+  contractAddress?: unknown;
+  name?: unknown;
+  symbol?: unknown;
+  decimals?: unknown;
+  balance?: unknown;
+  formattedBalance?: unknown;
+  imageUrl?: unknown;
+  metadataUri?: unknown;
+  verificationStatus?: unknown;
+  verificationSource?: unknown;
+  priceUSD?: unknown;
+  balanceUSD?: unknown;
+}
+
+// Raw `errors[]` entry shared by the Solana and Tron indexer gateways.
+interface GatewayNetworkErrorRaw {
   network?: unknown;
   reason?: unknown;
 }
@@ -476,15 +567,17 @@ interface GetTransactionHistoryResponse {
 interface IndexerClientEnvironment {
   indexerGatewayUrl: string;
   solanaIndexerGatewayUrl: string;
+  tronIndexerGatewayUrl: string;
 }
 
-export interface OMSWalletIndexerClient {
+export interface IndexerClient {
   getBalances(params: GetBalancesParams): Promise<BalancesResult>;
   getSolanaBalances(params: GetSolanaBalancesParams): Promise<SolanaBalancesResult>;
+  getTronBalances(params: GetTronBalancesParams): Promise<TronBalancesResult>;
   getTransactionHistory(params: GetTransactionHistoryParams): Promise<TransactionHistoryResult>;
 }
 
-export class IndexerClient implements OMSWalletIndexerClient {
+export class IndexerClientImpl implements IndexerClient {
   private readonly publishableKey: string;
   private readonly environment: IndexerClientEnvironment;
   private readonly client: HttpClient;
@@ -556,6 +649,35 @@ export class IndexerClient implements OMSWalletIndexerClient {
       status: response.statusCode,
       balances: requiredArray(response.payload.balances, 'balances').map(mapSolanaBalance),
       errors: requiredArray(response.payload.errors, 'errors').map(mapSolanaNetworkError)
+    }));
+  }
+
+  async getTronBalances(params: GetTronBalancesParams): Promise<TronBalancesResult> {
+    const request: GetTronTokenBalancesDetailsRequest = {
+      networks: params.networks ?? [TronNetworks.mainnet, TronNetworks.nile],
+      filter: {
+        accountAddresses: [params.walletAddress],
+        omitNativeBalances: params.omitNativeBalances,
+        contractWhitelist: nonEmpty(params.contractAddresses),
+        contractBlacklist: nonEmpty(params.excludedContractAddresses)
+      },
+      omitMetadata: params.includeMetadata === false
+    };
+
+    const response = await this.postJson<GetTronTokenBalancesDetailsResponse>(
+      IndexerOperation.getTronBalances,
+      {
+        baseUrl: this.environment.tronIndexerGatewayUrl,
+        path: '/GetTokenBalancesDetails',
+        body: JSON.stringify(request),
+        headers: this.defaultHeaders(TronIndexerWebrpcHeaderValue)
+      }
+    );
+
+    return this.decodeResponse(IndexerOperation.getTronBalances, response.statusCode, () => ({
+      status: response.statusCode,
+      balances: requiredArray(response.payload.balances, 'balances').map(mapTronBalance),
+      errors: requiredArray(response.payload.errors, 'errors').map(mapTronNetworkError)
     }));
   }
 
@@ -757,7 +879,7 @@ function mapSolanaBalance(value: unknown): SolanaBalance {
 }
 
 function mapSolanaNetworkError(value: unknown): SolanaNetworkError {
-  const raw = asObject(value, 'errors[]') as SolanaNetworkErrorRaw;
+  const raw = asObject(value, 'errors[]') as GatewayNetworkErrorRaw;
   return {
     network: mapSolanaNetwork(raw.network, 'errors[].network'),
     reason: requiredString(raw.reason, 'errors[].reason')
@@ -768,13 +890,68 @@ function mapSolanaNetwork(value: unknown, path: string): SolanaNetwork {
   return requiredStringUnion(value, path, [SolanaNetworks.mainnet, SolanaNetworks.devnet] as const);
 }
 
+function mapTronBalance(value: unknown): TronBalance {
+  const raw = asObject(value, 'balances[]') as TronBalanceRaw;
+  const assetType = requiredStringUnion(raw.assetType, 'balances[].assetType', [
+    'native',
+    'fungible-token'
+  ] as const);
+  const base: TronBalanceBase = {
+    network: mapTronNetwork(raw.network, 'balances[].network'),
+    accountAddress: requiredString(raw.accountAddress, 'balances[].accountAddress'),
+    name: requiredString(raw.name, 'balances[].name'),
+    symbol: requiredString(raw.symbol, 'balances[].symbol'),
+    decimals: requiredNumber(raw.decimals, 'balances[].decimals'),
+    balance: requiredString(raw.balance, 'balances[].balance'),
+    formattedBalance: requiredString(raw.formattedBalance, 'balances[].formattedBalance'),
+    imageUrl: optionalNonEmptyString(raw.imageUrl, 'balances[].imageUrl'),
+    metadataUri: optionalNonEmptyString(raw.metadataUri, 'balances[].metadataUri'),
+    verificationStatus: requiredStringUnion(
+      raw.verificationStatus,
+      'balances[].verificationStatus',
+      ['verified', 'unverified', 'unknown'] as const
+    ),
+    verificationSource: requiredString(raw.verificationSource, 'balances[].verificationSource'),
+    priceUSD: optionalString(raw.priceUSD, 'balances[].priceUSD'),
+    balanceUSD: optionalString(raw.balanceUSD, 'balances[].balanceUSD')
+  };
+
+  if (assetType === 'native') {
+    if (raw.tokenStandard != null || raw.contractAddress != null) {
+      throw new TypeError('native balances must not include tokenStandard or contractAddress');
+    }
+    return { ...base, assetType };
+  }
+
+  return {
+    ...base,
+    assetType,
+    tokenStandard: requiredStringUnion(raw.tokenStandard, 'balances[].tokenStandard', [
+      'trc20'
+    ] as const),
+    contractAddress: requiredString(raw.contractAddress, 'balances[].contractAddress')
+  };
+}
+
+function mapTronNetworkError(value: unknown): TronNetworkError {
+  const raw = asObject(value, 'errors[]') as GatewayNetworkErrorRaw;
+  return {
+    network: mapTronNetwork(raw.network, 'errors[].network'),
+    reason: requiredString(raw.reason, 'errors[].reason')
+  };
+}
+
+function mapTronNetwork(value: unknown, path: string): TronNetwork {
+  return requiredStringUnion(value, path, [TronNetworks.mainnet, TronNetworks.nile] as const);
+}
+
 function mapNativeTokenBalance(raw: NativeTokenBalanceRaw): NativeTokenBalance {
   return {
     contractType: 'NATIVE',
     accountAddress: requiredString(raw.accountAddress, 'nativeBalances[].accountAddress'),
     name: requiredString(raw.name, 'nativeBalances[].name'),
     symbol: requiredString(raw.symbol, 'nativeBalances[].symbol'),
-    balance: requiredString(raw.balance ?? raw.balanceWei, 'nativeBalances[].balance'),
+    balance: requiredString(raw.balance, 'nativeBalances[].balance'),
     balanceUSD: optionalString(raw.balanceUSD, 'nativeBalances[].balanceUSD'),
     priceUSD: optionalString(raw.priceUSD, 'nativeBalances[].priceUSD'),
     priceUpdatedAt: optionalString(raw.priceUpdatedAt, 'nativeBalances[].priceUpdatedAt'),
@@ -826,10 +1003,7 @@ function mapTransactionTransfer(value: unknown): TransactionTransfer {
     contractType: requiredString(raw.contractType, 'transactions[].transfers[].contractType'),
     from: requiredString(raw.from, 'transactions[].transfers[].from'),
     to: requiredString(raw.to, 'transactions[].transfers[].to'),
-    tokenIds: optionalStringArray(
-      raw.tokenIds ?? raw.tokenIDs,
-      'transactions[].transfers[].tokenIds'
-    ),
+    tokenIds: optionalStringArray(raw.tokenIds, 'transactions[].transfers[].tokenIds'),
     amounts: requiredStringArray(raw.amounts, 'transactions[].transfers[].amounts'),
     logIndex: requiredNumber(raw.logIndex, 'transactions[].transfers[].logIndex'),
     amountsUSD: optionalStringArray(raw.amountsUSD, 'transactions[].transfers[].amountsUSD'),
@@ -897,7 +1071,7 @@ function mapTokenMetadata(value: unknown): TokenMetadata {
   return {
     chainId: optionalNumber(raw.chainId, 'tokenMetadata.chainId'),
     contractAddress: optionalString(raw.contractAddress, 'tokenMetadata.contractAddress'),
-    tokenId: requiredString(raw.tokenId ?? raw.tokenID, 'tokenMetadata.tokenId'),
+    tokenId: requiredString(raw.tokenId, 'tokenMetadata.tokenId'),
     source: requiredString(raw.source, 'tokenMetadata.source'),
     name: requiredString(raw.name, 'tokenMetadata.name'),
     description: optionalString(raw.description, 'tokenMetadata.description'),
@@ -924,7 +1098,7 @@ function mapTokenMetadataAsset(value: unknown): TokenMetadataAsset {
   return {
     id: optionalNumber(raw.id, 'tokenMetadata.assets[].id'),
     collectionId: optionalNumber(raw.collectionId, 'tokenMetadata.assets[].collectionId'),
-    tokenId: optionalString(raw.tokenId ?? raw.tokenID, 'tokenMetadata.assets[].tokenId'),
+    tokenId: optionalString(raw.tokenId, 'tokenMetadata.assets[].tokenId'),
     url: optionalString(raw.url, 'tokenMetadata.assets[].url'),
     metadataField: optionalString(raw.metadataField, 'tokenMetadata.assets[].metadataField'),
     name: optionalString(raw.name, 'tokenMetadata.assets[].name'),
@@ -1061,7 +1235,7 @@ function indexerRequestFailure(error: unknown): OMSWalletUpstreamError {
   return {
     service: 'indexer',
     name: error instanceof Error ? error.name : stringField(error, 'name'),
-    code: numberOrStringField(error, 'code'),
+    code: codeField(error),
     message: errorMessage(error),
     status
   };
@@ -1075,7 +1249,7 @@ function indexerResponseError(
   return {
     service: 'indexer',
     name: stringField(payload, 'name') ?? stringField(payload, 'error'),
-    code: numberOrStringField(payload, 'code'),
+    code: codeField(payload),
     message: gatewayErrorMessage(payload) ?? fallbackMessage,
     status
   };
@@ -1097,9 +1271,11 @@ function numberField(source: unknown, key: string): number | undefined {
   return typeof value === 'number' ? value : undefined;
 }
 
-function numberOrStringField(source: unknown, key: string): number | string | undefined {
-  const value = objectField(source, key);
-  return typeof value === 'number' || typeof value === 'string' ? value : undefined;
+/** Reads an upstream `code`, stringifying numeric codes. */
+function codeField(source: unknown): string | undefined {
+  const value = objectField(source, 'code');
+  if (typeof value === 'number') return String(value);
+  return typeof value === 'string' ? value : undefined;
 }
 
 function objectField(source: unknown, key: string): unknown {
