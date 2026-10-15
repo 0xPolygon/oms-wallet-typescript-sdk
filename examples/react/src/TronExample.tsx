@@ -2,17 +2,41 @@ import { useEffect, useRef, useState } from 'react';
 import {
   TronNetworks,
   type FeeOptionSelection,
-  type FeeOptionWithBalance
+  type FeeOptionWithBalance,
+  type TronNetwork
 } from '@polygonlabs/oms-wallet';
 import { FeeOptionsPanel } from '../../shared/example-components';
 import { omsWallet } from './omsWallet';
 import { parseDecimalBaseUnits } from './SolanaExample';
 
-const TRONSCAN_NILE_URL = 'https://nile.tronscan.org/#';
-const NILE_FAUCET_URL = 'https://nileex.io/join/getJoinPage';
-const NILE_USDT_CONTRACT = 'TXYZopYRdj2D9XRtbG411XZZ3kM5VkAeBf';
 const USDT_DECIMALS = 6;
 const SUN_DECIMALS = 6;
+
+type TronNetworkKey = 'nile' | 'mainnet';
+
+type TronNetworkConfig = {
+  network: TronNetwork;
+  label: string;
+  explorerUrl: string;
+  usdtContract: string;
+  faucetUrl?: string;
+};
+
+const TRON_NETWORKS: Record<TronNetworkKey, TronNetworkConfig> = {
+  nile: {
+    network: TronNetworks.nile,
+    label: 'Nile',
+    explorerUrl: 'https://nile.tronscan.org/#',
+    usdtContract: 'TXYZopYRdj2D9XRtbG411XZZ3kM5VkAeBf',
+    faucetUrl: 'https://nileex.io/join/getJoinPage'
+  },
+  mainnet: {
+    network: TronNetworks.mainnet,
+    label: 'Mainnet',
+    explorerUrl: 'https://tronscan.org/#',
+    usdtContract: 'TR7NHqjeKQxGTCi8q8ZY4pL8otSzgjLj6t'
+  }
+};
 
 type AssetType = 'TRX' | 'TRC20';
 type Trc20TokenType = 'USDT' | 'CUSTOM';
@@ -23,6 +47,8 @@ type FeeSelectionController = {
 };
 
 export function TronExample({ walletAddress }: { walletAddress: string }) {
+  const [networkKey, setNetworkKey] = useState<TronNetworkKey>('nile');
+  const config = TRON_NETWORKS[networkKey];
   const [balance, setBalance] = useState<string | null>(null);
   const [usdtBalance, setUsdtBalance] = useState<string | null>(null);
   const [balanceStatus, setBalanceStatus] = useState('');
@@ -42,21 +68,30 @@ export function TronExample({ walletAddress }: { walletAddress: string }) {
   const [feeOptions, setFeeOptions] = useState<FeeOptionWithBalance[]>([]);
   const [isBusy, setIsBusy] = useState(false);
   const feeSelection = useRef<FeeSelectionController | null>(null);
+  const balanceRequest = useRef(0);
 
   useEffect(() => {
+    setBalance(null);
+    setUsdtBalance(null);
+    setTransactionHash('');
+    setTransactionId('');
+    setTransferStatus('');
     void refreshBalance();
     return () => {
       feeSelection.current?.reject(new Error('Tron operation closed'));
       feeSelection.current = null;
     };
-  }, [walletAddress]);
+  }, [walletAddress, networkKey]);
 
   async function refreshBalance() {
+    const request = ++balanceRequest.current;
     setIsBalanceLoading(true);
     setBalanceStatus('');
 
     try {
-      const snapshot = await getNileBalances(walletAddress);
+      const snapshot = await getTronBalances(walletAddress, config);
+      // Ignore a response for a network or wallet the panel has already moved away from.
+      if (request !== balanceRequest.current) return;
       if (snapshot.error) {
         setBalanceStatus(snapshot.error);
       } else {
@@ -64,9 +99,9 @@ export function TronExample({ walletAddress }: { walletAddress: string }) {
         setUsdtBalance(snapshot.usdt);
       }
     } catch (error) {
-      setBalanceStatus(errorMessage(error));
+      if (request === balanceRequest.current) setBalanceStatus(errorMessage(error));
     } finally {
-      setIsBalanceLoading(false);
+      if (request === balanceRequest.current) setIsBalanceLoading(false);
     }
   }
 
@@ -103,7 +138,7 @@ export function TronExample({ walletAddress }: { walletAddress: string }) {
     setTransactionId('');
     try {
       const options = {
-        network: TronNetworks.nile,
+        network: config.network,
         selectFeeOption: waitForFeeOptionSelection,
         statusPolling: { timeoutMs: 120_000 }
       };
@@ -115,7 +150,7 @@ export function TronExample({ walletAddress }: { walletAddress: string }) {
           value: parseDecimalBaseUnits(amount, SUN_DECIMALS, 'TRX amount')
         });
       } else {
-        const contractAddress = tokenType === 'USDT' ? NILE_USDT_CONTRACT : tokenContract.trim();
+        const contractAddress = tokenType === 'USDT' ? config.usdtContract : tokenContract.trim();
         if (!contractAddress) {
           throw new Error('Enter a TRC-20 contract address.');
         }
@@ -187,28 +222,45 @@ export function TronExample({ walletAddress }: { walletAddress: string }) {
       <section className="tool solana-tool" role="tabpanel">
         <div className="tool-header">
           <h2>Tron operations</h2>
-          <span className="metadata-pill">Nile testnet</span>
+          <span className="select-control">
+            <select
+              aria-label="Tron network"
+              value={networkKey}
+              disabled={isBusy}
+              onChange={(event) => setNetworkKey(event.target.value as TronNetworkKey)}
+            >
+              <option value="nile">Nile testnet</option>
+              <option value="mainnet">Mainnet</option>
+            </select>
+          </span>
         </div>
         <p className="field-hint">
           Tron wallets use native mode only. Transactions are often sponsored by each account's
           daily free bandwidth; once it is spent, the network fee is paid in TRX.
         </p>
+        {networkKey === 'mainnet' && (
+          <p className="field-hint">Mainnet transfers move real funds.</p>
+        )}
 
         <div className="balance-panel">
           <div className="balance-assets">
             <div className="balance-asset">
-              <span>Nile TRX balance</span>
+              <span>{config.label} TRX balance</span>
               <strong>{balance === null ? '—' : `${balance} TRX`}</strong>
-              <a href={NILE_FAUCET_URL} target="_blank" rel="noreferrer">
-                Open TRX faucet
-              </a>
+              {config.faucetUrl && (
+                <a href={config.faucetUrl} target="_blank" rel="noreferrer">
+                  Open TRX faucet
+                </a>
+              )}
             </div>
             <div className="balance-asset">
-              <span>Nile USDT balance</span>
+              <span>{config.label} USDT balance</span>
               <strong>{usdtBalance === null ? '—' : `${usdtBalance} USDT`}</strong>
-              <a href={NILE_FAUCET_URL} target="_blank" rel="noreferrer">
-                Open USDT faucet
-              </a>
+              {config.faucetUrl && (
+                <a href={config.faucetUrl} target="_blank" rel="noreferrer">
+                  Open USDT faucet
+                </a>
+              )}
             </div>
           </div>
           <div className="inline-links">
@@ -220,7 +272,11 @@ export function TronExample({ walletAddress }: { walletAddress: string }) {
             >
               {isBalanceLoading ? 'Refreshing...' : 'Refresh'}
             </button>
-            <a href={tronAddressExplorerUrl(walletAddress)} target="_blank" rel="noreferrer">
+            <a
+              href={`${config.explorerUrl}/address/${walletAddress}`}
+              target="_blank"
+              rel="noreferrer"
+            >
               View wallet
             </a>
           </div>
@@ -300,7 +356,7 @@ export function TronExample({ walletAddress }: { walletAddress: string }) {
                 </>
               )}
               {tokenType === 'USDT' && (
-                <p className="field-hint">USDT contract address: {NILE_USDT_CONTRACT}</p>
+                <p className="field-hint">USDT contract address: {config.usdtContract}</p>
               )}
             </>
           )}
@@ -336,7 +392,7 @@ export function TronExample({ walletAddress }: { walletAddress: string }) {
                 (!tokenContract.trim() || !tokenDecimals.trim()))
             }
           >
-            Send on Tron Nile
+            {networkKey === 'mainnet' ? 'Send on Tron mainnet' : 'Send on Tron Nile'}
           </button>
           {(transactionHash || transactionId) && (
             <div className="result-block">
@@ -348,7 +404,7 @@ export function TronExample({ walletAddress }: { walletAddress: string }) {
               </p>
               {transactionHash && (
                 <a
-                  href={tronTransactionExplorerUrl(transactionHash)}
+                  href={`${config.explorerUrl}/transaction/${transactionHash}`}
                   target="_blank"
                   rel="noreferrer"
                 >
@@ -372,24 +428,27 @@ export function TronExample({ walletAddress }: { walletAddress: string }) {
   );
 }
 
-async function getNileBalances(address: string): Promise<{
+async function getTronBalances(
+  address: string,
+  config: TronNetworkConfig
+): Promise<{
   trx: string;
   usdt: string;
   error?: string;
 }> {
   const result = await omsWallet.indexer.getTronBalances({
     walletAddress: address,
-    networks: [TronNetworks.nile],
-    contractAddresses: [NILE_USDT_CONTRACT]
+    networks: [config.network],
+    contractAddresses: [config.usdtContract]
   });
-  const networkError = result.errors.find((error) => error.network === TronNetworks.nile);
+  const networkError = result.errors.find((error) => error.network === config.network);
   if (networkError) {
     return { trx: '0', usdt: '0', error: networkError.reason };
   }
 
   const nativeBalance = result.balances.find((asset) => asset.assetType === 'native');
   const usdtBalance = result.balances.find(
-    (asset) => asset.assetType === 'fungible-token' && asset.contractAddress === NILE_USDT_CONTRACT
+    (asset) => asset.assetType === 'fungible-token' && asset.contractAddress === config.usdtContract
   );
   return {
     trx: nativeBalance?.formattedBalance ?? '0',
@@ -407,12 +466,4 @@ function parseTokenDecimals(value: string): number {
 
 function errorMessage(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
-}
-
-function tronAddressExplorerUrl(address: string): string {
-  return `${TRONSCAN_NILE_URL}/address/${address}`;
-}
-
-function tronTransactionExplorerUrl(txHash: string): string {
-  return `${TRONSCAN_NILE_URL}/transaction/${txHash}`;
 }

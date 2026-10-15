@@ -2,15 +2,41 @@ import { useEffect, useRef, useState } from 'react';
 import {
   SolanaNetworks,
   type FeeOptionSelection,
-  type FeeOptionWithBalance
+  type FeeOptionWithBalance,
+  type SolanaNetwork
 } from '@polygonlabs/oms-wallet';
 import { FeeOptionsPanel } from '../../shared/example-components';
 import { omsWallet } from './omsWallet';
 
-const SOLANA_DEVNET_EXPLORER_URL = 'https://explorer.solana.com';
+const SOLANA_EXPLORER_URL = 'https://explorer.solana.com';
 const LAMPORTS_PER_SOL_DECIMALS = 9;
-const DEVNET_USDC_MINT = '4zMMC9srt5Ri5X14GAgXhaHii3GnPAEERYPJgZJDncDU';
 const USDC_DECIMALS = 6;
+
+type SolanaNetworkKey = 'devnet' | 'mainnet';
+
+type SolanaNetworkConfig = {
+  network: SolanaNetwork;
+  label: string;
+  usdcMint: string;
+  /** Solana Explorer `cluster` query parameter; mainnet is the explorer default. */
+  explorerCluster?: string;
+  faucets?: { sol: string; usdc: string };
+};
+
+const SOLANA_NETWORKS: Record<SolanaNetworkKey, SolanaNetworkConfig> = {
+  devnet: {
+    network: SolanaNetworks.devnet,
+    label: 'Devnet',
+    usdcMint: '4zMMC9srt5Ri5X14GAgXhaHii3GnPAEERYPJgZJDncDU',
+    explorerCluster: 'devnet',
+    faucets: { sol: 'https://faucet.solana.com/', usdc: 'https://faucet.circle.com/' }
+  },
+  mainnet: {
+    network: SolanaNetworks.mainnet,
+    label: 'Mainnet',
+    usdcMint: 'EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v'
+  }
+};
 
 type AssetType = 'SOL' | 'SPL';
 type SplTokenType = 'USDC' | 'CUSTOM';
@@ -20,6 +46,8 @@ type FeeSelectionController = {
 };
 
 export function SolanaExample({ walletAddress }: { walletAddress: string }) {
+  const [networkKey, setNetworkKey] = useState<SolanaNetworkKey>('devnet');
+  const config = SOLANA_NETWORKS[networkKey];
   const [balance, setBalance] = useState<bigint | null>(null);
   const [usdcBalance, setUsdcBalance] = useState<bigint | null>(null);
   const [balanceStatus, setBalanceStatus] = useState('');
@@ -39,21 +67,30 @@ export function SolanaExample({ walletAddress }: { walletAddress: string }) {
   const [feeOptions, setFeeOptions] = useState<FeeOptionWithBalance[]>([]);
   const [isBusy, setIsBusy] = useState(false);
   const feeSelection = useRef<FeeSelectionController | null>(null);
+  const balanceRequest = useRef(0);
 
   useEffect(() => {
+    setBalance(null);
+    setUsdcBalance(null);
+    setTransactionSignature('');
+    setTransactionId('');
+    setTransferStatus('');
     void refreshBalance();
     return () => {
       feeSelection.current?.reject(new Error('Solana operation closed'));
       feeSelection.current = null;
     };
-  }, [walletAddress]);
+  }, [walletAddress, networkKey]);
 
   async function refreshBalance() {
+    const request = ++balanceRequest.current;
     setIsBalanceLoading(true);
     setBalanceStatus('');
 
     try {
-      const snapshot = await getDevnetBalances(walletAddress);
+      const snapshot = await getSolanaBalances(walletAddress, config);
+      // Ignore a response for a network or wallet the panel has already moved away from.
+      if (request !== balanceRequest.current) return;
       if (snapshot.error) {
         setBalanceStatus(snapshot.error);
       } else {
@@ -61,9 +98,9 @@ export function SolanaExample({ walletAddress }: { walletAddress: string }) {
         setUsdcBalance(snapshot.usdc);
       }
     } catch (error) {
-      setBalanceStatus(errorMessage(error));
+      if (request === balanceRequest.current) setBalanceStatus(errorMessage(error));
     } finally {
-      setIsBalanceLoading(false);
+      if (request === balanceRequest.current) setIsBalanceLoading(false);
     }
   }
 
@@ -100,7 +137,7 @@ export function SolanaExample({ walletAddress }: { walletAddress: string }) {
     setTransactionId('');
     try {
       const asset =
-        assetType === 'SOL' ? 'SOL' : splTokenType === 'USDC' ? DEVNET_USDC_MINT : mint.trim();
+        assetType === 'SOL' ? 'SOL' : splTokenType === 'USDC' ? config.usdcMint : mint.trim();
       if (!asset) {
         throw new Error('Enter an SPL token mint address.');
       }
@@ -114,7 +151,7 @@ export function SolanaExample({ walletAddress }: { walletAddress: string }) {
               splTokenType === 'USDC' ? 'USDC amount' : 'Token amount'
             );
       const transaction = await omsWallet.wallet.sendSolanaTransfer({
-        network: SolanaNetworks.devnet,
+        network: config.network,
         asset,
         to: destination,
         amount: amountInBaseUnits,
@@ -149,7 +186,7 @@ export function SolanaExample({ walletAddress }: { walletAddress: string }) {
 
     let availableBalance = balance;
     try {
-      const snapshot = await getDevnetBalances(walletAddress);
+      const snapshot = await getSolanaBalances(walletAddress, config);
       if (snapshot.error) throw new Error(snapshot.error);
       availableBalance = snapshot.sol;
       setBalance(snapshot.sol);
@@ -198,30 +235,47 @@ export function SolanaExample({ walletAddress }: { walletAddress: string }) {
       <section className="tool solana-tool" role="tabpanel">
         <div className="tool-header">
           <h2>Solana operations</h2>
-          <span className="metadata-pill">Devnet</span>
+          <span className="select-control">
+            <select
+              aria-label="Solana network"
+              value={networkKey}
+              disabled={isBusy}
+              onChange={(event) => setNetworkKey(event.target.value as SolanaNetworkKey)}
+            >
+              <option value="devnet">Devnet</option>
+              <option value="mainnet">Mainnet</option>
+            </select>
+          </span>
         </div>
+        {networkKey === 'mainnet' && (
+          <p className="field-hint">Mainnet transfers move real funds.</p>
+        )}
 
         <div className="balance-panel">
           <div className="balance-assets">
             <div className="balance-asset">
-              <span>Devnet SOL balance</span>
+              <span>{config.label} SOL balance</span>
               <strong>
                 {balance === null
                   ? '—'
                   : `${formatBaseUnits(balance, LAMPORTS_PER_SOL_DECIMALS)} SOL`}
               </strong>
-              <a href="https://faucet.solana.com/" target="_blank" rel="noreferrer">
-                Open SOL faucet
-              </a>
+              {config.faucets && (
+                <a href={config.faucets.sol} target="_blank" rel="noreferrer">
+                  Open SOL faucet
+                </a>
+              )}
             </div>
             <div className="balance-asset">
-              <span>Devnet USDC balance</span>
+              <span>{config.label} USDC balance</span>
               <strong>
                 {usdcBalance === null ? '—' : `${formatBaseUnits(usdcBalance, USDC_DECIMALS)} USDC`}
               </strong>
-              <a href="https://faucet.circle.com/" target="_blank" rel="noreferrer">
-                Open USDC faucet
-              </a>
+              {config.faucets && (
+                <a href={config.faucets.usdc} target="_blank" rel="noreferrer">
+                  Open USDC faucet
+                </a>
+              )}
             </div>
           </div>
           <div className="inline-links">
@@ -233,7 +287,11 @@ export function SolanaExample({ walletAddress }: { walletAddress: string }) {
             >
               {isBalanceLoading ? 'Refreshing...' : 'Refresh'}
             </button>
-            <a href={solanaAddressExplorerUrl(walletAddress)} target="_blank" rel="noreferrer">
+            <a
+              href={solanaExplorerUrl(`address/${walletAddress}`, config)}
+              target="_blank"
+              rel="noreferrer"
+            >
               View wallet
             </a>
           </div>
@@ -317,7 +375,7 @@ export function SolanaExample({ walletAddress }: { walletAddress: string }) {
                 </>
               )}
               {splTokenType === 'USDC' && (
-                <p className="field-hint">USDC mint address: {DEVNET_USDC_MINT}</p>
+                <p className="field-hint">USDC mint address: {config.usdcMint}</p>
               )}
             </>
           )}
@@ -360,7 +418,7 @@ export function SolanaExample({ walletAddress }: { walletAddress: string }) {
                 (!mint.trim() || !tokenDecimals.trim()))
             }
           >
-            Send on Solana Devnet
+            {networkKey === 'mainnet' ? 'Send on Solana mainnet' : 'Send on Solana Devnet'}
           </button>
           {(transactionSignature || transactionId) && (
             <div className="result-block">
@@ -372,7 +430,7 @@ export function SolanaExample({ walletAddress }: { walletAddress: string }) {
               </p>
               {transactionSignature && (
                 <a
-                  href={solanaTransactionExplorerUrl(transactionSignature)}
+                  href={solanaExplorerUrl(`tx/${transactionSignature}`, config)}
                   target="_blank"
                   rel="noreferrer"
                 >
@@ -396,24 +454,27 @@ export function SolanaExample({ walletAddress }: { walletAddress: string }) {
   );
 }
 
-async function getDevnetBalances(address: string): Promise<{
+async function getSolanaBalances(
+  address: string,
+  config: SolanaNetworkConfig
+): Promise<{
   sol: bigint;
   usdc: bigint;
   error?: string;
 }> {
   const result = await omsWallet.indexer.getSolanaBalances({
     walletAddress: address,
-    networks: [SolanaNetworks.devnet],
-    mintAddresses: [DEVNET_USDC_MINT]
+    networks: [config.network],
+    mintAddresses: [config.usdcMint]
   });
-  const networkError = result.errors.find((error) => error.network === SolanaNetworks.devnet);
+  const networkError = result.errors.find((error) => error.network === config.network);
   if (networkError) {
     return { sol: 0n, usdc: 0n, error: networkError.reason };
   }
 
   const nativeBalance = result.balances.find((asset) => asset.assetType === 'native');
   const usdcBalance = result.balances.find(
-    (asset) => asset.assetType === 'fungible-token' && asset.mintAddress === DEVNET_USDC_MINT
+    (asset) => asset.assetType === 'fungible-token' && asset.mintAddress === config.usdcMint
   );
   return {
     sol: parseIndexerBalance(nativeBalance?.balance, 'SOL'),
@@ -469,10 +530,7 @@ export function formatBaseUnits(value: bigint, decimals: number): string {
   return fraction ? `${whole}.${fraction}` : whole.toString();
 }
 
-function solanaAddressExplorerUrl(address: string): string {
-  return `${SOLANA_DEVNET_EXPLORER_URL}/address/${address}?cluster=devnet`;
-}
-
-function solanaTransactionExplorerUrl(signature: string): string {
-  return `${SOLANA_DEVNET_EXPLORER_URL}/tx/${signature}?cluster=devnet`;
+function solanaExplorerUrl(path: string, config: SolanaNetworkConfig): string {
+  const cluster = config.explorerCluster ? `?cluster=${config.explorerCluster}` : '';
+  return `${SOLANA_EXPLORER_URL}/${path}${cluster}`;
 }
