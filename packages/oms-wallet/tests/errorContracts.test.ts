@@ -16,33 +16,7 @@ import {
   type StorageManager
 } from '../src';
 import { testWalletAccount } from './fixtures/walletAccount.js';
-import { jsonResponse } from './fixtures/helpers.js';
-
-class MockSigner implements CredentialSigner {
-  readonly signingAlgorithm = 'ecdsa-p256-sha256';
-
-  constructor(private credential = '0x04' + '11'.repeat(64)) {}
-
-  async credentialId(): Promise<string> {
-    return this.credential;
-  }
-
-  setCredential(credential: string): void {
-    this.credential = credential;
-  }
-
-  async nextNonce(): Promise<string> {
-    return '42';
-  }
-
-  async sign(): Promise<string> {
-    return '0x' + '22'.repeat(64);
-  }
-
-  async hasCredential(): Promise<boolean> {
-    return true;
-  }
-}
+import { MockSigner, jsonResponse } from './fixtures/helpers.js';
 
 afterEach(() => {
   vi.restoreAllMocks();

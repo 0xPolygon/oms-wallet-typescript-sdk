@@ -2,11 +2,9 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import { WalletClientImpl } from '../src/clients/walletClient';
 import { Networks, TronNetworks } from '../src/networks';
-import { MemoryStorageManager } from '../src/storageManager';
 import { FeeOptionSelector } from '../src/types/transactionTypes';
 import { TransactionStatus, WalletType } from '../src/types/waas';
-import { testWalletAccount } from './fixtures/walletAccount.js';
-import { MockSigner, jsonResponse, requestCount } from './fixtures/helpers.js';
+import { createWalletWithSession, jsonResponse, requestCount } from './fixtures/helpers.js';
 
 const tronWalletAddress = 'TNPeeaaFB7K9cmo4uQpcU32zGK8G1NYqeL';
 const tronWalletHex = '0x8840e6c55b9ada326d211d818c34a994aeced808';
@@ -486,29 +484,4 @@ function sponsoredPrepareResponse(txnId: string) {
 
 function createTronWalletWithSession(): WalletClientImpl {
   return createWalletWithSession(tronWalletAddress, 'tron');
-}
-
-function createWalletWithSession(
-  walletAddress: string,
-  type?: 'ethereum' | 'solana' | 'tron'
-): WalletClientImpl {
-  const wallet = new WalletClientImpl({
-    publishableKey: 'publishable-key',
-    projectId: 'project-id',
-    environment: {
-      walletApiUrl: 'https://wallet.example',
-      indexerGatewayUrl: 'https://indexer.example',
-      solanaIndexerGatewayUrl: 'https://solana-indexer.example',
-      tronIndexerGatewayUrl: 'https://tron-indexer.example'
-    },
-    storage: new MemoryStorageManager(),
-    credentialSigner: new MockSigner()
-  });
-  (wallet as any).persistSession(testWalletAccount('wallet-id', walletAddress, type), {
-    expiresAt: '2099-01-01T00:00:00Z',
-    auth: { type: 'email', email: 'user@example.com' },
-    signerCredentialId: '0x04' + '11'.repeat(64),
-    signerKeyType: 'ecdsa-p256-sha256'
-  });
-  return wallet;
 }

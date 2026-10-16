@@ -9,28 +9,20 @@ import { Constants } from '../src/utils/constants';
 import { RequestUtils } from '../src/utils/requestUtils';
 import { WalletType } from '../src/types/waas';
 import { testWalletAccount } from './fixtures/walletAccount.js';
-import { jsonResponse, requestCount, testCredential, testEnvironment } from './fixtures/helpers.js';
+import {
+  MockSigner as FixtureMockSigner,
+  jsonResponse,
+  requestCount,
+  testCredential,
+  testEnvironment
+} from './fixtures/helpers.js';
 
-class MockSigner implements CredentialSigner {
-  readonly signingAlgorithm = 'ecdsa-p256-sha256';
+/** The shared signer plus a `clear` spy for sign-out and expiry cleanup assertions. */
+class MockSigner extends FixtureMockSigner {
   clear = vi.fn(async () => {});
 
-  constructor(private readonly available = true) {}
-
-  async credentialId(): Promise<string> {
-    return '0x04' + '11'.repeat(64);
-  }
-
-  async nextNonce(): Promise<string> {
-    return '42';
-  }
-
-  async sign(): Promise<string> {
-    return '0x' + '22'.repeat(64);
-  }
-
-  async hasCredential(): Promise<boolean> {
-    return this.available;
+  constructor(available = true) {
+    super(undefined, available);
   }
 }
 

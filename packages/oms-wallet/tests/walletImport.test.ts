@@ -2,31 +2,19 @@ import { Aes256Gcm, CipherSuite, DhkemP256HkdfSha256, HkdfSha256 } from '@hpke/c
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import { WalletClientImpl } from '../src/clients/walletClient';
-import type { CredentialSigner } from '../src/credentialSigner';
 import type { GetRecipientKeyRequest, ImportWalletRequest } from '../src/generated/waas.gen';
 import { MemoryStorageManager } from '../src/storageManager';
 import { WalletImportCipherSuite } from '../src/types/waas';
 import { Constants } from '../src/utils/constants';
 import { base64DecodeBytes, base64EncodeBytes } from '../src/utils/base64';
 import { sealWalletImportPrivateKey, walletImportPlaintext } from '../src/walletImport';
-import { testWalletAccount } from './fixtures/walletAccount.js';
-import { jsonResponse, testCredential, testEnvironment } from './fixtures/helpers.js';
-
-class MockSigner implements CredentialSigner {
-  readonly signingAlgorithm = 'ecdsa-p256-sha256';
-
-  async credentialId(): Promise<string> {
-    return `0x04${'11'.repeat(64)}`;
-  }
-
-  async nextNonce(): Promise<string> {
-    return '42';
-  }
-
-  async sign(): Promise<string> {
-    return `0x${'22'.repeat(64)}`;
-  }
-}
+import {
+  MockSigner,
+  createWalletWithSession,
+  jsonResponse,
+  testCredential,
+  testEnvironment
+} from './fixtures/helpers.js';
 
 afterEach(() => {
   vi.restoreAllMocks();
@@ -209,27 +197,3 @@ describe('wallet import', () => {
     });
   });
 });
-
-function createWalletWithSession(): WalletClientImpl {
-  const wallet = new WalletClientImpl({
-    publishableKey: 'publishable-key',
-    projectId: 'project-id',
-    environment: {
-      walletApiUrl: 'https://wallet.example',
-      indexerGatewayUrl: 'https://indexer.example',
-      solanaIndexerGatewayUrl: 'https://solana-indexer.example'
-    },
-    storage: new MemoryStorageManager(),
-    credentialSigner: new MockSigner()
-  });
-  (wallet as any).persistSession(
-    testWalletAccount('wallet-id', '0x1111111111111111111111111111111111111111'),
-    {
-      expiresAt: '2099-01-01T00:00:00Z',
-      auth: { type: 'email', email: 'user@example.com' },
-      signerCredentialId: `0x04${'11'.repeat(64)}`,
-      signerKeyType: 'ecdsa-p256-sha256'
-    }
-  );
-  return wallet;
-}

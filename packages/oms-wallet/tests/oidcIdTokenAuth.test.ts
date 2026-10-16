@@ -1,29 +1,19 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import { WalletClientImpl } from '../src/clients/walletClient';
-import type { CredentialSigner } from '../src/credentialSigner';
 import { WalletType } from '../src/types/waas';
 import { MemoryStorageManager } from '../src/storageManager';
 import { oidcIdTokenHandleHash } from '../src/utils/oidcIdToken';
 import { base64UrlEncodeString } from '../src/utils/oidcRedirect';
 import { Constants } from '../src/utils/constants';
-import { jsonResponse, requestCount, testCredential, testEnvironment } from './fixtures/helpers.js';
-
-class MockSigner implements CredentialSigner {
-  readonly signingAlgorithm = 'ecdsa-p256-sha256';
-
-  async credentialId(): Promise<string> {
-    return '0x04' + '11'.repeat(64);
-  }
-
-  async nextNonce(): Promise<string> {
-    return '42';
-  }
-
-  async sign(): Promise<string> {
-    return '0x' + '22'.repeat(64);
-  }
-}
+import {
+  MockSigner,
+  jsonResponse,
+  requestCount,
+  testCredential,
+  testEnvironment,
+  waitForRequest
+} from './fixtures/helpers.js';
 
 afterEach(() => {
   vi.restoreAllMocks();
@@ -355,17 +345,6 @@ function createWalletClient(
     redirectAuthStorage: params.redirectAuthStorage,
     credentialSigner: new MockSigner()
   });
-}
-
-async function waitForRequest(
-  fetchMock: ReturnType<typeof vi.fn>,
-  endpoint: string
-): Promise<void> {
-  for (let attempt = 0; attempt < 20; attempt += 1) {
-    if (requestCount(fetchMock, endpoint) > 0) return;
-    await new Promise((resolve) => setTimeout(resolve, 0));
-  }
-  throw new Error(`Timed out waiting for ${endpoint}`);
 }
 
 function fakeJwt(payload: Record<string, unknown>): string {

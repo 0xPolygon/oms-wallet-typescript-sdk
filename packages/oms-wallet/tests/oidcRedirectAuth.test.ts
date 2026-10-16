@@ -14,7 +14,13 @@ import {
   redirectUriFromCurrentUrl
 } from '../src/utils/oidcRedirect';
 import { testWalletAccount } from './fixtures/walletAccount.js';
-import { jsonResponse, requestCount, testCredential, testEnvironment } from './fixtures/helpers.js';
+import {
+  MockSigner,
+  jsonResponse,
+  requestCount,
+  testCredential,
+  testEnvironment
+} from './fixtures/helpers.js';
 
 const expectedDefaultGoogleClientId =
   '913882656162-7l4ofa0ou2hqo90umlkenhdop1f5inba.apps.googleusercontent.com';
@@ -31,30 +37,6 @@ function googleAuth(email: string | undefined) {
     providerLabel: 'Google',
     email
   };
-}
-
-class MockSigner implements CredentialSigner {
-  readonly signingAlgorithm = 'ecdsa-p256-sha256';
-  readonly preimages: string[] = [];
-
-  constructor(private credential = '0x04' + '11'.repeat(64)) {}
-
-  async credentialId(): Promise<string> {
-    return this.credential;
-  }
-
-  setCredential(credential: string): void {
-    this.credential = credential;
-  }
-
-  async nextNonce(): Promise<string> {
-    return '42';
-  }
-
-  async sign(preimage: string): Promise<string> {
-    this.preimages.push(preimage);
-    return '0x' + '22'.repeat(64);
-  }
 }
 
 afterEach(() => {

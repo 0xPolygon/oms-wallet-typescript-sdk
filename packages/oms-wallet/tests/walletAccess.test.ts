@@ -1,11 +1,13 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
-import { WalletClientImpl } from '../src/clients/walletClient';
 import { Networks } from '../src/networks';
-import { MemoryStorageManager } from '../src/storageManager';
 import { WalletType } from '../src/types/waas';
-import { testWalletAccount } from './fixtures/walletAccount.js';
-import { MockSigner, jsonResponse, requestCount, testEnvironment } from './fixtures/helpers.js';
+import {
+  createWalletWithSession,
+  jsonResponse,
+  requestCount,
+  waitForRequest
+} from './fixtures/helpers.js';
 
 afterEach(() => {
   vi.restoreAllMocks();
@@ -635,26 +637,6 @@ describe('WalletClient access management', () => {
   });
 });
 
-function createWalletWithSession(): WalletClientImpl {
-  const wallet = new WalletClientImpl({
-    publishableKey: 'publishable-key',
-    projectId: 'project-id',
-    environment: testEnvironment(),
-    storage: new MemoryStorageManager(),
-    credentialSigner: new MockSigner()
-  });
-  (wallet as any).persistSession(
-    testWalletAccount('wallet-id', '0x1111111111111111111111111111111111111111'),
-    {
-      expiresAt: '2099-01-01T00:00:00Z',
-      auth: { type: 'email', email: 'user@example.com' },
-      signerCredentialId: '0x04' + '11'.repeat(64),
-      signerKeyType: 'ecdsa-p256-sha256'
-    }
-  );
-  return wallet;
-}
-
 function testCredential(seed = '11', isCaller = true) {
   return {
     type: 'direct',
@@ -662,16 +644,4 @@ function testCredential(seed = '11', isCaller = true) {
     expiresAt: '2099-01-01T00:00:00Z',
     isCaller
   };
-}
-
-async function waitForRequest(
-  fetchMock: ReturnType<typeof vi.fn>,
-  endpoint: string,
-  count = 1
-): Promise<void> {
-  for (let attempt = 0; attempt < 20; attempt += 1) {
-    if (requestCount(fetchMock, endpoint) >= count) return;
-    await new Promise((resolve) => setTimeout(resolve, 0));
-  }
-  throw new Error(`Timed out waiting for ${endpoint}`);
 }

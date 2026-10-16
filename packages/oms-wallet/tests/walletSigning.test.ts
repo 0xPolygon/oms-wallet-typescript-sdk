@@ -4,8 +4,12 @@ import { WalletClientImpl } from '../src/clients/walletClient';
 import { WalletOperation } from '../src/index';
 import { Networks } from '../src/networks';
 import { MemoryStorageManager } from '../src/storageManager';
-import { testWalletAccount } from './fixtures/walletAccount.js';
-import { MockSigner, jsonResponse, testEnvironment } from './fixtures/helpers.js';
+import {
+  MockSigner,
+  createWalletWithSession,
+  jsonResponse,
+  testEnvironment
+} from './fixtures/helpers.js';
 
 afterEach(() => {
   vi.restoreAllMocks();
@@ -344,11 +348,9 @@ describe('WalletClient signature verification target', () => {
     '$label rejects an omitted walletAddress for an expired session before any request',
     async ({ label, walletType, verify }) => {
       const { fetchMock } = recordVerificationRequests();
-      const wallet = createWalletWithSession(
-        addressFor[walletType],
-        walletType,
-        '2000-01-01T00:00:00Z'
-      );
+      const wallet = createWalletWithSession(addressFor[walletType], walletType, {
+        expiresAt: '2000-01-01T00:00:00Z'
+      });
 
       await expect(verify(wallet)).rejects.toMatchObject({
         name: 'OMSWalletSessionError',
@@ -414,25 +416,4 @@ function createSignedOutWallet(): WalletClientImpl {
     storage: new MemoryStorageManager(),
     credentialSigner: new MockSigner()
   });
-}
-
-function createWalletWithSession(
-  walletAddress: string,
-  walletType?: 'ethereum' | 'solana' | 'tron',
-  expiresAt = '2099-01-01T00:00:00Z'
-): WalletClientImpl {
-  const wallet = new WalletClientImpl({
-    publishableKey: 'publishable-key',
-    projectId: 'project-id',
-    environment: testEnvironment(),
-    storage: new MemoryStorageManager(),
-    credentialSigner: new MockSigner()
-  });
-  (wallet as any).persistSession(testWalletAccount('wallet-id', walletAddress, walletType), {
-    expiresAt,
-    auth: { type: 'email', email: 'user@example.com' },
-    signerCredentialId: '0x04' + '11'.repeat(64),
-    signerKeyType: 'ecdsa-p256-sha256'
-  });
-  return wallet;
 }
