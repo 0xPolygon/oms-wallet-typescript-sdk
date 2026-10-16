@@ -6,7 +6,7 @@ import { MemoryStorageManager } from '../src/storageManager';
 import { FeeOptionSelector } from '../src/types/transactionTypes';
 import { TransactionStatus, WalletType } from '../src/types/waas';
 import { testWalletAccount } from './fixtures/walletAccount.js';
-import { MockSigner, jsonResponse } from './fixtures/helpers.js';
+import { MockSigner, jsonResponse, requestCount } from './fixtures/helpers.js';
 
 const tronWalletAddress = 'TNPeeaaFB7K9cmo4uQpcU32zGK8G1NYqeL';
 const tronWalletHex = '0x8840e6c55b9ada326d211d818c34a994aeced808';
@@ -258,6 +258,117 @@ describe('WalletClient Tron', () => {
       })
     ).resolves.toMatchObject({ txnId: 'txn-burn' });
     expect(selectFeeOption).toHaveBeenCalledOnce();
+  });
+
+  it('reads Tron fee balances for the transaction network by token contract address', async () => {
+    const tronBalance = (network: string, assetType: string, balance: string) => ({
+      network,
+      accountAddress: tronWalletAddress,
+      assetType,
+      ...(assetType === 'fungible-token'
+        ? { contractAddress: tronUsdt, tokenStandard: 'trc20', name: 'Tether USD', symbol: 'USDT' }
+        : { name: 'Tron', symbol: 'TRX' }),
+      decimals: 6,
+      balance,
+      formattedBalance: balance,
+      verificationStatus: 'unknown',
+      verificationSource: 'none'
+    });
+    const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = input.toString();
+      const body = JSON.parse(init?.body as string);
+
+      if (url.endsWith('/PrepareTronTransaction')) {
+        return jsonResponse({
+          txnId: 'txn-fee',
+          status: 'quoted',
+          feeOptions: [
+            {
+              token: { network: 'tron:nile', name: 'TRX', symbol: 'TRX', type: 'NATIVE' },
+              value: '345000',
+              displayValue: '0.345'
+            },
+            {
+              token: {
+                network: 'tron:nile',
+                name: 'Tether USD',
+                symbol: 'USDT',
+                type: 'TRC20',
+                decimals: 6,
+                contractAddress: tronUsdt
+              },
+              value: '100000',
+              displayValue: '0.1'
+            }
+          ],
+          sponsored: false,
+          expiresAt: '2099-01-01T00:00:00Z'
+        });
+      }
+      if (url === 'https://tron-indexer.example/GetTokenBalancesDetails') {
+        expect(body).toEqual({
+          networks: ['tron:nile'],
+          filter: {
+            accountAddresses: [tronWalletAddress],
+            omitNativeBalances: false,
+            contractWhitelist: [tronUsdt]
+          },
+          omitMetadata: true
+        });
+        return jsonResponse({
+          balances: [
+            tronBalance('tron:mainnet', 'native', '9000000'),
+            tronBalance('tron:nile', 'native', '2000000'),
+            tronBalance('tron:nile', 'fungible-token', '5000000'),
+            tronBalance('tron:mainnet', 'fungible-token', '7000000')
+          ],
+          errors: []
+        });
+      }
+      if (url.endsWith('/Execute')) {
+        expect(body).toEqual({ txnId: 'txn-fee', feeOption: { token: 'USDT', index: 1 } });
+        return jsonResponse({ status: 'pending' });
+      }
+      throw new Error(`Unexpected request: ${url}`);
+    });
+    vi.stubGlobal('fetch', fetchMock);
+    const seenOptions: unknown[] = [];
+    const selectFeeOption = vi.fn((options: Parameters<FeeOptionSelector>[0]) => {
+      seenOptions.push(
+        ...options.map(({ selection, available, availableRaw, decimals }) => ({
+          selection,
+          available,
+          availableRaw,
+          decimals
+        }))
+      );
+      return options[1].selection;
+    });
+
+    await createTronWalletWithSession().sendTronTransaction({
+      network: TronNetworks.nile,
+      to: tronRecipient,
+      value: 1n,
+      selectFeeOption,
+      waitForStatus: false
+    });
+
+    expect(selectFeeOption).toHaveBeenCalledOnce();
+    expect(requestCount(fetchMock, '/Execute')).toBe(1);
+    expect(seenOptions).toEqual([
+      {
+        selection: { token: 'TRX', index: 0 },
+        available: '2',
+        availableRaw: '2000000',
+        decimals: 6
+      },
+      {
+        selection: { token: 'USDT', index: 1 },
+        available: '5',
+        availableRaw: '5000000',
+        decimals: 6
+      }
+    ]);
   });
 
   it('signs Tron messages and typed data without an EVM network', async () => {

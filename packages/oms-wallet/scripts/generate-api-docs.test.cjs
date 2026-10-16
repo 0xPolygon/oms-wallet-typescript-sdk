@@ -73,6 +73,24 @@ test('rejects an indirect support-type reference into generated declarations', (
   );
 });
 
+test('rejects a public symbol that resolves to a generated declaration', () => {
+  const result = runFixture('generated-export');
+  assert.notEqual(result.status, 0);
+  assert.match(
+    result.stderr,
+    /Public symbol GeneratedPayload resolves to internal generated declaration declarations\/generated\/client\.d\.ts\./
+  );
+});
+
+test('rejects output that still names an expanded non-exported support declaration', () => {
+  const result = runFixture('support-leak');
+  assert.notEqual(result.status, 0);
+  assert.match(
+    result.stderr,
+    /Non-exported support declarations leaked into PublicApi: HiddenParams/
+  );
+});
+
 function runFixture(name) {
   const fixtureRoot = path.join(fixturesRoot, name);
   const temporaryRoot = fs.mkdtempSync(path.join(os.tmpdir(), `api-docs-${name}-`));

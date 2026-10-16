@@ -842,6 +842,31 @@ describe('WalletClient session storage', () => {
     }
   });
 
+  it.each([
+    { field: 'projectId', scope: { ...omsSessionScope, projectId: 'prj_other' } },
+    {
+      field: 'walletApiUrl',
+      scope: { ...omsSessionScope, walletApiUrl: 'https://wallet.other.example' }
+    },
+    {
+      field: 'indexerGatewayUrl',
+      scope: { ...omsSessionScope, indexerGatewayUrl: 'https://indexer.other.example/' }
+    }
+  ])('discards stored sessions saved for a different $field', ({ scope }) => {
+    const storage = new MemoryStorageManager();
+    seedStoredSession(storage, { scope });
+
+    const client = new OMSWallet({
+      publishableKey: 'pk_dev_sdbx_project_key',
+      storage,
+      credentialSigner: new MockSigner()
+    });
+
+    expect(client.wallet.activeWallet).toBeUndefined();
+    expect(client.wallet.session).toBeUndefined();
+    expect(storage.get(Constants.sessionStorageKey)).toBeFalsy();
+  });
+
   it('returns isolated active wallet snapshots', () => {
     const storage = new MemoryStorageManager();
     seedStoredSession(storage, { scope: omsSessionScope });
@@ -2007,6 +2032,40 @@ describe('WalletClient session storage', () => {
     });
     expect(wallet.activeWallet?.address).toBeUndefined();
     expect(storage.get(Constants.sessionStorageKey)).toBeNull();
+  });
+
+  it('lists every wallet page from an active session', async () => {
+    const requests: unknown[] = [];
+    const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = input.toString();
+      if (url.endsWith('/ListWallets')) {
+        const body = JSON.parse(init?.body as string);
+        requests.push(body);
+        return body.page?.cursor === 'cursor-2'
+          ? jsonResponse({ wallets: [testWallet('wallet-2', WalletType.Solana, '22')], page: {} })
+          : jsonResponse({
+              wallets: [testWallet('wallet-1', WalletType.Ethereum, '11')],
+              page: { cursor: 'cursor-2' }
+            });
+      }
+      throw new Error(`Unexpected request: ${url}`);
+    });
+    vi.stubGlobal('fetch', fetchMock);
+    const storage = new MemoryStorageManager();
+    seedStoredSession(storage, { walletId: 'wallet-1' });
+    const wallet = new WalletClientImpl({
+      publishableKey: 'publishable-key',
+      projectId: 'project-id',
+      environment: testEnvironment(),
+      storage,
+      credentialSigner: new MockSigner()
+    });
+
+    await expect(wallet.listWallets()).resolves.toEqual([
+      expectedWallet('wallet-1', WalletType.Ethereum, '11'),
+      expectedWallet('wallet-2', WalletType.Solana, '22')
+    ]);
+    expect(requests).toEqual([{}, { page: { cursor: 'cursor-2' } }]);
   });
 
   it('can switch to an existing wallet from an active session', async () => {

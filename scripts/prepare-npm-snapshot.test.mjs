@@ -42,4 +42,30 @@ test('requires every fixed package to receive the requested snapshot version', (
     () => assertSnapshotVersions(before, before, 'canary'),
     /Snapshot versioning did not change/
   );
+  assert.throws(
+    () => assertSnapshotVersions(before, after, 'snapshot'),
+    /did not receive the requested 'snapshot' snapshot version/
+  );
+  assert.throws(
+    () =>
+      assertSnapshotVersions(
+        before,
+        [after[0], { ...after[1], version: '0.0.0-canary-20260909000001' }],
+        'canary'
+      ),
+    /Snapshot packages must have one fixed-group version/
+  );
+  assert.throws(
+    () => assertSnapshotVersions(before, after.slice(0, 1), 'canary'),
+    /The publishable package set changed unexpectedly/
+  );
+  assert.throws(
+    () =>
+      assertSnapshotVersions(
+        before,
+        [after[0], { name: '@polygonlabs/unexpected', version: after[1].version }],
+        'canary'
+      ),
+    /Snapshot package @polygonlabs\/unexpected was not present before versioning/
+  );
 });

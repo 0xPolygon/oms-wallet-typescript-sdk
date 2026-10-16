@@ -935,6 +935,25 @@ describe('omsWalletConnector', () => {
     expect(config.state.status).toBe('disconnected');
   });
 
+  it('does not reconnect after a session expiry while the expired wallet is still present', async () => {
+    const omsWallet = createOmsWallet({
+      walletAddress: '0x9999999999999999999999999999999999999999'
+    });
+    const storage = createMemoryStorage();
+    const config = createWagmiConfig(omsWallet, {}, storage);
+    const connector = config.connectors[0];
+    await connect(config, { connector });
+
+    omsWallet.expireSession();
+
+    expect(config.state.status).toBe('disconnected');
+    await expect(connector.isAuthorized()).resolves.toBe(false);
+    const refreshedConfig = createWagmiConfig(omsWallet, {}, storage);
+    await expect(refreshedConfig.connectors[0].isAuthorized()).resolves.toBe(false);
+    await expect(reconnect(refreshedConfig)).resolves.toEqual([]);
+    expect(refreshedConfig.state.status).toBe('disconnected');
+  });
+
   it('decodes personal_sign hex payloads before passing them to OMS', async () => {
     const omsWallet = createOmsWallet({
       walletAddress: '0x9999999999999999999999999999999999999999'

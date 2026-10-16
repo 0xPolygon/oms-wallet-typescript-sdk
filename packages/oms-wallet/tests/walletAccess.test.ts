@@ -407,6 +407,34 @@ describe('WalletClient access management', () => {
     ]);
   });
 
+  it('rejects a remote session that belongs to another wallet', async () => {
+    const fetchMock = vi.fn(async (input: RequestInfo | URL) => {
+      const url = input.toString();
+      if (url.endsWith('/GetSession')) {
+        return jsonResponse({
+          session: {
+            sessionId: 'session-1',
+            walletId: 'other-wallet-id',
+            signerAddress: '0x1111111111111111111111111111111111111111',
+            grants: { entries: [] },
+            chainId: '80002',
+            expiresAt: '2099-01-01T00:00:00Z'
+          }
+        });
+      }
+      throw new Error(`Unexpected request: ${url}`);
+    });
+    vi.stubGlobal('fetch', fetchMock);
+
+    const wallet = createWalletWithSession();
+    await expect(wallet.getRemoteAccessSession({ sessionId: 'session-1' })).rejects.toMatchObject({
+      code: 'OMS_VALIDATION_ERROR',
+      operation: 'wallet.getRemoteAccessSession',
+      message: 'Session does not belong to the active wallet'
+    });
+    expect(requestCount(fetchMock, '/GetSession')).toBe(1);
+  });
+
   it('rejects Solana message signing for an active Ethereum wallet', async () => {
     const fetchMock = vi.fn();
     vi.stubGlobal('fetch', fetchMock);

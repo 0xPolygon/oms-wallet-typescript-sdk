@@ -12,10 +12,11 @@ import { Ciphersuite, KeyFormat, NetworkFamily, Waas } from '../src/generated/wa
 import { OMSWallet } from '../src/omsWallet';
 import { MemoryStorageManager } from '../src/storageManager';
 import { WalletImportCipherSuite } from '../src/types/waas';
+import { Constants } from '../src/utils/constants';
 import { base64DecodeBytes, base64EncodeBytes } from '../src/utils/base64';
 import { sealWalletImportPrivateKey, walletImportPlaintext } from '../src/walletImport';
 import { testWalletAccount } from './fixtures/walletAccount.js';
-import { jsonResponse } from './fixtures/helpers.js';
+import { jsonResponse, testCredential, testEnvironment } from './fixtures/helpers.js';
 
 class MockSigner implements CredentialSigner {
   readonly signingAlgorithm = 'ecdsa-p256-sha256';
@@ -206,50 +207,76 @@ describe('wallet import', () => {
     expect(fetchMock).toHaveBeenCalledOnce();
   });
 
-  it('activates an imported first wallet during manual wallet selection', async () => {
+  it('activates and persists an imported first wallet during manual wallet selection', async () => {
+    const fetchMock = vi.fn(async (input: RequestInfo | URL) => {
+      const url = input.toString();
+      if (url.endsWith('/CommitVerifier')) {
+        return jsonResponse({ verifier: 'verifier-1', challenge: 'challenge-1' });
+      }
+      if (url.endsWith('/CompleteAuth')) {
+        return jsonResponse({
+          identity: { type: 'email', sub: 'user-1' },
+          email: 'user@example.com',
+          wallets: [],
+          credential: testCredential()
+        });
+      }
+      throw new Error(`Unexpected request: ${url}`);
+    });
+    vi.stubGlobal('fetch', fetchMock);
+    const storage = new MemoryStorageManager();
     const wallet = new WalletClientImpl({
       publishableKey: 'publishable-key',
       projectId: 'project-id',
-      environment: {
-        walletApiUrl: 'https://wallet.example',
-        indexerGatewayUrl: 'https://indexer.example',
-        solanaIndexerGatewayUrl: 'https://solana-indexer.example'
-      },
-      storage: new MemoryStorageManager(),
+      environment: testEnvironment(),
+      storage,
       credentialSigner: new MockSigner(),
       walletImportTrustedPcr0s: ['1'.repeat(96)]
     });
-    (wallet as any).activePendingWalletSelection = {
-      id: 'pending-1',
-      signerCredentialId: `0x04${'11'.repeat(64)}`,
-      signerKeyType: 'ecdsa-p256-sha256',
-      walletType: 'ethereum',
-      metadata: {
-        expiresAt: '2099-01-01T00:00:00Z',
-        auth: { type: 'email', email: 'user@example.com' },
-        signerCredentialId: `0x04${'11'.repeat(64)}`,
-        signerKeyType: 'ecdsa-p256-sha256'
+    const importWallet = vi.fn(async () => ({
+      wallet: {
+        id: 'wallet-imported',
+        networkFamily: 'evm',
+        keyOrigin: 'imported',
+        address: '0x3333333333333333333333333333333333333333'
       }
-    };
-    (wallet as any).requestImportWallet = vi.fn(async () => ({
+    }));
+    (wallet as any).walletImportClient = { importWallet };
+
+    await wallet.startEmailAuth({ email: 'user@example.com' });
+    const selection = await wallet.completeEmailAuth({ code: '123456', walletSelection: 'manual' });
+    expect(selection).toMatchObject({ wallets: [] });
+    expect(wallet.activeWallet).toBeUndefined();
+
+    const result = await wallet.importEncryptedWallet({
+      walletType: 'ethereum',
+      keyMaterial: {
+        keyId: 'key-1',
+        cipherSuite: 'p256-sha256-aes256gcm',
+        encapsulatedKey: 'AQID',
+        ciphertext: 'BAUG'
+      }
+    });
+
+    const importedWallet = {
       id: 'wallet-imported',
       type: 'ethereum',
-      address: '0x1111111111111111111111111111111111111111',
+      address: '0x3333333333333333333333333333333333333333',
       keyOrigin: 'imported'
-    }));
-
-    await expect(
-      wallet.importEncryptedWallet({
-        walletType: 'ethereum',
-        keyMaterial: {
-          keyId: 'key-1',
-          cipherSuite: 'p256-sha256-aes256gcm',
-          encapsulatedKey: 'AQID',
-          ciphertext: 'BAUG'
-        }
-      })
-    ).resolves.toMatchObject({
-      wallet: { id: 'wallet-imported', keyOrigin: 'imported' }
+    };
+    expect(importWallet).toHaveBeenCalledOnce();
+    expect(result).toEqual({ wallet: importedWallet });
+    expect(wallet.activeWallet).toEqual(importedWallet);
+    expect(wallet.session).toEqual({
+      expiresAt: '2099-01-01T00:00:00Z',
+      auth: { type: 'email', email: 'user@example.com' }
+    });
+    expect(JSON.parse(storage.get(Constants.sessionStorageKey) ?? 'null')).toMatchObject({
+      wallet: importedWallet,
+      expiresAt: '2099-01-01T00:00:00Z',
+      auth: { type: 'email', email: 'user@example.com' },
+      signerCredentialId: `0x04${'11'.repeat(64)}`,
+      signerKeyType: 'ecdsa-p256-sha256'
     });
   });
 });
