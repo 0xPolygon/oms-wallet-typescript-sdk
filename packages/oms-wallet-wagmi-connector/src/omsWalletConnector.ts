@@ -110,21 +110,21 @@ export function omsWalletConnector(parameters: OMSWalletConnectorParameters) {
       if (await isManuallyDisconnected()) {
         return [];
       }
-      const address = (await resolveOmsWallet()).wallet.walletAddress;
-      if (!address) {
+      const activeWallet = (await resolveOmsWallet()).wallet.activeWallet;
+      if (!activeWallet) {
         return [];
       }
-      if (!isAddress(address)) {
+      if (activeWallet.type !== 'ethereum' || !isAddress(activeWallet.address)) {
         throw new OMSWalletProviderRpcError(
           4100,
           'The active OMS wallet is not an Ethereum wallet.'
         );
       }
-      return [getAddress(address)];
+      return [getAddress(activeWallet.address)];
     };
 
     const subscribeSessionExpired = (omsWallet: OMSWalletLike): void => {
-      unsubscribeSessionExpired ??= omsWallet.wallet.onSessionExpired?.(() => {
+      unsubscribeSessionExpired ??= omsWallet.wallet.onSessionExpired(() => {
         void setManuallyDisconnected(true);
         config.emitter.emit('disconnect');
         provider?.emit('disconnect');
@@ -140,7 +140,7 @@ export function omsWalletConnector(parameters: OMSWalletConnectorParameters) {
       await ensureChainId();
       const omsWallet = await resolveOmsWallet();
       subscribeSessionExpired(omsWallet);
-      if (!omsWallet.wallet.walletAddress) {
+      if (!omsWallet.wallet.activeWallet) {
         throw new OMSWalletProviderRpcError(
           4100,
           'No active OMS Wallet session. Authenticate with the OMS Wallet SDK before connecting through wagmi.'
@@ -172,7 +172,7 @@ export function omsWalletConnector(parameters: OMSWalletConnectorParameters) {
         getNetworks,
         (nextChainId) => Boolean(chainById(nextChainId)),
         connectWallet,
-        isManuallyDisconnected
+        accounts
       );
 
     const connector = {
@@ -241,7 +241,7 @@ export function omsWalletConnector(parameters: OMSWalletConnectorParameters) {
       async isAuthorized() {
         return (
           !(await isManuallyDisconnected()) &&
-          Boolean((await resolveOmsWallet()).wallet.walletAddress)
+          Boolean((await resolveOmsWallet()).wallet.activeWallet)
         );
       },
       async switchChain({

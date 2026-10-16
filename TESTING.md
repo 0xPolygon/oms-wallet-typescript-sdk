@@ -21,7 +21,7 @@ How testing works in this repo. `AGENTS.md` points here so agents know how to ve
 - **Scope:** SDK behavior with stubbed/mocked network boundaries. Tests assert public wallet/indexer
   behavior, request payloads, error mapping, OIDC state handling, pagination, transaction status,
   and type-level API contracts — not internal implementation details.
-- **Location:** `tests/**/*.ts`
+- **Location:** `tests/**/*.test.ts` (shared helpers live in `tests/fixtures/` and are not collected as tests)
 - **Run:** `pnpm --filter @polygonlabs/oms-wallet exec vitest run` (or `pnpm --filter @polygonlabs/oms-wallet test`, which runs this then the type tests)
 - **Package tests:** `packages/oms-wallet-wagmi-connector/tests/**/*.ts` run from that package with
   `pnpm --filter @polygonlabs/oms-wallet-wagmi-connector test`

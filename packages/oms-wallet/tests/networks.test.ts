@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 
-import { Networks, OMSWallet, findNetworkById, findNetworkByName } from '../src';
+import { Networks, findNetworkById, findNetworkByName } from '../src';
 
 describe('Networks', () => {
   it('exposes the supported network registry', () => {
@@ -122,6 +122,18 @@ describe('Networks', () => {
     expect(Object.values(Networks).every(Object.isFrozen)).toBe(true);
   });
 
+  it('keeps every network id and name unique and resolvable', () => {
+    const networks = Object.values(Networks);
+
+    expect(new Set(networks.map(({ id }) => id)).size).toBe(networks.length);
+    expect(new Set(networks.map(({ name }) => name.toLowerCase())).size).toBe(networks.length);
+    for (const network of networks) {
+      expect(findNetworkById(network.id)).toBe(network);
+      expect(findNetworkByName(network.name)).toBe(network);
+      expect(findNetworkByName(` ${network.name.toUpperCase()} `)).toBe(network);
+    }
+  });
+
   it('looks up networks by id or name', () => {
     expect(findNetworkById(43113)).toMatchObject({
       id: 43113,
@@ -139,13 +151,5 @@ describe('Networks', () => {
       displayName: 'Base Sepolia'
     });
     expect(findNetworkByName('Ethereum')).toBeUndefined();
-  });
-
-  it('does not expose the registry from OMSWallet instances', () => {
-    const oms = new OMSWallet({
-      publishableKey: 'pk_dev_sdbx_project_key'
-    });
-
-    expect('supportedNetworks' in oms).toBe(false);
   });
 });

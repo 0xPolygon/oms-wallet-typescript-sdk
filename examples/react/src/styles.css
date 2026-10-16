@@ -203,7 +203,8 @@ button.danger:active:not(:disabled) {
 
 .wallet-tabs {
   display: grid;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
+  grid-auto-columns: minmax(0, 1fr);
+  grid-auto-flow: column;
   gap: 4px;
   padding: 4px;
   border: 1px solid var(--oms-slate-200);

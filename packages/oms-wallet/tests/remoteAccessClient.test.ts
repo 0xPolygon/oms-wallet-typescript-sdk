@@ -5,6 +5,7 @@ import type { CredentialSigner } from '../src/credentialSigner';
 import { Networks } from '../src/networks';
 import { feeOptionSelection } from '../src/types/transactionTypes';
 import { TransactionStatus } from '../src/types/waas';
+import { jsonResponse } from './fixtures/helpers.js';
 
 class MockSigner implements CredentialSigner {
   readonly signingAlgorithm = 'ecdsa-p256k-eip191';
@@ -138,6 +139,55 @@ describe('RemoteAccessClient', () => {
     });
   });
 
+  it('exposes fee tokens with camelCase logoUrl and tokenId', async () => {
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async () =>
+        jsonResponse({
+          txnId: 'txn-1',
+          status: 'quoted',
+          feeOptions: [
+            {
+              token: {
+                network: '80002',
+                name: 'USD Coin',
+                symbol: 'USDC',
+                type: 'erc20',
+                decimals: 6,
+                logoURL: 'https://tokens.example/usdc.png',
+                contractAddress: '0x3333333333333333333333333333333333333333',
+                tokenID: 'usdc'
+              },
+              value: '2000',
+              displayValue: '0.002'
+            }
+          ],
+          sponsored: false,
+          expiresAt: '2099-01-01T00:00:00Z'
+        })
+      )
+    );
+
+    const prepared = await createClient().prepareTransaction({
+      walletId: 'wallet-1',
+      sessionId: 'session-1',
+      network: Networks.amoy,
+      to: '0x2222222222222222222222222222222222222222'
+    });
+
+    expect(prepared.feeOptions[0].token).toStrictEqual({
+      network: '80002',
+      name: 'USD Coin',
+      symbol: 'USDC',
+      type: 'erc20',
+      decimals: 6,
+      logoUrl: 'https://tokens.example/usdc.png',
+      contractAddress: '0x3333333333333333333333333333333333333333',
+      tokenId: 'usdc'
+    });
+    expect(feeOptionSelection(prepared.feeOptions[0], 0)).toEqual({ token: 'usdc', index: 0 });
+  });
+
   it('revokes a registered credential by its WaaS credential id', async () => {
     const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
       expect(input.toString()).toContain('/RevokeCredential');
@@ -252,13 +302,6 @@ function createClient(): RemoteAccessClient {
   return new RemoteAccessClient({
     publishableKey: 'pk_dev_sdbx_project_key',
     credentialSigner: new MockSigner()
-  });
-}
-
-function jsonResponse(body: unknown): Response {
-  return new Response(JSON.stringify(body), {
-    status: 200,
-    headers: { 'Content-Type': 'application/json' }
   });
 }
 

@@ -125,7 +125,7 @@ export interface WaasErrorDetails {
   upstreamError?: {
     service: 'waas' | 'indexer';
     name?: string;
-    code?: number | string;
+    code?: string;
     message?: string;
     status?: number;
   };

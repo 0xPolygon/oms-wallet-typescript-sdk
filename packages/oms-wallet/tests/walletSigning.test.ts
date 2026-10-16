@@ -1,29 +1,15 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
-import { WalletClient } from '../src/clients/walletClient';
-import type { CredentialSigner } from '../src/credentialSigner';
+import { WalletClientImpl } from '../src/clients/walletClient';
+import { WalletOperation } from '../src/index';
 import { Networks } from '../src/networks';
 import { MemoryStorageManager } from '../src/storageManager';
-
-class MockSigner implements CredentialSigner {
-  readonly signingAlgorithm = 'ecdsa-p256-sha256';
-
-  async credentialId(): Promise<string> {
-    return '0x04' + '11'.repeat(64);
-  }
-
-  async nextNonce(): Promise<string> {
-    return '42';
-  }
-
-  async sign(): Promise<string> {
-    return '0x' + '22'.repeat(64);
-  }
-
-  async hasCredential(): Promise<boolean> {
-    return true;
-  }
-}
+import {
+  MockSigner,
+  createWalletWithSession,
+  jsonResponse,
+  testEnvironment
+} from './fixtures/helpers.js';
 
 afterEach(() => {
   vi.restoreAllMocks();
@@ -162,7 +148,7 @@ describe('WalletClient signing', () => {
         expect(body).toEqual({
           network: '137',
           networkFamily: 'evm',
-          walletId: 'wallet-id',
+          walletAddress: '0x1111111111111111111111111111111111111111',
           message: 'hello',
           signature: '0xmessage'
         });
@@ -172,6 +158,7 @@ describe('WalletClient signing', () => {
       if (url.endsWith('/IsValidTypedDataSignature')) {
         expect(body).toEqual({
           network: '137',
+          networkFamily: 'evm',
           walletAddress: '0x1111111111111111111111111111111111111111',
           typedData: serializedTypedData,
           signature: '0xtyped'
@@ -202,71 +189,231 @@ describe('WalletClient signing', () => {
       })
     ).resolves.toBe(false);
   });
+});
 
-  it('validates Solana message signatures through the generated wallet public client', async () => {
+describe('WalletClient signature verification target', () => {
+  const ethereumAddress = '0x1111111111111111111111111111111111111111';
+  const solanaAddress = '9xQeWvG816bUx9EPjHmaT23yvVMuZwHngkQF5JC9YjCy';
+  const tronAddress = 'TNPeeaaFB7K9cmo4uQpcU32zGK8G1NYqeL';
+
+  type VerificationCall = {
+    label: keyof typeof WalletOperation;
+    walletType: 'ethereum' | 'solana' | 'tron';
+    path: string;
+    networkFamily: string;
+    payload: Record<string, unknown>;
+    verify: (wallet: WalletClientImpl, walletAddress?: string) => Promise<boolean>;
+  };
+
+  const verificationCalls: VerificationCall[] = [
+    {
+      label: 'isValidMessageSignature',
+      walletType: 'ethereum',
+      path: '/IsValidMessageSignature',
+      networkFamily: 'evm',
+      payload: { message: 'hello', signature: '0xsig' },
+      verify: (wallet, walletAddress) =>
+        wallet.isValidMessageSignature({
+          walletAddress: walletAddress as `0x${string}` | undefined,
+          message: 'hello',
+          signature: '0xsig'
+        })
+    },
+    {
+      label: 'isValidTypedDataSignature',
+      walletType: 'ethereum',
+      path: '/IsValidTypedDataSignature',
+      networkFamily: 'evm',
+      payload: { typedData: { primaryType: 'Mail' }, signature: '0xsig' },
+      verify: (wallet, walletAddress) =>
+        wallet.isValidTypedDataSignature({
+          walletAddress: walletAddress as `0x${string}` | undefined,
+          typedData: { primaryType: 'Mail' },
+          signature: '0xsig'
+        })
+    },
+    {
+      label: 'isValidSolanaMessageSignature',
+      walletType: 'solana',
+      path: '/IsValidMessageSignature',
+      networkFamily: 'solana',
+      payload: { message: 'hello', signature: 'base58-signature' },
+      verify: (wallet, walletAddress) =>
+        wallet.isValidSolanaMessageSignature({
+          walletAddress,
+          message: 'hello',
+          signature: 'base58-signature'
+        })
+    },
+    {
+      label: 'isValidTronMessageSignature',
+      walletType: 'tron',
+      path: '/IsValidMessageSignature',
+      networkFamily: 'tron',
+      payload: { message: 'hello', signature: '0xsig' },
+      verify: (wallet, walletAddress) =>
+        wallet.isValidTronMessageSignature({
+          walletAddress,
+          message: 'hello',
+          signature: '0xsig'
+        })
+    },
+    {
+      label: 'isValidTronTypedDataSignature',
+      walletType: 'tron',
+      path: '/IsValidTypedDataSignature',
+      networkFamily: 'tron',
+      payload: { typedData: { primaryType: 'Mail' }, signature: '0xsig' },
+      verify: (wallet, walletAddress) =>
+        wallet.isValidTronTypedDataSignature({
+          walletAddress,
+          typedData: { primaryType: 'Mail' },
+          signature: '0xsig'
+        })
+    }
+  ];
+
+  const addressFor = {
+    ethereum: ethereumAddress,
+    solana: solanaAddress,
+    tron: tronAddress
+  } as const;
+
+  function recordVerificationRequests() {
+    const requests: Array<{ url: string; body: Record<string, unknown> }> = [];
     const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
-      const url = input.toString();
-      const body = JSON.parse(init?.body as string);
       const headers = init?.headers as Record<string, string>;
-
       expect(headers['Api-Key']).toBe('publishable-key');
       expect(headers['OMS-Wallet-Signature']).toBeUndefined();
       expect(headers.Authorization).toBeUndefined();
-
-      if (url.endsWith('/IsValidMessageSignature')) {
-        expect(body).toEqual({
-          networkFamily: 'solana',
-          walletAddress: '9xQeWvG816bUx9EPjHmaT23yvVMuZwHngkQF5JC9YjCy',
-          message: 'hello solana',
-          signature: 'base58-signature'
-        });
-        return jsonResponse({ isValid: true });
-      }
-
-      throw new Error(`Unexpected request: ${url}`);
+      requests.push({ url: input.toString(), body: JSON.parse(init?.body as string) });
+      return jsonResponse({ isValid: true });
     });
     vi.stubGlobal('fetch', fetchMock);
+    return { fetchMock, requests };
+  }
 
-    const wallet = createWalletWithSession('9xQeWvG816bUx9EPjHmaT23yvVMuZwHngkQF5JC9YjCy');
+  it.each(verificationCalls)(
+    '$label verifies a given address while signed out without walletId',
+    async ({ walletType, path, networkFamily, payload, verify }) => {
+      const { requests } = recordVerificationRequests();
+      const wallet = createSignedOutWallet();
 
-    await expect(
-      wallet.isValidSolanaMessageSignature({
-        walletAddress: '9xQeWvG816bUx9EPjHmaT23yvVMuZwHngkQF5JC9YjCy',
-        message: 'hello solana',
-        signature: 'base58-signature'
-      })
-    ).resolves.toBe(true);
-  });
+      await expect(verify(wallet, addressFor[walletType])).resolves.toBe(true);
+
+      expect(requests).toHaveLength(1);
+      expect(requests[0].url.endsWith(path)).toBe(true);
+      expect(requests[0].body).toEqual({
+        networkFamily,
+        walletAddress: addressFor[walletType],
+        ...payload
+      });
+    }
+  );
+
+  it.each(verificationCalls)(
+    '$label sends the active wallet address when walletAddress is omitted',
+    async ({ walletType, path, networkFamily, payload, verify }) => {
+      const { requests } = recordVerificationRequests();
+      const wallet = createWalletWithSession(addressFor[walletType], walletType);
+
+      await expect(verify(wallet)).resolves.toBe(true);
+
+      expect(requests).toHaveLength(1);
+      expect(requests[0].url.endsWith(path)).toBe(true);
+      expect(requests[0].body).toEqual({
+        networkFamily,
+        walletAddress: addressFor[walletType],
+        ...payload
+      });
+    }
+  );
+
+  it.each(verificationCalls)(
+    '$label rejects an omitted walletAddress without a session before any request',
+    async ({ label, verify }) => {
+      const { fetchMock } = recordVerificationRequests();
+      const wallet = createSignedOutWallet();
+
+      await expect(verify(wallet)).rejects.toMatchObject({
+        name: 'OMSWalletSessionError',
+        code: 'OMS_SESSION_MISSING',
+        operation: WalletOperation[label]
+      });
+      expect(fetchMock).not.toHaveBeenCalled();
+    }
+  );
+
+  it.each(verificationCalls)(
+    '$label rejects an omitted walletAddress for an expired session before any request',
+    async ({ label, walletType, verify }) => {
+      const { fetchMock } = recordVerificationRequests();
+      const wallet = createWalletWithSession(addressFor[walletType], walletType, {
+        expiresAt: '2000-01-01T00:00:00Z'
+      });
+
+      await expect(verify(wallet)).rejects.toMatchObject({
+        name: 'OMSWalletSessionError',
+        code: 'OMS_SESSION_EXPIRED',
+        operation: `wallet.${label}`
+      });
+      expect(fetchMock).not.toHaveBeenCalled();
+      expect(wallet.activeWallet).toBeUndefined();
+    }
+  );
+
+  it.each(
+    verificationCalls.flatMap((call) =>
+      ['', '   '].map((walletAddress) => ({
+        ...call,
+        walletAddress,
+        description: walletAddress ? 'a whitespace-only' : 'an empty'
+      }))
+    )
+  )(
+    '$label rejects $description walletAddress before any request',
+    async ({ label, walletType, walletAddress, verify }) => {
+      const { fetchMock } = recordVerificationRequests();
+      const wallet = createWalletWithSession(addressFor[walletType], walletType);
+
+      await expect(verify(wallet, walletAddress)).rejects.toMatchObject({
+        name: 'OMSWalletValidationError',
+        code: 'OMS_VALIDATION_ERROR',
+        operation: `wallet.${label}`,
+        message: 'walletAddress must not be empty'
+      });
+      expect(fetchMock).not.toHaveBeenCalled();
+    }
+  );
+
+  it.each(
+    verificationCalls.flatMap((call) =>
+      (['ethereum', 'solana', 'tron'] as const)
+        .filter((activeType) => activeType !== call.walletType)
+        .map((activeType) => ({ ...call, activeType }))
+    )
+  )(
+    '$label rejects an omitted walletAddress for an active $activeType wallet before any request',
+    async ({ label, activeType, verify }) => {
+      const { fetchMock } = recordVerificationRequests();
+      const wallet = createWalletWithSession(addressFor[activeType], activeType);
+
+      await expect(verify(wallet)).rejects.toMatchObject({
+        name: 'OMSWalletValidationError',
+        code: 'OMS_VALIDATION_ERROR',
+        operation: `wallet.${label}`
+      });
+      expect(fetchMock).not.toHaveBeenCalled();
+    }
+  );
 });
 
-function createWalletWithSession(walletAddress: string): WalletClient {
-  const wallet = new WalletClient({
+function createSignedOutWallet(): WalletClientImpl {
+  return new WalletClientImpl({
     publishableKey: 'publishable-key',
     projectId: 'project-id',
     environment: testEnvironment(),
     storage: new MemoryStorageManager(),
     credentialSigner: new MockSigner()
   });
-  (wallet as any).persistSession('wallet-id', walletAddress, {
-    expiresAt: '2099-01-01T00:00:00Z',
-    auth: { type: 'email', email: 'user@example.com' },
-    signerCredentialId: '0x04' + '11'.repeat(64),
-    signerKeyType: 'ecdsa-p256-sha256'
-  });
-  return wallet;
-}
-
-function jsonResponse(body: unknown): Response {
-  return new Response(JSON.stringify(body), {
-    status: 200,
-    headers: { 'Content-Type': 'application/json' }
-  });
-}
-
-function testEnvironment() {
-  return {
-    walletApiUrl: 'https://wallet.example',
-    indexerGatewayUrl: 'https://indexer.example',
-    solanaIndexerGatewayUrl: 'https://solana-indexer.example'
-  };
 }

@@ -7,6 +7,7 @@ import type {
   AccessGrantPage,
   AuthorizeRemoteAccessParams,
   AuthorizedRemoteAccess,
+  ListAccessPageParams,
   ListAccessParams,
   RemoteAccessSession,
   RemoteCredentialMetadata,
@@ -21,6 +22,8 @@ import type {
   SendNativeTransactionParams,
   SendSolanaTransferParams,
   SendTransactionParams,
+  SendTronTransactionParams,
+  CallTronContractParams,
   SendTransactionResponse,
   TransactionStatusPollingOptions
 } from './types/transactionTypes.js';
@@ -108,10 +111,18 @@ export interface SolanaWalletAccount {
   readonly keyOrigin: WalletKeyOrigin;
 }
 
-export type WalletAccount = EthereumWalletAccount | SolanaWalletAccount;
+export interface TronWalletAccount {
+  readonly id: string;
+  readonly type: 'tron';
+  /** Base58Check address (`T…`). */
+  readonly address: string;
+  readonly reference?: string;
+  readonly keyOrigin: WalletKeyOrigin;
+}
+
+export type WalletAccount = EthereumWalletAccount | SolanaWalletAccount | TronWalletAccount;
 
 export interface WalletActivationResult {
-  readonly walletAddress: string;
   readonly wallet: WalletAccount;
 }
 
@@ -123,6 +134,12 @@ export type ImportWalletParams =
     }
   | {
       type: 'solana';
+      privateKey: string | Uint8Array;
+      reference?: string;
+    }
+  | {
+      type: 'tron';
+      /** A secp256k1 private key: 32 raw bytes or 64 hex characters (optionally `0x`-prefixed). */
       privateKey: string | Uint8Array;
       reference?: string;
     };
@@ -141,13 +158,12 @@ export interface EncryptedWalletImportKeyMaterial {
 }
 
 export interface ImportEncryptedWalletParams {
-  type: WalletType;
+  walletType: WalletType;
   keyMaterial: EncryptedWalletImportKeyMaterial;
   reference?: string;
 }
 
 export interface CompleteWalletAuthResult {
-  readonly walletAddress: string;
   readonly wallet: WalletAccount;
   readonly wallets: ReadonlyArray<WalletAccount>;
   readonly credential: Readonly<WalletCredential>;
@@ -188,14 +204,23 @@ export interface OMSWalletOidcSessionAuth {
 
 export type OMSWalletSessionAuth = OMSWalletEmailSessionAuth | OMSWalletOidcSessionAuth;
 
-export interface OMSWalletSessionState {
-  readonly walletAddress: string | undefined;
-  readonly expiresAt: string | undefined;
-  readonly auth: OMSWalletSessionAuth | undefined;
+export interface OMSWalletSession {
+  readonly expiresAt: string;
+  readonly auth: OMSWalletSessionAuth;
 }
 
+/** Session lifetime requested when `sessionLifetimeSeconds` is omitted (one week). */
+export const DEFAULT_SESSION_LIFETIME_SECONDS = 604_800;
+/** Largest accepted `sessionLifetimeSeconds` (30 days). */
+export const MAX_SESSION_LIFETIME_SECONDS = 2_592_000;
+
 export interface OMSWalletSessionExpiredEvent {
-  readonly session: OMSWalletSessionState;
+  /**
+   * The wallet that was active when the session expired. `undefined` when the credential expired
+   * while a manual wallet selection was still pending.
+   */
+  readonly wallet: WalletAccount | undefined;
+  readonly session: OMSWalletSession;
   readonly expiredAt: string;
 }
 
@@ -217,6 +242,15 @@ export interface SignTypedDataParams {
   typedData: unknown;
 }
 
+export interface SignTronMessageParams {
+  message: string;
+}
+
+export interface SignTronTypedDataParams {
+  /** TIP-712 typed data. Address values may be Base58Check (`T…`). */
+  typedData: unknown;
+}
+
 export interface GetIdTokenParams {
   ttlSeconds?: number;
   customClaims?: Record<string, unknown>;
@@ -224,23 +258,37 @@ export interface GetIdTokenParams {
 
 export interface IsValidMessageSignatureParams {
   network?: Network;
+  /** Address to verify against. Omit to use the active Ethereum wallet's address. */
   walletAddress?: Address;
-  walletId?: string;
   message: string;
   signature: string;
 }
 
 export interface IsValidSolanaMessageSignatureParams {
+  /** Address to verify against. Omit to use the active Solana wallet's address. */
   walletAddress?: string;
-  walletId?: string;
   message: string;
   signature: string;
 }
 
 export interface IsValidTypedDataSignatureParams {
   network?: Network;
+  /** Address to verify against. Omit to use the active Ethereum wallet's address. */
   walletAddress?: Address;
-  walletId?: string;
+  typedData: unknown;
+  signature: string;
+}
+
+export interface IsValidTronMessageSignatureParams {
+  /** Base58Check address (`T…`) to verify against. Omit to use the active Tron wallet's address. */
+  walletAddress?: string;
+  message: string;
+  signature: string;
+}
+
+export interface IsValidTronTypedDataSignatureParams {
+  /** Base58Check address (`T…`) to verify against. Omit to use the active Tron wallet's address. */
+  walletAddress?: string;
   typedData: unknown;
   signature: string;
 }
@@ -257,9 +305,11 @@ export type SignInWithOidcRedirectParams = OidcRedirectAuthParamsBase & {
       }
   );
 
-export interface OMSWalletClient {
-  readonly walletAddress: string | undefined;
-  readonly session: OMSWalletSessionState;
+export interface WalletClient {
+  /** The active wallet, or `undefined` when signed out. Same shape as `listWallets()` entries. */
+  readonly activeWallet: WalletAccount | undefined;
+  /** Expiry and auth metadata for the active session; defined exactly when `activeWallet` is. */
+  readonly session: OMSWalletSession | undefined;
 
   onSessionExpired(listener: OMSWalletSessionExpiredListener): () => void;
   startEmailAuth(params: StartEmailAuthParams): Promise<void>;
@@ -298,7 +348,10 @@ export interface OMSWalletClient {
   signOut(): Promise<void>;
   listWallets(): Promise<Array<WalletAccount>>;
   useWallet(params: { walletId: string }): Promise<WalletActivationResult>;
-  createWallet(params?: { type?: WalletType; reference?: string }): Promise<WalletActivationResult>;
+  createWallet(params?: {
+    walletType?: WalletType;
+    reference?: string;
+  }): Promise<WalletActivationResult>;
   importWallet(params: ImportWalletParams): Promise<WalletActivationResult>;
   getWalletImportRecipientKey(params: {
     cipherSuite: WalletImportCipherSuite;
@@ -311,6 +364,10 @@ export interface OMSWalletClient {
   isValidMessageSignature(params: IsValidMessageSignatureParams): Promise<boolean>;
   isValidSolanaMessageSignature(params: IsValidSolanaMessageSignatureParams): Promise<boolean>;
   isValidTypedDataSignature(params: IsValidTypedDataSignatureParams): Promise<boolean>;
+  signTronMessage(params: SignTronMessageParams): Promise<string>;
+  signTronTypedData(params: SignTronTypedDataParams): Promise<string>;
+  isValidTronMessageSignature(params: IsValidTronMessageSignatureParams): Promise<boolean>;
+  isValidTronTypedDataSignature(params: IsValidTronTypedDataSignatureParams): Promise<boolean>;
   sendTransaction(params: SendNativeTransactionParams): Promise<SendTransactionResponse>;
   sendTransaction(params: SendDataTransactionParams): Promise<SendTransactionResponse>;
   sendTransaction<
@@ -321,9 +378,12 @@ export interface OMSWalletClient {
   ): Promise<SendTransactionResponse>;
   sendTransaction(params: SendTransactionParams): Promise<SendTransactionResponse>;
   sendSolanaTransfer(params: SendSolanaTransferParams): Promise<SendTransactionResponse>;
+  sendTronTransaction(params: SendTronTransactionParams): Promise<SendTransactionResponse>;
+  callTronContract(params: CallTronContractParams): Promise<SendTransactionResponse>;
   callContract(params: {
     network: Network;
     contractAddress: Address;
+    /** Function name only, e.g. `'transfer'`. The signature is built from the `args` types. */
     method: string;
     args?: Array<AbiArg>;
     mode?: TransactionMode;
@@ -335,6 +395,8 @@ export interface OMSWalletClient {
   inspectRemoteCredential(params: { credentialId: string }): Promise<RemoteCredentialMetadata>;
   authorizeRemoteAccess(params: AuthorizeRemoteAccessParams): Promise<AuthorizedRemoteAccess>;
   listAccess(params?: ListAccessParams): Promise<AccessGrant[]>;
+  /** Returns one access page. Pass the previous page's `page.cursor` to continue. */
+  listAccessPage(params?: ListAccessPageParams): Promise<AccessGrantPage>;
   listAccessPages(params?: ListAccessParams): AsyncIterable<AccessGrantPage>;
   getRemoteAccessSession(params: { sessionId: string }): Promise<RemoteAccessSession>;
   getRemoteAccessSessionUsage(params: {

@@ -4,6 +4,7 @@ export interface OMSWalletEnvironment {
   walletApiUrl: string;
   indexerGatewayUrl: string;
   solanaIndexerGatewayUrl: string;
+  tronIndexerGatewayUrl: string;
 }
 
 export function environmentFromPublishableKey(publishableKey: string): OMSWalletEnvironment {
@@ -11,6 +12,7 @@ export function environmentFromPublishableKey(publishableKey: string): OMSWallet
   return {
     walletApiUrl: parsedKey.walletApiUrl,
     indexerGatewayUrl: parsedKey.indexerGatewayUrl,
-    solanaIndexerGatewayUrl: parsedKey.solanaIndexerGatewayUrl
+    solanaIndexerGatewayUrl: parsedKey.solanaIndexerGatewayUrl,
+    tronIndexerGatewayUrl: parsedKey.tronIndexerGatewayUrl
   };
 }

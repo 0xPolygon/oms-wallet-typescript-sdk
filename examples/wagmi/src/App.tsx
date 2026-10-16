@@ -22,11 +22,13 @@ import {
   OidcButtons
 } from '../../shared/example-components';
 import {
+  activeEthereumAddress,
   formatOidcProvider,
   formatSessionAuth,
   hasOidcCallbackParams,
   shortAddress,
   shortHash,
+  switchToEthereumWallet,
   type OidcRedirectProvider
 } from '../../shared/example-utils';
 import { omsWallet } from './omsWallet';
@@ -67,6 +69,7 @@ export function App() {
   const signTypedData = useSignTypedData();
   const sendTransaction = useSendTransaction();
   const oidcCallbackStarted = useRef(false);
+  const sessionRestoreStarted = useRef(false);
   const [step, setStep] = useState<DemoStep>(
     account.status === 'connected' ? 'operations' : 'auth'
   );
@@ -93,15 +96,15 @@ export function App() {
   });
   const feeOptions = feeOptionSelection.feeOptions;
   const omsSession = omsWallet.wallet.session;
-  const activeOmsSessionAddress = omsSession.walletAddress;
+  const activeOmsSessionAddress = activeEthereumAddress(omsWallet.wallet);
   const showGoogleAuth =
     !activeOmsSessionAddress ||
-    !(omsSession.auth?.type === 'oidc' && omsSession.auth.provider === 'google');
+    !(omsSession?.auth?.type === 'oidc' && omsSession?.auth.provider === 'google');
   const showAppleAuth =
     !activeOmsSessionAddress ||
-    !(omsSession.auth?.type === 'oidc' && omsSession.auth.provider === 'apple');
+    !(omsSession?.auth?.type === 'oidc' && omsSession?.auth.provider === 'apple');
   const showOidcAuth = showGoogleAuth || showAppleAuth;
-  const showEmailAuth = !activeOmsSessionAddress || omsSession.auth?.type !== 'email';
+  const showEmailAuth = !activeOmsSessionAddress || omsSession?.auth?.type !== 'email';
   const showEmailCodeInput = authStep === 'code' && !activeOmsSessionAddress;
   const oidcProviders = useMemo<OidcRedirectProvider[]>(() => {
     const providers: OidcRedirectProvider[] = [];
@@ -198,6 +201,16 @@ export function App() {
   }, []);
 
   useEffect(() => {
+    if (!omsWallet.wallet.activeWallet || activeEthereumAddress(omsWallet.wallet)) return;
+    if (sessionRestoreStarted.current) return;
+    sessionRestoreStarted.current = true;
+    void runAuth('Switching to an Ethereum wallet...', async () => {
+      const wallet = await switchToEthereumWallet(omsWallet.wallet);
+      setAuthStatus(`Wallet session restored: ${wallet?.address}`);
+    });
+  }, []);
+
+  useEffect(() => {
     if (!hasOidcCallbackParams()) return;
     if (!omsConnector || oidcCallbackStarted.current) return;
     oidcCallbackStarted.current = true;
@@ -250,8 +263,7 @@ export function App() {
     if (!omsConnector) {
       throw new Error('OMS Wallet connector is not configured.');
     }
-    const walletAddress = omsWallet.wallet.walletAddress;
-    if (!walletAddress) {
+    if (!omsWallet.wallet.activeWallet) {
       throw new Error('OMS sign-in completed without an active wallet.');
     }
     await connect.mutateAsync({ connector: omsConnector, chainId: selectedChain.id });
@@ -477,9 +489,9 @@ export function App() {
                   onClick={() => void connectActiveOmsSession()}
                   disabled={isBusy}
                 >
-                  <span>{formatSessionAuth(omsSession.auth, 'OMS Wallet')}</span>
+                  <span>{formatSessionAuth(omsSession?.auth, 'OMS Wallet')}</span>
                   <small>
-                    {formatSessionContinuation(activeOmsSessionAddress, omsSession.auth?.email)}
+                    {formatSessionContinuation(activeOmsSessionAddress, omsSession?.auth?.email)}
                   </small>
                 </button>
               )}

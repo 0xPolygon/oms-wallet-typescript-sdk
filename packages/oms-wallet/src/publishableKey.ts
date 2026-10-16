@@ -66,6 +66,7 @@ export interface ParsedPublishableKey {
   walletApiUrl: string;
   indexerGatewayUrl: string;
   solanaIndexerGatewayUrl: string;
+  tronIndexerGatewayUrl: string;
   walletImportTrustedPcr0s: ReadonlyArray<string>;
 }
 
@@ -85,6 +86,7 @@ export function parsePublishableKey(publishableKey: string): ParsedPublishableKe
     walletApiUrl: route.apiUrl,
     indexerGatewayUrl: `${route.apiUrl}/v1/IndexerGateway/`,
     solanaIndexerGatewayUrl: `${route.apiUrl}/v1/SolanaIndexerGateway/`,
+    tronIndexerGatewayUrl: `${route.apiUrl}/v1/TronIndexerGateway/`,
     walletImportTrustedPcr0s: route.walletImportTrustedPcr0s
   };
 }

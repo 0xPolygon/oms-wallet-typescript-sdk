@@ -1,35 +1,20 @@
 import { Aes256Gcm, CipherSuite, DhkemP256HkdfSha256, HkdfSha256 } from '@hpke/core';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
-import { WalletClient } from '../src/clients/walletClient';
-import type { CredentialSigner } from '../src/credentialSigner';
-import type {
-  GetRecipientKeyRequest,
-  HPKEPayload,
-  ImportWalletRequest
-} from '../src/generated/waas.gen';
-import { Ciphersuite, KeyFormat, NetworkFamily, Waas } from '../src/generated/waas.gen';
-import { OMSWallet } from '../src/omsWallet';
+import { WalletClientImpl } from '../src/clients/walletClient';
+import type { GetRecipientKeyRequest, ImportWalletRequest } from '../src/generated/waas.gen';
 import { MemoryStorageManager } from '../src/storageManager';
 import { WalletImportCipherSuite } from '../src/types/waas';
+import { Constants } from '../src/utils/constants';
 import { base64DecodeBytes, base64EncodeBytes } from '../src/utils/base64';
 import { sealWalletImportPrivateKey, walletImportPlaintext } from '../src/walletImport';
-
-class MockSigner implements CredentialSigner {
-  readonly signingAlgorithm = 'ecdsa-p256-sha256';
-
-  async credentialId(): Promise<string> {
-    return `0x04${'11'.repeat(64)}`;
-  }
-
-  async nextNonce(): Promise<string> {
-    return '42';
-  }
-
-  async sign(): Promise<string> {
-    return `0x${'22'.repeat(64)}`;
-  }
-}
+import {
+  MockSigner,
+  createWalletWithSession,
+  jsonResponse,
+  testCredential,
+  testEnvironment
+} from './fixtures/helpers.js';
 
 afterEach(() => {
   vi.restoreAllMocks();
@@ -66,39 +51,21 @@ describe('wallet import', () => {
     expect(new Uint8Array(opened)).toEqual(plaintext);
   });
 
-  it('serializes HPKE bytes as base64 strings on the WaaS wire', async () => {
-    const fetchMock = vi.fn(async (_input: RequestInfo | URL, init?: RequestInit) => {
-      expect(JSON.parse(init?.body as string)).toEqual({
-        networkFamily: 'evm',
-        format: 'private-key',
-        keyMaterial: {
-          keyId: 'key-1',
-          suite: 'p256-sha256-aes256gcm',
-          encapsulatedKey: 'AQID',
-          ciphertext: 'BAUG'
-        }
-      });
-      return jsonResponse({
-        wallet: {
-          id: 'wallet-1',
-          networkFamily: 'evm',
-          keyOrigin: 'imported',
-          address: '0x1111111111111111111111111111111111111111'
-        }
-      });
-    });
-    const client = new Waas('https://wallet.example', fetchMock);
+  it('accepts secp256k1 hex keys for Tron imports and rejects invalid ones', () => {
+    const privateKey = `0x${'01'.repeat(32)}`;
 
-    await client.importWallet({
-      networkFamily: NetworkFamily.EVM,
-      format: KeyFormat.PrivateKey,
-      keyMaterial: {
-        keyId: 'key-1',
-        suite: Ciphersuite.P256_SHA256_AES_256_GCM,
-        encapsulatedKey: 'AQID',
-        ciphertext: 'BAUG'
-      } as unknown as HPKEPayload
-    });
+    expect(walletImportPlaintext({ type: 'tron', privateKey })).toEqual(
+      new TextEncoder().encode(privateKey)
+    );
+    expect(walletImportPlaintext({ type: 'tron', privateKey: new Uint8Array(32).fill(1) })).toEqual(
+      new Uint8Array(32).fill(1)
+    );
+    expect(() => walletImportPlaintext({ type: 'tron', privateKey: '0x1234' })).toThrow(
+      'Tron privateKey must be 32 bytes or 64 hexadecimal characters'
+    );
+    expect(() => walletImportPlaintext({ type: 'tron', privateKey: '00'.repeat(32) })).toThrow(
+      'Tron privateKey is outside the valid secp256k1 scalar range'
+    );
   });
 
   it('passes Privy HPKE export material through with the matching recipient-key suite', async () => {
@@ -137,7 +104,7 @@ describe('wallet import', () => {
       cipherSuite: WalletImportCipherSuite.P256Sha256ChaCha20Poly1305
     });
     const result = await wallet.importEncryptedWallet({
-      type: 'ethereum',
+      walletType: 'ethereum',
       reference: 'Privy wallet',
       keyMaterial: {
         keyId: recipient.keyId,
@@ -157,106 +124,76 @@ describe('wallet import', () => {
     expect(importWallet).toHaveBeenCalledOnce();
   });
 
-  it('requires attestation for Development sandbox imports', async () => {
-    const fetchMock = vi.fn(async (_input: RequestInfo | URL, init?: RequestInit) => {
-      expect(new Headers(init?.headers).has('X-Attestation-Nonce')).toBe(true);
-      return jsonResponse({ keyId: 'key-1', publicKey: 'AQID' });
+  it('activates and persists an imported first wallet during manual wallet selection', async () => {
+    const fetchMock = vi.fn(async (input: RequestInfo | URL) => {
+      const url = input.toString();
+      if (url.endsWith('/CommitVerifier')) {
+        return jsonResponse({ verifier: 'verifier-1', challenge: 'challenge-1' });
+      }
+      if (url.endsWith('/CompleteAuth')) {
+        return jsonResponse({
+          identity: { type: 'email', sub: 'user-1' },
+          email: 'user@example.com',
+          wallets: [],
+          credential: testCredential()
+        });
+      }
+      throw new Error(`Unexpected request: ${url}`);
     });
     vi.stubGlobal('fetch', fetchMock);
-
-    const oms = new OMSWallet({
-      publishableKey: 'pk_dev_sdbx_project_key',
-      storage: new MemoryStorageManager(),
-      credentialSigner: new MockSigner()
+    const storage = new MemoryStorageManager();
+    const wallet = new WalletClientImpl({
+      publishableKey: 'publishable-key',
+      projectId: 'project-id',
+      environment: testEnvironment(),
+      storage,
+      credentialSigner: new MockSigner(),
+      walletImportTrustedPcr0s: ['1'.repeat(96)]
     });
-    (oms.wallet as any).persistSession('wallet-id', '0x1111111111111111111111111111111111111111', {
+    const importWallet = vi.fn(async () => ({
+      wallet: {
+        id: 'wallet-imported',
+        networkFamily: 'evm',
+        keyOrigin: 'imported',
+        address: '0x3333333333333333333333333333333333333333'
+      }
+    }));
+    (wallet as any).walletImportClient = { importWallet };
+
+    await wallet.startEmailAuth({ email: 'user@example.com' });
+    const selection = await wallet.completeEmailAuth({ code: '123456', walletSelection: 'manual' });
+    expect(selection).toMatchObject({ wallets: [] });
+    expect(wallet.activeWallet).toBeUndefined();
+
+    const result = await wallet.importEncryptedWallet({
+      walletType: 'ethereum',
+      keyMaterial: {
+        keyId: 'key-1',
+        cipherSuite: 'p256-sha256-aes256gcm',
+        encapsulatedKey: 'AQID',
+        ciphertext: 'BAUG'
+      }
+    });
+
+    const importedWallet = {
+      id: 'wallet-imported',
+      type: 'ethereum',
+      address: '0x3333333333333333333333333333333333333333',
+      keyOrigin: 'imported'
+    };
+    expect(importWallet).toHaveBeenCalledOnce();
+    expect(result).toEqual({ wallet: importedWallet });
+    expect(wallet.activeWallet).toEqual(importedWallet);
+    expect(wallet.session).toEqual({
+      expiresAt: '2099-01-01T00:00:00Z',
+      auth: { type: 'email', email: 'user@example.com' }
+    });
+    expect(JSON.parse(storage.get(Constants.sessionStorageKey) ?? 'null')).toMatchObject({
+      wallet: importedWallet,
       expiresAt: '2099-01-01T00:00:00Z',
       auth: { type: 'email', email: 'user@example.com' },
       signerCredentialId: `0x04${'11'.repeat(64)}`,
       signerKeyType: 'ecdsa-p256-sha256'
     });
-
-    await expect(
-      oms.wallet.getWalletImportRecipientKey({
-        cipherSuite: WalletImportCipherSuite.P256Sha256ChaCha20Poly1305
-      })
-    ).rejects.toMatchObject({ code: 'OMS_ATTESTATION_VERIFICATION_FAILED' });
-    expect(fetchMock).toHaveBeenCalledOnce();
-  });
-
-  it('activates an imported first wallet during manual wallet selection', async () => {
-    const wallet = new WalletClient({
-      publishableKey: 'publishable-key',
-      projectId: 'project-id',
-      environment: {
-        walletApiUrl: 'https://wallet.example',
-        indexerGatewayUrl: 'https://indexer.example',
-        solanaIndexerGatewayUrl: 'https://solana-indexer.example'
-      },
-      storage: new MemoryStorageManager(),
-      credentialSigner: new MockSigner(),
-      walletImportTrustedPcr0s: ['1'.repeat(96)]
-    });
-    (wallet as any).activePendingWalletSelection = {
-      id: 'pending-1',
-      signerCredentialId: `0x04${'11'.repeat(64)}`,
-      signerKeyType: 'ecdsa-p256-sha256',
-      walletType: 'ethereum',
-      metadata: {
-        expiresAt: '2099-01-01T00:00:00Z',
-        auth: { type: 'email', email: 'user@example.com' },
-        signerCredentialId: `0x04${'11'.repeat(64)}`,
-        signerKeyType: 'ecdsa-p256-sha256'
-      }
-    };
-    (wallet as any).requestImportWallet = vi.fn(async () => ({
-      id: 'wallet-imported',
-      type: 'ethereum',
-      address: '0x1111111111111111111111111111111111111111',
-      keyOrigin: 'imported'
-    }));
-
-    await expect(
-      wallet.importEncryptedWallet({
-        type: 'ethereum',
-        keyMaterial: {
-          keyId: 'key-1',
-          cipherSuite: 'p256-sha256-aes256gcm',
-          encapsulatedKey: 'AQID',
-          ciphertext: 'BAUG'
-        }
-      })
-    ).resolves.toMatchObject({
-      walletAddress: '0x1111111111111111111111111111111111111111',
-      wallet: { id: 'wallet-imported', keyOrigin: 'imported' }
-    });
   });
 });
-
-function createWalletWithSession(): WalletClient {
-  const wallet = new WalletClient({
-    publishableKey: 'publishable-key',
-    projectId: 'project-id',
-    environment: {
-      walletApiUrl: 'https://wallet.example',
-      indexerGatewayUrl: 'https://indexer.example',
-      solanaIndexerGatewayUrl: 'https://solana-indexer.example'
-    },
-    storage: new MemoryStorageManager(),
-    credentialSigner: new MockSigner()
-  });
-  (wallet as any).persistSession('wallet-id', '0x1111111111111111111111111111111111111111', {
-    expiresAt: '2099-01-01T00:00:00Z',
-    auth: { type: 'email', email: 'user@example.com' },
-    signerCredentialId: `0x04${'11'.repeat(64)}`,
-    signerKeyType: 'ecdsa-p256-sha256'
-  });
-  return wallet;
-}
-
-function jsonResponse(body: unknown): Response {
-  return new Response(JSON.stringify(body), {
-    status: 200,
-    headers: { 'Content-Type': 'application/json' }
-  });
-}

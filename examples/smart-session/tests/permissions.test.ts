@@ -2,13 +2,7 @@ import assert from 'node:assert/strict';
 import { getAddress } from 'viem';
 import { test } from 'vitest';
 
-import {
-  BASE_SEPOLIA_USDC,
-  BASE_USDC,
-  getSmartSessionAsset,
-  POLYGON_AMOY_USDC,
-  SMART_SESSION_ASSETS
-} from '../shared/networks.ts';
+import { getSmartSessionAsset, SMART_SESSION_ASSETS } from '../shared/networks.ts';
 import {
   createSmartSessionGrants,
   MAX_SMART_SESSION_GRANTS,
@@ -83,11 +77,12 @@ test('any-receiver ERC-20 permission omits the grant recipient', () => {
   ]);
 });
 
+// Literal addresses, so a wrong constant in shared/networks.ts is caught here.
 test.each([
-  ['Polygon Amoy', 'polygon-amoy', POLYGON_AMOY_USDC],
-  ['Base', 'base', BASE_USDC],
-  ['Base Sepolia', 'base-sepolia', BASE_SEPOLIA_USDC]
-] as const)('USDC permissions use the contract configured for %s', (_label, networkId, token) => {
+  ['Polygon Amoy', 'polygon-amoy', '0x41E94Eb019C0762f9Bfcf9Fb1E58725BfB0e7582'],
+  ['Base', 'base', '0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913'],
+  ['Base Sepolia', 'base-sepolia', '0x036CbD53842c5426634e7929541eC2318f3dCF7e']
+] as const)('USDC permissions use the USDC contract for %s', (_label, networkId, token) => {
   const usdc = getSmartSessionAsset(networkId, 'usdc');
   assert.equal(usdc.kind, 'erc20');
   if (usdc.kind !== 'erc20') return;

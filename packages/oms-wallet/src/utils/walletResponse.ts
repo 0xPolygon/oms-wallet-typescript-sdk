@@ -1,4 +1,4 @@
-import type { Address } from 'viem';
+import { isAddress } from 'viem';
 
 import type {
   CredentialInfo,
@@ -27,10 +27,14 @@ export function fromGeneratedWallet(wallet: GeneratedWallet | undefined): Wallet
   const type = fromGeneratedNetworkFamily(wallet.networkFamily);
   const keyOrigin = fromGeneratedWalletKeyOrigin(wallet.keyOrigin);
   if (type === WalletType.Ethereum) {
+    // Checks the shape only; EIP-55 checksum casing is not enforced.
+    if (!isAddress(wallet.address, { strict: false })) {
+      throw invalidResponseError('Ethereum wallet response has an invalid address');
+    }
     return {
       id: wallet.id,
       type,
-      address: wallet.address as Address,
+      address: wallet.address,
       reference: wallet.reference,
       keyOrigin
     };

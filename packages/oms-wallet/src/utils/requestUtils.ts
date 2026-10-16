@@ -1,5 +1,7 @@
 import type { CredentialSigningAlgorithm } from '../credentialSigner.js';
 
+import { base64UrlEncodeBytes } from './base64.js';
+
 export class RequestUtils {
   static buildWalletRequestPreimage(
     endpoint: string,
@@ -24,9 +26,6 @@ export class RequestUtils {
     const encoded = new TextEncoder().encode(challenge + code);
     const hashBuffer = await crypto.subtle.digest('SHA-256', encoded);
     const bytes = new Uint8Array(hashBuffer);
-    return btoa(String.fromCharCode(...bytes))
-      .replace(/\+/g, '-')
-      .replace(/\//g, '_')
-      .replace(/=/g, '');
+    return base64UrlEncodeBytes(bytes);
   }
 }

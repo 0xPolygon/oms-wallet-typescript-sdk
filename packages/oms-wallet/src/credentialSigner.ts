@@ -3,7 +3,7 @@ import type { Hex } from 'viem';
 import { keccak256, toBytes } from 'viem';
 import { privateKeyToAccount } from 'viem/accounts';
 
-import { ByteUtils } from './utils/byteUtils.js';
+import { bytesToHex } from './utils/base64.js';
 
 export type CredentialSigningAlgorithm = 'ecdsa-p256-sha256' | 'ecdsa-p256k-eip191';
 
@@ -85,7 +85,7 @@ export class WebCryptoP256CredentialSigner implements CredentialSigner {
       this.keyPair!.privateKey,
       new TextEncoder().encode(preimage)
     );
-    return `0x${ByteUtils.bytesToHex(new Uint8Array(signature))}`;
+    return `0x${bytesToHex(new Uint8Array(signature))}`;
   }
 
   async hasCredential(): Promise<boolean> {
@@ -146,7 +146,7 @@ export class WebCryptoP256CredentialSigner implements CredentialSigner {
     ])) as CryptoKeyPair;
 
     const publicKey = await crypto.subtle.exportKey('raw', this.keyPair.publicKey);
-    this.credential = `0x${ByteUtils.bytesToHex(new Uint8Array(publicKey))}`;
+    this.credential = `0x${bytesToHex(new Uint8Array(publicKey))}`;
     this.nonce = 0n;
     await this.persistNewCredentialOrLoadExisting();
   }
@@ -237,7 +237,7 @@ export class EthereumPrivateKeyCredentialSigner implements CredentialSigner {
 }
 
 function privateKeyBytesToHex(privateKey: Uint8Array): Hex {
-  return `0x${ByteUtils.bytesToHex(privateKey)}` as Hex;
+  return `0x${bytesToHex(privateKey)}` as Hex;
 }
 
 function assertWebCryptoSupport(): void {

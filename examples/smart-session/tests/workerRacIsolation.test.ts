@@ -1,6 +1,6 @@
 import { env } from 'cloudflare:workers';
 import { applyD1Migrations } from 'cloudflare:test';
-import { beforeAll, beforeEach, expect, test, vi } from 'vitest';
+import { afterEach, beforeAll, beforeEach, expect, test, vi } from 'vitest';
 
 import {
   OMSWalletRequestError,
@@ -68,7 +68,7 @@ vi.mock('../worker/rac.js', () => ({
             upstreamError: {
               service: 'waas',
               name: 'PreconditionFailed',
-              code: 7206,
+              code: '7206',
               message: 'Precondition failed; try again with a higher nonce value',
               status: 412
             }
@@ -135,8 +135,54 @@ const walletA = '0x3000000000000000000000000000000000000003';
 const walletB = '0x4000000000000000000000000000000000000004';
 const sessionSigner = '0x5000000000000000000000000000000000000005';
 
+const nativeBalance = '1000000000000000000';
+const usdcBalance = '2500000';
+const indexerRequests: Array<{ url: string; body: Record<string, any> }> = [];
+// The worker reads session balances from the OMS indexer; serve them locally so no test reaches
+// the network.
+const indexerFetch = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+  const url = input instanceof Request ? input.url : input.toString();
+  if (!url.endsWith('/GetTokenBalancesDetails')) {
+    throw new Error(`Unexpected network request: ${url}`);
+  }
+  const body = JSON.parse(init?.body as string) as Record<string, any>;
+  indexerRequests.push({ url, body });
+  const accountAddress = body.filter.accountAddresses[0] as string;
+  const chainId = body.chainIds[0] as number;
+  return Response.json({
+    page: { page: 0, pageSize: 40, more: false },
+    nativeBalances: [
+      {
+        chainId,
+        results: [
+          { accountAddress, chainId, name: 'Native', symbol: 'NAT', balance: nativeBalance }
+        ]
+      }
+    ],
+    balances: [
+      {
+        chainId,
+        results: ((body.filter.contractWhitelist ?? []) as string[]).map((contractAddress) => ({
+          contractType: 'ERC20',
+          contractAddress,
+          accountAddress,
+          tokenID: '0',
+          balance: usdcBalance,
+          blockHash: '0x' + '00'.repeat(32),
+          blockNumber: 1,
+          chainId
+        }))
+      }
+    ]
+  });
+});
+
 beforeAll(async () => {
   await applyD1Migrations(testEnv.DB, testEnv.TEST_MIGRATIONS);
+});
+
+afterEach(() => {
+  vi.unstubAllGlobals();
 });
 
 beforeEach(() => {
@@ -146,6 +192,50 @@ beforeEach(() => {
   mockedWaas.sessions.clear();
   mockedWaas.preparedTransactions.length = 0;
   mockedWaas.registeredCredentials.length = 0;
+  indexerRequests.length = 0;
+  indexerFetch.mockClear();
+  vi.stubGlobal('fetch', indexerFetch);
+});
+
+test('reports usable session balances from the indexer for the session network and asset', async () => {
+  const token = 'admin-session-balances-token-at-least-32-characters';
+  await createApprovedNativeSession(token, recipientA, walletA, 'session-balance-native');
+  const usdc = await createApprovedUsdcSession(
+    token,
+    [recipientB],
+    walletB,
+    'session-balance-usdc'
+  );
+  indexerRequests.length = 0;
+
+  const sessions = (await overview(token)).sessions;
+
+  expect(sessions).toEqual(
+    expect.arrayContaining([
+      expect.objectContaining({ sessionId: 'session-balance-native', balance: nativeBalance }),
+      expect.objectContaining({ sessionId: 'session-balance-usdc', balance: usdcBalance })
+    ])
+  );
+  const amoy = getSmartSessionNetwork('polygon-amoy').network.id;
+  const polygon = getSmartSessionNetwork('polygon').network.id;
+  expect(
+    indexerRequests
+      .map(({ body }) => ({
+        chainIds: body.chainIds,
+        accountAddresses: body.filter.accountAddresses,
+        contractWhitelist: body.filter.contractWhitelist
+      }))
+      .sort((a, b) => a.chainIds[0] - b.chainIds[0])
+  ).toEqual(
+    [
+      { chainIds: [amoy], accountAddresses: [walletA], contractWhitelist: undefined },
+      {
+        chainIds: [polygon],
+        accountAddresses: [walletB],
+        contractWhitelist: [usdc.asset.tokenAddress]
+      }
+    ].sort((a, b) => a.chainIds[0] - b.chainIds[0])
+  );
 });
 
 test('isolates wallet and dashboard APIs by hostname', async () => {

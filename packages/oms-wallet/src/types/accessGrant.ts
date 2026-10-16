@@ -47,8 +47,18 @@ export interface ListAccessParams {
   type?: AccessGrant['type'];
 }
 
+export interface ListAccessPageParams extends ListAccessParams {
+  /** `page.cursor` from the previous `AccessGrantPage`. Omit for the first page. */
+  cursor?: string;
+}
+
 export interface AccessGrantPage {
   grants: AccessGrant[];
+  /** Paging metadata from WaaS. `cursor` is absent on the last page. */
+  page?: {
+    limit?: number;
+    cursor?: string;
+  };
 }
 
 export interface AuthorizeRemoteAccessParams {

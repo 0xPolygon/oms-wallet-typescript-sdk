@@ -237,7 +237,10 @@ async function readJsonBody(request: Request): Promise<unknown> {
 
 function parseCreateAndExportRequest(value: unknown): CreateAndExportRequest {
   if (!isRecord(value)) throw new Error('Request body must be an object.');
-  const recipientPublicKey = requiredString(value, 'recipientPublicKey');
+  const recipientPublicKey = value.recipientPublicKey;
+  if (typeof recipientPublicKey !== 'string' || recipientPublicKey.length === 0) {
+    throw new Error('Request body is missing recipientPublicKey.');
+  }
   if (recipientPublicKey.length > 512) throw new Error('Recipient public key is too long.');
   return { recipientPublicKey };
 }
