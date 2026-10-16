@@ -1,9 +1,10 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import { WalletClientImpl } from '../src/clients/walletClient';
-import { toOMSWalletError } from '../src/errors';
-import { AddressAlreadyImportedError } from '../src/generated/waas.gen';
+import { Waas } from '../src/generated/waas.gen';
 import { MemoryStorageManager } from '../src/storageManager';
+import { Constants } from '../src/utils/constants';
+import { testWalletAccount } from './fixtures/walletAccount.js';
 import { MockSigner, jsonResponse, testEnvironment } from './fixtures/helpers.js';
 
 afterEach(() => {
@@ -148,27 +149,68 @@ describe('WalletClient errors', () => {
     expect(fetchMock).not.toHaveBeenCalled();
   });
 
-  it('maps wallet-import failures to stable public error codes', () => {
-    const duplicate = AddressAlreadyImportedError.new({
-      code: 7313,
-      name: 'AddressAlreadyImported',
-      message: 'address already imported',
-      status: 400
+  it('maps an already-imported address from importEncryptedWallet to a stable public error', async () => {
+    const storage = new MemoryStorageManager();
+    storage.set(
+      Constants.sessionStorageKey,
+      JSON.stringify({
+        version: 2,
+        scope: {
+          projectId: 'project-id',
+          walletApiUrl: 'https://wallet.example',
+          indexerGatewayUrl: 'https://indexer.example'
+        },
+        wallet: testWalletAccount('wallet-id', '0x1111111111111111111111111111111111111111'),
+        expiresAt: '2099-01-01T00:00:00Z',
+        auth: { type: 'email', email: 'user@example.com' },
+        signerCredentialId: '0x04' + '11'.repeat(64),
+        signerKeyType: 'ecdsa-p256-sha256'
+      })
+    );
+    const wallet = new WalletClientImpl({
+      publishableKey: 'publishable-key',
+      projectId: 'project-id',
+      environment: testEnvironment(),
+      storage,
+      credentialSigner: new MockSigner(),
+      walletImportTrustedPcr0s: ['1'.repeat(96)]
     });
-    expect(toOMSWalletError(duplicate, 'wallet.importWallet')).toMatchObject({
-      code: 'OMS_WALLET_ADDRESS_ALREADY_IMPORTED',
-      operation: 'wallet.importWallet',
-      status: 409,
-      retryable: false
-    });
+    const importFetch = vi.fn(async () =>
+      jsonResponse(
+        {
+          error: 'AddressAlreadyImported',
+          code: 7313,
+          msg: 'address already imported',
+          status: 400
+        },
+        400
+      )
+    );
+    // The attested import transport is replaced with an unattested generated client so the
+    // WaaS error body is parsed exactly as the wire returns it.
+    (wallet as any).walletImportClient = new Waas('https://wallet.example', importFetch);
 
-    const attestationError = new Error('untrusted attestation');
-    attestationError.name = 'OMSWalletAttestationVerificationError';
-    expect(toOMSWalletError(attestationError, 'wallet.getWalletImportRecipientKey')).toMatchObject({
-      code: 'OMS_ATTESTATION_VERIFICATION_FAILED',
-      operation: 'wallet.getWalletImportRecipientKey',
-      retryable: false
+    const error = await wallet
+      .importEncryptedWallet({
+        walletType: 'ethereum',
+        keyMaterial: {
+          keyId: 'key-1',
+          cipherSuite: 'p256-sha256-aes256gcm',
+          encapsulatedKey: 'AQID',
+          ciphertext: 'BAUG'
+        }
+      })
+      .catch((caught: unknown) => caught);
+
+    expect(importFetch).toHaveBeenCalledOnce();
+    expect(error).toMatchObject({
+      code: 'OMS_WALLET_ADDRESS_ALREADY_IMPORTED',
+      operation: 'wallet.importEncryptedWallet',
+      status: 409,
+      retryable: false,
+      upstreamError: { service: 'waas', name: 'AddressAlreadyImported', code: '7313' }
     });
+    expect(wallet.activeWallet?.id).toBe('wallet-id');
   });
 });
 

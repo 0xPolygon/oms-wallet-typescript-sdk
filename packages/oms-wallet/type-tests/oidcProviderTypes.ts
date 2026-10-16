@@ -156,9 +156,11 @@ const customOidcProviderWithoutRedirectUri: CustomOidcProviderConfig = {
 void customOidcProviderWithoutRedirectUri;
 
 const defaultGoogleProvider = OmsRelayOidcProviders.google;
-// @ts-expect-error SDK default Google config is read-only.
+// @ts-expect-error OMS relay provider values are read-only (TS2540, even for the same literal).
+defaultGoogleProvider.provider = 'google';
+// @ts-expect-error OMS relay provider values do not expose a client ID.
 defaultGoogleProvider.clientId = 'google-client';
-// @ts-expect-error OMS relay provider values do not expose editable scopes.
+// @ts-expect-error OMS relay provider values do not expose scopes.
 defaultGoogleProvider.scopes.push('admin');
 const relayProvider: 'google' = defaultGoogleProvider.provider;
 void relayProvider;
@@ -470,7 +472,7 @@ const unsubscribeSessionExpired: () => void = defaultClient.wallet.onSessionExpi
     void wallet?.address;
     void session.auth.email;
     // @ts-expect-error expired session snapshots are readonly.
-    session.auth = undefined;
+    session.auth = { type: 'email', email: 'user@example.com' };
   }
 );
 const sessionExpiredListener: OMSWalletSessionExpiredListener = ({ expiredAt }) => {

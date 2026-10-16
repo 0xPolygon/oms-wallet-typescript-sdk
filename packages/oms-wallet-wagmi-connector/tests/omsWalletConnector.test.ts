@@ -72,11 +72,14 @@ describe('omsWalletConnector', () => {
     ).rejects.toThrow('Authenticate with the OMS Wallet SDK before connecting through wagmi.');
   });
 
-  it('rejects connect when the active OMS wallet is not an Ethereum wallet', async () => {
-    const omsWallet = createOmsWallet({
-      walletAddress: '9xQeWvG816bUx9EPjHmaT23yvVMuZwHngkQF5JC9YjCy',
-      walletType: 'solana'
-    });
+  it.each([
+    { walletType: 'solana', walletAddress: '9xQeWvG816bUx9EPjHmaT23yvVMuZwHngkQF5JC9YjCy' },
+    { walletType: 'tron', walletAddress: 'TNPeeaaFB7K9cmo4uQpcU32zGK8G1NYqeL' },
+    { walletType: 'solana', walletAddress: '0x9999999999999999999999999999999999999999' },
+    { walletType: 'tron', walletAddress: '0x9999999999999999999999999999999999999999' },
+    { walletType: 'ethereum', walletAddress: '0x99999999999999999999999999999999999999' }
+  ] as const)('rejects connect for a $walletType wallet at $walletAddress', async (params) => {
+    const omsWallet = createOmsWallet(params);
     const config = createWagmiConfig(omsWallet);
 
     await expect(

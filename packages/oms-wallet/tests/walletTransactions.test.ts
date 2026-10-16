@@ -272,22 +272,27 @@ describe('WalletClient transactions', () => {
   });
 
   it('prepares, executes, and polls a native SOL transfer', async () => {
+    const walletAddress = '4Nd1mYQbqjVU2aR7cJNPyqW9XjHnBYvWQd7ZxYxvT6uP';
+    const seenOptions: unknown[] = [];
     const selectFeeOption = vi.fn((options: Parameters<FeeOptionSelector>[0]) => {
-      expect(options).toHaveLength(1);
-      expect(options[0]).toMatchObject({
-        feeOption: {
-          value: '5000',
-          displayValue: '0.000005',
-          token: { network: 'solana:devnet', symbol: 'SOL' }
-        },
-        selection: { token: 'SOL', index: 0 }
-      });
-      expect(options[0].availableRaw).toBeUndefined();
+      seenOptions.push(...options);
       return options[0].selection;
     });
     const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
       const url = input.toString();
       const body = JSON.parse(init?.body as string);
+
+      if (url === 'https://solana-indexer.example/GetTokenBalancesDetails') {
+        expect(body).toEqual({
+          networks: ['solana:devnet'],
+          filter: { accountAddresses: [walletAddress], omitNativeBalances: false },
+          omitMetadata: true
+        });
+        return jsonResponse({
+          balances: [solanaNativeBalance(walletAddress, '2000000')],
+          errors: []
+        });
+      }
 
       if (url.endsWith('/PrepareSolanaTransfer')) {
         expect(body).toEqual({
@@ -332,10 +337,7 @@ describe('WalletClient transactions', () => {
     });
     vi.stubGlobal('fetch', fetchMock);
 
-    const wallet = createWalletWithSession(
-      new MemoryStorageManager(),
-      '4Nd1mYQbqjVU2aR7cJNPyqW9XjHnBYvWQd7ZxYxvT6uP'
-    );
+    const wallet = createWalletWithSession(new MemoryStorageManager(), walletAddress);
 
     await expect(
       wallet.sendSolanaTransfer({
@@ -352,8 +354,26 @@ describe('WalletClient transactions', () => {
       txnHash: 'solana-signature',
       statusResolution: 'resolved'
     });
-    expect(fetchMock).toHaveBeenCalledTimes(4);
     expect(selectFeeOption).toHaveBeenCalledOnce();
+    expect(seenOptions).toEqual([
+      {
+        feeOption: {
+          token: { network: 'solana:devnet', name: 'SOL', symbol: 'SOL', type: 'NATIVE' },
+          value: '5000',
+          displayValue: '0.000005'
+        },
+        selection: { token: 'SOL', index: 0 },
+        available: '0.002',
+        availableRaw: '2000000',
+        decimals: 9
+      }
+    ]);
+    expect(fetchMock.mock.calls.map(([input]) => input.toString())).toEqual([
+      'https://wallet.example/v1/Waas/PrepareSolanaTransfer',
+      'https://solana-indexer.example/GetTokenBalancesDetails',
+      'https://wallet.example/v1/Waas/Execute',
+      'https://wallet.example/v1/Waas/TransactionStatus'
+    ]);
   });
 
   it('firstAvailable selects an affordable Solana fee option using indexer balances', async () => {
@@ -469,18 +489,57 @@ describe('WalletClient transactions', () => {
     expect(fetchMock).toHaveBeenCalledTimes(3);
   });
 
-  it('selects a rent fee option for a relayed SPL-token transfer', async () => {
+  it('pays a relayed SPL-token transfer with a selected SPL fee option and its balance', async () => {
     const mint = 'So11111111111111111111111111111111111111112';
+    const usdcMint = '4zMMC9srt5Ri5X14GAgXhaHii3GnPAEERYPJgZJDncDU';
+    const walletAddress = '4Nd1mYQbqjVU2aR7cJNPyqW9XjHnBYvWQd7ZxYxvT6uP';
+    const seenOptions: Array<Record<string, unknown>> = [];
     const selectFeeOption = vi.fn((options: Parameters<FeeOptionSelector>[0]) => {
-      expect(options.map(({ selection }) => selection)).toEqual([
-        { token: 'SOL', index: 0 },
-        { token: 'USDC', index: 1 }
-      ]);
+      seenOptions.push(
+        ...options.map(({ selection, available, availableRaw, decimals }) => ({
+          selection,
+          available,
+          availableRaw,
+          decimals
+        }))
+      );
       return options[1].selection;
     });
     const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
       const url = input.toString();
       const body = JSON.parse(init?.body as string);
+
+      if (url === 'https://solana-indexer.example/GetTokenBalancesDetails') {
+        expect(body).toEqual({
+          networks: ['solana:devnet'],
+          filter: {
+            accountAddresses: [walletAddress],
+            omitNativeBalances: false,
+            contractWhitelist: [usdcMint]
+          },
+          omitMetadata: true
+        });
+        return jsonResponse({
+          balances: [
+            solanaNativeBalance(walletAddress, '2000000'),
+            {
+              network: 'solana:devnet',
+              accountAddress: walletAddress,
+              assetType: 'fungible-token',
+              tokenProgram: 'spl-token',
+              mintAddress: usdcMint,
+              name: 'USD Coin',
+              symbol: 'USDC',
+              decimals: 6,
+              balance: '20000',
+              formattedBalance: '0.02',
+              verificationStatus: 'verified',
+              verificationSource: 'jupiter'
+            }
+          ],
+          errors: []
+        });
+      }
 
       if (url.endsWith('/PrepareSolanaTransfer')) {
         expect(body).toEqual({
@@ -511,7 +570,7 @@ describe('WalletClient transactions', () => {
                 name: 'USDC',
                 symbol: 'USDC',
                 type: 'SPL',
-                contractAddress: '4zMMC9srt5Ri5X14GAgXhaHii3GnPAEERYPJgZJDncDU'
+                contractAddress: usdcMint
               },
               value: '10000',
               displayValue: '0.01'
@@ -534,10 +593,7 @@ describe('WalletClient transactions', () => {
     });
     vi.stubGlobal('fetch', fetchMock);
 
-    const wallet = createWalletWithSession(
-      new MemoryStorageManager(),
-      '4Nd1mYQbqjVU2aR7cJNPyqW9XjHnBYvWQd7ZxYxvT6uP'
-    );
+    const wallet = createWalletWithSession(new MemoryStorageManager(), walletAddress);
 
     await expect(
       wallet.sendSolanaTransfer({
@@ -555,6 +611,20 @@ describe('WalletClient transactions', () => {
     });
     expect(fetchMock).toHaveBeenCalledTimes(3);
     expect(selectFeeOption).toHaveBeenCalledOnce();
+    expect(seenOptions).toEqual([
+      {
+        selection: { token: 'SOL', index: 0 },
+        available: '0.002',
+        availableRaw: '2000000',
+        decimals: 9
+      },
+      {
+        selection: { token: 'USDC', index: 1 },
+        available: '0.02',
+        availableRaw: '20000',
+        decimals: 6
+      }
+    ]);
   });
 
   it('prepares an SPL-token transfer using the mint as the asset', async () => {
@@ -1376,4 +1446,19 @@ function createWalletWithSession(
     signerKeyType: 'ecdsa-p256-sha256'
   });
   return wallet;
+}
+
+function solanaNativeBalance(accountAddress: string, balance: string) {
+  return {
+    network: 'solana:devnet',
+    accountAddress,
+    assetType: 'native',
+    name: 'Solana',
+    symbol: 'SOL',
+    decimals: 9,
+    balance,
+    formattedBalance: balance,
+    verificationStatus: 'unknown',
+    verificationSource: 'none'
+  };
 }
