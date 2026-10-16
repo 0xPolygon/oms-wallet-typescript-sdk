@@ -113,6 +113,18 @@ describe('public API error contracts', () => {
           }
         `);
     expect(fetchMock).toHaveBeenCalledOnce();
+
+    // Development sandbox keys require attestation too.
+    const devOms = createOmsClientWithSession({ publishableKey: 'pk_dev_sdbx_project_key' });
+    await expect(
+      devOms.wallet.getWalletImportRecipientKey({
+        cipherSuite: WalletImportCipherSuite.P256Sha256ChaCha20Poly1305
+      })
+    ).rejects.toMatchObject({
+      code: 'OMS_ATTESTATION_VERIFICATION_FAILED',
+      operation: 'wallet.getWalletImportRecipientKey'
+    });
+    expect(fetchMock).toHaveBeenCalledTimes(2);
   });
 
   it('snapshots WaaS domain errors with upstream details', async () => {
@@ -422,26 +434,9 @@ describe('public API error contracts', () => {
         `);
   });
 
-  it('snapshots SDK-local errors without upstream details', async () => {
-    const oms = createOmsClient();
-
-    await expect(
-      publicError(() => oms.wallet.signMessage({ network: Networks.polygon, message: 'hello' }))
-    ).resolves.toMatchInlineSnapshot(`
-          {
-            "code": "OMS_SESSION_MISSING",
-            "message": "No active wallet session",
-            "name": "OMSWalletSessionError",
-            "operation": "wallet.signMessage",
-            "retryable": null,
-            "status": null,
-            "txnId": null,
-            "upstreamError": null,
-          }
-        `);
-  });
-
   it('snapshots missing-session contracts for protected wallet methods', async () => {
+    const fetchMock = vi.fn();
+    vi.stubGlobal('fetch', fetchMock);
     const oms = createOmsClient();
 
     await expect(
@@ -450,6 +445,10 @@ describe('public API error contracts', () => {
         ['wallet.useWallet', () => oms.wallet.useWallet({ walletId: 'wallet-1' })],
         ['wallet.createWallet', () => oms.wallet.createWallet()],
         ['wallet.getIdToken', () => oms.wallet.getIdToken()],
+        [
+          'wallet.signMessage',
+          () => oms.wallet.signMessage({ network: Networks.polygon, message: 'hello' })
+        ],
         [
           'wallet.signTypedData',
           () =>
@@ -544,6 +543,19 @@ describe('public API error contracts', () => {
                 "code": "OMS_SESSION_MISSING",
                 "message": "No active wallet session",
                 "name": "OMSWalletSessionError",
+                "operation": "wallet.signMessage",
+                "retryable": null,
+                "status": null,
+                "txnId": null,
+                "upstreamError": null,
+              },
+              "label": "wallet.signMessage",
+            },
+            {
+              "error": {
+                "code": "OMS_SESSION_MISSING",
+                "message": "No active wallet session",
+                "name": "OMSWalletSessionError",
                 "operation": "wallet.signTypedData",
                 "retryable": null,
                 "status": null,
@@ -632,6 +644,7 @@ describe('public API error contracts', () => {
             },
           ]
         `);
+    expect(fetchMock).not.toHaveBeenCalled();
   });
 
   it('snapshots OIDC local error contracts without upstream details', async () => {
@@ -1110,23 +1123,21 @@ describe('public API error contracts', () => {
   });
 
   it('snapshots transaction local validation errors without upstream details', async () => {
-    vi.stubGlobal(
-      'fetch',
-      vi.fn(async (input: RequestInfo | URL) => {
-        const url = input.toString();
-        if (url.endsWith('/PrepareEthereumTransaction')) {
-          return jsonResponse({
-            txnId: 'txn-no-fee-options',
-            status: 'quoted',
-            feeOptions: [],
-            sponsored: false,
-            expiresAt: '2099-01-01T00:00:00Z'
-          });
-        }
+    const fetchMock = vi.fn(async (input: RequestInfo | URL) => {
+      const url = input.toString();
+      if (url.endsWith('/PrepareEthereumTransaction')) {
+        return jsonResponse({
+          txnId: 'txn-no-fee-options',
+          status: 'quoted',
+          feeOptions: [],
+          sponsored: false,
+          expiresAt: '2099-01-01T00:00:00Z'
+        });
+      }
 
-        throw new Error(`Unexpected request: ${url}`);
-      })
-    );
+      throw new Error(`Unexpected request: ${url}`);
+    });
+    vi.stubGlobal('fetch', fetchMock);
 
     const oms = createOmsClientWithSession();
 
@@ -1151,6 +1162,8 @@ describe('public API error contracts', () => {
             "upstreamError": null,
           }
         `);
+    // Execute must not run without a fee option.
+    expect(fetchMock).toHaveBeenCalledTimes(1);
   });
 
   it('snapshots transaction execute failures as unconfirmed writes', async () => {

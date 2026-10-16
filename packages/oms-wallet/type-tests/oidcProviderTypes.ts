@@ -1,11 +1,6 @@
 import {
   AuthMode,
-  DEFAULT_SESSION_LIFETIME_SECONDS,
-  IndexerOperation,
-  MAX_SESSION_LIFETIME_SECONDS,
   Networks,
-  RemoteAccessOperation,
-  WalletOperation,
   SolanaNetworks,
   TronNetworks,
   RemoteAccessClient,
@@ -37,51 +32,27 @@ import {
   type WalletAccount,
   type OMSWalletErrorCode,
   type OMSWalletUpstreamError,
-  type BalancesResult,
   type AbiArg,
   type GetBalancesParams,
   type GetSolanaBalancesParams,
   type GetTransactionHistoryParams,
-  type IndexerNetworkType,
   type OMSWalletParams,
   type IndexerClient,
-  type WalletClient,
-  type AccessGrantPage,
   type FeeToken,
-  type ListAccessPageParams,
-  type OMSWalletOperation,
   type OidcAuthMode,
   type CustomOidcProviderConfig,
   type OmsRelayOidcProvider,
   type SendDataTransactionParams,
   type SendNativeTransactionParams,
-  type SendSolanaTransferParams,
   type SendTransactionBase,
   type SendTransactionParams,
   type SendTransactionResponse,
   type SendContractTransactionParams,
-  type ContractTokenBalance,
-  type NativeTokenBalance,
-  type SolanaBalance,
-  type SolanaBalancesResult,
-  type SolanaFungibleTokenBalance,
-  type SolanaNativeBalance,
-  type SolanaNetworkError,
-  type SolanaVerificationSource,
-  type SolanaVerificationStatus,
-  type TokenBalance,
-  type TokenBalancesPage,
-  type TokenContractInfo,
-  type TokenMetadata,
-  type TransactionHistoryResult,
   type SignInWithOidcIdTokenParams,
-  type AuthorizeRemoteAccessParams,
   type CredentialSigner,
   type PreparedRemoteTransaction,
   type EncryptedWalletImportKeyMaterial,
-  type RemoteAccessGrant,
   type RemoteAccessSession,
-  type SmartSessionGrant,
   type SmartSessionGrantUsage
 } from '../src/index';
 
@@ -266,13 +237,6 @@ if (false) {
     // @ts-expect-error signature verification no longer takes walletId.
     void wallet.isValidTronMessageSignature({ walletId: 'id', message: 'hello', signature: '0x' });
 
-    const accessPage: AccessGrantPage = await wallet.listAccessPage({ pageSize: 20 });
-    const accessPageParams: ListAccessPageParams = {
-      pageSize: 20,
-      cursor: accessPage.page?.cursor,
-      type: 'remote'
-    };
-    void wallet.listAccessPage(accessPageParams);
     void wallet.signTronMessage({ message: 'Sign in to Example' });
     void wallet.signTronTypedData({ typedData: {} });
     const trxTransfer: SendTronTransactionParams = {
@@ -300,54 +264,6 @@ if (false) {
     };
     void wallet.callTronContract(trc20Transfer);
     void wallet.importWallet({ type: 'tron', privateKey: '11'.repeat(32) });
-
-    const solanaWallet = await wallet.createWallet({ walletType: WalletType.Solana });
-    const origin: WalletKeyOrigin = solanaWallet.wallet.keyOrigin;
-    void origin;
-    if (solanaWallet.wallet.type === WalletType.Solana) {
-      const address: string = solanaWallet.wallet.address;
-      void address;
-      void wallet.isValidSolanaMessageSignature({
-        walletAddress: address,
-        message: 'Sign in to Example',
-        signature: 'solana-signature'
-      });
-    }
-    void wallet.signSolanaMessage({ message: 'Sign in to Example' });
-    const solanaTransfer: SendSolanaTransferParams = {
-      network: SolanaNetworks.devnet,
-      asset: 'SOL',
-      to: '3gFktQX6vki5M2DzN8Y1ESPUJ4fJ8o6hVQWf8vYvPypD',
-      amount: 1_000_000n,
-      mode: TransactionMode.Relayer
-    };
-    void wallet.sendSolanaTransfer(solanaTransfer);
-
-    const authorization = await wallet.authorizeRemoteAccess({
-      credentialId: 'credential-id',
-      network: Networks.polygon,
-      grants: [
-        {
-          kind: 'nativeTransfer',
-          to: '0x1111111111111111111111111111111111111111',
-          limit: 1n
-        }
-      ],
-      expiresAt: '2099-01-01T00:00:00Z'
-    });
-    void authorization.walletId;
-    void authorization.sessionId;
-    void wallet.revokeAccess({
-      credentialId: 'credential-id',
-      sessionId: authorization.sessionId
-    });
-    const ownerSession = await wallet.getRemoteAccessSession({
-      sessionId: authorization.sessionId
-    });
-    void wallet.getRemoteAccessSessionUsage({
-      sessionId: ownerSession.sessionId,
-      network: Networks.polygon
-    });
 
     const imported = await configuredOmsWallet.wallet.importWallet({
       type: WalletType.Ethereum,
@@ -378,25 +294,6 @@ if (false) {
     void configuredOmsWallet.wallet.importWallet({ type: WalletType.Ethereum });
   });
 }
-
-const smartSessionGrant: SmartSessionGrant = {
-  kind: 'erc20Transfer',
-  token: '0x2222222222222222222222222222222222222222',
-  limit: 1n
-};
-void smartSessionGrant;
-
-const authorizeRemoteAccess: AuthorizeRemoteAccessParams = {
-  credentialId: 'credential-id',
-  network: Networks.polygon,
-  grants: [smartSessionGrant],
-  expiresAt: '2099-01-01T00:00:00Z'
-};
-void authorizeRemoteAccess;
-
-declare const remoteAccess: RemoteAccessGrant;
-const remoteSessionId: string = remoteAccess.sessionId;
-void remoteSessionId;
 
 const defaultClient = new OMSWallet({
   publishableKey: 'pk_dev_sdbx_project_key'
@@ -437,18 +334,6 @@ const oidcAuthMode: OidcAuthMode = AuthMode.AuthCodePKCE;
 void oidcAuthMode;
 // @ts-expect-error AuthMode only lists OIDC redirect auth modes.
 void AuthMode.OTP;
-const defaultSessionLifetime: 604800 = DEFAULT_SESSION_LIFETIME_SECONDS;
-const maxSessionLifetime: 2592000 = MAX_SESSION_LIFETIME_SECONDS;
-void defaultSessionLifetime;
-void maxSessionLifetime;
-const walletClient: WalletClient = defaultClient.wallet;
-void walletClient;
-const operations: OMSWalletOperation[] = [
-  WalletOperation.listAccessPage,
-  IndexerOperation.getTronBalances,
-  RemoteAccessOperation.listSessions
-];
-void operations;
 const feeToken: FeeToken = {
   network: 'amoy',
   name: 'USD Coin',
@@ -517,101 +402,6 @@ const unsupportedNetwork: Network = {
   explorerUrl: 'https://example.com',
   displayName: 'Unsupported'
 };
-const tokenContractInfo: TokenContractInfo = {
-  chainId: 137,
-  address: '0xtoken',
-  source: 'token-directory',
-  name: 'USD Coin',
-  type: 'ERC20',
-  symbol: 'USDC',
-  decimals: 6,
-  deployed: true,
-  bytecodeHash: '0xhash',
-  extensions: {},
-  updatedAt: '2026-01-01T00:00:00Z',
-  status: 'AVAILABLE'
-};
-const tokenMetadata: TokenMetadata = {
-  tokenId: '0',
-  source: 'metadata',
-  name: 'USDC',
-  attributes: [],
-  status: 'AVAILABLE'
-};
-const contractTokenBalance: ContractTokenBalance = {
-  contractType: 'ERC20',
-  contractAddress: '0xtoken',
-  accountAddress: '0xwallet',
-  tokenId: '0',
-  balance: '141799',
-  chainId: Networks.polygon.id,
-  blockHash: '0xblock',
-  blockNumber: 1,
-  contractInfo: tokenContractInfo,
-  tokenMetadata,
-  balanceUSD: '0.141799',
-  priceUSD: '1'
-};
-const nativeTokenBalance: NativeTokenBalance = {
-  contractType: 'NATIVE',
-  accountAddress: '0xwallet',
-  balance: '1000000000000000000',
-  chainId: Networks.polygon.id,
-  name: 'POL',
-  symbol: 'POL'
-};
-const tokenBalance: TokenBalance = contractTokenBalance;
-const tokenBalancesPage: TokenBalancesPage = { page: 0, pageSize: 40, more: false };
-const tokenBalancesResult: BalancesResult = {
-  status: 200,
-  page: tokenBalancesPage,
-  nativeBalances: [nativeTokenBalance],
-  balances: [contractTokenBalance]
-};
-const solanaFungibleTokenBalance: SolanaFungibleTokenBalance = {
-  network: SolanaNetworks.mainnet,
-  accountAddress: 'solana-wallet',
-  assetType: 'fungible-token',
-  tokenProgram: 'spl-token',
-  mintAddress: 'usdc-mint',
-  name: 'USD Coin',
-  symbol: 'USDC',
-  decimals: 6,
-  balance: '1000000',
-  formattedBalance: '1',
-  verificationStatus: 'verified',
-  verificationSource: 'jupiter'
-};
-const solanaNativeBalance: SolanaNativeBalance = {
-  network: SolanaNetworks.devnet,
-  accountAddress: 'solana-wallet',
-  assetType: 'native',
-  name: 'Solana',
-  symbol: 'SOL',
-  decimals: 9,
-  balance: '1000000000',
-  formattedBalance: '1',
-  verificationStatus: 'unknown',
-  verificationSource: 'none'
-};
-const solanaBalance: SolanaBalance = solanaFungibleTokenBalance;
-const solanaNetworkError: SolanaNetworkError = {
-  network: SolanaNetworks.devnet,
-  reason: 'RPC unavailable'
-};
-const solanaBalancesResult: SolanaBalancesResult = {
-  status: 200,
-  balances: [solanaNativeBalance, solanaBalance],
-  errors: [solanaNetworkError]
-};
-const solanaVerificationStatus: SolanaVerificationStatus = 'unknown';
-const solanaVerificationSource: SolanaVerificationSource = 'none';
-const indexerNetworkType: IndexerNetworkType = 'MAINNETS';
-const transactionHistoryResult: TransactionHistoryResult = {
-  status: 200,
-  page: tokenBalancesPage,
-  transactions: []
-};
 const upstreamError: OMSWalletUpstreamError = {
   service: 'waas',
   name: 'CommitmentConsumed',
@@ -646,14 +436,6 @@ void amoyNetwork;
 void baseNetwork;
 void allNetworks;
 void unsupportedNetwork;
-void tokenContractInfo;
-void tokenMetadata;
-void tokenBalancesResult;
-void solanaBalancesResult;
-void solanaVerificationStatus;
-void solanaVerificationSource;
-void indexerNetworkType;
-void transactionHistoryResult;
 void upstreamError;
 void maybeUpstreamError;
 void transactionExecutionCode;

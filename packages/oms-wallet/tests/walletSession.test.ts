@@ -752,36 +752,28 @@ describe('WalletClient session storage', () => {
     expect(signer.clear).toHaveBeenCalledOnce();
   });
 
-  it('restores completed wallet session metadata from storage', () => {
-    const storage = new MemoryStorageManager();
-    seedStoredSession(storage, { auth: googleAuth(), scope: omsSessionScope });
-
-    const client = new OMSWallet({
-      publishableKey: 'pk_dev_sdbx_project_key',
-      storage,
-      credentialSigner: new MockSigner()
-    });
-
-    expect(client.wallet.activeWallet?.address).toBe('0x1111111111111111111111111111111111111111');
-
-    expect(client.wallet.session).toEqual({
-      expiresAt: '2099-01-01T00:00:00Z',
+  it.each([
+    {
+      label: 'an Ethereum wallet with OIDC auth',
+      wallet: testWalletAccount('wallet-id', '0x1111111111111111111111111111111111111111'),
       auth: googleAuth()
-    });
-  });
-
-  it('restores the full active wallet, including Tron wallets, from storage', () => {
+    },
+    {
+      label: 'an imported Tron wallet with email auth',
+      wallet: {
+        id: 'wallet-tron',
+        type: 'tron',
+        address: 'TNPeeaaFB7K9cmo4uQpcU32zGK8G1NYqeL',
+        reference: 'primary',
+        keyOrigin: 'imported'
+      },
+      auth: emailAuth()
+    }
+  ])('restores the full active wallet and session for $label from storage', ({ wallet, auth }) => {
     const storage = new MemoryStorageManager();
-    seedStoredSession(storage, { scope: omsSessionScope });
+    seedStoredSession(storage, { auth, scope: omsSessionScope });
     const record = JSON.parse(storage.get(Constants.sessionStorageKey)!);
-    record.wallet = {
-      id: 'wallet-tron',
-      type: 'tron',
-      address: 'TNPeeaaFB7K9cmo4uQpcU32zGK8G1NYqeL',
-      reference: 'primary',
-      keyOrigin: 'imported'
-    };
-    storage.set(Constants.sessionStorageKey, JSON.stringify(record));
+    storage.set(Constants.sessionStorageKey, JSON.stringify({ ...record, wallet }));
 
     const client = new OMSWallet({
       publishableKey: 'pk_dev_sdbx_project_key',
@@ -789,8 +781,8 @@ describe('WalletClient session storage', () => {
       credentialSigner: new MockSigner()
     });
 
-    expect(client.wallet.activeWallet).toEqual(record.wallet);
-    expect(client.wallet.session).toEqual({ expiresAt: '2099-01-01T00:00:00Z', auth: emailAuth() });
+    expect(client.wallet.activeWallet).toEqual(wallet);
+    expect(client.wallet.session).toEqual({ expiresAt: '2099-01-01T00:00:00Z', auth });
   });
 
   it('discards version 1 session records saved by SDK 0.3.x', () => {
@@ -820,16 +812,17 @@ describe('WalletClient session storage', () => {
     expect(storage.get(Constants.sessionStorageKey)).toBeFalsy();
   });
 
-  it('discards stored sessions whose wallet record is malformed', () => {
-    for (const wallet of [
-      { id: 'wallet-id', type: 'bitcoin', address: 'bc1', keyOrigin: 'enclave' },
-      { id: 'wallet-id', type: 'ethereum', address: 'not-hex', keyOrigin: 'enclave' },
-      { id: 'wallet-id', type: 'tron', address: 'TNPeeaaFB7K9cmo4uQpcU32zGK8G1NYqeL' }
+  it('discards stored sessions whose wallet record is malformed or has no completed auth', () => {
+    for (const override of [
+      { wallet: { id: 'wallet-id', type: 'bitcoin', address: 'bc1', keyOrigin: 'enclave' } },
+      { wallet: { id: 'wallet-id', type: 'ethereum', address: 'not-hex', keyOrigin: 'enclave' } },
+      { wallet: { id: 'wallet-id', type: 'tron', address: 'TNPeeaaFB7K9cmo4uQpcU32zGK8G1NYqeL' } },
+      { auth: undefined }
     ]) {
       const storage = new MemoryStorageManager();
       seedStoredSession(storage, { scope: omsSessionScope });
       const record = JSON.parse(storage.get(Constants.sessionStorageKey)!);
-      storage.set(Constants.sessionStorageKey, JSON.stringify({ ...record, wallet }));
+      storage.set(Constants.sessionStorageKey, JSON.stringify({ ...record, ...override }));
 
       const client = new OMSWallet({
         publishableKey: 'pk_dev_sdbx_project_key',
@@ -838,6 +831,7 @@ describe('WalletClient session storage', () => {
       });
 
       expect(client.wallet.activeWallet).toBeUndefined();
+      expect(client.wallet.session).toBeUndefined();
       expect(storage.get(Constants.sessionStorageKey)).toBeFalsy();
     }
   });
@@ -906,9 +900,11 @@ describe('WalletClient session storage', () => {
     expect(signer.clear).toHaveBeenCalledOnce();
   });
 
-  it('returns isolated auth snapshots for restored sessions', async () => {
+  it.each([
+    { label: 'a session restored from storage', restored: true, auth: googleAuth() },
+    { label: 'a session persisted after auth', restored: false, auth: emailAuth() }
+  ])('returns isolated wallet.session auth snapshots for $label', async ({ restored, auth }) => {
     const storage = new MemoryStorageManager();
-    seedStoredSession(storage, { auth: googleAuth(), scope: omsSessionScope });
     const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
       const url = input.toString();
       const body = JSON.parse(init?.body as string);
@@ -921,43 +917,33 @@ describe('WalletClient session storage', () => {
       throw new Error(`Unexpected request: ${url}`);
     });
     vi.stubGlobal('fetch', fetchMock);
-
-    const client = new OMSWallet({
-      publishableKey: 'pk_dev_sdbx_project_key',
+    if (restored) seedStoredSession(storage, { auth, scope: directSessionScope });
+    const wallet = new WalletClientImpl({
+      publishableKey: 'publishable-key',
+      projectId: 'project-id',
+      environment: testEnvironment(),
       storage,
       credentialSigner: new MockSigner()
     });
-    const restoredSession = client.wallet.session;
+    if (!restored) {
+      (wallet as any).persistSession(
+        testWalletAccount('wallet-id', '0x1111111111111111111111111111111111111111'),
+        {
+          expiresAt: '2099-01-01T00:00:00Z',
+          auth,
+          signerCredentialId: '0x04' + '11'.repeat(64),
+          signerKeyType: 'ecdsa-p256-sha256'
+        }
+      );
+    }
+    expect(wallet.session?.auth).toEqual(auth);
 
-    (restoredSession.auth as any).email = 'mutated@example.com';
-    await client.wallet.useWallet({ walletId: 'wallet-id' });
+    (wallet.session.auth as any).email = 'mutated@example.com';
+    await wallet.useWallet({ walletId: 'wallet-id' });
 
-    expect(client.wallet.session?.auth).toEqual(googleAuth());
-    expect(storedSession(storage)?.auth).toEqual(googleAuth());
-  });
-
-  it('does not restore wallet metadata without completed session auth', () => {
-    const storage = new MemoryStorageManager();
-    storage.set(
-      Constants.sessionStorageKey,
-      JSON.stringify({
-        version: 2,
-        scope: omsSessionScope,
-        wallet: testWalletAccount('wallet-id', '0x1111111111111111111111111111111111111111'),
-        expiresAt: '2099-01-01T00:00:00Z',
-        signerCredentialId: '0x04' + '11'.repeat(64),
-        signerKeyType: 'ecdsa-p256-sha256'
-      })
-    );
-
-    const client = new OMSWallet({
-      publishableKey: 'pk_dev_sdbx_project_key',
-      storage,
-      credentialSigner: new MockSigner()
-    });
-
-    expect(client.wallet.session).toBeUndefined();
-    expect(storage.get(Constants.sessionStorageKey)).toBeNull();
+    expect(requestCount(fetchMock, '/UseWallet')).toBe(1);
+    expect(wallet.session?.auth).toEqual(auth);
+    expect(storedSession(storage)?.auth).toEqual(auth);
   });
 
   it('stores the local signer identity after email auth and restores a usable session', async () => {
@@ -1065,45 +1051,6 @@ describe('WalletClient session storage', () => {
     await expect(
       restoredWallet.signMessage({ network: Networks.amoy, message: 'test' })
     ).resolves.toBe('0xsigned');
-  });
-
-  it('returns isolated session auth snapshots from wallet.session', async () => {
-    const storage = new MemoryStorageManager();
-    const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
-      const url = input.toString();
-      const body = JSON.parse(init?.body as string);
-
-      if (url.endsWith('/UseWallet')) {
-        expect(body).toEqual({ walletId: 'wallet-id' });
-        return jsonResponse({ wallet: testWallet('wallet-id', WalletType.Ethereum, '11') });
-      }
-
-      throw new Error(`Unexpected request: ${url}`);
-    });
-    vi.stubGlobal('fetch', fetchMock);
-    const wallet = new WalletClientImpl({
-      publishableKey: 'publishable-key',
-      projectId: 'project-id',
-      environment: testEnvironment(),
-      storage,
-      credentialSigner: new MockSigner()
-    });
-    (wallet as any).persistSession(
-      testWalletAccount('wallet-id', '0x1111111111111111111111111111111111111111'),
-      {
-        expiresAt: '2099-01-01T00:00:00Z',
-        auth: emailAuth(),
-        signerCredentialId: '0x04' + '11'.repeat(64),
-        signerKeyType: 'ecdsa-p256-sha256'
-      }
-    );
-
-    const session = wallet.session;
-    (session.auth as any).email = 'mutated@example.com';
-    await wallet.useWallet({ walletId: 'wallet-id' });
-
-    expect(wallet.session?.auth).toEqual(emailAuth());
-    expect(storedSession(storage)?.auth).toEqual(emailAuth());
   });
 
   it('uses a requested email auth session lifetime', async () => {
@@ -1510,121 +1457,76 @@ describe('WalletClient session storage', () => {
     expect(wallet.activeWallet?.address).toBe(testWalletAddress(requestedType, '33'));
   });
 
-  it('stale pending wallet selections fail before network after newer manual auth', async () => {
-    const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
-      const url = input.toString();
-      const body = JSON.parse(init?.body as string);
+  it.each([
+    { secondSelection: 'manual' as const, activeAddress: undefined },
+    {
+      secondSelection: 'automatic' as const,
+      activeAddress: '0x2222222222222222222222222222222222222222'
+    }
+  ])(
+    'stale pending wallet selections fail before network after newer $secondSelection auth',
+    async ({ secondSelection, activeAddress }) => {
+      const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+        const url = input.toString();
+        const body = JSON.parse(init?.body as string);
 
-      if (url.endsWith('/CompleteAuth')) {
-        return jsonResponse({
-          identity: { type: 'email', sub: 'user-1' },
-          email: body.answer === 'first' ? 'first@example.com' : 'second@example.com',
-          wallets: [
-            testWallet(
-              body.answer === 'first' ? 'wallet-first' : 'wallet-second',
-              WalletType.Ethereum,
-              body.answer === 'first' ? '11' : '22'
-            )
-          ],
-          credential: testCredential()
-        });
-      }
+        if (url.endsWith('/CompleteAuth')) {
+          return jsonResponse({
+            identity: { type: 'email', sub: 'user-1' },
+            email: body.answer === 'first' ? 'first@example.com' : 'second@example.com',
+            wallets: [
+              testWallet(
+                body.answer === 'first' ? 'wallet-first' : 'wallet-second',
+                WalletType.Ethereum,
+                body.answer === 'first' ? '11' : '22'
+              )
+            ],
+            credential: testCredential()
+          });
+        }
 
-      throw new Error(`Unexpected request: ${url}`);
-    });
-    vi.stubGlobal('fetch', fetchMock);
+        if (url.endsWith('/UseWallet')) {
+          return jsonResponse({ wallet: testWallet('wallet-second', WalletType.Ethereum, '22') });
+        }
 
-    const wallet = new WalletClientImpl({
-      publishableKey: 'publishable-key',
-      projectId: 'project-id',
-      environment: testEnvironment(),
-      storage: new MemoryStorageManager(),
-      credentialSigner: new MockSigner()
-    });
-    seedEmailAuthAttempt(wallet);
-    vi.spyOn(RequestUtils, 'hashEmailAuthAnswer')
-      .mockResolvedValueOnce('first')
-      .mockResolvedValueOnce('second');
+        throw new Error(`Unexpected request: ${url}`);
+      });
+      vi.stubGlobal('fetch', fetchMock);
 
-    const staleSelection = await wallet.completeEmailAuth({
-      code: '111111',
-      walletSelection: 'manual'
-    });
-    seedEmailAuthAttempt(wallet, 'verifier-2', 'challenge-2');
-    await wallet.completeEmailAuth({
-      code: '222222',
-      walletSelection: 'manual'
-    });
-    const requestCountBeforeStaleSelection = fetchMock.mock.calls.length;
+      const wallet = new WalletClientImpl({
+        publishableKey: 'publishable-key',
+        projectId: 'project-id',
+        environment: testEnvironment(),
+        storage: new MemoryStorageManager(),
+        credentialSigner: new MockSigner()
+      });
+      seedEmailAuthAttempt(wallet);
+      vi.spyOn(RequestUtils, 'hashEmailAuthAnswer')
+        .mockResolvedValueOnce('first')
+        .mockResolvedValueOnce('second');
 
-    await expect(staleSelection.selectWallet({ walletId: 'wallet-first' })).rejects.toMatchObject({
-      code: 'OMS_WALLET_SELECTION_STALE'
-    });
-    await expect(
-      staleSelection.createAndSelectWallet({ reference: 'stale' })
-    ).rejects.toMatchObject({
-      code: 'OMS_WALLET_SELECTION_STALE'
-    });
-    expect(fetchMock.mock.calls.length).toBe(requestCountBeforeStaleSelection);
-    expect(wallet.activeWallet?.address).toBeUndefined();
-  });
+      const staleSelection = await wallet.completeEmailAuth({
+        code: '111111',
+        walletSelection: 'manual'
+      });
+      seedEmailAuthAttempt(wallet, 'verifier-2', 'challenge-2');
+      await wallet.completeEmailAuth({ code: '222222', walletSelection: secondSelection });
+      const requestCountBeforeStaleSelection = fetchMock.mock.calls.length;
 
-  it('stale pending wallet selections fail before network after newer automatic auth', async () => {
-    const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
-      const url = input.toString();
-      const body = JSON.parse(init?.body as string);
-
-      if (url.endsWith('/CompleteAuth')) {
-        return jsonResponse({
-          identity: { type: 'email', sub: 'user-1' },
-          email: body.answer === 'first' ? 'first@example.com' : 'second@example.com',
-          wallets: [
-            testWallet(
-              body.answer === 'first' ? 'wallet-first' : 'wallet-second',
-              WalletType.Ethereum,
-              body.answer === 'first' ? '11' : '22'
-            )
-          ],
-          credential: testCredential()
-        });
-      }
-
-      if (url.endsWith('/UseWallet')) {
-        return jsonResponse({ wallet: testWallet('wallet-second', WalletType.Ethereum, '22') });
-      }
-
-      throw new Error(`Unexpected request: ${url}`);
-    });
-    vi.stubGlobal('fetch', fetchMock);
-
-    const wallet = new WalletClientImpl({
-      publishableKey: 'publishable-key',
-      projectId: 'project-id',
-      environment: testEnvironment(),
-      storage: new MemoryStorageManager(),
-      credentialSigner: new MockSigner()
-    });
-    seedEmailAuthAttempt(wallet);
-    vi.spyOn(RequestUtils, 'hashEmailAuthAnswer')
-      .mockResolvedValueOnce('first')
-      .mockResolvedValueOnce('second');
-
-    const staleSelection = await wallet.completeEmailAuth({
-      code: '111111',
-      walletSelection: 'manual'
-    });
-    seedEmailAuthAttempt(wallet, 'verifier-2', 'challenge-2');
-    await wallet.completeEmailAuth({ code: '222222' });
-    const requestCountBeforeStaleSelection = fetchMock.mock.calls.length;
-
-    await expect(
-      staleSelection.createAndSelectWallet({ reference: 'stale' })
-    ).rejects.toMatchObject({
-      code: 'OMS_WALLET_SELECTION_STALE'
-    });
-    expect(fetchMock.mock.calls.length).toBe(requestCountBeforeStaleSelection);
-    expect(wallet.activeWallet?.address).toBe('0x2222222222222222222222222222222222222222');
-  });
+      await expect(staleSelection.selectWallet({ walletId: 'wallet-first' })).rejects.toMatchObject(
+        {
+          code: 'OMS_WALLET_SELECTION_STALE'
+        }
+      );
+      await expect(
+        staleSelection.createAndSelectWallet({ reference: 'stale' })
+      ).rejects.toMatchObject({
+        code: 'OMS_WALLET_SELECTION_STALE'
+      });
+      expect(fetchMock.mock.calls.length).toBe(requestCountBeforeStaleSelection);
+      expect(wallet.activeWallet?.address).toBe(activeAddress);
+    }
+  );
 
   it('reused pending wallet selections fail before network after success', async () => {
     const fetchMock = vi.fn(async (input: RequestInfo | URL) => {
@@ -1952,37 +1854,6 @@ describe('WalletClient session storage', () => {
     });
     expect(requestCount(fetchMock, '/UseWallet')).toBe(0);
     expect(requestCount(fetchMock, '/CreateWallet')).toBe(0);
-  });
-
-  it('public wallet activation methods require an active session', async () => {
-    const fetchMock = vi.fn(async (input: RequestInfo | URL) => {
-      throw new Error(`Unexpected request: ${input.toString()}`);
-    });
-    vi.stubGlobal('fetch', fetchMock);
-
-    const wallet = new WalletClientImpl({
-      publishableKey: 'publishable-key',
-      projectId: 'project-id',
-      environment: testEnvironment(),
-      storage: new MemoryStorageManager(),
-      credentialSigner: new MockSigner()
-    });
-
-    await expect(wallet.listWallets()).rejects.toMatchObject({
-      code: 'OMS_SESSION_MISSING',
-      message: 'No authenticated wallet session'
-    });
-    await expect(wallet.useWallet({ walletId: 'wallet-1' })).rejects.toMatchObject({
-      code: 'OMS_SESSION_MISSING',
-      message: 'No active wallet session'
-    });
-    await expect(
-      wallet.createWallet({ walletType: WalletType.Ethereum, reference: 'fresh' })
-    ).rejects.toMatchObject({
-      code: 'OMS_SESSION_MISSING',
-      message: 'No active wallet session'
-    });
-    expect(fetchMock).not.toHaveBeenCalled();
   });
 
   it('active wallet switch invalidated while in flight by sign-out does not persist the stale result', async () => {

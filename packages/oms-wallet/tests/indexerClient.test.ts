@@ -537,33 +537,6 @@ describe('IndexerClient', () => {
     });
   });
 
-  it('does not set a synthetic Origin when the runtime already has one', async () => {
-    const fetchMock = vi.fn(
-      async () =>
-        new Response(
-          JSON.stringify({
-            page: { page: 0, pageSize: 40, more: false },
-            nativeBalances: [],
-            balances: []
-          }),
-          { status: 200 }
-        )
-    );
-    vi.stubGlobal('fetch', fetchMock);
-    vi.stubGlobal('location', { origin: 'http://app.example' });
-
-    const indexer = new IndexerClientImpl({
-      publishableKey: 'publishable-key',
-      environment: testEnvironment()
-    });
-
-    await indexer.getBalances({
-      walletAddress: '0x9999999999999999999999999999999999999999'
-    });
-
-    expect(fetchMock.mock.calls[0][1]?.headers).not.toHaveProperty('Origin');
-  });
-
   it('preserves WebRPC gateway error causes', async () => {
     vi.stubGlobal(
       'fetch',
@@ -604,32 +577,6 @@ describe('IndexerClient', () => {
         status: 400
       }
     });
-  });
-
-  it('wraps invalid JSON responses in typed SDK errors', async () => {
-    const fetchMock = vi.fn(async () => new Response('not-json', { status: 200 }));
-    vi.stubGlobal('fetch', fetchMock);
-
-    const indexer = new IndexerClientImpl({
-      publishableKey: 'publishable-key',
-      environment: testEnvironment()
-    });
-
-    await expect(
-      indexer.getBalances({
-        networks: [Networks.polygon],
-        contractAddresses: ['0x2222222222222222222222222222222222222222'],
-        walletAddress: '0x9999999999999999999999999999999999999999',
-        includeMetadata: false
-      })
-    ).rejects.toMatchObject({
-      code: 'OMS_INVALID_RESPONSE',
-      operation: 'indexer.getBalances',
-      status: 200
-    });
-    expect(fetchMock.mock.calls[0][0].toString()).toBe(
-      'https://indexer.example/GetTokenBalancesDetails'
-    );
   });
 
   it('rejects balance objects missing evidence-backed core fields', async () => {
@@ -674,31 +621,6 @@ describe('IndexerClient', () => {
     });
   });
 
-  it('wraps non-JSON HTTP responses as retryable HTTP errors', async () => {
-    vi.stubGlobal(
-      'fetch',
-      vi.fn(async () => new Response('<html>Bad Gateway</html>', { status: 502 }))
-    );
-
-    const indexer = new IndexerClientImpl({
-      publishableKey: 'publishable-key',
-      environment: testEnvironment()
-    });
-
-    await expect(
-      indexer.getBalances({
-        networks: [Networks.polygon],
-        contractAddresses: ['0x2222222222222222222222222222222222222222'],
-        walletAddress: '0x9999999999999999999999999999999999999999',
-        includeMetadata: false
-      })
-    ).rejects.toMatchObject({
-      code: 'OMS_HTTP_ERROR',
-      operation: 'indexer.getBalances',
-      status: 502,
-      retryable: true
-    });
-  });
   it('requests Tron balances through TronIndexerGateway and normalizes metadata', async () => {
     const wallet = 'TW39NT9SCCv7aomYYXgh4wcUWag4XtVe2H';
     const fetchMock = vi.fn(

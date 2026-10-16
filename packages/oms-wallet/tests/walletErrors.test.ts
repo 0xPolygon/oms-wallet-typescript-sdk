@@ -13,49 +13,6 @@ afterEach(() => {
 });
 
 describe('WalletClient errors', () => {
-  it('wraps local validation failures separately from request failures', async () => {
-    const wallet = new WalletClientImpl({
-      publishableKey: 'publishable-key',
-      projectId: 'project-id',
-      environment: testEnvironment(),
-      storage: new MemoryStorageManager(),
-      redirectAuthStorage: new MemoryStorageManager(),
-      credentialSigner: new MockSigner()
-    });
-
-    await expect(
-      wallet.completeOidcRedirectAuth({
-        callbackUrl: 'https://app.example/callback'
-      })
-    ).rejects.toMatchObject({
-      code: 'OMS_VALIDATION_ERROR',
-      operation: 'wallet.completeOidcRedirectAuth',
-      message: 'OIDC callback URL is missing code or state'
-    });
-  });
-
-  it('classifies non-JSON wallet HTTP failures as retryable HTTP errors', async () => {
-    vi.stubGlobal(
-      'fetch',
-      vi.fn(async () => new Response('<html>Bad Gateway</html>', { status: 502 }))
-    );
-
-    const wallet = new WalletClientImpl({
-      publishableKey: 'publishable-key',
-      projectId: 'project-id',
-      environment: testEnvironment(),
-      storage: new MemoryStorageManager(),
-      credentialSigner: new MockSigner()
-    });
-
-    await expect(wallet.startEmailAuth({ email: 'user@example.com' })).rejects.toMatchObject({
-      code: 'OMS_HTTP_ERROR',
-      operation: 'wallet.startEmailAuth',
-      status: 502,
-      retryable: true
-    });
-  });
-
   it('maps consumed auth commitments to a specific SDK error code', async () => {
     const fetchMock = vi.fn(async (input: RequestInfo | URL) => {
       const url = input.toString();

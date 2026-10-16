@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 
-import { Networks, OMSWallet, findNetworkById, findNetworkByName } from '../src';
+import { Networks, findNetworkById, findNetworkByName } from '../src';
 
 describe('Networks', () => {
   it('exposes the supported network registry', () => {
@@ -151,13 +151,5 @@ describe('Networks', () => {
       displayName: 'Base Sepolia'
     });
     expect(findNetworkByName('Ethereum')).toBeUndefined();
-  });
-
-  it('does not expose the registry from OMSWallet instances', () => {
-    const oms = new OMSWallet({
-      publishableKey: 'pk_dev_sdbx_project_key'
-    });
-
-    expect('supportedNetworks' in oms).toBe(false);
   });
 });

@@ -95,25 +95,6 @@ describe('WalletClient access management', () => {
     ]);
   });
 
-  it('requires an active session to read an access page', async () => {
-    const fetchMock = vi.fn();
-    vi.stubGlobal('fetch', fetchMock);
-    const wallet = new WalletClientImpl({
-      publishableKey: 'publishable-key',
-      projectId: 'project-id',
-      environment: testEnvironment(),
-      storage: new MemoryStorageManager(),
-      credentialSigner: new MockSigner()
-    });
-
-    await expect(wallet.listAccessPage()).rejects.toMatchObject({
-      name: 'OMSWalletSessionError',
-      code: 'OMS_SESSION_MISSING',
-      operation: 'wallet.listAccessPage'
-    });
-    expect(fetchMock).not.toHaveBeenCalled();
-  });
-
   it('yields wallet access pages for paginated callers', async () => {
     const fetchMock = vi.fn(async (input: RequestInfo | URL) => {
       const url = input.toString();

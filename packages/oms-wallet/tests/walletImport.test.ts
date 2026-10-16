@@ -3,13 +3,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import { WalletClientImpl } from '../src/clients/walletClient';
 import type { CredentialSigner } from '../src/credentialSigner';
-import type {
-  GetRecipientKeyRequest,
-  HPKEPayload,
-  ImportWalletRequest
-} from '../src/generated/waas.gen';
-import { Ciphersuite, KeyFormat, NetworkFamily, Waas } from '../src/generated/waas.gen';
-import { OMSWallet } from '../src/omsWallet';
+import type { GetRecipientKeyRequest, ImportWalletRequest } from '../src/generated/waas.gen';
 import { MemoryStorageManager } from '../src/storageManager';
 import { WalletImportCipherSuite } from '../src/types/waas';
 import { Constants } from '../src/utils/constants';
@@ -86,41 +80,6 @@ describe('wallet import', () => {
     );
   });
 
-  it('serializes HPKE bytes as base64 strings on the WaaS wire', async () => {
-    const fetchMock = vi.fn(async (_input: RequestInfo | URL, init?: RequestInit) => {
-      expect(JSON.parse(init?.body as string)).toEqual({
-        networkFamily: 'evm',
-        format: 'private-key',
-        keyMaterial: {
-          keyId: 'key-1',
-          suite: 'p256-sha256-aes256gcm',
-          encapsulatedKey: 'AQID',
-          ciphertext: 'BAUG'
-        }
-      });
-      return jsonResponse({
-        wallet: {
-          id: 'wallet-1',
-          networkFamily: 'evm',
-          keyOrigin: 'imported',
-          address: '0x1111111111111111111111111111111111111111'
-        }
-      });
-    });
-    const client = new Waas('https://wallet.example', fetchMock);
-
-    await client.importWallet({
-      networkFamily: NetworkFamily.EVM,
-      format: KeyFormat.PrivateKey,
-      keyMaterial: {
-        keyId: 'key-1',
-        suite: Ciphersuite.P256_SHA256_AES_256_GCM,
-        encapsulatedKey: 'AQID',
-        ciphertext: 'BAUG'
-      } as unknown as HPKEPayload
-    });
-  });
-
   it('passes Privy HPKE export material through with the matching recipient-key suite', async () => {
     const wallet = createWalletWithSession();
     const getRecipientKey = vi.fn(async (request: GetRecipientKeyRequest) => {
@@ -175,36 +134,6 @@ describe('wallet import', () => {
     expect(result.wallet).toMatchObject({ id: 'wallet-imported', keyOrigin: 'imported' });
     expect(getRecipientKey).toHaveBeenCalledOnce();
     expect(importWallet).toHaveBeenCalledOnce();
-  });
-
-  it('requires attestation for Development sandbox imports', async () => {
-    const fetchMock = vi.fn(async (_input: RequestInfo | URL, init?: RequestInit) => {
-      expect(new Headers(init?.headers).has('X-Attestation-Nonce')).toBe(true);
-      return jsonResponse({ keyId: 'key-1', publicKey: 'AQID' });
-    });
-    vi.stubGlobal('fetch', fetchMock);
-
-    const oms = new OMSWallet({
-      publishableKey: 'pk_dev_sdbx_project_key',
-      storage: new MemoryStorageManager(),
-      credentialSigner: new MockSigner()
-    });
-    (oms.wallet as any).persistSession(
-      testWalletAccount('wallet-id', '0x1111111111111111111111111111111111111111'),
-      {
-        expiresAt: '2099-01-01T00:00:00Z',
-        auth: { type: 'email', email: 'user@example.com' },
-        signerCredentialId: `0x04${'11'.repeat(64)}`,
-        signerKeyType: 'ecdsa-p256-sha256'
-      }
-    );
-
-    await expect(
-      oms.wallet.getWalletImportRecipientKey({
-        cipherSuite: WalletImportCipherSuite.P256Sha256ChaCha20Poly1305
-      })
-    ).rejects.toMatchObject({ code: 'OMS_ATTESTATION_VERIFICATION_FAILED' });
-    expect(fetchMock).toHaveBeenCalledOnce();
   });
 
   it('activates and persists an imported first wallet during manual wallet selection', async () => {

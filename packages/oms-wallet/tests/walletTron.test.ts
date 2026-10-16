@@ -400,47 +400,6 @@ describe('WalletClient Tron', () => {
     });
   });
 
-  it('validates Tron signatures with the tron network family', async () => {
-    const bodies: unknown[] = [];
-    vi.stubGlobal(
-      'fetch',
-      vi.fn(async (_input: RequestInfo | URL, init?: RequestInit) => {
-        bodies.push(JSON.parse(init?.body as string));
-        return jsonResponse({ isValid: true });
-      })
-    );
-
-    const wallet = createTronWalletWithSession();
-
-    await expect(
-      wallet.isValidTronMessageSignature({
-        walletAddress: tronWalletAddress,
-        message: 'hello',
-        signature: '0xsig'
-      })
-    ).resolves.toBe(true);
-    await expect(
-      wallet.isValidTronTypedDataSignature({
-        typedData: { primaryType: 'Mail' },
-        signature: '0xsig'
-      })
-    ).resolves.toBe(true);
-    expect(bodies).toEqual([
-      {
-        networkFamily: 'tron',
-        walletAddress: tronWalletAddress,
-        message: 'hello',
-        signature: '0xsig'
-      },
-      {
-        networkFamily: 'tron',
-        walletAddress: tronWalletAddress,
-        typedData: { primaryType: 'Mail' },
-        signature: '0xsig'
-      }
-    ]);
-  });
-
   it('rejects Tron operations for an active Ethereum or Solana wallet before any request', async () => {
     const fetchMock = vi.fn();
     vi.stubGlobal('fetch', fetchMock);
