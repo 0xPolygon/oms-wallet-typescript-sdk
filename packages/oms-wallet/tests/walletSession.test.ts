@@ -1255,7 +1255,7 @@ describe('WalletClient session storage', () => {
     expect(requestCount(fetchMock, '/CompleteAuth')).toBe(2);
   });
 
-  it('loads remaining auth wallet pages before creating a wallet', async () => {
+  it('loads an additional auth wallet page before creating a wallet', async () => {
     const requestedType = WalletType.Solana;
     const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
       const url = input.toString();

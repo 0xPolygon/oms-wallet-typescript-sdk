@@ -91,7 +91,7 @@ describe('AWS Nitro attestation verification', () => {
     );
   });
 
-  it('rejects untrusted measurements and mismatched request bindings', async () => {
+  it('rejects untrusted PCR0, wrong nonce, mismatched response body and tampered signature', async () => {
     await expect(verifyFixture({ trustedPcr0s: new Set(['1'.repeat(96)]) })).rejects.toThrow(
       'PCR0 is not trusted'
     );

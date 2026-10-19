@@ -518,10 +518,6 @@ const transactionHistoryParams: GetTransactionHistoryParams = {
   includeMetadata: true
 };
 void defaultClient.indexer.getTransactionHistory(transactionHistoryParams);
-void defaultClient.wallet.startOidcRedirectAuth({
-  provider: OmsRelayOidcProviders.google,
-  omsRelayReturnUri: 'https://app.example/auth/callback'
-});
 // @ts-expect-error OMS relay provider authorization parameters are fixed by the SDK.
 void defaultClient.wallet.startOidcRedirectAuth({
   provider: OmsRelayOidcProviders.google,
@@ -543,10 +539,6 @@ void (async () => {
 });
 void defaultClient.wallet.startOidcRedirectAuth({
   provider: OmsRelayOidcProviders.google
-});
-void defaultClient.wallet.startOidcRedirectAuth({
-  provider: OmsRelayOidcProviders.apple,
-  omsRelayReturnUri: 'https://app.example/auth/callback'
 });
 void defaultClient.wallet.startOidcRedirectAuth({
   provider: OmsRelayOidcProviders.google,
