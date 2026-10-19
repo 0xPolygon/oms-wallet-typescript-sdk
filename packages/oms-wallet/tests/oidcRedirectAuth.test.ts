@@ -1010,34 +1010,53 @@ describe('WalletClient OIDC redirect auth', () => {
     expect(replaceUrl).toHaveBeenCalledWith('https://app.example/auth/callback');
   });
 
-  it('rejects nonce mismatches without clearing pending state', async () => {
-    const redirectAuthStorage = new MemoryStorageManager();
-    const fetchMock = vi.fn(async () =>
-      jsonResponse({
-        verifier: 'verifier-1',
-        challenge: 'challenge-1'
-      })
-    );
-    vi.stubGlobal('fetch', fetchMock);
+  it.each([
+    { field: 'nonce', tampered: { nonce: 'bad-nonce' }, message: 'OIDC state nonce mismatch' },
+    { field: 'scope', tampered: { scope: 'other-project' }, message: 'OIDC state scope mismatch' },
+    {
+      field: 'redirect_uri',
+      tampered: { redirect_uri: 'https://evil.example/auth/callback' },
+      message: 'OIDC state redirect_uri mismatch'
+    }
+  ])(
+    'rejects $field mismatches without clearing pending state or activating a wallet',
+    async ({ tampered, message }) => {
+      const redirectAuthStorage = new MemoryStorageManager();
+      const sessionStorage = new MemoryStorageManager();
+      const fetchMock = vi.fn(async () =>
+        jsonResponse({
+          verifier: 'verifier-1',
+          challenge: 'challenge-1'
+        })
+      );
+      vi.stubGlobal('fetch', fetchMock);
 
-    const wallet = createWalletClient({ redirectAuthStorage });
-    await wallet.startOidcRedirectAuth({
-      provider: OmsRelayOidcProviders.google,
-      omsRelayReturnUri: 'https://app.example/auth/callback'
-    });
-    const badState = encodeOidcState({
-      nonce: 'bad-nonce',
-      scope: 'project-id'
-    });
+      const wallet = createWalletClient({ redirectAuthStorage, sessionStorage });
+      const started = await wallet.startOidcRedirectAuth({
+        provider: OmsRelayOidcProviders.google,
+        omsRelayReturnUri: 'https://app.example/auth/callback'
+      });
+      const badState = encodeOidcState({
+        ...decodeOidcState(authorizationState(started)),
+        ...tampered
+      });
+      const pendingBefore = redirectAuthStorage.get(Constants.redirectAuthStorageKey);
+      expect(pendingBefore).toContain('verifier-1');
 
-    await expect(
-      wallet.completeOidcRedirectAuth({
-        callbackUrl: `https://app.example/auth/callback?code=auth-code&state=${badState}`
-      })
-    ).rejects.toThrow('OIDC state nonce mismatch');
-    expect(redirectAuthStorage.get(Constants.redirectAuthStorageKey)).toContain('verifier-1');
-    expect(fetchMock).toHaveBeenCalledTimes(1);
-  });
+      await expect(
+        wallet.completeOidcRedirectAuth({
+          callbackUrl: `https://app.example/auth/callback?code=auth-code&state=${badState}`
+        })
+      ).rejects.toMatchObject({
+        code: 'OMS_VALIDATION_ERROR',
+        operation: 'wallet.completeOidcRedirectAuth',
+        message
+      });
+      expect(redirectAuthStorage.get(Constants.redirectAuthStorageKey)).toBe(pendingBefore);
+      expect(wallet.activeWallet).toBeUndefined();
+      expect(fetchMock).toHaveBeenCalledTimes(1);
+    }
+  );
 
   it('uses browser sessionStorage as the default transient redirect auth storage', async () => {
     const sessionStore = new Map<string, string>();
