@@ -1531,9 +1531,7 @@ export class WalletClientImpl implements WalletClient {
   private async requestImportWallet(params: ImportEncryptedWalletParams): Promise<WalletAccount> {
     const client = this.requireWalletImportClient();
     if (!params.keyMaterial.keyId.trim()) throw new Error('keyMaterial.keyId is required');
-    // Webrpc's TypeScript generator declares Go []byte fields as string arrays,
-    // while the JSON transport encodes them as base64 strings.
-    const keyMaterial = {
+    const keyMaterial: HPKEPayload = {
       keyId: params.keyMaterial.keyId,
       suite: toGeneratedWalletImportCipherSuite(params.keyMaterial.cipherSuite),
       encapsulatedKey: requireBase64(
@@ -1541,7 +1539,7 @@ export class WalletClientImpl implements WalletClient {
         'keyMaterial.encapsulatedKey'
       ),
       ciphertext: requireBase64(params.keyMaterial.ciphertext, 'keyMaterial.ciphertext')
-    } as unknown as HPKEPayload;
+    };
     const response = await client.importWallet({
       networkFamily: toGeneratedNetworkFamily(params.walletType),
       format: GeneratedKeyFormat.PrivateKey,
