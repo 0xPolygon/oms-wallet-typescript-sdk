@@ -277,6 +277,29 @@ export function toOMSWalletError(
   });
 }
 
+/**
+ * Whether WaaS rejected the calling credential as gone: `KeyNotFound` (7202) or `KeyExpired` (7203).
+ * Checks a raw generated error and an SDK error that carries it as `upstreamError`.
+ */
+export function isCredentialEndedError(error: unknown): boolean {
+  if (isOMSWalletError(error)) {
+    return (
+      error.upstreamError?.service === 'waas' &&
+      (error.upstreamError.code === '7202' || error.upstreamError.code === '7203')
+    );
+  }
+  const code = generatedCodeFromError(error);
+  return code === 7202 || code === 7203;
+}
+
+/** Whether WaaS does not serve the called method (`WebrpcBadRoute`, code -2). */
+export function isBadRouteError(error: unknown): boolean {
+  const name = error instanceof Error ? error.name : undefined;
+  return (
+    name === 'WebrpcBadRoute' || (!isOMSWalletError(error) && generatedCodeFromError(error) === -2)
+  );
+}
+
 export function errorMessage(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
 }

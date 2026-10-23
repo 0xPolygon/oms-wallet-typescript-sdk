@@ -205,14 +205,18 @@ export interface OMSWalletOidcSessionAuth {
 export type OMSWalletSessionAuth = OMSWalletEmailSessionAuth | OMSWalletOidcSessionAuth;
 
 export interface OMSWalletSession {
+  /**
+   * The current session expiry. WaaS extends it with use, up to the lifetime requested at sign-in,
+   * and the SDK refreshes it.
+   */
   readonly expiresAt: string;
   readonly auth: OMSWalletSessionAuth;
 }
 
 /** Session lifetime requested when `sessionLifetimeSeconds` is omitted (one week). */
 export const DEFAULT_SESSION_LIFETIME_SECONDS = 604_800;
-/** Largest accepted `sessionLifetimeSeconds` (30 days). */
-export const MAX_SESSION_LIFETIME_SECONDS = 2_592_000;
+/** Largest accepted `sessionLifetimeSeconds` (180 days). */
+export const MAX_SESSION_LIFETIME_SECONDS = 15_552_000;
 
 export interface OMSWalletSessionExpiredEvent {
   /**

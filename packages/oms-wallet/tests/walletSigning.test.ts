@@ -8,7 +8,9 @@ import {
   MockSigner,
   createWalletWithSession,
   jsonResponse,
-  testEnvironment
+  requestCount,
+  testEnvironment,
+  waasErrorResponse
 } from './fixtures/helpers.js';
 
 afterEach(() => {
@@ -345,9 +347,10 @@ describe('WalletClient signature verification target', () => {
   );
 
   it.each(verificationCalls)(
-    '$label rejects an omitted walletAddress for an expired session before any request',
-    async ({ label, walletType, verify }) => {
-      const { fetchMock } = recordVerificationRequests();
+    '$label rejects an omitted walletAddress for an expired session before any verification request',
+    async ({ label, walletType, path, verify }) => {
+      const fetchMock = vi.fn(async () => waasErrorResponse('KeyExpired'));
+      vi.stubGlobal('fetch', fetchMock);
       const wallet = createWalletWithSession(addressFor[walletType], walletType, {
         expiresAt: '2000-01-01T00:00:00Z'
       });
@@ -355,9 +358,13 @@ describe('WalletClient signature verification target', () => {
       await expect(verify(wallet)).rejects.toMatchObject({
         name: 'OMSWalletSessionError',
         code: 'OMS_SESSION_EXPIRED',
-        operation: `wallet.${label}`
+        operation: `wallet.${label}`,
+        upstreamError: undefined,
+        cause: { name: 'KeyExpired', code: 7203 }
       });
-      expect(fetchMock).not.toHaveBeenCalled();
+      // Only the expiry refresh is sent; WaaS reports the credential expired.
+      expect(requestCount(fetchMock, '/GetCredential')).toBe(1);
+      expect(requestCount(fetchMock, path)).toBe(0);
       expect(wallet.activeWallet).toBeUndefined();
     }
   );

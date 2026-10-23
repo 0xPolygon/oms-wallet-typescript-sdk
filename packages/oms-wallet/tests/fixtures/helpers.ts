@@ -58,6 +58,18 @@ export function jsonResponse(body: unknown, status = 200): Response {
   });
 }
 
+/** A WaaS error body: `KeyExpired` (7203) by default, or `KeyNotFound` (7202), `WebrpcBadRoute` (-2). */
+export function waasErrorResponse(
+  name: 'KeyExpired' | 'KeyNotFound' | 'WebrpcBadRoute' = 'KeyExpired'
+) {
+  const { code, status } = {
+    KeyExpired: { code: 7203, status: 400 },
+    KeyNotFound: { code: 7202, status: 404 },
+    WebrpcBadRoute: { code: -2, status: 404 }
+  }[name];
+  return jsonResponse({ code, name, message: name, status }, status);
+}
+
 export function requestCount(fetchMock: ReturnType<typeof vi.fn>, endpoint: string): number {
   return fetchMock.mock.calls.filter(([input]) => input.toString().endsWith(endpoint)).length;
 }
@@ -78,14 +90,14 @@ export function testCredential() {
 export function createWalletWithSession(
   walletAddress = '0x1111111111111111111111111111111111111111',
   walletType?: Parameters<typeof testWalletAccount>[2],
-  options: { expiresAt?: string; storage?: MemoryStorageManager } = {}
+  options: { expiresAt?: string; storage?: MemoryStorageManager; signer?: MockSigner } = {}
 ): WalletClientImpl {
   const wallet = new WalletClientImpl({
     publishableKey: 'publishable-key',
     projectId: 'project-id',
     environment: testEnvironment(),
     storage: options.storage ?? new MemoryStorageManager(),
-    credentialSigner: new MockSigner()
+    credentialSigner: options.signer ?? new MockSigner()
   });
   (wallet as any).persistSession(testWalletAccount('wallet-id', walletAddress, walletType), {
     expiresAt: options.expiresAt ?? '2099-01-01T00:00:00Z',

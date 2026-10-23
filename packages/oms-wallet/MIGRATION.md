@@ -53,6 +53,26 @@ wallet selection was still pending.
 Saved sessions now record the wallet's type. Sessions saved by 0.3.x do not, so 0.4.0 discards them
 on load and users sign in once after upgrading.
 
+### Session expiry extends with use
+
+`session.expiresAt` (and `credential.expiresAt` in auth results) is now the current expiry rather
+than a fixed end time. The wallet API extends it with use, up to the lifetime requested at sign-in,
+and the SDK refreshes it after restoring a session, when the local expiry is reached, and after
+wallet activity. Do not treat `expiresAt` as final; listen to `onSessionExpired` instead.
+
+- A session whose local expiry has passed is checked with the wallet API before it is ended, so a
+  protected operation can succeed on it. If the wallet API cannot be reached, the session is kept
+  and the operation fails with the request error (for example `OMS_REQUEST_FAILED`) instead of
+  `OMS_SESSION_EXPIRED`.
+- When the wallet API rejects the session credential as not found or expired (WaaS `KeyNotFound`
+  7202 or `KeyExpired` 7203), the session ends like a local expiry and the operation fails with
+  `OMSWalletSessionError` (`OMS_SESSION_EXPIRED`), with the same shape as a local expiry: the WaaS
+  error is its `cause`, and it has no `upstreamError`. This includes a rejected transaction execute,
+  which never ran. A status lookup that fails after a transaction was submitted keeps
+  `OMS_TRANSACTION_STATUS_LOOKUP_FAILED` and its `txnId`.
+- `MAX_SESSION_LIFETIME_SECONDS` is 180 days (`15552000`); previously lifetimes above 30 days were
+  rejected.
+
 ### Invalid Ethereum wallet addresses are rejected
 
 A wallet returned by WaaS (auth, `listWallets`, `useWallet`, `createWallet`, import) whose Ethereum
@@ -86,8 +106,9 @@ request. Without an active session it throws `OMSWalletSessionError` (`OMS_SESSI
 `OMS_SESSION_EXPIRED` for an expired session) instead of a backend request error. If the
 active wallet belongs to another family, for example `isValidSolanaMessageSignature` with an active
 Ethereum wallet, it throws `OMSWalletValidationError` instead of a backend error. Passing
-`walletAddress` still works while signed out. As with other wallet operations, an expired session
-found this way is cleared and your `onSessionExpired` listeners are called.
+`walletAddress` still works while signed out. As with other wallet operations, a locally expired
+session found this way is first refreshed with the wallet API; if it has ended, it is cleared and
+your `onSessionExpired` listeners are called.
 
 An empty or whitespace-only `walletAddress` now throws `OMSWalletValidationError`
 (`walletAddress must not be empty`) before any request. Previously `""` silently fell back to the

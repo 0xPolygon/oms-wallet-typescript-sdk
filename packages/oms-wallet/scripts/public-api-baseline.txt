@@ -448,6 +448,13 @@ export declare class OMSWalletStorageError extends OMSWalletError {
 }
 export declare function isOMSWalletError(error: unknown): error is OMSWalletError;
 export declare function toOMSWalletError(error: unknown, operation: OMSWalletOperation, upstreamService?: OMSWalletUpstreamError['service']): OMSWalletError;
+/**
+ * Whether WaaS rejected the calling credential as gone: `KeyNotFound` (7202) or `KeyExpired` (7203).
+ * Checks a raw generated error and an SDK error that carries it as `upstreamError`.
+ */
+export declare function isCredentialEndedError(error: unknown): boolean;
+/** Whether WaaS does not serve the called method (`WebrpcBadRoute`, code -2). */
+export declare function isBadRouteError(error: unknown): boolean;
 export declare function errorMessage(error: unknown): string;
 export {};
 
@@ -774,6 +781,10 @@ import type { Address } from 'viem';
 import type { Network } from '../networks.js';
 export interface WalletCredential {
     credentialId: string;
+    /**
+     * The credential's current expiry. WaaS extends it with use, up to the lifetime requested at
+     * sign-in; for the active session the SDK refreshes `wallet.session.expiresAt`.
+     */
     expiresAt: string;
     isCaller: boolean;
 }
@@ -1219,13 +1230,17 @@ export interface OMSWalletOidcSessionAuth {
 }
 export type OMSWalletSessionAuth = OMSWalletEmailSessionAuth | OMSWalletOidcSessionAuth;
 export interface OMSWalletSession {
+    /**
+     * The current session expiry. WaaS extends it with use, up to the lifetime requested at sign-in,
+     * and the SDK refreshes it.
+     */
     readonly expiresAt: string;
     readonly auth: OMSWalletSessionAuth;
 }
 /** Session lifetime requested when `sessionLifetimeSeconds` is omitted (one week). */
 export declare const DEFAULT_SESSION_LIFETIME_SECONDS = 604800;
-/** Largest accepted `sessionLifetimeSeconds` (30 days). */
-export declare const MAX_SESSION_LIFETIME_SECONDS = 2592000;
+/** Largest accepted `sessionLifetimeSeconds` (180 days). */
+export declare const MAX_SESSION_LIFETIME_SECONDS = 15552000;
 export interface OMSWalletSessionExpiredEvent {
     /**
      * The wallet that was active when the session expired. `undefined` when the credential expired

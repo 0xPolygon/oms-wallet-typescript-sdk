@@ -92,7 +92,7 @@ The SDK stores completed wallet-session metadata in the configured storage so ap
 
 In browsers, wallet API requests are signed with a non-extractable WebCrypto P-256 credential. Persisted session data contains wallet and auth metadata only; the browser credential remains managed by WebCrypto. Non-browser runtimes fall back to in-memory storage unless you provide a custom `StorageManager`.
 
-Completed auth requests ask for a one-week session lifetime by default. You can request a shorter or longer lifetime up to 30 days. Expired sessions become inactive before protected wallet operations; call `signOut()` to end the session and clear active wallet state.
+Completed auth requests ask for a one-week session lifetime by default. You can request a shorter or longer lifetime up to 180 days. The session's `expiresAt` is its current expiry: the wallet API extends it with use, up to the requested lifetime, and the SDK refreshes it. Expired sessions become inactive before protected wallet operations; call `signOut()` to end the session and clear active wallet state.
 
 ## Authentication Flow
 
@@ -206,9 +206,11 @@ to present its own wallet picker after the token is verified.
 
 Email and OIDC auth both persist the active wallet session in the configured SDK storage. The versioned session record is scoped to the publishable key project and API environment. A client rejects and clears a stored session when either scope differs. Browser storage defaults to `localStorage` when available; non-browser runtimes fall back to in-memory storage unless you provide a custom `StorageManager`. Browser signing defaults to a non-extractable WebCrypto P-256 credential using `ecdsa-p256-sha256`. Completed auth requests ask the wallet API for a one-week session lifetime.
 
-Pass `sessionLifetimeSeconds` to `startEmailAuth`, `signInWithOidcIdToken`, `startOidcRedirectAuth`, `completeOidcRedirectAuth`, or `signInWithOidcRedirect` to request a different session lifetime. Values must be integer seconds from `1` through `2592000` (30 days), exported as `MAX_SESSION_LIFETIME_SECONDS`; the one-week default is exported as `DEFAULT_SESSION_LIFETIME_SECONDS`. For OIDC redirects, values passed at start are stored with the pending redirect state and used on callback completion unless completion overrides them.
+Pass `sessionLifetimeSeconds` to `startEmailAuth`, `signInWithOidcIdToken`, `startOidcRedirectAuth`, `completeOidcRedirectAuth`, or `signInWithOidcRedirect` to request a different session lifetime. Values must be integer seconds from `1` through `15552000` (180 days), exported as `MAX_SESSION_LIFETIME_SECONDS`; the one-week default is exported as `DEFAULT_SESSION_LIFETIME_SECONDS`. For OIDC redirects, values passed at start are stored with the pending redirect state and used on callback completion unless completion overrides them.
 
 Use `omsWallet.wallet.activeWallet` for the active wallet. It has the same shape as the entries `listWallets()` returns and is `undefined` when signed out. Narrow on `type` to get the address type for that wallet family; Ethereum addresses are typed as viem `Address`. Use `omsWallet.wallet.session` for credential expiry and structured auth metadata. It is defined exactly when `activeWallet` is.
+
+`session.expiresAt` is the current expiry, not a fixed end time. The wallet API slides it forward while the session is used, up to the lifetime requested at sign-in, and the SDK refreshes it: after restoring a stored session, when the local expiry is reached, and in the background after wallet activity. `credential.expiresAt` in auth results is the expiry at sign-in. When the local expiry is reached while the wallet API is unreachable, the SDK keeps the session and checks again later; protected operations then fail with the request error rather than `OMS_SESSION_EXPIRED`.
 
 ```typescript
 import { WalletType } from '@polygonlabs/oms-wallet'
@@ -235,7 +237,7 @@ Use `omsWallet.wallet.getIdToken({ ttlSeconds, customClaims })` to request an ID
 
 Pending email OTP and OIDC redirect state are not exposed through `session`; use the auth method results to drive pending UI.
 
-The SDK makes expired sessions inactive before protected wallet operations and throws `OMSWalletSessionError` with code `OMS_SESSION_EXPIRED`. It clears the active signer/session state, but keeps the expired session metadata in storage until the app explicitly starts a new auth flow or calls `signOut()`. Subscribe with `omsWallet.wallet.onSessionExpired` to route the user back to sign-in while preserving the expired session snapshot for email OTP reauth or Google account hints, including after a page refresh:
+The SDK makes expired sessions inactive before protected wallet operations and throws `OMSWalletSessionError` with code `OMS_SESSION_EXPIRED`. The same happens when the wallet API reports that the session credential no longer exists or has expired. It clears the active signer/session state, but keeps the expired session metadata in storage until the app explicitly starts a new auth flow or calls `signOut()`. Subscribe with `omsWallet.wallet.onSessionExpired` to route the user back to sign-in while preserving the expired session snapshot for email OTP reauth or Google account hints, including after a page refresh:
 
 ```typescript
 const omsWallet = new OMSWallet({

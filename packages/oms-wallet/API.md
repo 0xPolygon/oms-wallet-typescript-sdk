@@ -622,10 +622,10 @@ export declare const DEFAULT_SESSION_LIFETIME_SECONDS = 604800;
 
 ### `MAX_SESSION_LIFETIME_SECONDS`
 
-Largest accepted `sessionLifetimeSeconds` (30 days).
+Largest accepted `sessionLifetimeSeconds` (180 days).
 
 ```typescript
-export declare const MAX_SESSION_LIFETIME_SECONDS = 2592000;
+export declare const MAX_SESSION_LIFETIME_SECONDS = 15552000;
 ```
 
 ### `GetIdTokenParams`

@@ -1,4 +1,4 @@
-import { afterEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { WalletClientImpl } from '../src/clients/walletClient';
 import type { CredentialSigner } from '../src/credentialSigner';
@@ -14,7 +14,8 @@ import {
   jsonResponse,
   requestCount,
   testCredential,
-  testEnvironment
+  testEnvironment,
+  waasErrorResponse
 } from './fixtures/helpers.js';
 
 /** The shared signer plus a `clear` spy for sign-out and expiry cleanup assertions. */
@@ -25,6 +26,15 @@ class MockSigner extends FixtureMockSigner {
     super(undefined, available);
   }
 }
+
+beforeEach(() => {
+  // Default WaaS for tests that send no request of their own: a server without GetCredential, so a
+  // restored session's background expiry refresh keeps the local expiry.
+  vi.stubGlobal(
+    'fetch',
+    vi.fn(async () => waasErrorResponse('WebrpcBadRoute'))
+  );
+});
 
 afterEach(() => {
   vi.useRealTimers();
@@ -137,6 +147,10 @@ describe('WalletClient session storage', () => {
   });
 
   it('retains expired wallet metadata, notifies session expiry listeners, and throws a session expiry error', async () => {
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async () => waasErrorResponse('KeyExpired'))
+    );
     const storage = new MemoryStorageManager();
     const signer = new MockSigner();
     const onSessionExpired = vi.fn();
@@ -195,6 +209,10 @@ describe('WalletClient session storage', () => {
   });
 
   it('delivers isolated session expired snapshots to each listener and replay', async () => {
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async () => waasErrorResponse('KeyExpired'))
+    );
     const storage = new MemoryStorageManager();
     const signer = new MockSigner();
     const expectedEvent = {
@@ -250,6 +268,10 @@ describe('WalletClient session storage', () => {
   });
 
   it('does not call listeners registered during the same expiry dispatch', async () => {
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async () => waasErrorResponse('KeyExpired'))
+    );
     const storage = new MemoryStorageManager();
     const signer = new MockSigner();
     const reentrantListener = vi.fn();
@@ -289,6 +311,10 @@ describe('WalletClient session storage', () => {
   });
 
   it('does not notify a listener after it unsubscribes', async () => {
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async () => waasErrorResponse('KeyExpired'))
+    );
     const storage = new MemoryStorageManager();
     const signer = new MockSigner();
     const onSessionExpired = vi.fn();
@@ -321,6 +347,10 @@ describe('WalletClient session storage', () => {
   });
 
   it('notifies session expiry listeners when signer cleanup fails', async () => {
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async () => waasErrorResponse('KeyExpired'))
+    );
     const storage = new MemoryStorageManager();
     const signer = new MockSigner();
     signer.clear.mockRejectedValueOnce(new Error('clear failed'));
@@ -467,6 +497,10 @@ describe('WalletClient session storage', () => {
   });
 
   it('notifies and clears an active session when its expiry time is reached', async () => {
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async () => waasErrorResponse('KeyExpired'))
+    );
     vi.useFakeTimers();
     vi.setSystemTime(new Date('2026-01-01T00:00:00Z'));
 
@@ -548,6 +582,10 @@ describe('WalletClient session storage', () => {
   });
 
   it('does not let an old expiry timer clear a replacement session', async () => {
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async () => waasErrorResponse('KeyExpired'))
+    );
     vi.useFakeTimers();
     vi.setSystemTime(new Date('2026-01-01T00:00:00Z'));
 

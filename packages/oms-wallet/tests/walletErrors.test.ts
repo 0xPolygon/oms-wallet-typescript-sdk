@@ -5,7 +5,12 @@ import { Waas } from '../src/generated/waas.gen';
 import { MemoryStorageManager } from '../src/storageManager';
 import { Constants } from '../src/utils/constants';
 import { testWalletAccount } from './fixtures/walletAccount.js';
-import { MockSigner, jsonResponse, testEnvironment } from './fixtures/helpers.js';
+import {
+  MockSigner,
+  jsonResponse,
+  testEnvironment,
+  waasErrorResponse
+} from './fixtures/helpers.js';
 
 afterEach(() => {
   vi.restoreAllMocks();
@@ -95,15 +100,22 @@ describe('WalletClient errors', () => {
         idToken: 'invalid-token',
         issuer: 'https://accounts.google.com',
         audience: 'google-client',
-        sessionLifetimeSeconds: 2_592_001
+        sessionLifetimeSeconds: 15_552_001
       })
     ).rejects.toMatchObject({
       code: 'OMS_VALIDATION_ERROR',
       operation: 'wallet.signInWithOidcIdToken',
       message:
-        'wallet.signInWithOidcIdToken requires sessionLifetimeSeconds to be an integer between 1 and 2592000'
+        'wallet.signInWithOidcIdToken requires sessionLifetimeSeconds to be an integer between 1 and 15552000'
     });
     expect(fetchMock).not.toHaveBeenCalled();
+
+    // 180 days is the largest accepted lifetime.
+    fetchMock.mockResolvedValueOnce(jsonResponse({ verifier: 'verifier-1', challenge: 'c' }));
+    await expect(
+      wallet.startEmailAuth({ email: 'user@example.com', sessionLifetimeSeconds: 15_552_000 })
+    ).resolves.toBeUndefined();
+    expect(fetchMock).toHaveBeenCalledOnce();
   });
 
   it('maps an already-imported address from importEncryptedWallet to a stable public error', async () => {
@@ -123,6 +135,11 @@ describe('WalletClient errors', () => {
         signerCredentialId: '0x04' + '11'.repeat(64),
         signerKeyType: 'ecdsa-p256-sha256'
       })
+    );
+    // The restored session's expiry refresh answers as a server without GetCredential.
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async () => waasErrorResponse('WebrpcBadRoute'))
     );
     const wallet = new WalletClientImpl({
       publishableKey: 'publishable-key',
