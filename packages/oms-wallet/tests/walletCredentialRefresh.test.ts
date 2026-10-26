@@ -79,6 +79,47 @@ describe('WalletClient sliding credential expiry', () => {
     expect(onSessionExpired).toHaveBeenCalledOnce();
   });
 
+  it('keeps a refreshed expiry in memory and reschedules when storage fails', async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date('2026-01-01T00:00:00Z'));
+    let getCredential = () => credentialResponse('2026-01-01T00:10:00Z');
+    const fetchMock = stubWaas({ '/GetCredential': () => getCredential() });
+    const storage = new MemoryStorageManager();
+    const wallet = createWalletWithSession(walletAddress, undefined, {
+      expiresAt: '2026-01-01T00:02:00Z',
+      storage
+    });
+    vi.spyOn(storage, 'set').mockImplementation(() => {
+      throw new Error('quota exceeded');
+    });
+    const onSessionExpired = vi.fn();
+    wallet.onSessionExpired(onSessionExpired);
+    const unhandledRejection = vi.fn();
+    process.on('unhandledRejection', unhandledRejection);
+
+    try {
+      await vi.advanceTimersByTimeAsync(120_000);
+
+      expect(requestCount(fetchMock, '/GetCredential')).toBe(1);
+      expect(wallet.session?.expiresAt).toBe('2026-01-01T00:10:00Z');
+      expect(storedExpiresAt(storage)).toBe('2026-01-01T00:02:00Z');
+      expect(onSessionExpired).not.toHaveBeenCalled();
+
+      // The timer was rescheduled to the in-memory expiry.
+      getCredential = () => waasErrorResponse('KeyExpired');
+      await vi.advanceTimersByTimeAsync(479_999);
+      expect(requestCount(fetchMock, '/GetCredential')).toBe(1);
+      await vi.advanceTimersByTimeAsync(1);
+      expect(requestCount(fetchMock, '/GetCredential')).toBe(2);
+      expect(onSessionExpired).toHaveBeenCalledOnce();
+
+      await vi.advanceTimersByTimeAsync(0);
+      expect(unhandledRejection).not.toHaveBeenCalled();
+    } finally {
+      process.off('unhandledRejection', unhandledRejection);
+    }
+  });
+
   it.each(['KeyNotFound', 'KeyExpired'] as const)(
     'ends the session once when an authenticated call fails with %s',
     async (name) => {

@@ -20,7 +20,7 @@ Add Tron wallet support, replace `walletAddress` with a typed `activeWallet`, an
 
 - **`wallet.listAccessPage`** reads one access page; pass the previous page's `page.cursor` to continue. `AccessGrantPage` now includes `page` (`limit`, `cursor`).
 - **`WalletOperation`**, **`IndexerOperation`**, **`RemoteAccessOperation`**, and the **`OMSWalletOperation`** type are exported for comparing `error.operation`.
-- **`DEFAULT_SESSION_LIFETIME_SECONDS`** (180 days) and **`MAX_SESSION_LIFETIME_SECONDS`** (180 days) are exported.
+- **`DEFAULT_SESSION_LIFETIME_SECONDS`** and **`MAX_SESSION_LIFETIME_SECONDS`** are exported (see Session lifetime).
 - **`FeeToken`** is exported.
 
 ### Breaking changes

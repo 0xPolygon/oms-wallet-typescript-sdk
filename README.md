@@ -34,7 +34,7 @@ Common workspace commands (run from the repo root):
 ```bash
 pnpm lint                     # eslint + markdownlint + prettier + typecheck
 pnpm typecheck                # tsc -b across the packages
-pnpm test                     # release-script tests + SDK + connector test suites
+pnpm test                     # release-script tests + every workspace package's tests
 pnpm build                    # build packages (dual CJS+ESM) + all examples (pnpm -r)
 pnpm check:exports            # publint on the publishable packages
 ```

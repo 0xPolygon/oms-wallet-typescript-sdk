@@ -55,10 +55,11 @@ on load and users sign in once after upgrading.
 
 ### Session expiry extends with use
 
-`session.expiresAt` (and `credential.expiresAt` in auth results) is now the current expiry rather
-than a fixed end time. The wallet API extends it with use, up to the lifetime requested at sign-in,
-and the SDK refreshes it after restoring a session, when the local expiry is reached, and after
-wallet activity. Do not treat `expiresAt` as final; listen to `onSessionExpired` instead.
+`session.expiresAt` is now the current expiry rather than a fixed end time. The wallet API extends
+it with use, up to the lifetime requested at sign-in, and the SDK refreshes it after restoring a
+session, when the local expiry is reached, and after wallet activity. Do not treat `expiresAt` as
+final; listen to `onSessionExpired` instead. `credential.expiresAt` in auth results is the expiry at
+sign-in and is not updated.
 
 - A session whose local expiry has passed is checked with the wallet API before it is ended, so a
   protected operation can succeed on it. If the wallet API cannot be reached, the session is kept
@@ -74,7 +75,9 @@ wallet activity. Do not treat `expiresAt` as final; listen to `onSessionExpired`
   rejected.
 - When `sessionLifetimeSeconds` is omitted, auth now requests 180 days (`DEFAULT_SESSION_LIFETIME_SECONDS`,
   the maximum) instead of one week. A session still ends after 10 days without use; pass a shorter
-  `sessionLifetimeSeconds` if you need a hard limit.
+  `sessionLifetimeSeconds` if you need a hard limit. On wallet API versions without sliding expiry,
+  the requested lifetime is clamped to the server maximum (30 days) and there is no idle timeout, so
+  the default gives a fixed 30-day session there.
 
 ### Simulation-reverted transactions fail as request errors
 
@@ -93,7 +96,12 @@ instead of being returned as a viem `Address`. Checksum casing is not enforced.
 ### Exhaustive wallet-type checks
 
 `WalletType` gained `Tron` and `WalletAccount` gained `TronWalletAccount`. Exhaustive `switch`
-statements over either need a `tron` case.
+statements over either need a `tron` case. `ImportWalletParams` gained a `type: 'tron'` variant, so
+code that matches on it needs the same case. `WalletClient` gained `signTronMessage`,
+`signTronTypedData`, `isValidTronMessageSignature`, `isValidTronTypedDataSignature`,
+`sendTronTransaction`, `callTronContract` and `listAccessPage`, and `IndexerClient` gained
+`getTronBalances`, so objects that implement these interfaces (for example typed test doubles) need
+them.
 
 ### Signature verification takes an address, not a wallet ID
 

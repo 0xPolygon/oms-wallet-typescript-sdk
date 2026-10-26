@@ -6,7 +6,8 @@ How testing works in this repo. `AGENTS.md` points here so agents know how to ve
 > to that package, and SDK-scoped scripts (`test`, `test:types`, `test:watch`, `check:public-api`,
 > `generate:api`, `check:api`) run either from inside `packages/oms-wallet` or from the repo root with
 > `pnpm --filter @polygonlabs/oms-wallet <script>`. The root `pnpm test` runs the release-helper unit
-> tests, then delegates to both publishable packages.
+> tests, then every workspace package's `test` script (SDK, connector, smart-session example, Privy
+> import Worker).
 
 ## Frameworks & tools
 

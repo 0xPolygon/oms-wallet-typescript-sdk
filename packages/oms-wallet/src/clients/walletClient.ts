@@ -3137,8 +3137,9 @@ export class WalletClientImpl implements WalletClient {
   }
 
   /**
-   * Wraps the fetch of the clients that sign with the session credential. It refreshes the expiry
-   * after successful session requests and records when WaaS rejects the session credential, so
+   * Wraps the fetch of the clients that sign with the session credential. After a successful session
+   * request it starts a background expiry refresh once the last read (sign-in or refresh) is at
+   * least 6 hours old, and it records when WaaS rejects the session credential, so
    * only those rejections end the session (public requests can return 7202 for other credentials).
    */
   private sessionActivityFetch(fetch: Fetch): Fetch {
