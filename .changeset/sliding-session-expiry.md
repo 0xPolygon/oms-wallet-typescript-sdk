@@ -13,4 +13,5 @@ Sessions now stay signed in while they are used: the session expiry extends with
 
 ### Session lifetime
 
-- **`MAX_SESSION_LIFETIME_SECONDS`** is now 180 days (`15552000`); `sessionLifetimeSeconds` above 30 days was previously rejected. The one-week default is unchanged.
+- **`MAX_SESSION_LIFETIME_SECONDS`** is now 180 days (`15552000`); `sessionLifetimeSeconds` above 30 days was previously rejected.
+- **`DEFAULT_SESSION_LIFETIME_SECONDS`** is now 180 days (`15552000`), the maximum: auth requests that omit `sessionLifetimeSeconds` ask for 180 days instead of one week. A session still ends after 10 days without use, so pass a shorter `sessionLifetimeSeconds` for a hard limit.

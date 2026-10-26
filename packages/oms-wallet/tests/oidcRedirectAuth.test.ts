@@ -564,7 +564,7 @@ describe('WalletClient OIDC redirect auth', () => {
           authMode: 'auth-code',
           verifier: 'verifier-1',
           answer: 'auth-code',
-          lifetime: 604_800
+          lifetime: 15_552_000
         });
         return jsonResponse({
           identity: { type: 'oidc', iss: 'https://issuer.example', sub: 'user-1' },
@@ -664,7 +664,7 @@ describe('WalletClient OIDC redirect auth', () => {
           authMode: 'auth-code-pkce',
           verifier: 'verifier-1',
           answer: 'auth-code',
-          lifetime: 604_800
+          lifetime: 15_552_000
         });
         return jsonResponse({
           identity: { type: 'oidc', iss: 'https://accounts.google.com', sub: 'user-1' },
@@ -873,7 +873,7 @@ describe('WalletClient OIDC redirect auth', () => {
           authMode: 'auth-code-pkce',
           verifier: 'verifier-1',
           answer: 'auth-code',
-          lifetime: 604_800
+          lifetime: 15_552_000
         });
         return jsonResponse({
           identity: { type: 'oidc', iss: 'https://accounts.google.com', sub: 'user-1' },

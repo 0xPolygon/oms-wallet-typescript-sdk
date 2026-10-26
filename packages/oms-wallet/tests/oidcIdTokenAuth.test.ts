@@ -52,7 +52,7 @@ describe('WalletClient OIDC ID-token auth', () => {
           authMode: 'id-token',
           verifier: 'oidc-verifier-1',
           answer: idToken,
-          lifetime: 604_800
+          lifetime: 15_552_000
         });
         return jsonResponse({
           identity: { type: 'oidc', iss: 'https://accounts.google.com', sub: 'google-sub-1' },

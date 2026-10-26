@@ -72,6 +72,9 @@ wallet activity. Do not treat `expiresAt` as final; listen to `onSessionExpired`
   `OMS_TRANSACTION_STATUS_LOOKUP_FAILED` and its `txnId`.
 - `MAX_SESSION_LIFETIME_SECONDS` is 180 days (`15552000`); previously lifetimes above 30 days were
   rejected.
+- When `sessionLifetimeSeconds` is omitted, auth now requests 180 days (`DEFAULT_SESSION_LIFETIME_SECONDS`,
+  the maximum) instead of one week. A session still ends after 10 days without use; pass a shorter
+  `sessionLifetimeSeconds` if you need a hard limit.
 
 ### Invalid Ethereum wallet addresses are rejected
 

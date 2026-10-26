@@ -92,7 +92,7 @@ The SDK stores completed wallet-session metadata in the configured storage so ap
 
 In browsers, wallet API requests are signed with a non-extractable WebCrypto P-256 credential. Persisted session data contains wallet and auth metadata only; the browser credential remains managed by WebCrypto. Non-browser runtimes fall back to in-memory storage unless you provide a custom `StorageManager`.
 
-Completed auth requests ask for a one-week session lifetime by default. You can request a shorter or longer lifetime up to 180 days. The session's `expiresAt` is its current expiry: the wallet API extends it with use, up to the requested lifetime, and the SDK refreshes it. Expired sessions become inactive before protected wallet operations; call `signOut()` to end the session and clear active wallet state.
+Completed auth requests ask for the maximum session lifetime, 180 days, by default; you can request a shorter one. The session's `expiresAt` is its current expiry: the wallet API extends it with use, up to the requested lifetime, and the SDK refreshes it. Expired sessions become inactive before protected wallet operations; call `signOut()` to end the session and clear active wallet state.
 
 ## Authentication Flow
 
@@ -204,9 +204,9 @@ to present its own wallet picker after the token is verified.
 
 ### Session State
 
-Email and OIDC auth both persist the active wallet session in the configured SDK storage. The versioned session record is scoped to the publishable key project and API environment. A client rejects and clears a stored session when either scope differs. Browser storage defaults to `localStorage` when available; non-browser runtimes fall back to in-memory storage unless you provide a custom `StorageManager`. Browser signing defaults to a non-extractable WebCrypto P-256 credential using `ecdsa-p256-sha256`. Completed auth requests ask the wallet API for a one-week session lifetime.
+Email and OIDC auth both persist the active wallet session in the configured SDK storage. The versioned session record is scoped to the publishable key project and API environment. A client rejects and clears a stored session when either scope differs. Browser storage defaults to `localStorage` when available; non-browser runtimes fall back to in-memory storage unless you provide a custom `StorageManager`. Browser signing defaults to a non-extractable WebCrypto P-256 credential using `ecdsa-p256-sha256`. Completed auth requests ask the wallet API for a 180-day session lifetime unless you pass a shorter one.
 
-Pass `sessionLifetimeSeconds` to `startEmailAuth`, `signInWithOidcIdToken`, `startOidcRedirectAuth`, `completeOidcRedirectAuth`, or `signInWithOidcRedirect` to request a different session lifetime. Values must be integer seconds from `1` through `15552000` (180 days), exported as `MAX_SESSION_LIFETIME_SECONDS`; the one-week default is exported as `DEFAULT_SESSION_LIFETIME_SECONDS`. For OIDC redirects, values passed at start are stored with the pending redirect state and used on callback completion unless completion overrides them.
+Pass `sessionLifetimeSeconds` to `startEmailAuth`, `signInWithOidcIdToken`, `startOidcRedirectAuth`, `completeOidcRedirectAuth`, or `signInWithOidcRedirect` to request a different session lifetime. Values must be integer seconds from `1` through `15552000` (180 days), exported as `MAX_SESSION_LIFETIME_SECONDS`; the default, also 180 days, is exported as `DEFAULT_SESSION_LIFETIME_SECONDS`. The wallet API also ends a session after 10 days without use. For OIDC redirects, values passed at start are stored with the pending redirect state and used on callback completion unless completion overrides them.
 
 Use `omsWallet.wallet.activeWallet` for the active wallet. It has the same shape as the entries `listWallets()` returns and is `undefined` when signed out. Narrow on `type` to get the address type for that wallet family; Ethereum addresses are typed as viem `Address`. Use `omsWallet.wallet.session` for credential expiry and structured auth metadata. It is defined exactly when `activeWallet` is.
 

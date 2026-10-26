@@ -614,10 +614,10 @@ export type OMSWalletSessionExpiredListener = (event: OMSWalletSessionExpiredEve
 
 ### `DEFAULT_SESSION_LIFETIME_SECONDS`
 
-Session lifetime requested when `sessionLifetimeSeconds` is omitted (one week).
+Session lifetime requested when `sessionLifetimeSeconds` is omitted (180 days, the maximum).
 
 ```typescript
-export declare const DEFAULT_SESSION_LIFETIME_SECONDS = 604800;
+export declare const DEFAULT_SESSION_LIFETIME_SECONDS = 15552000;
 ```
 
 ### `MAX_SESSION_LIFETIME_SECONDS`

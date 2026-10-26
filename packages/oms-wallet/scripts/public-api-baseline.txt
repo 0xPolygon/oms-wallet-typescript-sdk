@@ -1237,8 +1237,8 @@ export interface OMSWalletSession {
     readonly expiresAt: string;
     readonly auth: OMSWalletSessionAuth;
 }
-/** Session lifetime requested when `sessionLifetimeSeconds` is omitted (one week). */
-export declare const DEFAULT_SESSION_LIFETIME_SECONDS = 604800;
+/** Session lifetime requested when `sessionLifetimeSeconds` is omitted (180 days, the maximum). */
+export declare const DEFAULT_SESSION_LIFETIME_SECONDS = 15552000;
 /** Largest accepted `sessionLifetimeSeconds` (180 days). */
 export declare const MAX_SESSION_LIFETIME_SECONDS = 15552000;
 export interface OMSWalletSessionExpiredEvent {
