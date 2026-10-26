@@ -76,6 +76,14 @@ wallet activity. Do not treat `expiresAt` as final; listen to `onSessionExpired`
   the maximum) instead of one week. A session still ends after 10 days without use; pass a shorter
   `sessionLifetimeSeconds` if you need a hard limit.
 
+### Simulation-reverted transactions fail as request errors
+
+When the wallet API refuses to submit a transaction because simulation shows it would revert (WaaS
+`TransactionSimulationFailed`, 7314), the write now fails with `OMSWalletRequestError`
+(`OMS_REQUEST_FAILED`, status 400, `upstreamError.code` `'7314'`) instead of
+`OMS_TRANSACTION_EXECUTION_UNCONFIRMED`. The transaction was closed as failed and never submitted, so
+there is no `txnId` to check. Other execute failures keep `OMS_TRANSACTION_EXECUTION_UNCONFIRMED`.
+
 ### Invalid Ethereum wallet addresses are rejected
 
 A wallet returned by WaaS (auth, `listWallets`, `useWallet`, `createWallet`, import) whose Ethereum

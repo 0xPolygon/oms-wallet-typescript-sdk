@@ -2446,6 +2446,11 @@ export class WalletClientImpl implements WalletClient {
         // the operation maps this to `OMS_SESSION_EXPIRED` and ends the session.
         throw error;
       }
+      if (sdkError.upstreamError?.service === 'waas' && sdkError.upstreamError.code === '7314') {
+        // TransactionSimulationFailed: the relayer refused to dispatch a reverting transaction and
+        // WaaS closed it as failed, so the outcome is known; report the request failure as is.
+        throw sdkError;
+      }
       throw new OMSWalletTransactionError({
         code: 'OMS_TRANSACTION_EXECUTION_UNCONFIRMED',
         operation: WalletOperation.execute,

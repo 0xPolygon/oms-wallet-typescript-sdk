@@ -1192,6 +1192,67 @@ describe('public API error contracts', () => {
         `);
   });
 
+  it('snapshots a simulation-reverted Execute as a request failure', async () => {
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async (input: RequestInfo | URL) => {
+        const url = input.toString();
+        if (url.endsWith('/PrepareEthereumTransaction')) {
+          return jsonResponse({
+            txnId: 'txn-reverts',
+            status: 'quoted',
+            feeOptions: [],
+            sponsored: true,
+            expiresAt: '2099-01-01T00:00:00Z'
+          });
+        }
+        if (url.endsWith('/Execute')) {
+          return jsonResponse(
+            {
+              code: 7314,
+              name: 'TransactionSimulationFailed',
+              message: 'Transaction simulation failed; the call would revert on-chain',
+              status: 400
+            },
+            400
+          );
+        }
+
+        throw new Error(`Unexpected request: ${url}`);
+      })
+    );
+
+    const oms = createOmsClientWithSession();
+
+    await expect(
+      publicError(() =>
+        oms.wallet.sendTransaction({
+          network: Networks.polygon,
+          to: '0x1111111111111111111111111111111111111111',
+          value: 0n
+        })
+      )
+    ).resolves.toMatchInlineSnapshot(`
+      {
+        "code": "OMS_REQUEST_FAILED",
+        "message": "Transaction simulation failed; the call would revert on-chain",
+        "name": "OMSWalletRequestError",
+        "operation": "wallet.execute",
+        "retryable": false,
+        "status": 400,
+        "txnId": null,
+        "upstreamError": {
+          "code": "7314",
+          "message": "Transaction simulation failed; the call would revert on-chain",
+          "name": "TransactionSimulationFailed",
+          "service": "waas",
+          "status": 400,
+        },
+      }
+    `);
+    expect(oms.wallet.session).toBeDefined();
+  });
+
   it('snapshots transaction status polling failures with txn and upstream details', async () => {
     vi.stubGlobal(
       'fetch',
