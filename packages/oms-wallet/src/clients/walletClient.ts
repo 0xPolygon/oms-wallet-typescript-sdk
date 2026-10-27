@@ -8,6 +8,7 @@ import type {
   CommitVerifierRequest,
   CompleteAuthRequest,
   CompleteAuthResponse,
+  ClaimWalletRequest,
   CreateWalletRequest,
   UseWalletRequest,
   ListAccessRequest,
@@ -316,18 +317,24 @@ interface ActiveEmailAuthAttempt {
 
 class PendingWalletSelectionImpl implements PendingWalletSelection {
   private readonly availableWalletIds: Set<string>;
+  private readonly claimableWalletIds: Set<string>;
 
   constructor(
     public readonly walletType: WalletType,
     public readonly wallets: ReadonlyArray<WalletAccount>,
+    public readonly claimableWallets: ReadonlyArray<WalletAccount>,
     public readonly credential: Readonly<WalletCredential>,
     private readonly selectWalletAction: (walletId: string) => Promise<WalletActivationResult>,
     private readonly createAndSelectWalletAction: (
       reference?: string
     ) => Promise<WalletActivationResult>,
+    private readonly claimAndSelectWalletAction: (
+      walletId: string
+    ) => Promise<WalletActivationResult>,
     private readonly runExclusiveAction: PendingWalletSelectionActionRunner
   ) {
     this.availableWalletIds = new Set(wallets.map((wallet) => wallet.id));
+    this.claimableWalletIds = new Set(claimableWallets.map((wallet) => wallet.id));
   }
 
   async selectWallet(params: { walletId: string }): Promise<WalletActivationResult> {
@@ -349,6 +356,22 @@ class PendingWalletSelectionImpl implements PendingWalletSelection {
     return this.runExclusiveAction(
       WalletOperation.pendingWalletSelectionCreateAndSelectWallet,
       () => this.createAndSelectWalletAction(params.reference)
+    );
+  }
+
+  async claimAndSelectWallet(params: { walletId: string }): Promise<WalletActivationResult> {
+    return this.runExclusiveAction(
+      WalletOperation.pendingWalletSelectionClaimAndSelectWallet,
+      async () => {
+        if (!this.claimableWalletIds.has(params.walletId)) {
+          throw new OMSWalletSelectionError({
+            code: 'OMS_WALLET_SELECTION_UNAVAILABLE',
+            operation: WalletOperation.pendingWalletSelectionClaimAndSelectWallet,
+            message: 'Selected wallet is not one of the claimable wallets'
+          });
+        }
+        return this.claimAndSelectWalletAction(params.walletId);
+      }
     );
   }
 }
@@ -960,6 +983,18 @@ export class WalletClientImpl implements WalletClient {
         WalletOperation.useWallet
       );
       return this.activateWallet(wallet, context.metadata, WalletOperation.useWallet);
+    });
+  }
+
+  async claimWallet(params: { walletId: string }): Promise<WalletActivationResult> {
+    return this.runOperation(WalletOperation.claimWallet, async () => {
+      const context = await this.activeWalletActivationContext(WalletOperation.claimWallet);
+      const wallet = await this.requestClaimWallet(params.walletId);
+      await this.requireActiveWalletActivationContextStillActive(
+        context,
+        WalletOperation.claimWallet
+      );
+      return this.activateWallet(wallet, context.metadata, WalletOperation.claimWallet);
     });
   }
 
@@ -1619,6 +1654,16 @@ export class WalletClientImpl implements WalletClient {
     return fromGeneratedWallet(response.wallet);
   }
 
+  /**
+   * Claims a preallocated wallet for the authenticated user. WaaS grants the session credential
+   * access to it. Does not activate or persist it.
+   */
+  private async requestClaimWallet(walletId: string): Promise<WalletAccount> {
+    const params: ClaimWalletRequest = { walletId };
+    const response = await this.client.claimWallet(params);
+    return fromGeneratedWallet(response.wallet);
+  }
+
   private activateWallet(
     wallet: WalletAccount,
     metadata: WalletSessionMetadata,
@@ -1641,6 +1686,8 @@ export class WalletClientImpl implements WalletClient {
 
     const metadata = await this.sessionMetadataFromAuthResponse(response, auth);
     const wallets = await this.listAllWalletsFromAuthResponse(response);
+    // CompleteAuth is the only place WaaS reports preallocated wallets; ListWallets omits them.
+    const claimableWallets = (response.claimable ?? []).map(fromGeneratedWallet);
     const credential = fromGeneratedAccessGrant(response.credential);
     const candidateWallets = wallets.filter((wallet) => wallet.type === walletType);
     const requireCurrentAuth = () => guard?.validate();
@@ -1652,6 +1699,7 @@ export class WalletClientImpl implements WalletClient {
         {
           walletType,
           wallets: candidateWallets,
+          claimableWallets: claimableWallets.filter((wallet) => wallet.type === walletType),
           credential,
           metadata
         },
@@ -1660,10 +1708,16 @@ export class WalletClientImpl implements WalletClient {
       return selection;
     }
 
+    // An owned wallet wins; otherwise claim a preallocated wallet before creating a new one.
     const wallet = candidateWallets[0];
+    const claimable = wallet
+      ? undefined
+      : claimableWallets.find((claimableWallet) => claimableWallet.type === walletType);
     const selectedWallet = wallet
       ? await this.requestUseWallet(wallet.id)
-      : await this.requestCreateWallet(walletType);
+      : claimable
+        ? await this.requestClaimWallet(claimable.id)
+        : await this.requestCreateWallet(walletType);
     requireCurrentAuth();
     const activated = this.activateWallet(selectedWallet, metadata, operation);
     const resultWallets = wallet ? wallets : [...wallets, activated.wallet];
@@ -1671,6 +1725,9 @@ export class WalletClientImpl implements WalletClient {
     return {
       wallet: activated.wallet,
       wallets: resultWallets,
+      claimableWallets: claimable
+        ? claimableWallets.filter((claimableWallet) => claimableWallet.id !== claimable.id)
+        : claimableWallets,
       credential
     };
   }
@@ -2058,6 +2115,7 @@ export class WalletClientImpl implements WalletClient {
     params: {
       walletType: WalletType;
       wallets: Array<WalletAccount>;
+      claimableWallets: Array<WalletAccount>;
       credential: WalletCredential;
       metadata: WalletSessionMetadata;
     },
@@ -2077,11 +2135,13 @@ export class WalletClientImpl implements WalletClient {
     this.scheduleSessionExpiry(this.sessionFromMetadata(undefined, params.metadata));
 
     const wallets = params.wallets.map((wallet) => ({ ...wallet }));
+    const claimableWallets = params.claimableWallets.map((wallet) => ({ ...wallet }));
     const credential = { ...params.credential };
 
     return new PendingWalletSelectionImpl(
       params.walletType,
       wallets,
+      claimableWallets,
       credential,
       async (walletId) => {
         const operation = WalletOperation.pendingWalletSelectionSelectWallet;
@@ -2094,6 +2154,13 @@ export class WalletClientImpl implements WalletClient {
         const operation = WalletOperation.pendingWalletSelectionCreateAndSelectWallet;
         await this.requireActivePendingWalletSelection(selectionSession, operation);
         const wallet = await this.requestCreateWallet(selectionSession.walletType, reference);
+        await this.requireActivePendingWalletSelection(selectionSession, operation);
+        return this.activateWallet(wallet, selectionSession.metadata, operation);
+      },
+      async (walletId) => {
+        const operation = WalletOperation.pendingWalletSelectionClaimAndSelectWallet;
+        await this.requireActivePendingWalletSelection(selectionSession, operation);
+        const wallet = await this.requestClaimWallet(walletId);
         await this.requireActivePendingWalletSelection(selectionSession, operation);
         return this.activateWallet(wallet, selectionSession.metadata, operation);
       },

@@ -223,6 +223,18 @@ Ethereum wallet.
 `listAccessPages` now include it when WaaS returns paging data. Use the new `listAccessPage` to read
 one page and resume from `page.cursor`. Update deep-equality assertions on yielded pages.
 
+### Claimable wallets
+
+Automatic wallet selection now claims a preallocated wallet: when the user owns no wallet of the
+requested type but one is claimable, sign-in claims and activates it instead of creating a wallet.
+A rejected claim fails the sign-in. See the README's claimable wallets section.
+
+`CompleteEmailAuthResult`, `CompleteOidcIdTokenAuthResult` and `CompleteOidcRedirectAuthResult`
+gained `claimableWallets`, `PendingWalletSelection` gained `claimableWallets` and
+`claimAndSelectWallet`, and `WalletClient` gained `claimWallet`, so objects that implement these
+interfaces (for example typed test doubles) need them. Update deep-equality assertions on sign-in
+results.
+
 ### Wagmi connector
 
 `@polygonlabs/oms-wallet-wagmi-connector` now reads `wallet.activeWallet` instead of

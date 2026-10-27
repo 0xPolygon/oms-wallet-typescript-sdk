@@ -2,6 +2,7 @@ export const WalletOperation = {
   pendingWalletSelectionSelectWallet: 'wallet.pendingWalletSelection.selectWallet',
   pendingWalletSelectionCreateAndSelectWallet:
     'wallet.pendingWalletSelection.createAndSelectWallet',
+  pendingWalletSelectionClaimAndSelectWallet: 'wallet.pendingWalletSelection.claimAndSelectWallet',
   startEmailAuth: 'wallet.startEmailAuth',
   completeEmailAuth: 'wallet.completeEmailAuth',
   signInWithOidcIdToken: 'wallet.signInWithOidcIdToken',
@@ -11,6 +12,7 @@ export const WalletOperation = {
   signOut: 'wallet.signOut',
   listWallets: 'wallet.listWallets',
   useWallet: 'wallet.useWallet',
+  claimWallet: 'wallet.claimWallet',
   createWallet: 'wallet.createWallet',
   importWallet: 'wallet.importWallet',
   getWalletImportRecipientKey: 'wallet.getWalletImportRecipientKey',

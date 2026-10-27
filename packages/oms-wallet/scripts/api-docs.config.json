@@ -19,6 +19,7 @@
         "WalletClient.signOut",
         "WalletClient.listWallets",
         "WalletClient.useWallet",
+        "WalletClient.claimWallet",
         "WalletClient.createWallet",
         "WalletClient.importWallet",
         "WalletClient.getWalletImportRecipientKey",

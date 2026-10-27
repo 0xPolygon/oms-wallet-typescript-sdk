@@ -30,6 +30,7 @@ import {
   type TronBalance,
   type TronNetwork,
   type WalletAccount,
+  type WalletActivationResult,
   type OMSWalletErrorCode,
   type OMSWalletUpstreamError,
   type AbiArg,
@@ -172,6 +173,11 @@ if (false) {
     void manualAuth.wallets;
     void manualAuth.selectWallet({ walletId: manualAuth.wallets[0].id });
     void manualAuth.createAndSelectWallet({ reference: 'main' });
+    void manualAuth.claimAndSelectWallet({ walletId: manualAuth.claimableWallets[0].id });
+    // @ts-expect-error claimAndSelectWallet requires the claimable wallet ID.
+    void manualAuth.claimAndSelectWallet();
+    // @ts-expect-error manual auth claimable wallet lists are readonly snapshots.
+    manualAuth.claimableWallets.push(manualAuth.wallets[0]);
     // @ts-expect-error manual auth wallet lists are readonly snapshots.
     manualAuth.wallets.push(manualAuth.wallets[0]);
     // @ts-expect-error manual auth wallet metadata is readonly.
@@ -188,6 +194,14 @@ if (false) {
     void activatedAuth.wallets;
     // @ts-expect-error completed auth wallet lists are readonly snapshots.
     activatedAuth.wallets.push(activatedAuth.wallet);
+    const unclaimedWallet: WalletAccount | undefined = activatedAuth.claimableWallets[0];
+    void unclaimedWallet;
+    // @ts-expect-error completed auth claimable wallet lists are readonly snapshots.
+    activatedAuth.claimableWallets.push(activatedAuth.wallet);
+    const claimed: Promise<WalletActivationResult> = wallet.claimWallet({ walletId: 'wallet-id' });
+    void claimed;
+    // @ts-expect-error claimWallet takes { walletId }, mirroring useWallet.
+    void wallet.claimWallet('wallet-id');
     // @ts-expect-error completed auth wallet metadata is readonly.
     activatedAuth.wallet.id = 'wallet-id';
     // @ts-expect-error completed auth credential metadata is readonly.

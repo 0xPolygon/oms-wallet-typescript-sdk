@@ -417,6 +417,7 @@ describe('public API error contracts', () => {
       publicErrors([
         ['wallet.listWallets', () => oms.wallet.listWallets()],
         ['wallet.useWallet', () => oms.wallet.useWallet({ walletId: 'wallet-1' })],
+        ['wallet.claimWallet', () => oms.wallet.claimWallet({ walletId: 'wallet-1' })],
         ['wallet.createWallet', () => oms.wallet.createWallet()],
         ['wallet.getIdToken', () => oms.wallet.getIdToken()],
         [
@@ -485,6 +486,19 @@ describe('public API error contracts', () => {
                 "upstreamError": null,
               },
               "label": "wallet.useWallet",
+            },
+            {
+              "error": {
+                "code": "OMS_SESSION_MISSING",
+                "message": "No active wallet session",
+                "name": "OMSWalletSessionError",
+                "operation": "wallet.claimWallet",
+                "retryable": null,
+                "status": null,
+                "txnId": null,
+                "upstreamError": null,
+              },
+              "label": "wallet.claimWallet",
             },
             {
               "error": {

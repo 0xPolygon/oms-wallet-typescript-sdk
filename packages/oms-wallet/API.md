@@ -124,6 +124,18 @@ useWallet(params: {
 }): Promise<WalletActivationResult>;
 ```
 
+### `WalletClient.claimWallet`
+
+Claims a preallocated wallet for the signed-in user and makes it the active wallet. Requires
+an active session; during a pending manual selection use
+`PendingWalletSelection.claimAndSelectWallet`.
+
+```typescript
+claimWallet(params: {
+    walletId: string;
+}): Promise<WalletActivationResult>;
+```
+
 ### `WalletClient.createWallet`
 
 ```typescript
@@ -241,6 +253,7 @@ export interface CompleteEmailAuthParams {
 export interface CompleteEmailAuthResult {
     readonly wallet: WalletAccount;
     readonly wallets: ReadonlyArray<WalletAccount>;
+    readonly claimableWallets: ReadonlyArray<WalletAccount>;
     readonly credential: Readonly<WalletCredential>;
 }
 ```
@@ -266,6 +279,7 @@ export interface SignInWithOidcIdTokenParams {
 export interface CompleteOidcIdTokenAuthResult {
     readonly wallet: WalletAccount;
     readonly wallets: ReadonlyArray<WalletAccount>;
+    readonly claimableWallets: ReadonlyArray<WalletAccount>;
     readonly credential: Readonly<WalletCredential>;
 }
 ```
@@ -315,6 +329,7 @@ export interface CompleteOidcRedirectAuthParams {
 export interface CompleteOidcRedirectAuthResult {
     readonly wallet: WalletAccount;
     readonly wallets: ReadonlyArray<WalletAccount>;
+    readonly claimableWallets: ReadonlyArray<WalletAccount>;
     readonly credential: Readonly<WalletCredential>;
 }
 ```
@@ -543,12 +558,16 @@ export interface ImportEncryptedWalletParams {
 export interface PendingWalletSelection {
     readonly walletType: WalletType;
     readonly wallets: ReadonlyArray<WalletAccount>;
+    readonly claimableWallets: ReadonlyArray<WalletAccount>;
     readonly credential: Readonly<WalletCredential>;
     selectWallet(params: {
         walletId: string;
     }): Promise<WalletActivationResult>;
     createAndSelectWallet(params?: {
         reference?: string;
+    }): Promise<WalletActivationResult>;
+    claimAndSelectWallet(params: {
+        walletId: string;
     }): Promise<WalletActivationResult>;
 }
 ```
@@ -2095,6 +2114,7 @@ export type OMSWalletOperation = WalletOperation | IndexerOperation | RemoteAcce
 export declare const WalletOperation: {
     readonly pendingWalletSelectionSelectWallet: "wallet.pendingWalletSelection.selectWallet";
     readonly pendingWalletSelectionCreateAndSelectWallet: "wallet.pendingWalletSelection.createAndSelectWallet";
+    readonly pendingWalletSelectionClaimAndSelectWallet: "wallet.pendingWalletSelection.claimAndSelectWallet";
     readonly startEmailAuth: "wallet.startEmailAuth";
     readonly completeEmailAuth: "wallet.completeEmailAuth";
     readonly signInWithOidcIdToken: "wallet.signInWithOidcIdToken";
@@ -2104,6 +2124,7 @@ export declare const WalletOperation: {
     readonly signOut: "wallet.signOut";
     readonly listWallets: "wallet.listWallets";
     readonly useWallet: "wallet.useWallet";
+    readonly claimWallet: "wallet.claimWallet";
     readonly createWallet: "wallet.createWallet";
     readonly importWallet: "wallet.importWallet";
     readonly getWalletImportRecipientKey: "wallet.getWalletImportRecipientKey";

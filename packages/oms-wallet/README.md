@@ -103,7 +103,7 @@ OMS supports email-based OTP, OIDC ID-token auth, and OIDC authorization-code re
 Email OTP is a two-step flow:
 
 1. **`startEmailAuth({ email, sessionLifetimeSeconds? })`** — validates the requested session lifetime, clears any active session, and sends a one-time code to the user's inbox.
-2. **`completeEmailAuth({ code })`** — verifies the code, then automatically loads an existing wallet or creates a new one if none exists. Returns `{ wallet, wallets, credential }`.
+2. **`completeEmailAuth({ code })`** — verifies the code, then automatically selects a wallet of the requested type (see [Automatic wallet selection](#automatic-wallet-selection)). Returns `{ wallet, wallets, claimableWallets, credential }`.
 
 Use manual wallet selection when the app needs to present wallet choices:
 
@@ -116,9 +116,50 @@ const selection = await omsWallet.wallet.completeEmailAuth({
 await selection.selectWallet({ walletId: selection.wallets[0].id })
 // or:
 await selection.createAndSelectWallet({ reference: 'main' })
+// or, to claim a preallocated wallet:
+await selection.claimAndSelectWallet({ walletId: selection.claimableWallets[0].id })
 ```
 
 The returned pending selection is bound to the verified auth flow and signer. Hold that object and complete selection through it instead of saving `{ wallets }` and later calling global wallet activation methods.
+
+### Automatic wallet selection
+
+Every completed sign-in (email OTP, OIDC ID token, OIDC redirect) with the default automatic wallet
+selection activates a wallet of the requested `walletType` (Ethereum by default) in this order:
+
+1. The first wallet of that type the user already owns.
+2. Otherwise, a claimable wallet of that type: the SDK claims it and activates it.
+3. Otherwise, a newly created wallet.
+
+If the claim fails, the sign-in fails; the SDK does not fall back to creating a wallet.
+
+### Claimable wallets
+
+A project can preallocate a receive-only wallet for a user's email address before that user signs
+in, so the address can be funded ahead of time. After the user signs in with that verified email
+(email OTP, or an OIDC provider that reports it as verified), the wallet is claimable: claiming
+links it to the user and lets their session sign with it. The wallet API reports claimable wallets
+only when sign-in completes; `listWallets()` does not include them until they are claimed.
+
+- `result.claimableWallets` on a completed sign-in lists the wallets still claimable, of every type.
+  A wallet claimed during that sign-in is not included.
+- `selection.claimableWallets` on a pending manual selection lists the claimable wallets of the
+  requested type; `selection.claimAndSelectWallet({ walletId })` claims one and activates it.
+- `omsWallet.wallet.claimWallet({ walletId })` claims a wallet from an active session and makes it
+  the active wallet, like `useWallet`.
+
+```typescript
+const result = await omsWallet.wallet.completeEmailAuth({ code: '123456' })
+
+const solanaClaim = result.claimableWallets.find((wallet) => wallet.type === WalletType.Solana)
+if (solanaClaim) {
+  await omsWallet.wallet.claimWallet({ walletId: solanaClaim.id })
+}
+```
+
+A rejected claim (the wallet is not allocated to the user's verified email, or was already claimed)
+fails with `OMSWalletRequestError` (`OMS_REQUEST_FAILED`, `upstreamError.name` `'AccountNotFound'`)
+and leaves the active wallet and pending selection unchanged.
 
 ### OIDC Redirect Auth
 
@@ -261,8 +302,8 @@ await omsWallet.wallet.signOut()
 
 ### Manage and Import Wallets
 
-`listWallets`, `useWallet`, and `createWallet` manage the wallets attached to the authenticated
-account. Every returned wallet includes `keyOrigin`, which is `WalletKeyOrigin.Enclave` for a key
+`listWallets`, `useWallet`, `claimWallet`, and `createWallet` manage the wallets attached to the
+authenticated account ([claimable wallets](#claimable-wallets) are not listed until claimed). Every returned wallet includes `keyOrigin`, which is `WalletKeyOrigin.Enclave` for a key
 created by WaaS and `WalletKeyOrigin.Imported` for an imported key.
 
 Wallet import verifies AWS Nitro enclave attestations against the measurements managed by each OMS

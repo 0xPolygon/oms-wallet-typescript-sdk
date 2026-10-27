@@ -166,6 +166,11 @@ export interface ImportEncryptedWalletParams {
 export interface CompleteWalletAuthResult {
   readonly wallet: WalletAccount;
   readonly wallets: ReadonlyArray<WalletAccount>;
+  /**
+   * Preallocated wallets the signed-in user can still claim, of every wallet type. Excludes a
+   * wallet claimed during this sign-in; empty when there are none.
+   */
+  readonly claimableWallets: ReadonlyArray<WalletAccount>;
   readonly credential: Readonly<WalletCredential>;
 }
 
@@ -180,10 +185,14 @@ export interface CompleteOidcRedirectAuthResult extends CompleteWalletAuthResult
 export interface PendingWalletSelection {
   readonly walletType: WalletType;
   readonly wallets: ReadonlyArray<WalletAccount>;
+  /** Preallocated wallets of `walletType` that the signed-in user can claim. */
+  readonly claimableWallets: ReadonlyArray<WalletAccount>;
   readonly credential: Readonly<WalletCredential>;
 
   selectWallet(params: { walletId: string }): Promise<WalletActivationResult>;
   createAndSelectWallet(params?: { reference?: string }): Promise<WalletActivationResult>;
+  /** Claims one of `claimableWallets` and activates it. */
+  claimAndSelectWallet(params: { walletId: string }): Promise<WalletActivationResult>;
 }
 
 export interface OMSWalletEmailSessionAuth {
@@ -352,6 +361,12 @@ export interface WalletClient {
   signOut(): Promise<void>;
   listWallets(): Promise<Array<WalletAccount>>;
   useWallet(params: { walletId: string }): Promise<WalletActivationResult>;
+  /**
+   * Claims a preallocated wallet for the signed-in user and makes it the active wallet. Requires
+   * an active session; during a pending manual selection use
+   * `PendingWalletSelection.claimAndSelectWallet`.
+   */
+  claimWallet(params: { walletId: string }): Promise<WalletActivationResult>;
   createWallet(params?: {
     walletType?: WalletType;
     reference?: string;
