@@ -290,6 +290,9 @@ const unsubscribe = omsWallet.wallet.onSessionExpired(({ wallet, session }) => {
   // `wallet` is undefined when the credential expired during a pending manual wallet selection.
   console.info('Session expired:', wallet?.address, session.auth)
 })
+
+// Later, when the listener is no longer needed (for example when a component unmounts):
+unsubscribe()
 ```
 
 To end the session, call:

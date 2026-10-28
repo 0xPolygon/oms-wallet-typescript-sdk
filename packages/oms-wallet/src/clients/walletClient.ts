@@ -448,6 +448,7 @@ export class WalletClientImpl implements WalletClient {
   private activeEmailAuthAttempt: ActiveEmailAuthAttempt | undefined;
   private nextPendingWalletSelectionId = 1;
   private sessionExpiryTimer: ReturnType<typeof setTimeout> | undefined;
+  private cancelRestoredSessionRead: (() => void) | undefined;
   private latestSessionExpiredEvent: OMSWalletSessionExpiredEvent | undefined;
   private sessionRevision = 0;
   /** Revision of the last session that ended by expiry, locally or reported by WaaS. */
@@ -577,9 +578,10 @@ export class WalletClientImpl implements WalletClient {
     if (this.activeWalletAccount) {
       // A restored session may have been extended or ended on the server since it was saved. The
       // read extends an active session, so a hidden or prerendered page waits until it is shown.
-      const revision = this.sessionRevision;
-      whenInForeground(() => {
-        if (this.sessionRevision === revision) void this.refreshSessionCredential('background');
+      // Ending the session cancels the wait so its listeners don't keep this client alive.
+      this.cancelRestoredSessionRead = whenInForeground(() => {
+        this.cancelRestoredSessionRead = undefined;
+        void this.refreshSessionCredential('background');
       });
     }
   }
@@ -1240,6 +1242,8 @@ export class WalletClientImpl implements WalletClient {
     this.lastSharedSessionActivity = undefined;
     this.credentialRefreshRetryDelayMs = CREDENTIAL_REFRESH_RETRY_MIN_MS;
     this.clearSessionExpiryTimer();
+    this.cancelRestoredSessionRead?.();
+    this.cancelRestoredSessionRead = undefined;
     if (!keepSharedState) await this.credentialSigner.clear?.();
     if (storageFailure !== undefined) {
       throw new OMSWalletStorageError({
@@ -3886,23 +3890,27 @@ interface ForegroundDocument {
 
 /**
  * Runs `action` now when the page is visible and not prerendering, or outside a browser (no
- * `document`); otherwise once, when both hold.
+ * `document`); otherwise once, when both hold. Returns a function that cancels a pending wait.
  */
-function whenInForeground(action: () => void): void {
+function whenInForeground(action: () => void): (() => void) | undefined {
   const doc = (globalThis as { document?: ForegroundDocument }).document;
   const isForeground = () => doc?.visibilityState === 'visible' && !doc.prerendering;
   if (!doc?.addEventListener || isForeground()) {
     action();
-    return;
+    return undefined;
   }
-  const onChange = () => {
-    if (!isForeground()) return;
+  const cancel = () => {
     doc.removeEventListener?.('visibilitychange', onChange);
     doc.removeEventListener?.('prerenderingchange', onChange);
+  };
+  const onChange = () => {
+    if (!isForeground()) return;
+    cancel();
     action();
   };
   doc.addEventListener('visibilitychange', onChange);
   doc.addEventListener('prerenderingchange', onChange);
+  return cancel;
 }
 
 /**

@@ -1531,6 +1531,25 @@ describe('WalletClient restore read in the foreground', () => {
     expect(requestCount(fetchMock, '/GetCredential')).toBe(1);
   });
 
+  it('stops waiting for the page to be shown once the restored session ends', async () => {
+    const doc = new FakeDocument('hidden');
+    const removeListener = vi.spyOn(doc, 'removeEventListener');
+    vi.stubGlobal('document', doc);
+    const { fetchMock, wallet } = restoreSession();
+    await settle();
+
+    await wallet.signOut();
+    expect(removeListener.mock.calls.map(([type]) => type).sort()).toEqual([
+      'prerenderingchange',
+      'visibilitychange'
+    ]);
+
+    doc.visibilityState = 'visible';
+    doc.dispatchEvent(new Event('visibilitychange'));
+    await settle();
+    expect(requestCount(fetchMock, '/GetCredential')).toBe(0);
+  });
+
   it('reads the expiry of a restored session right away without a document', async () => {
     expect((globalThis as { document?: unknown }).document).toBeUndefined();
     const { fetchMock } = restoreSession();
