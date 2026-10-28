@@ -1724,6 +1724,44 @@ describe('WalletClient request deadline', () => {
     }
   );
 
+  it('does not count a request that was never sent as session activity', async () => {
+    // WaaS never saw it, so it did not extend the session.
+    stubWaasWithSignal({ '/SignMessage': () => jsonResponse({ signature: '0xsigned' }) });
+    const signer = new ControlledSigner();
+    const wallet = createWalletWithSession(walletAddress, undefined, { signer });
+    const before = (wallet as any).lastSessionActivityAt;
+    signer.signing = 'fail';
+
+    await expect(signMessage(wallet)).rejects.toMatchObject({ code: 'OMS_REQUEST_FAILED' });
+
+    expect((wallet as any).lastSessionActivityAt).toBe(before);
+  });
+
+  it("does not count an earlier session's request as the current session's activity", async () => {
+    let answerOld!: (response: Response) => void;
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(() => new Promise<Response>((resolve) => (answerOld = resolve)))
+    );
+    const wallet = createWalletWithSession(walletAddress);
+    const oldRequest = signMessage(wallet).catch(() => undefined);
+    await vi.waitFor(() => expect(answerOld).toBeDefined());
+
+    // The user signs out and in again while the old request is in flight.
+    await wallet.signOut();
+    (wallet as any).persistSession(testWalletAccount('wallet-id', walletAddress), {
+      expiresAt: '2099-01-01T00:00:00Z',
+      auth: { type: 'email', email: 'user@example.com' },
+      signerCredentialId: '0x04' + '11'.repeat(64),
+      signerKeyType: 'ecdsa-p256-sha256'
+    });
+    const before = (wallet as any).lastSessionActivityAt;
+    answerOld(jsonResponse({ signature: '0xold' }));
+    await oldRequest;
+
+    expect((wallet as any).lastSessionActivityAt).toBe(before);
+  });
+
   it('keeps an Execute that timed out after it was sent unconfirmed', async () => {
     vi.useFakeTimers();
     stubWaasWithSignal({

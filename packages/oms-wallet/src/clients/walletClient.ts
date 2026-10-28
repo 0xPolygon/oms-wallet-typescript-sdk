@@ -3408,6 +3408,11 @@ export class WalletClientImpl implements WalletClient {
    * storage, for other clients (tabs) signing with the same credential key. Best effort: a storage
    * failure never fails the request.
    */
+  /** Whether a signed request may have reached WaaS, and for the session still current. */
+  private reachedWaasInSession(signal: AbortSignal | undefined, revision: number): boolean {
+    return (!signal || wasRequestSent(signal)) && this.sessionRevision === revision;
+  }
+
   private recordSessionActivity(at: number): void {
     this.lastSessionActivityAt = at;
     const signerCredentialId = this.sessionSignerCredentialId;
@@ -3602,6 +3607,7 @@ export class WalletClientImpl implements WalletClient {
   private sessionRequestFetch(fetch: Fetch): Fetch {
     return async (input: RequestInfo, init?: RequestInit): Promise<Response> => {
       const signal = init?.signal ?? undefined;
+      const revision = this.sessionRevision;
       while (this.credentialReadInFlight) await untilAborted(this.credentialReadInFlight, signal);
       this.signedSessionRequestsInFlight += 1;
       let inFlight = true;
@@ -3609,8 +3615,9 @@ export class WalletClientImpl implements WalletClient {
         if (!inFlight) return;
         inFlight = false;
         // Recorded at completion: a request can reach WaaS, and extend the credential, any time
-        // until then.
-        this.recordSessionActivity(Date.now());
+        // until then. A request never sent extended nothing, and one of an earlier session says
+        // nothing about this one.
+        if (this.reachedWaasInSession(signal, revision)) this.recordSessionActivity(Date.now());
         this.signedSessionRequestsInFlight -= 1;
         if (this.signedSessionRequestsInFlight === 0) {
           for (const resume of this.signedSessionRequestsIdleWaiters.splice(0)) resume();
@@ -3636,6 +3643,7 @@ export class WalletClientImpl implements WalletClient {
     return async (input: RequestInfo, init?: RequestInit): Promise<Response> => {
       const recordsActivity = this.nextCredentialReadRecordsActivity;
       this.nextCredentialReadRecordsActivity = true;
+      const revision = this.sessionRevision;
       const signal = init?.signal ?? undefined;
       while (this.signedSessionRequestsInFlight > 0 || this.credentialReadInFlight) {
         await untilAborted(
@@ -3653,9 +3661,11 @@ export class WalletClientImpl implements WalletClient {
         // A read is session activity too: WaaS extends an active credential when it receives it.
         // Reads never overlap other session requests, so a successful read's completion is also
         // when its expiry was current.
-        const completedAt = Date.now();
-        this.lastCredentialReadCompletedAt = completedAt;
-        if (recordsActivity) this.recordSessionActivity(completedAt);
+        if (this.reachedWaasInSession(signal, revision)) {
+          const completedAt = Date.now();
+          this.lastCredentialReadCompletedAt = completedAt;
+          if (recordsActivity) this.recordSessionActivity(completedAt);
+        }
         this.credentialReadInFlight = undefined;
         release();
       };
