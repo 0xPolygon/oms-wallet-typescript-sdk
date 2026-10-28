@@ -878,6 +878,15 @@ describe('omsWalletConnector', () => {
     await expect(refreshedConnector.isAuthorized()).resolves.toBe(true);
   });
 
+  it('leaves no session expiry listener for configs that never connect', async () => {
+    // For example a config built again on every hot reload against one long-lived OMSWallet.
+    const omsWallet = createOmsWallet();
+    for (let built = 0; built < 5; built += 1) createWagmiConfig(omsWallet);
+    await new Promise((resolve) => setTimeout(resolve, 0));
+
+    expect(omsWallet.sessionExpiredListenerCount()).toBe(0);
+  });
+
   it('keeps session expiry disconnect handling after reconnect', async () => {
     const walletAddress = '0x9999999999999999999999999999999999999999';
     const omsWallet = createOmsWallet({ walletAddress });

@@ -7,7 +7,6 @@ import type { OMSWalletEnvironment } from '../src/omsEnvironment';
 import { OmsRelayOidcProviders, type CustomOidcProviderConfig } from '../src/oidc';
 import { MemoryStorageManager, type StorageManager } from '../src/storageManager';
 import { AuthMode, WalletType } from '../src/types/waas';
-import { Constants } from '../src/utils/constants';
 import {
   decodeOidcState,
   encodeOidcState,
@@ -19,7 +18,8 @@ import {
   jsonResponse,
   requestCount,
   testCredential,
-  testEnvironment
+  testEnvironment,
+  testStorageKeys
 } from './fixtures/helpers.js';
 
 const expectedDefaultGoogleClientId =
@@ -96,7 +96,7 @@ describe('WalletClient OIDC redirect auth', () => {
       const state = decodeOidcState(authorizationState(result));
       expect(state.scope).toBe('project-id');
       expect(state.redirect_uri).toBe(returnUri);
-      expect(redirectAuthStorage.get(Constants.redirectAuthStorageKey)).toContain('verifier-1');
+      expect(redirectAuthStorage.get(testStorageKeys.redirectAuth)).toContain('verifier-1');
     }
   );
 
@@ -235,7 +235,7 @@ describe('WalletClient OIDC redirect auth', () => {
 
     const authorizeUrl = new URL(result.authorizationUrl);
     expect(authorizeUrl.searchParams.get('login_hint')).toBe('last@example.com');
-    expect(storage.get(Constants.sessionStorageKey)).toBeNull();
+    expect(storage.get(testStorageKeys.session)).toBeNull();
   });
 
   it('allows callers to suppress the previous session login hint', async () => {
@@ -644,7 +644,7 @@ describe('WalletClient OIDC redirect auth', () => {
       email: undefined
     });
     // The idle window and lifetime ceiling derived from CompleteAuth are stored with the session.
-    const stored = JSON.parse(sessionStorage.get(Constants.sessionStorageKey) ?? 'null');
+    const stored = JSON.parse(sessionStorage.get(testStorageKeys.session) ?? 'null');
     expect(stored.idleWindowMs).toBeGreaterThan(0);
     expect(stored.expiryCeiling).toBe('2099-01-01T00:00:00.000Z');
     expect(requestCount(fetchMock, '/CommitVerifier')).toBe(1);
@@ -723,7 +723,7 @@ describe('WalletClient OIDC redirect auth', () => {
       expiresAt: '2099-01-01T00:00:00Z',
       auth: googleAuth(undefined)
     });
-    expect(redirectAuthStorage.get(Constants.redirectAuthStorageKey)).toBeNull();
+    expect(redirectAuthStorage.get(testStorageKeys.redirectAuth)).toBeNull();
     expect(replaceUrl).toHaveBeenCalledWith('https://app.example/auth/callback');
   });
 
@@ -934,7 +934,7 @@ describe('WalletClient OIDC redirect auth', () => {
     expect(selection.selectWallet).toEqual(expect.any(Function));
     expect(selection.createAndSelectWallet).toEqual(expect.any(Function));
     expect(wallet.activeWallet?.address).toBeUndefined();
-    expect(redirectAuthStorage.get(Constants.redirectAuthStorageKey)).toBeNull();
+    expect(redirectAuthStorage.get(testStorageKeys.redirectAuth)).toBeNull();
   });
 
   it('rejects OIDC callbacks when the signer changed after starting redirect auth', async () => {
@@ -974,7 +974,7 @@ describe('WalletClient OIDC redirect auth', () => {
       message: 'OIDC redirect auth signer mismatch'
     });
     expect(fetchMock).toHaveBeenCalledOnce();
-    expect(redirectAuthStorage.get(Constants.redirectAuthStorageKey)).toBeNull();
+    expect(redirectAuthStorage.get(testStorageKeys.redirectAuth)).toBeNull();
   });
 
   it('cleans the callback URL when OIDC completion fails', async () => {
@@ -1012,7 +1012,7 @@ describe('WalletClient OIDC redirect auth', () => {
       })
     ).rejects.toThrow('request failed');
 
-    expect(redirectAuthStorage.get(Constants.redirectAuthStorageKey)).toBeNull();
+    expect(redirectAuthStorage.get(testStorageKeys.redirectAuth)).toBeNull();
     expect(replaceUrl).toHaveBeenCalledWith('https://app.example/auth/callback');
   });
 
@@ -1046,7 +1046,7 @@ describe('WalletClient OIDC redirect auth', () => {
         ...decodeOidcState(authorizationState(started)),
         ...tampered
       });
-      const pendingBefore = redirectAuthStorage.get(Constants.redirectAuthStorageKey);
+      const pendingBefore = redirectAuthStorage.get(testStorageKeys.redirectAuth);
       expect(pendingBefore).toContain('verifier-1');
 
       await expect(
@@ -1058,7 +1058,7 @@ describe('WalletClient OIDC redirect auth', () => {
         operation: 'wallet.completeOidcRedirectAuth',
         message
       });
-      expect(redirectAuthStorage.get(Constants.redirectAuthStorageKey)).toBe(pendingBefore);
+      expect(redirectAuthStorage.get(testStorageKeys.redirectAuth)).toBe(pendingBefore);
       expect(wallet.activeWallet).toBeUndefined();
       expect(fetchMock).toHaveBeenCalledTimes(1);
     }
@@ -1087,7 +1087,7 @@ describe('WalletClient OIDC redirect auth', () => {
       omsRelayReturnUri: 'https://app.example/auth/callback'
     });
 
-    expect(sessionStore.get(Constants.redirectAuthStorageKey)).toContain('verifier-1');
+    expect(sessionStore.get(testStorageKeys.redirectAuth)).toContain('verifier-1');
   });
 
   it('surfaces OIDC provider callback errors and clears matching pending state', async () => {
@@ -1113,7 +1113,7 @@ describe('WalletClient OIDC redirect auth', () => {
         callbackUrl: `https://app.example/auth/callback?error=access_denied&error_description=User%20cancelled&state=${authorizationState(started)}`
       })
     ).rejects.toThrow('User cancelled');
-    expect(redirectAuthStorage.get(Constants.redirectAuthStorageKey)).toBeNull();
+    expect(redirectAuthStorage.get(testStorageKeys.redirectAuth)).toBeNull();
   });
 
   it('rejects callbacks without pending auth', async () => {
@@ -1233,7 +1233,7 @@ describe('WalletClient OIDC redirect auth', () => {
     ).rejects.toThrow('OIDC redirect auth requires redirectAuthStorage or browser sessionStorage');
 
     expect(wallet.activeWallet?.address).toBe('0x1111111111111111111111111111111111111111');
-    expect(JSON.parse(storage.get(Constants.sessionStorageKey) ?? 'null')).toMatchObject({
+    expect(JSON.parse(storage.get(testStorageKeys.session) ?? 'null')).toMatchObject({
       version: 2,
       wallet: { id: 'wallet-id', address: '0x1111111111111111111111111111111111111111' }
     });

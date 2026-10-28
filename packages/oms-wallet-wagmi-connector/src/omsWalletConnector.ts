@@ -181,7 +181,7 @@ export function omsWalletConnector(parameters: OMSWalletConnectorParameters) {
       icon: parameters.icon,
       type: omsWalletConnector.type,
       async setup() {
-        const omsWallet = await resolveOmsWallet();
+        await resolveOmsWallet();
         try {
           chainId = chainId ?? resolveInitialChainId(configuredNetworks());
         } catch {
@@ -189,7 +189,8 @@ export function omsWalletConnector(parameters: OMSWalletConnectorParameters) {
           // errors until `connect` where consumers can catch them normally.
         }
         void isManuallyDisconnected();
-        subscribeSessionExpired(omsWallet);
+        // Session expiry is observed from `connect` on, so a config that never connects, or is
+        // dropped without disconnecting, leaves no listener on the shared wallet.
       },
       async connect<withCapabilities extends boolean = false>({
         chainId: requestedChainId,

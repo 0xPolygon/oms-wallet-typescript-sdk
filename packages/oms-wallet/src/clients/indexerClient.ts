@@ -578,7 +578,7 @@ export interface IndexerClient {
 }
 
 export class IndexerClientImpl implements IndexerClient {
-  private readonly publishableKey: string;
+  private publishableKey: string;
   private readonly environment: IndexerClientEnvironment;
   private readonly client: HttpClient;
 
@@ -586,6 +586,11 @@ export class IndexerClientImpl implements IndexerClient {
     this.publishableKey = params.publishableKey;
     this.environment = params.environment;
     this.client = new HttpClient();
+  }
+
+  /** Sends later requests with `publishableKey`, a rotated key of the same project. */
+  usePublishableKey(publishableKey: string): void {
+    this.publishableKey = publishableKey;
   }
 
   async getBalances(params: GetBalancesParams): Promise<BalancesResult> {

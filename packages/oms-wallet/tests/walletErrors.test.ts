@@ -3,14 +3,14 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import { WalletClientImpl } from '../src/clients/walletClient';
 import { Waas } from '../src/generated/waas.gen';
 import { MemoryStorageManager } from '../src/storageManager';
-import { Constants } from '../src/utils/constants';
 import { testWalletAccount } from './fixtures/walletAccount.js';
 import {
   MockSigner,
   jsonResponse,
   testEnvironment,
   testStoredExpiryBounds,
-  waasErrorResponse
+  waasErrorResponse,
+  testStorageKeys
 } from './fixtures/helpers.js';
 
 afterEach(() => {
@@ -122,7 +122,7 @@ describe('WalletClient errors', () => {
   it('maps an already-imported address from importEncryptedWallet to a stable public error', async () => {
     const storage = new MemoryStorageManager();
     storage.set(
-      Constants.sessionStorageKey,
+      testStorageKeys.session,
       JSON.stringify({
         version: 2,
         scope: {

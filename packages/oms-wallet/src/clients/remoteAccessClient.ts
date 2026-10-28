@@ -20,7 +20,7 @@ import { toOMSWalletError } from '../errors.js';
 import { Waas } from '../generated/waas.gen.js';
 import { RemoteAccessOperation } from '../operations.js';
 import { parsePublishableKey } from '../publishableKey.js';
-import { createSignedFetch } from '../signedFetch.js';
+import { createDeadlineFetch, createSerialFetch, createSignedFetch } from '../signedFetch.js';
 import { TransactionMode } from '../types/waas.js';
 import {
   fromGeneratedRemoteAccessSession,
@@ -48,7 +48,13 @@ export class RemoteAccessClient {
     const { projectId, walletApiUrl } = parsePublishableKey(params.publishableKey);
     this.#client = new Waas(
       walletApiUrl,
-      createSignedFetch(params.publishableKey, params.credentialSigner, projectId)
+      // One request at a time, so concurrent calls are not rejected for their nonce.
+      createDeadlineFetch(
+        createSerialFetch(
+          createSignedFetch(params.publishableKey, params.credentialSigner, projectId),
+          params.credentialSigner
+        )
+      )
     );
   }
 

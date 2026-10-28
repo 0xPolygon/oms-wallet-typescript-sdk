@@ -5,14 +5,14 @@ import { WalletType } from '../src/types/waas';
 import { MemoryStorageManager } from '../src/storageManager';
 import { oidcIdTokenHandleHash } from '../src/utils/oidcIdToken';
 import { base64UrlEncodeString } from '../src/utils/oidcRedirect';
-import { Constants } from '../src/utils/constants';
 import {
   MockSigner,
   jsonResponse,
   requestCount,
   testCredential,
   testEnvironment,
-  waitForRequest
+  waitForRequest,
+  testStorageKeys
 } from './fixtures/helpers.js';
 
 afterEach(() => {
@@ -105,11 +105,11 @@ describe('WalletClient OIDC ID-token auth', () => {
       providerLabel: 'Google',
       email: 'user@example.com'
     });
-    expect(JSON.parse(storage.get(Constants.sessionStorageKey) ?? 'null').auth).toEqual(
+    expect(JSON.parse(storage.get(testStorageKeys.session) ?? 'null').auth).toEqual(
       wallet.session?.auth
     );
     // The idle window and lifetime ceiling derived from CompleteAuth are stored with the session.
-    const stored = JSON.parse(storage.get(Constants.sessionStorageKey) ?? 'null');
+    const stored = JSON.parse(storage.get(testStorageKeys.session) ?? 'null');
     expect(stored.idleWindowMs).toBeGreaterThan(0);
     expect(stored.expiryCeiling).toBe('2099-01-01T00:00:00.000Z');
     expect(requestCount(fetchMock, '/CommitVerifier')).toBe(1);
@@ -218,7 +218,7 @@ describe('WalletClient OIDC ID-token auth', () => {
   it('clears pending OIDC redirect state when starting ID-token auth', async () => {
     const redirectAuthStorage = new MemoryStorageManager();
     redirectAuthStorage.set(
-      Constants.redirectAuthStorageKey,
+      testStorageKeys.redirectAuth,
       JSON.stringify({ verifier: 'old-verifier' })
     );
     const fetchMock = vi.fn(async (input: RequestInfo | URL) => {
@@ -264,7 +264,7 @@ describe('WalletClient OIDC ID-token auth', () => {
       issuer: 'https://accounts.google.com',
       audience: 'google-client-id'
     });
-    expect(redirectAuthStorage.get(Constants.redirectAuthStorageKey)).toBeNull();
+    expect(redirectAuthStorage.get(testStorageKeys.redirectAuth)).toBeNull();
   });
 
   it('does not persist an ID-token auth result that resolves after sign-out', async () => {
@@ -331,7 +331,7 @@ describe('WalletClient OIDC ID-token auth', () => {
       message: 'Wallet session changed while auth was in flight'
     });
     expect(wallet.activeWallet?.address).toBeUndefined();
-    expect(storage.get(Constants.sessionStorageKey)).toBeNull();
+    expect(storage.get(testStorageKeys.session)).toBeNull();
   });
 });
 

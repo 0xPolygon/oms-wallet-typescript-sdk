@@ -5,6 +5,7 @@ import type { CredentialSigner } from '../../src/credentialSigner';
 import type { OMSWalletEnvironment } from '../../src/omsEnvironment';
 import { MemoryStorageManager } from '../../src/storageManager';
 import { testWalletAccount } from './walletAccount.js';
+import { sessionStorageKeys } from '../../src/utils/constants';
 
 /**
  * A credential signer with a fixed P-256 credential. It records every signed preimage, can switch
@@ -169,3 +170,6 @@ export async function waitForRequest(
   }
   throw new Error(`Timed out waiting for ${endpoint}`);
 }
+
+/** The storage keys of the test project's session on the test wallet API. */
+export const testStorageKeys = sessionStorageKeys('project-id', testEnvironment().walletApiUrl);

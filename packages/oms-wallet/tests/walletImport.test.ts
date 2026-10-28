@@ -5,7 +5,6 @@ import { WalletClientImpl } from '../src/clients/walletClient';
 import type { GetRecipientKeyRequest, ImportWalletRequest } from '../src/generated/waas.gen';
 import { MemoryStorageManager } from '../src/storageManager';
 import { WalletImportCipherSuite } from '../src/types/waas';
-import { Constants } from '../src/utils/constants';
 import { base64DecodeBytes, base64EncodeBytes } from '../src/utils/base64';
 import { sealWalletImportPrivateKey, walletImportPlaintext } from '../src/walletImport';
 import {
@@ -13,7 +12,8 @@ import {
   createWalletWithSession,
   jsonResponse,
   testCredential,
-  testEnvironment
+  testEnvironment,
+  testStorageKeys
 } from './fixtures/helpers.js';
 
 afterEach(() => {
@@ -188,7 +188,7 @@ describe('wallet import', () => {
       expiresAt: '2099-01-01T00:00:00Z',
       auth: { type: 'email', email: 'user@example.com' }
     });
-    expect(JSON.parse(storage.get(Constants.sessionStorageKey) ?? 'null')).toMatchObject({
+    expect(JSON.parse(storage.get(testStorageKeys.session) ?? 'null')).toMatchObject({
       wallet: importedWallet,
       expiresAt: '2099-01-01T00:00:00Z',
       auth: { type: 'email', email: 'user@example.com' },

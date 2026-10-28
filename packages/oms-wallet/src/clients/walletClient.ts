@@ -71,6 +71,7 @@ import type {
   TransactionStatusResponse,
   WalletImportCipherSuite
 } from '../types/waas.js';
+import type { SessionStorageKeys } from '../utils/constants.js';
 import type {
   AutomaticWalletSelectionParams,
   CompleteEmailAuthParams,
@@ -141,7 +142,13 @@ import {
 import { TronNetworks } from '../networks.js';
 import { isOmsRelayOidcProvider, resolveOidcProviderConfig } from '../oidc.js';
 import { WalletOperation } from '../operations.js';
-import { createDeadlineFetch, createSignedFetch, wasRequestSent } from '../signedFetch.js';
+import {
+  createDeadlineFetch,
+  createSerialFetch,
+  createSignedFetch,
+  untilAborted,
+  wasRequestSent
+} from '../signedFetch.js';
 import { createDefaultStorage, SessionStorageManager } from '../storageManager.js';
 import { feeOptionSelection } from '../types/transactionTypes.js';
 import {
@@ -157,7 +164,7 @@ import {
   fromGeneratedSmartSessionGrantUsages,
   toGeneratedSmartSessionGrant
 } from '../utils/accessGrant.js';
-import { Constants } from '../utils/constants.js';
+import { sessionStorageKeys } from '../utils/constants.js';
 import { oidcIdTokenExpiresAtEpochSeconds, oidcIdTokenHandleHash } from '../utils/oidcIdToken.js';
 import {
   buildOidcAuthorizationUrl,
@@ -427,11 +434,14 @@ export class WalletClientImpl implements WalletClient {
   private readonly walletImportClient?: WaasClient;
   private readonly publicClient: WaasPublicClient;
   private readonly storage: StorageManager;
+  private readonly storageKeys: SessionStorageKeys;
   private readonly redirectAuthStorage?: StorageManager;
   private readonly credentialSigner: CredentialSigner;
   private readonly indexerClient: IndexerClientImpl;
   private readonly environment: OMSWalletEnvironment;
   private readonly projectId: string;
+  /** The key sent with each request; a rotated key of the same project replaces it. */
+  private publishableKey: string;
   private readonly sessionExpiredListeners = new Set<OMSWalletSessionExpiredListener>();
   private readonly fastTransactionStatusPollIntervalMs = 400;
   private readonly fastTransactionStatusPollCount = 5;
@@ -508,9 +518,12 @@ export class WalletClientImpl implements WalletClient {
     walletImportTrustedPcr0s?: ReadonlyArray<string>;
   }) {
     this.environment = params.environment;
+    this.storageKeys = sessionStorageKeys(params.projectId, params.environment.walletApiUrl);
     this.storage = params.storage ?? createDefaultStorage();
     this.redirectAuthStorage = params.redirectAuthStorage ?? defaultRedirectAuthStorage();
-    this.credentialSigner = params.credentialSigner ?? new WebCryptoP256CredentialSigner();
+    this.credentialSigner =
+      params.credentialSigner ??
+      new WebCryptoP256CredentialSigner(this.storageKeys.webCryptoCredential);
     this.projectId = params.projectId;
 
     const storedSession = this.loadStoredSessionRecord();
@@ -552,10 +565,13 @@ export class WalletClientImpl implements WalletClient {
       this.sessionExpiryBounds = undefined;
     }
 
-    const signedFetch = createSignedFetch(
-      params.publishableKey,
+    this.publishableKey = params.publishableKey;
+    const publishableKey = () => this.publishableKey;
+    // Session requests and expiry reads signed with one credential reach WaaS one at a time.
+    const signedFetch = createSerialFetch(
+      createSignedFetch(publishableKey, this.credentialSigner, this.projectId),
       this.credentialSigner,
-      this.projectId
+      `oms-wallet-signed-requests:${this.storageKeys.scope}`
     );
     const sessionFetch = this.sessionActivityFetch(this.sessionRequestFetch(signedFetch));
     this.client = new WaasClient(
@@ -574,7 +590,7 @@ export class WalletClientImpl implements WalletClient {
       : undefined;
     this.publicClient = new WaasPublicClient(
       params.environment.walletApiUrl,
-      createApiKeyFetch(params.publishableKey)
+      createApiKeyFetch(publishableKey)
     );
     this.indexerClient = new IndexerClientImpl({
       publishableKey: params.publishableKey,
@@ -590,6 +606,15 @@ export class WalletClientImpl implements WalletClient {
         void this.refreshSessionCredential('background');
       });
     }
+  }
+
+  /**
+   * Sends later requests with `publishableKey`, a rotated key of the same project and environment.
+   * The session belongs to the project, not to a key, so it is kept.
+   */
+  usePublishableKey(publishableKey: string): void {
+    this.publishableKey = publishableKey;
+    this.indexerClient.usePublishableKey(publishableKey);
   }
 
   /**
@@ -1214,12 +1239,12 @@ export class WalletClientImpl implements WalletClient {
     } else if (clearStorage) {
       this.latestSessionExpiredEvent = undefined;
       try {
-        this.storage.delete(Constants.sessionStorageKey);
+        this.storage.delete(this.storageKeys.session);
       } catch (error) {
         storageFailure = error;
       }
       try {
-        this.storage.delete(Constants.sessionActivityStorageKey);
+        this.storage.delete(this.storageKeys.sessionActivity);
       } catch {
         // Best effort: a leftover record names this credential, so later sessions ignore it.
       }
@@ -1261,7 +1286,7 @@ export class WalletClientImpl implements WalletClient {
   }
 
   private clearPendingOidcRedirectAuth(): void {
-    this.redirectAuthStorage?.delete(Constants.redirectAuthStorageKey);
+    this.redirectAuthStorage?.delete(this.storageKeys.redirectAuth);
   }
 
   async signMessage(params: SignMessageParams): Promise<string> {
@@ -2004,7 +2029,7 @@ export class WalletClientImpl implements WalletClient {
     const isActiveSessionExpiry =
       this.activeWalletAccount !== undefined && this.sessionExpiresAt === metadata.expiresAt;
     try {
-      this.storage.set(Constants.sessionStorageKey, JSON.stringify(record));
+      this.storage.set(this.storageKeys.session, JSON.stringify(record));
     } catch (error) {
       throw new OMSWalletStorageError({
         operation,
@@ -2025,7 +2050,7 @@ export class WalletClientImpl implements WalletClient {
   }
 
   private loadStoredSessionRecord(): LoadedSessionRecord | undefined {
-    const serialized = this.storage.get(Constants.sessionStorageKey);
+    const serialized = this.storage.get(this.storageKeys.session);
     if (!serialized) return undefined;
 
     try {
@@ -2048,7 +2073,7 @@ export class WalletClientImpl implements WalletClient {
         typeof scope.indexerGatewayUrl !== 'string' ||
         !auth
       ) {
-        this.storage.delete(Constants.sessionStorageKey);
+        this.storage.delete(this.storageKeys.session);
         return undefined;
       }
 
@@ -2058,14 +2083,14 @@ export class WalletClientImpl implements WalletClient {
         scope.walletApiUrl !== expectedScope.walletApiUrl ||
         scope.indexerGatewayUrl !== expectedScope.indexerGatewayUrl
       ) {
-        this.storage.delete(Constants.sessionStorageKey);
+        this.storage.delete(this.storageKeys.session);
         return undefined;
       }
 
       // Records without the expiry bounds (pre-release 0.4.0 builds) are discarded too.
       const expiryBounds = storedSessionExpiryBounds(parsed);
       if (!expiryBounds) {
-        this.storage.delete(Constants.sessionStorageKey);
+        this.storage.delete(this.storageKeys.session);
         return undefined;
       }
       return {
@@ -2083,7 +2108,7 @@ export class WalletClientImpl implements WalletClient {
         }
       };
     } catch {
-      this.storage.delete(Constants.sessionStorageKey);
+      this.storage.delete(this.storageKeys.session);
       return undefined;
     }
   }
@@ -2489,7 +2514,7 @@ export class WalletClientImpl implements WalletClient {
     pending: PendingOidcRedirectAuth
   ): void {
     try {
-      storage.set(Constants.redirectAuthStorageKey, JSON.stringify(pending));
+      storage.set(this.storageKeys.redirectAuth, JSON.stringify(pending));
     } catch (error) {
       throw new OMSWalletStorageError({
         operation: WalletOperation.startOidcRedirectAuth,
@@ -2500,7 +2525,7 @@ export class WalletClientImpl implements WalletClient {
   }
 
   private loadPendingOidcRedirectAuth(storage: StorageManager): PendingOidcRedirectAuth {
-    const stored = storage.get(Constants.redirectAuthStorageKey);
+    const stored = storage.get(this.storageKeys.redirectAuth);
     if (!stored) {
       throw new Error('No pending OIDC redirect auth found');
     }
@@ -2554,7 +2579,7 @@ export class WalletClientImpl implements WalletClient {
     pending: PendingOidcRedirectAuth
   ): void {
     try {
-      storage.set(Constants.redirectAuthStorageKey, JSON.stringify({ ...pending, consumed: true }));
+      storage.set(this.storageKeys.redirectAuth, JSON.stringify({ ...pending, consumed: true }));
     } catch (error) {
       throw new OMSWalletStorageError({
         operation: WalletOperation.completeOidcRedirectAuth,
@@ -3360,7 +3385,7 @@ export class WalletClientImpl implements WalletClient {
     const signerCredentialId = this.sessionSignerCredentialId;
     if (!signerCredentialId) return undefined;
     try {
-      const serialized = this.storage.get(Constants.sessionActivityStorageKey);
+      const serialized = this.storage.get(this.storageKeys.sessionActivity);
       if (!serialized) return undefined;
       const parsed = JSON.parse(serialized) as Record<string, unknown> | null;
       if (
@@ -3392,7 +3417,7 @@ export class WalletClientImpl implements WalletClient {
     if (written && written.signerCredentialId === signerCredentialId && written.at >= at) return;
     try {
       this.storage.set(
-        Constants.sessionActivityStorageKey,
+        this.storageKeys.sessionActivity,
         JSON.stringify({ signerCredentialId, at })
       );
       this.lastSharedSessionActivity = { signerCredentialId, at };
@@ -3564,7 +3589,7 @@ export class WalletClientImpl implements WalletClient {
       normalizeCredentialId(refreshed.signerCredentialId)
     ) {
       const record: StoredSessionRecord = { ...stored, expiresAt: refreshed.expiresAt };
-      this.storage.set(Constants.sessionStorageKey, JSON.stringify(record));
+      this.storage.set(this.storageKeys.session, JSON.stringify(record));
     }
     this.latestSessionExpiredEvent = undefined;
     this.sessionExpiresAt = refreshed.expiresAt;
@@ -3730,7 +3755,7 @@ export class WalletClientImpl implements WalletClient {
   }
 
   private matchesStoredSessionSnapshot(snapshot: StoredSessionSnapshot): boolean {
-    return this.storage.get(Constants.sessionStorageKey) === snapshot.serializedRecord;
+    return this.storage.get(this.storageKeys.session) === snapshot.serializedRecord;
   }
 
   private notifySessionExpired(event: OMSWalletSessionExpiredEvent): void {
@@ -3845,12 +3870,12 @@ function defaultRedirectAuthStorage(): StorageManager | undefined {
   return SessionStorageManager.isAvailable() ? new SessionStorageManager() : undefined;
 }
 
-function createApiKeyFetch(publishableKey: string): Fetch {
+function createApiKeyFetch(publishableKey: () => string): Fetch {
   return async (input: RequestInfo, init?: RequestInit): Promise<Response> => {
     const existingHeaders = (init?.headers ?? {}) as Record<string, string>;
     const headers: Record<string, string> = {
       ...existingHeaders,
-      'Api-Key': publishableKey
+      'Api-Key': publishableKey()
     };
 
     return globalThis.fetch(input, { ...init, headers });
@@ -3866,26 +3891,6 @@ function requireContractMethodName(method: string): void {
       `method must be a function name such as 'transfer', not a signature; got '${method}'`
     );
   }
-}
-
-/** Resolves or rejects with `promise`, or rejects with the abort reason once `signal` aborts. */
-function untilAborted<T>(promise: Promise<T>, signal: AbortSignal | undefined): Promise<T> {
-  if (!signal) return promise;
-  return new Promise<T>((resolve, reject) => {
-    const rejectWithReason = () => reject(signal.reason);
-    if (signal.aborted) return rejectWithReason();
-    signal.addEventListener('abort', rejectWithReason, { once: true });
-    promise.then(
-      (value) => {
-        signal.removeEventListener('abort', rejectWithReason);
-        resolve(value);
-      },
-      (error: unknown) => {
-        signal.removeEventListener('abort', rejectWithReason);
-        reject(error);
-      }
-    );
-  });
 }
 
 function isTronNetwork(network: SolanaNetwork | TronNetwork): network is TronNetwork {

@@ -3,7 +3,6 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import { WalletClientImpl } from '../src/clients/walletClient';
 import { Networks } from '../src/networks';
 import { MemoryStorageManager } from '../src/storageManager';
-import { Constants } from '../src/utils/constants';
 import { testWalletAccount } from './fixtures/walletAccount.js';
 import {
   MockSigner,
@@ -13,7 +12,8 @@ import {
   testCredential,
   testEnvironment,
   testStoredExpiryBounds,
-  waasErrorResponse
+  waasErrorResponse,
+  testStorageKeys
 } from './fixtures/helpers.js';
 
 afterEach(() => {
@@ -47,7 +47,7 @@ function stubWaas(handlers: Record<string, () => Response | Promise<Response>>) 
 }
 
 function storedExpiresAt(storage: MemoryStorageManager): string | undefined {
-  return JSON.parse(storage.get(Constants.sessionStorageKey) ?? 'null')?.expiresAt;
+  return JSON.parse(storage.get(testStorageKeys.session) ?? 'null')?.expiresAt;
 }
 
 function signMessage(wallet: WalletClientImpl) {
@@ -445,7 +445,7 @@ describe('WalletClient sliding credential expiry', () => {
     });
     const storage = new MemoryStorageManager();
     storage.set(
-      Constants.sessionStorageKey,
+      testStorageKeys.session,
       JSON.stringify({
         version: 2,
         scope: {
@@ -622,7 +622,7 @@ describe('WalletClient wallet activation and refreshed expiry', () => {
     });
     (signedIn as any).clearSessionExpiryTimer();
     const storage = new MemoryStorageManager();
-    storage.set(Constants.sessionStorageKey, seeded.get(Constants.sessionStorageKey) ?? '');
+    storage.set(testStorageKeys.session, seeded.get(testStorageKeys.session) ?? '');
     return storage;
   }
 
@@ -680,12 +680,10 @@ describe('WalletClient wallet activation and refreshed expiry', () => {
     await vi.waitFor(() => expect(requestCount(fetchMock, '/GetCredential')).toBe(2));
 
     await tabA.useWallet({ walletId: 'wallet-2' });
-    expect(JSON.parse(storage.get(Constants.sessionStorageKey) ?? 'null').wallet.id).toBe(
-      'wallet-2'
-    );
+    expect(JSON.parse(storage.get(testStorageKeys.session) ?? 'null').wallet.id).toBe('wallet-2');
 
     await (tabB as any).refreshSessionCredential();
-    const stored = JSON.parse(storage.get(Constants.sessionStorageKey) ?? 'null');
+    const stored = JSON.parse(storage.get(testStorageKeys.session) ?? 'null');
     expect(stored.wallet.id).toBe('wallet-2');
     expect(stored.expiresAt).toBe('2099-06-01T00:00:00Z');
     expect(tabB.activeWallet?.id).toBe('wallet-id');
@@ -794,7 +792,7 @@ describe('WalletClient session signer check', () => {
     expect(fetchMock).not.toHaveBeenCalled();
     expect(signer.preimages).toHaveLength(0);
     expect(storageSet).not.toHaveBeenCalled();
-    expect(storage.get(Constants.sessionStorageKey)).toBeNull();
+    expect(storage.get(testStorageKeys.session)).toBeNull();
     expect(wallet.session).toBeUndefined();
     // No operation reports the end, so listeners (such as the wagmi connector) learn it here.
     expect(onSessionExpired).toHaveBeenCalledOnce();
@@ -818,7 +816,7 @@ describe('WalletClient session signer check', () => {
     const signedIn = createWalletWithSession(walletAddress, undefined, { storage: seeded });
     (signedIn as any).clearSessionExpiryTimer();
     const storage = new MemoryStorageManager();
-    storage.set(Constants.sessionStorageKey, seeded.get(Constants.sessionStorageKey) ?? '');
+    storage.set(testStorageKeys.session, seeded.get(testStorageKeys.session) ?? '');
     const signer = new MockSigner(otherCredentialId);
     const wallet = new WalletClientImpl({
       publishableKey: 'publishable-key',
@@ -879,17 +877,17 @@ describe('WalletClient session signer check', () => {
 
     // Another tab signed in: it replaced the shared key and stored its own session.
     const newerSession = JSON.stringify({
-      ...JSON.parse(storage.get(Constants.sessionStorageKey) ?? '{}'),
+      ...JSON.parse(storage.get(testStorageKeys.session) ?? '{}'),
       signerCredentialId: otherCredentialId,
       expiresAt: '2026-03-01T00:00:00Z'
     });
-    storage.set(Constants.sessionStorageKey, newerSession);
+    storage.set(testStorageKeys.session, newerSession);
     signer.setCredential(otherCredentialId);
     await vi.advanceTimersByTimeAsync(120_000 + EXPIRY_CHECK_GRACE_MS);
 
     expect(fetchMock).not.toHaveBeenCalled();
     expect(wallet.session).toBeUndefined();
-    expect(storage.get(Constants.sessionStorageKey)).toBe(newerSession);
+    expect(storage.get(testStorageKeys.session)).toBe(newerSession);
     expect(signer.clear).not.toHaveBeenCalled();
   });
 
@@ -918,7 +916,7 @@ describe('WalletClient session signer check', () => {
       message: 'No active wallet session'
     });
     expect(fetchMock).not.toHaveBeenCalled();
-    expect(storage.get(Constants.sessionStorageKey)).toBeNull();
+    expect(storage.get(testStorageKeys.session)).toBeNull();
     expect(wallet.session).toBeUndefined();
     // The operation reports it; listeners are not notified.
     expect(onSessionExpired).not.toHaveBeenCalled();
@@ -980,7 +978,7 @@ describe('WalletClient expiry check bounds from sign-in', () => {
   }
 
   function storedRecord(storage: MemoryStorageManager): Record<string, unknown> | null {
-    return JSON.parse(storage.get(Constants.sessionStorageKey) ?? 'null');
+    return JSON.parse(storage.get(testStorageKeys.session) ?? 'null');
   }
 
   /** Copies the stored session into a new storage, as the next page load would find it. */
@@ -992,7 +990,7 @@ describe('WalletClient expiry check bounds from sign-in', () => {
     if (!record) throw new Error('No stored session');
     edit(record);
     const storage = new MemoryStorageManager();
-    storage.set(Constants.sessionStorageKey, JSON.stringify(record));
+    storage.set(testStorageKeys.session, JSON.stringify(record));
     return storage;
   }
 
@@ -1285,7 +1283,7 @@ describe('WalletClient expiry check bounds from sign-in', () => {
     await vi.advanceTimersByTimeAsync(0);
 
     expect(wallet.session).toBeUndefined();
-    expect(storage.get(Constants.sessionStorageKey)).toBeNull();
+    expect(storage.get(testStorageKeys.session)).toBeNull();
     expect(fetchMock).not.toHaveBeenCalled();
   });
 
@@ -1401,7 +1399,7 @@ describe('WalletClient expiry check bounds from sign-in', () => {
       const tab1ActivityAt = T0 + 5 * HOUR;
       await advanceTo(tab1ActivityAt);
       await signMessage(tab1);
-      expect(JSON.parse(storage.get(Constants.sessionActivityStorageKey) ?? 'null')).toEqual({
+      expect(JSON.parse(storage.get(testStorageKeys.sessionActivity) ?? 'null')).toEqual({
         signerCredentialId: sessionCredentialId,
         at: tab1ActivityAt
       });
@@ -1430,7 +1428,7 @@ describe('WalletClient expiry check bounds from sign-in', () => {
       const wallet = newClient(storage);
       await signIn(wallet, 180 * 24 * 60 * 60);
       storage.set(
-        Constants.sessionActivityStorageKey,
+        testStorageKeys.sessionActivity,
         JSON.stringify({ signerCredentialId: '0x04' + '33'.repeat(64), at: T0 + 5 * DAY })
       );
 
@@ -1453,10 +1451,10 @@ describe('WalletClient expiry check bounds from sign-in', () => {
       const wallet = newClient(storage);
       await signIn(wallet, 180 * 24 * 60 * 60);
       await signMessage(wallet);
-      expect(storage.get(Constants.sessionActivityStorageKey)).not.toBeNull();
+      expect(storage.get(testStorageKeys.sessionActivity)).not.toBeNull();
 
       await wallet.signOut();
-      expect(storage.get(Constants.sessionActivityStorageKey)).toBeNull();
+      expect(storage.get(testStorageKeys.sessionActivity)).toBeNull();
     });
 
     it("keeps another tab's shared activity when a newer sign-in there replaced this session", async () => {
@@ -1476,17 +1474,17 @@ describe('WalletClient expiry check bounds from sign-in', () => {
 
       // Another tab signed in, stored its session, and used it.
       storage.set(
-        Constants.sessionStorageKey,
+        testStorageKeys.session,
         JSON.stringify({ ...storedRecord(storage), signerCredentialId: otherCredentialId })
       );
       const sharedActivity = JSON.stringify({ signerCredentialId: otherCredentialId, at: T0 });
-      storage.set(Constants.sessionActivityStorageKey, sharedActivity);
+      storage.set(testStorageKeys.sessionActivity, sharedActivity);
       signer.setCredential(otherCredentialId);
       await vi.advanceTimersByTimeAsync(120_000 + EXPIRY_CHECK_GRACE_MS);
 
       expect(fetchMock).not.toHaveBeenCalled();
       expect(wallet.session).toBeUndefined();
-      expect(storage.get(Constants.sessionActivityStorageKey)).toBe(sharedActivity);
+      expect(storage.get(testStorageKeys.sessionActivity)).toBe(sharedActivity);
     });
   });
 });
@@ -1510,7 +1508,7 @@ describe('WalletClient restore read in the foreground', () => {
     const signedIn = createWalletWithSession(walletAddress, undefined, { storage: seeded });
     (signedIn as any).clearSessionExpiryTimer();
     const storage = new MemoryStorageManager();
-    storage.set(Constants.sessionStorageKey, seeded.get(Constants.sessionStorageKey) ?? '');
+    storage.set(testStorageKeys.session, seeded.get(testStorageKeys.session) ?? '');
     const wallet = new WalletClientImpl({
       publishableKey: 'publishable-key',
       projectId: 'project-id',

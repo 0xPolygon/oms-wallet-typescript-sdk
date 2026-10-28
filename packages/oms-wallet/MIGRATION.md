@@ -258,10 +258,36 @@ gained `claimableWallets`, `PendingWalletSelection` gained `claimableWallets` an
 interfaces (for example typed test doubles) need them. Update deep-equality assertions on sign-in
 results.
 
+### Instances of one project share one wallet
+
+Creating `OMSWallet` again for the same project and environment, with the default browser storage and
+signer or the same `storage`, `credentialSigner` and `redirectAuthStorage` objects, now returns the
+same wallet instead of a separate copy of the session. Signing out, switching wallets and session
+expiry through one instance apply to the other. A rotated publishable key of the same project keeps
+the session. Node defaults, and instances with different storage objects, stay separate sessions.
+Passing one `storage` object with a different `credentialSigner` or `redirectAuthStorage` now throws
+`OMSWalletValidationError`.
+
+### Stored sessions are kept per project and environment
+
+The session, its signing key, redirect state and activity record are stored under keys that name the
+project and wallet API origin, so several projects or environments on one origin no longer replace
+each other's session. Sessions saved by 0.3.x are discarded on upgrade anyway (see above), so there is
+nothing to migrate.
+
+### Signed requests go one at a time
+
+Requests signed with one credential, including the session expiry read, are sent one at a time, in
+order, and across tabs where the browser supports Web Locks. Concurrent calls no longer fail with a
+stale nonce (`PreconditionFailed`, 7206), but a burst of calls takes longer: each waits for the one
+before it, within its 30-second deadline.
+
 ### Wagmi connector
 
 `@polygonlabs/oms-wallet-wagmi-connector` now reads `wallet.activeWallet` instead of
 `wallet.walletAddress`. Upgrade both packages together; they are released with the same version.
+It now observes session expiry from `connect` on, so a wagmi config that never connects leaves no
+listener on the wallet.
 
 ## 0.3.0
 

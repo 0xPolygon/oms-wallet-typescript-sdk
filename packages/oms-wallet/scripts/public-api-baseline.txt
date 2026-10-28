@@ -274,13 +274,15 @@ export interface IndexerClient {
     getTransactionHistory(params: GetTransactionHistoryParams): Promise<TransactionHistoryResult>;
 }
 export declare class IndexerClientImpl implements IndexerClient {
-    private readonly publishableKey;
+    private publishableKey;
     private readonly environment;
     private readonly client;
     constructor(params: {
         publishableKey: string;
         environment: IndexerClientEnvironment;
     });
+    /** Sends later requests with `publishableKey`, a rotated key of the same project. */
+    usePublishableKey(publishableKey: string): void;
     getBalances(params: GetBalancesParams): Promise<BalancesResult>;
     getSolanaBalances(params: GetSolanaBalancesParams): Promise<SolanaBalancesResult>;
     getTronBalances(params: GetTronBalancesParams): Promise<TronBalancesResult>;
@@ -682,6 +684,13 @@ export interface OMSWalletParams {
 export declare class OMSWallet {
     readonly wallet: WalletClient;
     readonly indexer: IndexerClient;
+    /**
+     * Instances that already share their stored session, the same project and environment with the
+     * same storage, signer and redirect storage, share one wallet client, so they cannot drift apart.
+     * That covers the browser defaults (localStorage and the IndexedDB signing key) and the same
+     * custom objects. Instances whose session lives only in memory, such as the defaults in Node, stay
+     * separate sessions.
+     */
     constructor(params: OMSWalletParams);
 }
 

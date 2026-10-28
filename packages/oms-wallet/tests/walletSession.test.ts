@@ -5,7 +5,7 @@ import type { CredentialSigner } from '../src/credentialSigner';
 import { Networks } from '../src/networks';
 import { OMSWallet } from '../src/omsWallet';
 import { MemoryStorageManager } from '../src/storageManager';
-import { Constants } from '../src/utils/constants';
+import { sessionStorageKeys } from '../src/utils/constants';
 import { RequestUtils } from '../src/utils/requestUtils';
 import { WalletType } from '../src/types/waas';
 import { testWalletAccount } from './fixtures/walletAccount.js';
@@ -17,7 +17,8 @@ import {
   testEnvironment,
   testExpiryBounds,
   testStoredExpiryBounds,
-  waasErrorResponse
+  waasErrorResponse,
+  testStorageKeys
 } from './fixtures/helpers.js';
 
 /** Fixture signer with a `clear` spy for sign-out and expiry cleanup assertions. */
@@ -81,6 +82,9 @@ const omsSessionScope = {
   indexerGatewayUrl: 'https://sandbox-api.dev.polygon-dev.technology/v1/IndexerGateway/'
 };
 
+/** The storage keys of the project `OMSWallet` derives from `pk_dev_sdbx_project_key`. */
+const omsStorageKeys = sessionStorageKeys(omsSessionScope.projectId, omsSessionScope.walletApiUrl);
+
 function seedStoredSession(
   storage: MemoryStorageManager,
   params: {
@@ -91,13 +95,16 @@ function seedStoredSession(
     scope?: typeof directSessionScope;
     signerCredentialId?: string;
     signerKeyType?: CredentialSigner['signingAlgorithm'];
+    /** Where the record is stored; by default, under its scope's key. */
+    key?: string;
   } = {}
 ): void {
+  const scope = params.scope ?? directSessionScope;
   storage.set(
-    Constants.sessionStorageKey,
+    params.key ?? sessionStorageKeys(scope.projectId, scope.walletApiUrl).session,
     JSON.stringify({
       version: 2,
-      scope: params.scope ?? directSessionScope,
+      scope,
       wallet: testWalletAccount(
         params.walletId ?? 'wallet-id',
         params.walletAddress ?? '0x1111111111111111111111111111111111111111'
@@ -111,8 +118,11 @@ function seedStoredSession(
   );
 }
 
-function storedSession(storage: MemoryStorageManager): Record<string, any> | null {
-  return JSON.parse(storage.get(Constants.sessionStorageKey) ?? 'null');
+function storedSession(
+  storage: MemoryStorageManager,
+  key = testStorageKeys.session
+): Record<string, any> | null {
+  return JSON.parse(storage.get(key) ?? 'null');
 }
 
 describe('WalletClient session storage', () => {
@@ -146,7 +156,7 @@ describe('WalletClient session storage', () => {
       operation: 'wallet.signMessage',
       message: 'No active wallet session'
     });
-    expect(storage.get(Constants.sessionStorageKey)).toBeNull();
+    expect(storage.get(testStorageKeys.session)).toBeNull();
   });
 
   it('retains expired wallet metadata, notifies session expiry listeners, and throws a session expiry error', async () => {
@@ -408,7 +418,7 @@ describe('WalletClient session storage', () => {
     client.wallet.onSessionExpired(onSessionExpired);
 
     expect(client.wallet.session).toBeUndefined();
-    expect(storedSession(storage)).toMatchObject({
+    expect(storedSession(storage, omsStorageKeys.session)).toMatchObject({
       version: 2,
       wallet: { id: 'wallet-id' },
       expiresAt: '2000-01-01T00:00:00Z',
@@ -582,7 +592,7 @@ describe('WalletClient session storage', () => {
     await vi.advanceTimersByTimeAsync(120_000);
 
     expect(wallet.activeWallet?.address).toBeUndefined();
-    expect((wallet as any).storage.get(Constants.sessionStorageKey)).toBeNull();
+    expect((wallet as any).storage.get(testStorageKeys.session)).toBeNull();
     expect(signer.clear).toHaveBeenCalledOnce();
     expect(onSessionExpired).not.toHaveBeenCalled();
   });
@@ -715,7 +725,7 @@ describe('WalletClient session storage', () => {
     const storage = new MemoryStorageManager();
     const redirectAuthStorage = new MemoryStorageManager();
     redirectAuthStorage.set(
-      Constants.redirectAuthStorageKey,
+      testStorageKeys.redirectAuth,
       JSON.stringify({ verifier: 'old-verifier' })
     );
     const wallet = new WalletClientImpl({
@@ -746,8 +756,8 @@ describe('WalletClient session storage', () => {
       message: 'No pending email auth attempt'
     });
     expect(wallet.session).toBeUndefined();
-    expect(storage.get(Constants.sessionStorageKey)).toBeNull();
-    expect(redirectAuthStorage.get(Constants.redirectAuthStorageKey)).toBeNull();
+    expect(storage.get(testStorageKeys.session)).toBeNull();
+    expect(redirectAuthStorage.get(testStorageKeys.redirectAuth)).toBeNull();
     expect(signer.clear).toHaveBeenCalledOnce();
   });
 
@@ -757,7 +767,7 @@ describe('WalletClient session storage', () => {
     const redirectAuthStorage = new MemoryStorageManager();
     seedStoredSession(storage, { auth: emailAuth('old@example.com') });
     redirectAuthStorage.set(
-      Constants.redirectAuthStorageKey,
+      testStorageKeys.redirectAuth,
       JSON.stringify({ verifier: 'old-verifier' })
     );
 
@@ -785,8 +795,8 @@ describe('WalletClient session storage', () => {
     await wallet.startEmailAuth({ email: 'new@example.com' });
 
     expect(wallet.activeWallet?.address).toBeUndefined();
-    expect(storage.get(Constants.sessionStorageKey)).toBeNull();
-    expect(redirectAuthStorage.get(Constants.redirectAuthStorageKey)).toBeNull();
+    expect(storage.get(testStorageKeys.session)).toBeNull();
+    expect(redirectAuthStorage.get(testStorageKeys.redirectAuth)).toBeNull();
     expect(signer.clear).toHaveBeenCalledOnce();
   });
 
@@ -810,8 +820,8 @@ describe('WalletClient session storage', () => {
   ])('restores the full active wallet and session for $label from storage', ({ wallet, auth }) => {
     const storage = new MemoryStorageManager();
     seedStoredSession(storage, { auth, scope: omsSessionScope });
-    const record = JSON.parse(storage.get(Constants.sessionStorageKey)!);
-    storage.set(Constants.sessionStorageKey, JSON.stringify({ ...record, wallet }));
+    const record = JSON.parse(storage.get(omsStorageKeys.session)!);
+    storage.set(omsStorageKeys.session, JSON.stringify({ ...record, wallet }));
 
     const client = new OMSWallet({
       publishableKey: 'pk_dev_sdbx_project_key',
@@ -826,7 +836,7 @@ describe('WalletClient session storage', () => {
   it('discards version 1 session records saved by SDK 0.3.x', () => {
     const storage = new MemoryStorageManager();
     storage.set(
-      Constants.sessionStorageKey,
+      omsStorageKeys.session,
       JSON.stringify({
         version: 1,
         scope: omsSessionScope,
@@ -847,7 +857,7 @@ describe('WalletClient session storage', () => {
 
     expect(client.wallet.activeWallet).toBeUndefined();
     expect(client.wallet.session).toBeUndefined();
-    expect(storage.get(Constants.sessionStorageKey)).toBeFalsy();
+    expect(storage.get(omsStorageKeys.session)).toBeFalsy();
   });
 
   it('discards stored sessions whose wallet record is malformed or has no completed auth', () => {
@@ -859,8 +869,8 @@ describe('WalletClient session storage', () => {
     ]) {
       const storage = new MemoryStorageManager();
       seedStoredSession(storage, { scope: omsSessionScope });
-      const record = JSON.parse(storage.get(Constants.sessionStorageKey)!);
-      storage.set(Constants.sessionStorageKey, JSON.stringify({ ...record, ...override }));
+      const record = JSON.parse(storage.get(omsStorageKeys.session)!);
+      storage.set(omsStorageKeys.session, JSON.stringify({ ...record, ...override }));
 
       const client = new OMSWallet({
         publishableKey: 'pk_dev_sdbx_project_key',
@@ -870,7 +880,7 @@ describe('WalletClient session storage', () => {
 
       expect(client.wallet.activeWallet).toBeUndefined();
       expect(client.wallet.session).toBeUndefined();
-      expect(storage.get(Constants.sessionStorageKey)).toBeFalsy();
+      expect(storage.get(omsStorageKeys.session)).toBeFalsy();
     }
   });
 
@@ -884,9 +894,9 @@ describe('WalletClient session storage', () => {
       field: 'indexerGatewayUrl',
       scope: { ...omsSessionScope, indexerGatewayUrl: 'https://indexer.other.example/' }
     }
-  ])('discards stored sessions saved for a different $field', ({ scope }) => {
+  ])("discards a record under this project's key that names a different $field", ({ scope }) => {
     const storage = new MemoryStorageManager();
-    seedStoredSession(storage, { scope });
+    seedStoredSession(storage, { scope, key: omsStorageKeys.session });
 
     const client = new OMSWallet({
       publishableKey: 'pk_dev_sdbx_project_key',
@@ -896,7 +906,41 @@ describe('WalletClient session storage', () => {
 
     expect(client.wallet.activeWallet).toBeUndefined();
     expect(client.wallet.session).toBeUndefined();
-    expect(storage.get(Constants.sessionStorageKey)).toBeFalsy();
+    expect(storage.get(omsStorageKeys.session)).toBeFalsy();
+  });
+
+  it('keeps the sessions of other projects and environments on the same storage apart', () => {
+    // Two projects, or one project in two environments, used on one origin.
+    const storage = new MemoryStorageManager();
+    const otherProject = { ...omsSessionScope, projectId: 'prj_other' };
+    const otherEnvironment = {
+      projectId: 'prj_project',
+      walletApiUrl: 'https://sandbox-api.polygon.technology',
+      indexerGatewayUrl: 'https://sandbox-api.polygon.technology/v1/IndexerGateway/'
+    };
+    seedStoredSession(storage, { scope: otherProject, walletId: 'wallet-other-project' });
+    seedStoredSession(storage, { scope: otherEnvironment, walletId: 'wallet-other-environment' });
+    seedStoredSession(storage, { scope: omsSessionScope });
+    const keysOf = (scope: typeof omsSessionScope) =>
+      sessionStorageKeys(scope.projectId, scope.walletApiUrl).session;
+    const otherProjectRecord = storage.get(keysOf(otherProject));
+    const otherEnvironmentRecord = storage.get(keysOf(otherEnvironment));
+
+    const client = new OMSWallet({
+      publishableKey: 'pk_dev_sdbx_project_key',
+      storage,
+      credentialSigner: new MockSigner()
+    });
+
+    expect(client.wallet.activeWallet?.id).toBe('wallet-id');
+    expect(storage.get(keysOf(otherProject))).toBe(otherProjectRecord);
+    expect(storage.get(keysOf(otherEnvironment))).toBe(otherEnvironmentRecord);
+    expect(keysOf(otherProject)).toBe(
+      'omsWallet_session:prj_other@https://sandbox-api.dev.polygon-dev.technology'
+    );
+    expect(keysOf(otherEnvironment)).toBe(
+      'omsWallet_session:prj_project@https://sandbox-api.polygon.technology'
+    );
   });
 
   it('returns isolated active wallet snapshots', () => {
@@ -934,7 +978,7 @@ describe('WalletClient session storage', () => {
       operation: 'wallet.signMessage'
     });
     expect(wallet.activeWallet?.address).toBeUndefined();
-    expect(storage.get(Constants.sessionStorageKey)).toBeNull();
+    expect(storage.get(testStorageKeys.session)).toBeNull();
     expect(signer.clear).toHaveBeenCalledOnce();
   });
 
@@ -1218,13 +1262,17 @@ describe('WalletClient session storage', () => {
       throw new Error(`Unexpected request: ${url}`);
     });
     vi.stubGlobal('fetch', fetchMock);
+    // A new auth flow replaces the signing key, as the default WebCrypto signer does, so the new
+    // flow's requests do not wait for the old credential's request in flight.
+    const signer = new MockSigner();
+    signer.clear = vi.fn(async () => signer.setCredential('0x04' + '22'.repeat(64)));
 
     const wallet = new WalletClientImpl({
       publishableKey: 'publishable-key',
       projectId: 'project-id',
       environment: testEnvironment(),
       storage: new MemoryStorageManager(),
-      credentialSigner: new MockSigner()
+      credentialSigner: signer
     });
     seedEmailAuthAttempt(wallet);
     vi.spyOn(RequestUtils, 'hashEmailAuthAnswer').mockResolvedValue('old-answer');
@@ -1652,6 +1700,7 @@ describe('WalletClient session storage', () => {
     await expect(secondCreate).rejects.toMatchObject({
       code: 'OMS_WALLET_SELECTION_IN_FLIGHT'
     });
+    await waitForRequest(fetchMock, '/CreateWallet');
     expect(requestCount(fetchMock, '/CreateWallet')).toBe(1);
 
     resolveCreate(
@@ -1808,13 +1857,14 @@ describe('WalletClient session storage', () => {
       throw new Error(`Unexpected request: ${url}`);
     });
     vi.stubGlobal('fetch', fetchMock);
+    const signer = new MockSigner();
 
     const wallet = new WalletClientImpl({
       publishableKey: 'publishable-key',
       projectId: 'project-id',
       environment: testEnvironment(),
       storage: new MemoryStorageManager(),
-      credentialSigner: new MockSigner()
+      credentialSigner: signer
     });
     seedEmailAuthAttempt(wallet);
     vi.spyOn(RequestUtils, 'hashEmailAuthAnswer')
@@ -1823,6 +1873,10 @@ describe('WalletClient session storage', () => {
     const selection = await wallet.completeEmailAuth({ code: '111111', walletSelection: 'manual' });
 
     const staleCreate = selection.createAndSelectWallet({ reference: 'stale' });
+    await waitForRequest(fetchMock, '/CreateWallet');
+    // A new email auth starts with a new signing key, as `startEmailAuth` makes the default signer
+    // create, so its requests do not wait for the old credential's create in flight.
+    signer.setCredential('0x04' + '22'.repeat(64));
     seedEmailAuthAttempt(wallet, 'verifier-2', 'challenge-2');
     await wallet.completeEmailAuth({ code: '222222' });
     resolveCreate(
@@ -1940,7 +1994,7 @@ describe('WalletClient session storage', () => {
       message: 'No active wallet session'
     });
     expect(wallet.activeWallet?.address).toBeUndefined();
-    expect(storage.get(Constants.sessionStorageKey)).toBeNull();
+    expect(storage.get(testStorageKeys.session)).toBeNull();
   });
 
   it('lists every wallet page from an active session', async () => {

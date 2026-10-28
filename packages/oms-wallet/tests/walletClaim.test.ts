@@ -3,7 +3,6 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { WalletClientImpl } from '../src/clients/walletClient';
 import { OMSWalletRequestError } from '../src/errors';
 import { MemoryStorageManager } from '../src/storageManager';
-import { Constants } from '../src/utils/constants';
 import { WalletType } from '../src/types/waas';
 import { base64UrlEncodeString } from '../src/utils/oidcRedirect';
 import {
@@ -14,7 +13,8 @@ import {
   testCredential,
   testEnvironment,
   waasErrorResponse,
-  waitForRequest
+  waitForRequest,
+  testStorageKeys
 } from './fixtures/helpers.js';
 
 const ownedEthereum = waasWallet('wallet-owned-eth', WalletType.Ethereum, '0x' + '11'.repeat(20));
@@ -177,7 +177,7 @@ describe('WalletClient claimable wallets', () => {
     expectAccountNotFound(error, 'wallet.completeEmailAuth');
     expect(requestCount(fetchMock, '/CreateWallet')).toBe(0);
     expect(wallet.activeWallet).toBeUndefined();
-    expect(storage.get(Constants.sessionStorageKey)).toBeNull();
+    expect(storage.get(testStorageKeys.session)).toBeNull();
   });
 
   it('exposes claimable wallets of the requested type on a pending selection and claims one', async () => {
@@ -247,7 +247,7 @@ describe('WalletClient claimable wallets', () => {
 
     expectAccountNotFound(error, 'wallet.pendingWalletSelection.claimAndSelectWallet');
     expect(wallet.activeWallet).toBeUndefined();
-    expect(storage.get(Constants.sessionStorageKey)).toBeNull();
+    expect(storage.get(testStorageKeys.session)).toBeNull();
     await expect(selection.selectWallet({ walletId: 'wallet-owned-eth' })).resolves.toEqual({
       wallet: account(ownedEthereum)
     });
@@ -279,7 +279,7 @@ describe('WalletClient claimable wallets', () => {
     const storage = new MemoryStorageManager();
     mockWaas({ claimWallet: () => accountNotFoundResponse() });
     const wallet = createWalletWithSession(undefined, undefined, { storage });
-    const before = storage.get(Constants.sessionStorageKey);
+    const before = storage.get(testStorageKeys.session);
 
     const error = await wallet
       .claimWallet({ walletId: 'wallet-claimable-eth' })
@@ -287,7 +287,7 @@ describe('WalletClient claimable wallets', () => {
 
     expectAccountNotFound(error, 'wallet.claimWallet');
     expect(wallet.activeWallet?.id).toBe('wallet-id');
-    expect(storage.get(Constants.sessionStorageKey)).toBe(before);
+    expect(storage.get(testStorageKeys.session)).toBe(before);
   });
 
   it('claimWallet does not persist a claim that resolves after sign-out', async () => {
@@ -311,7 +311,7 @@ describe('WalletClient claimable wallets', () => {
       operation: 'wallet.claimWallet'
     });
     expect(wallet.activeWallet).toBeUndefined();
-    expect(storage.get(Constants.sessionStorageKey)).toBeNull();
+    expect(storage.get(testStorageKeys.session)).toBeNull();
   });
 
   it('claimWallet requires an active session while a manual selection is pending', async () => {
@@ -432,7 +432,7 @@ function seedEmailAuthAttempt(wallet: WalletClientImpl): void {
 }
 
 function storedSession(storage: MemoryStorageManager): Record<string, any> | null {
-  return JSON.parse(storage.get(Constants.sessionStorageKey) ?? 'null');
+  return JSON.parse(storage.get(testStorageKeys.session) ?? 'null');
 }
 
 function fakeJwt(payload: Record<string, unknown>): string {

@@ -858,6 +858,14 @@ const omsWallet = new OMSWallet({
 
 OIDC redirect auth uses separate transient storage for verifier/state data. In browsers it defaults to `sessionStorage`; pass `redirectAuthStorage` to override it. Final wallet session metadata continues to use the configured `storage`.
 
+### Instances
+
+Creating `OMSWallet` again for the same project and environment returns the same wallet whenever the instances already share their stored session: in a browser with the default storage and signer, or with the same `storage`, `credentialSigner` and `redirectAuthStorage` objects. Both instances then see the same active wallet, session, sign-out and expiry events, so React StrictMode, hot reloads and per-screen construction cannot leave copies that drift apart. A new publishable key for the same project and environment (a rotated key) keeps the session, and later requests send the new key.
+
+Instances whose session lives only in memory stay separate sessions: the defaults in Node, or instances given different storage objects, such as one per user on a server. Passing one `storage` object to a second instance with a different `credentialSigner` or `redirectAuthStorage` throws `OMSWalletValidationError`, because the two would overwrite each other's session.
+
+Stored sessions are kept per project and wallet API origin, so several projects, or one project in several environments, can be used on one origin.
+
 ## Reference
 
 ### Networks
@@ -904,7 +912,7 @@ Public methods throw `OMSWalletError` subclasses with stable SDK fields such as 
 
 For transaction writes, `OMS_TRANSACTION_EXECUTION_UNCONFIRMED` means the SDK has a `txnId` from preparation, but the execute request failed before the SDK could confirm whether the transaction was submitted; do not blindly resend the same write. If the wallet API rejects the session credential (WaaS `KeyNotFound` 7202 or `KeyExpired` 7203), the write fails with `OMS_SESSION_EXPIRED` instead; nothing was submitted. If the wallet API refuses the transaction because simulation shows it would revert (WaaS `TransactionSimulationFailed`, `upstreamError.code` `'7314'`), the write fails with `OMSWalletRequestError` (`OMS_REQUEST_FAILED`, status 400) instead: the transaction was closed as failed and never submitted. Execute requests the wallet API refuses before submitting anything also fail with `OMS_REQUEST_FAILED`: `upstreamError.code` `'7201'` (invalid request signature), `'7205'` (credential usage limit exceeded), `'7206'` (nonce still rejected after the resends below), or `'7207'` (`Unauthorized`), and so do Tron execute requests refused before broadcast with `'7200'` (`InvalidRequest`, for example an insufficient balance) or `'7310'` (`InvalidFeeOption`, for example a resource cost above the quote), and execute requests the SDK never sent because signing failed or the request deadline passed first. Signed wallet API requests time out after 30 seconds, including their wait for other session requests and their signing. `OMS_TRANSACTION_STATUS_LOOKUP_FAILED` means the transaction was submitted but status polling failed, so retry status lookup with the returned `txnId`. `retryable` describes the failed SDK operation, not the whole user intent.
 
-When the wallet API rejects a signed request's nonce (WaaS `PreconditionFailed`, 7206), which concurrent requests can cause, the SDK signs the request again with a fresh nonce and resends it, up to 2 times, before the error surfaces. The wallet API rejects the nonce before running the method, so this applies to transaction writes too.
+Requests signed with one credential are sent one at a time, in order, including across tabs where the browser supports Web Locks, so the wallet API does not reject their nonces. When the wallet API rejects a signed request's nonce (WaaS `PreconditionFailed`, 7206), which concurrent requests can cause, the SDK signs the request again with a fresh nonce and resends it, up to 2 times, before the error surfaces. The wallet API rejects the nonce before running the method, so this applies to transaction writes too.
 
 Wallet import reports an already-managed address as `OMS_WALLET_ADDRESS_ALREADY_IMPORTED` and a
 missing, malformed, stale, or untrusted enclave attestation as
