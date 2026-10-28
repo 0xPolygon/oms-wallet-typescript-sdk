@@ -141,7 +141,7 @@ import {
 import { TronNetworks } from '../networks.js';
 import { isOmsRelayOidcProvider, resolveOidcProviderConfig } from '../oidc.js';
 import { WalletOperation } from '../operations.js';
-import { createSignedFetch } from '../signedFetch.js';
+import { createDeadlineFetch, createSignedFetch, wasRequestSent } from '../signedFetch.js';
 import { createDefaultStorage, SessionStorageManager } from '../storageManager.js';
 import { feeOptionSelection } from '../types/transactionTypes.js';
 import {
@@ -466,8 +466,11 @@ export class WalletClientImpl implements WalletClient {
   private dispatchingSessionExpiredEvent = false;
   private credentialRefresh:
     { revision: number; promise: Promise<CredentialRefreshResult> } | undefined;
-  /** Set once WaaS answers `GetCredential` with `WebrpcBadRoute`; kept for the client's lifetime. */
-  private credentialRefreshUnsupported = false;
+  /**
+   * Until when, in epoch ms, the expiry is not read after WaaS answered `GetCredential` with
+   * `WebrpcBadRoute` (a server without it, or a misrouted request); it is asked again after that.
+   */
+  private credentialRefreshUnsupportedUntil: number | undefined;
   /**
    * When the session expiry was last read from WaaS in this client, in epoch ms: the send time of
    * the sign-in `CompleteAuth`, or the completion of the last successful `GetCredential`. Unset
@@ -555,15 +558,18 @@ export class WalletClientImpl implements WalletClient {
       this.projectId
     );
     const sessionFetch = this.sessionActivityFetch(this.sessionRequestFetch(signedFetch));
-    this.client = new WaasClient(params.environment.walletApiUrl, sessionFetch);
+    this.client = new WaasClient(
+      params.environment.walletApiUrl,
+      createDeadlineFetch(sessionFetch)
+    );
     this.credentialClient = new WaasClient(
       params.environment.walletApiUrl,
-      this.credentialReadFetch(signedFetch)
+      createDeadlineFetch(this.credentialReadFetch(signedFetch))
     );
     this.walletImportClient = params.walletImportTrustedPcr0s
       ? new WaasClient(
           params.environment.walletApiUrl,
-          createAttestedFetch(sessionFetch, params.walletImportTrustedPcr0s)
+          createDeadlineFetch(createAttestedFetch(sessionFetch, params.walletImportTrustedPcr0s))
         )
       : undefined;
     this.publicClient = new WaasPublicClient(
@@ -2646,10 +2652,17 @@ export class WalletClientImpl implements WalletClient {
 
     let executed: ExecuteResponse;
     const revision = this.sessionRevision;
+    // Records whether the Execute request reached `fetch`; it aborts with nothing else.
+    const executeSignal = new AbortController().signal;
     try {
-      executed = await this.client.execute(request);
+      executed = await this.client.execute(request, undefined, executeSignal);
     } catch (error) {
       const sdkError = toOMSWalletError(error, WalletOperation.execute);
+      if (!wasRequestSent(executeSignal)) {
+        // The request never left this client: it timed out at a request gate or while it was
+        // signed, or signing failed. Nothing was submitted, so report the request failure as is.
+        throw sdkError;
+      }
       if (isCredentialEndedError(sdkError) && this.rejectedSessionCredentialRevision === revision) {
         // WaaS rejected the session credential before running Execute, so nothing was submitted;
         // the operation maps this to `OMS_SESSION_EXPIRED` and ends the session.
@@ -2668,6 +2681,15 @@ export class WalletClientImpl implements WalletClient {
         // (InvalidSignature 7201, UsageLimitExceeded 7205, PreconditionFailed 7206 after the
         // stale-nonce resends, Unauthorized 7207 for a revoked credential), or the handler's checks
         // before submission (Unauthorized 7207). Report the request failure as is.
+        throw sdkError;
+      }
+      if (
+        typeof params.network === 'string' &&
+        isTronNetwork(params.network) &&
+        sdkError.upstreamError?.service === 'waas' &&
+        TRON_EXECUTE_REFUSED_BEFORE_SUBMISSION_CODES.has(sdkError.upstreamError.code ?? '')
+      ) {
+        // A Tron Execute refused while WaaS priced it again, before anything was broadcast.
         throw sdkError;
       }
       throw new OMSWalletTransactionError({
@@ -3251,7 +3273,7 @@ export class WalletClientImpl implements WalletClient {
       await this.expireSession(session);
       return;
     }
-    if (!this.credentialRefreshUnsupported) {
+    if (!this.isCredentialRefreshUnsupported()) {
       // Reading the expiry extends an active credential, so ask only once the session would have
       // ended on the server.
       const checkAt = this.sessionExpiryCheckAt(session);
@@ -3420,7 +3442,7 @@ export class WalletClientImpl implements WalletClient {
     origin: CredentialReadOrigin = 'background'
   ): Promise<CredentialRefreshResult> {
     if (!this.activeWalletAccount) return Promise.resolve({ outcome: 'stale' });
-    if (this.credentialRefreshUnsupported) return Promise.resolve({ outcome: 'unsupported' });
+    if (this.isCredentialRefreshUnsupported()) return Promise.resolve({ outcome: 'unsupported' });
     const revision = this.sessionRevision;
     if (this.credentialRefresh?.revision === revision) return this.credentialRefresh.promise;
 
@@ -3480,7 +3502,8 @@ export class WalletClientImpl implements WalletClient {
       expiresAt = response.credential?.expiresAt;
     } catch (error) {
       if (isBadRouteError(error)) {
-        this.credentialRefreshUnsupported = true;
+        this.credentialRefreshUnsupportedUntil =
+          Date.now() + CREDENTIAL_REFRESH_UNSUPPORTED_RETRY_MS;
         return { outcome: isCurrent() ? 'unsupported' : 'stale' };
       }
       if (!isCurrent()) return { outcome: 'stale' };
@@ -3554,11 +3577,13 @@ export class WalletClientImpl implements WalletClient {
    */
   private sessionRequestFetch(fetch: Fetch): Fetch {
     return async (input: RequestInfo, init?: RequestInit): Promise<Response> => {
-      while (this.credentialReadInFlight) await this.credentialReadInFlight;
+      const signal = init?.signal ?? undefined;
+      while (this.credentialReadInFlight) await untilAborted(this.credentialReadInFlight, signal);
       this.signedSessionRequestsInFlight += 1;
-      try {
-        return await fetch(input, init);
-      } finally {
+      let inFlight = true;
+      const finish = () => {
+        if (!inFlight) return;
+        inFlight = false;
         // Recorded at completion: a request can reach WaaS, and extend the credential, any time
         // until then.
         this.recordSessionActivity(Date.now());
@@ -3566,6 +3591,18 @@ export class WalletClientImpl implements WalletClient {
         if (this.signedSessionRequestsInFlight === 0) {
           for (const resume of this.signedSessionRequestsIdleWaiters.splice(0)) resume();
         }
+      };
+      // Aborted before it was sent, the request can no longer reach WaaS, so it stops holding up
+      // expiry reads even while a slow signer is still finishing.
+      const finishIfNotSent = () => {
+        if (signal && !wasRequestSent(signal)) finish();
+      };
+      signal?.addEventListener('abort', finishIfNotSent, { once: true });
+      try {
+        return await fetch(input, init);
+      } finally {
+        signal?.removeEventListener('abort', finishIfNotSent);
+        finish();
       }
     };
   }
@@ -3575,15 +3612,20 @@ export class WalletClientImpl implements WalletClient {
     return async (input: RequestInfo, init?: RequestInit): Promise<Response> => {
       const recordsActivity = this.nextCredentialReadRecordsActivity;
       this.nextCredentialReadRecordsActivity = true;
+      const signal = init?.signal ?? undefined;
       while (this.signedSessionRequestsInFlight > 0 || this.credentialReadInFlight) {
-        await (this.credentialReadInFlight ??
-          new Promise<void>((resume) => this.signedSessionRequestsIdleWaiters.push(resume)));
+        await untilAborted(
+          this.credentialReadInFlight ??
+            new Promise<void>((resume) => this.signedSessionRequestsIdleWaiters.push(resume)),
+          signal
+        );
       }
       let release!: () => void;
       this.credentialReadInFlight = new Promise<void>((resolve) => (release = resolve));
-      try {
-        return await fetch(input, init);
-      } finally {
+      let inFlight = true;
+      const finish = () => {
+        if (!inFlight) return;
+        inFlight = false;
         // A read is session activity too: WaaS extends an active credential when it receives it.
         // Reads never overlap other session requests, so a successful read's completion is also
         // when its expiry was current.
@@ -3592,6 +3634,18 @@ export class WalletClientImpl implements WalletClient {
         if (recordsActivity) this.recordSessionActivity(completedAt);
         this.credentialReadInFlight = undefined;
         release();
+      };
+      // As for session requests: a read aborted before it was sent releases the requests waiting
+      // for it.
+      const finishIfNotSent = () => {
+        if (signal && !wasRequestSent(signal)) finish();
+      };
+      signal?.addEventListener('abort', finishIfNotSent, { once: true });
+      try {
+        return await fetch(input, init);
+      } finally {
+        signal?.removeEventListener('abort', finishIfNotSent);
+        finish();
       }
     };
   }
@@ -3625,8 +3679,13 @@ export class WalletClientImpl implements WalletClient {
     };
   }
 
+  private isCredentialRefreshUnsupported(): boolean {
+    const until = this.credentialRefreshUnsupportedUntil;
+    return until !== undefined && Date.now() < until;
+  }
+
   private refreshSessionCredentialIfDue(): void {
-    if (!this.activeWalletAccount || this.credentialRefreshUnsupported) return;
+    if (!this.activeWalletAccount || this.isCredentialRefreshUnsupported()) return;
     const lastRefreshAt = this.lastCredentialRefreshAt;
     if (
       lastRefreshAt !== undefined &&
@@ -3807,6 +3866,26 @@ function requireContractMethodName(method: string): void {
       `method must be a function name such as 'transfer', not a signature; got '${method}'`
     );
   }
+}
+
+/** Resolves or rejects with `promise`, or rejects with the abort reason once `signal` aborts. */
+function untilAborted<T>(promise: Promise<T>, signal: AbortSignal | undefined): Promise<T> {
+  if (!signal) return promise;
+  return new Promise<T>((resolve, reject) => {
+    const rejectWithReason = () => reject(signal.reason);
+    if (signal.aborted) return rejectWithReason();
+    signal.addEventListener('abort', rejectWithReason, { once: true });
+    promise.then(
+      (value) => {
+        signal.removeEventListener('abort', rejectWithReason);
+        resolve(value);
+      },
+      (error: unknown) => {
+        signal.removeEventListener('abort', rejectWithReason);
+        reject(error);
+      }
+    );
+  });
 }
 
 function isTronNetwork(network: SolanaNetwork | TronNetwork): network is TronNetwork {
@@ -4057,6 +4136,16 @@ const EXECUTE_REFUSED_BEFORE_SUBMISSION_CODES: ReadonlySet<string> = new Set([
   '7206',
   '7207'
 ]);
+/**
+ * WaaS codes with which a Tron Execute is refused before anything is submitted. In WaaS v1.2.0,
+ * `executeTron` raises InvalidRequest (7200) and InvalidFeeOption (7310) only while it prices the
+ * transaction again, before it claims the transaction as pending and broadcasts it
+ * (rpc/tron_transaction.go `executeTron`). TransactionExpired is left out: WaaS also returns it for a
+ * transaction an earlier Execute already claimed.
+ */
+const TRON_EXECUTE_REFUSED_BEFORE_SUBMISSION_CODES: ReadonlySet<string> = new Set(['7200', '7310']);
+/** After WaaS answers GetCredential with WebrpcBadRoute, how long until it is asked again. */
+const CREDENTIAL_REFRESH_UNSUPPORTED_RETRY_MS = 15 * 60_000;
 const MAX_SESSION_EXPIRY_TIMER_MS = 2_147_483_647;
 /** How long after the predicted server expiry the expiry timer asks WaaS (5 minutes). */
 const SESSION_EXPIRY_CHECK_GRACE_MS = 5 * 60_000;

@@ -472,6 +472,55 @@ describe('WalletClient Tron', () => {
   });
 });
 
+describe('WalletClient Tron Execute refused before broadcast', () => {
+  /** A Tron transfer whose Execute WaaS answers with `error`. */
+  async function sendTronTransferRejectedWith(error: { name: string; code: number }) {
+    const fetchMock = vi.fn(async (input: RequestInfo | URL) => {
+      const url = input.toString();
+      if (url.endsWith('/PrepareTronTransaction')) {
+        return jsonResponse(sponsoredPrepareResponse('txn-trx'));
+      }
+      if (url.endsWith('/Execute')) {
+        return jsonResponse({ ...error, message: error.name, status: 400 }, 400);
+      }
+      throw new Error(`Unexpected request: ${url}`);
+    });
+    vi.stubGlobal('fetch', fetchMock);
+    const wallet = createTronWalletWithSession();
+    return wallet
+      .sendTronTransaction({ network: TronNetworks.nile, to: tronRecipient, value: 1_000_000n })
+      .catch((caught: unknown) => caught);
+  }
+
+  it.each([
+    { name: 'InvalidRequest', code: 7200 },
+    { name: 'InvalidFeeOption', code: 7310 }
+  ])('reports a Tron Execute refused with $name ($code) as a request failure', async (error) => {
+    // WaaS raises these while it prices the transaction again, before it claims and broadcasts it.
+    const caught = await sendTronTransferRejectedWith(error);
+
+    expect(caught).toMatchObject({
+      name: 'OMSWalletRequestError',
+      code: 'OMS_REQUEST_FAILED',
+      operation: 'wallet.execute',
+      status: 400,
+      upstreamError: { service: 'waas', name: error.name, code: String(error.code) }
+    });
+    expect((caught as { txnId?: string }).txnId).toBeUndefined();
+  });
+
+  it('keeps a Tron Execute answered with TransactionExpired unconfirmed', async () => {
+    // WaaS also returns TransactionExpired for a transaction an earlier Execute already claimed.
+    const caught = await sendTronTransferRejectedWith({ name: 'TransactionExpired', code: 7309 });
+
+    expect(caught).toMatchObject({
+      code: 'OMS_TRANSACTION_EXECUTION_UNCONFIRMED',
+      txnId: 'txn-trx',
+      upstreamError: { service: 'waas', name: 'TransactionExpired', code: '7309' }
+    });
+  });
+});
+
 function sponsoredPrepareResponse(txnId: string) {
   return {
     txnId,

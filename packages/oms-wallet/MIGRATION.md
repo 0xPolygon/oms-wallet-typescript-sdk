@@ -96,8 +96,19 @@ When the wallet API refuses to submit a transaction because simulation shows it 
 there is no `txnId` to check. The same applies when the wallet API refuses the execute request
 before submitting anything: an invalid request signature (`'7201'`, status 400), an exceeded
 credential usage limit (`'7205'`, status 429), a nonce still rejected after the SDK's resends
-(`'7206'`, status 412), or `Unauthorized` (`'7207'`, status 401). Other execute failures keep
+(`'7206'`, status 412), or `Unauthorized` (`'7207'`, status 401). A Tron execute refused while the
+wallet API prices it again (`'7200'` `InvalidRequest` or `'7310'` `InvalidFeeOption`, status 400)
+and an execute request the SDK never sent (signing failed, or the 30-second request deadline passed
+before it was sent) fail the same way. Other execute failures keep
 `OMS_TRANSACTION_EXECUTION_UNCONFIRMED`.
+
+### Signed requests time out after 30 seconds
+
+Requests signed with the session credential, including the expiry read, now fail with
+`OMS_REQUEST_FAILED` (`retryable: true`) when they get no response within 30 seconds, counted from
+the start, including the wait for other session requests and the signing. Previously a request that
+never completed could block every later wallet call. An execute request that was already sent when it
+timed out keeps `OMS_TRANSACTION_EXECUTION_UNCONFIRMED`.
 
 ### Invalid Ethereum wallet addresses are rejected
 

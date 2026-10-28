@@ -45,7 +45,7 @@ WaaS requires each signed request's nonce to be higher than the credential's las
 |---|---|---|
 | `refreshed` | WaaS returned a parseable `credential.expiresAt` | Session expiry set (later or earlier), timer rescheduled. When the stored record is this credential's, only its expiry is updated, so a wallet another tab activated stays stored; a record of another credential is left alone |
 | `ended` | `KeyNotFound` (7202), `KeyExpired` (7203), or `Unauthorized` (7207, credential revoked) | Session ended as on local expiry; `onSessionExpired` fires once |
-| `unsupported` | `WebrpcBadRoute` (servers without `GetCredential`) | Local expiry kept; remembered for the client's lifetime, so not retried |
+| `unsupported` | `WebrpcBadRoute` (servers without `GetCredential`, or a misrouted request) | Local expiry kept; not asked again for 15 minutes, then the next read asks once more |
 | `unavailable` | Network or any other error | Session unchanged |
 | `stale` | Session replaced or signed out while in flight | Result ignored |
 | `signerMismatch` | The signer no longer holds the session's key (or reports none); no request was sent | Session cleared as by a protected operation; an operation fails with `No active wallet session`. A background read (timer, restore, 6-hour, after `Unauthorized`) fires `onSessionExpired` instead, as nothing else reports it |

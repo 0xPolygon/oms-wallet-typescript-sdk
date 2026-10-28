@@ -251,7 +251,7 @@ describe('WalletClient sliding credential expiry', () => {
     }
   );
 
-  it('keeps local expiry on a server without GetCredential and does not ask again', async () => {
+  it('keeps local expiry on a server without GetCredential and does not ask again within 15 minutes', async () => {
     vi.useFakeTimers();
     vi.setSystemTime(new Date('2026-01-01T00:00:00Z'));
     const fetchMock = stubWaas({ '/GetCredential': () => waasErrorResponse('WebrpcBadRoute') });
@@ -275,6 +275,32 @@ describe('WalletClient sliding credential expiry', () => {
     await expect(signMessage(wallet)).rejects.toMatchObject({ code: 'OMS_SESSION_EXPIRED' });
 
     expect(requestCount(fetchMock, '/GetCredential')).toBe(1);
+  });
+
+  it('asks for GetCredential again once 15 minutes have passed since it was missing', async () => {
+    // A routing error during a deploy also answers WebrpcBadRoute, so the answer is not final.
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date('2026-01-01T00:00:00Z'));
+    let getCredential = () => waasErrorResponse('WebrpcBadRoute');
+    const fetchMock = stubWaas({ '/GetCredential': () => getCredential() });
+    const wallet = createWalletWithSession(walletAddress, undefined, {
+      expiresAt: '2026-01-01T00:02:00Z'
+    });
+    await vi.advanceTimersByTimeAsync(120_000 + EXPIRY_CHECK_GRACE_MS);
+    expect(wallet.session).toBeUndefined();
+
+    await vi.advanceTimersByTimeAsync(15 * 60_000);
+    getCredential = () => credentialResponse('2026-02-01T00:00:00Z');
+    (wallet as any).persistSession(testWalletAccount('wallet-id', walletAddress), {
+      expiresAt: '2000-01-01T00:00:00Z',
+      auth: { type: 'email', email: 'user@example.com' },
+      signerCredentialId: '0x04' + '11'.repeat(64),
+      signerKeyType: 'ecdsa-p256-sha256'
+    });
+    await expect(signMessage(wallet)).rejects.toThrow();
+
+    expect(requestCount(fetchMock, '/GetCredential')).toBe(2);
+    expect(wallet.session?.expiresAt).toBe('2026-02-01T00:00:00Z');
   });
 
   it('keeps the session and checks again later when WaaS is unreachable at expiry', async () => {
@@ -1328,10 +1354,10 @@ describe('WalletClient expiry check bounds from sign-in', () => {
     const fetchMock = stubWaas({
       ...emailSignInHandlers(T0 + 10 * DAY),
       '/GetCredential': () => waasErrorResponse('KeyExpired'),
-      // The request takes two hours to reach WaaS and complete.
+      // The request takes 20 seconds to reach WaaS and complete, within the request deadline.
       '/SignMessage': () =>
         new Promise<Response>((resolve) =>
-          setTimeout(() => resolve(jsonResponse({ signature: '0xsigned' })), 2 * HOUR)
+          setTimeout(() => resolve(jsonResponse({ signature: '0xsigned' })), 20_000)
         )
     });
     const wallet = newClient(new MemoryStorageManager());
@@ -1339,10 +1365,10 @@ describe('WalletClient expiry check bounds from sign-in', () => {
 
     await advanceTo(T0 + HOUR);
     const signed = signMessage(wallet);
-    await advanceTo(T0 + 3 * HOUR);
+    await advanceTo(T0 + HOUR + 20_000);
     await expect(signed).resolves.toBe('0xsigned');
 
-    const checkAt = T0 + 3 * HOUR + 10 * DAY + EXPIRY_CHECK_GRACE_MS;
+    const checkAt = T0 + HOUR + 20_000 + 10 * DAY + EXPIRY_CHECK_GRACE_MS;
     await advanceTo(checkAt - 1);
     expect(requestCount(fetchMock, '/GetCredential')).toBe(0);
 
@@ -1555,5 +1581,140 @@ describe('WalletClient restore read in the foreground', () => {
     const { fetchMock } = restoreSession();
     await settle();
     expect(requestCount(fetchMock, '/GetCredential')).toBe(1);
+  });
+});
+
+describe('WalletClient request deadline', () => {
+  /** A signer whose signing the test can hold up or fail. */
+  class ControlledSigner extends MockSigner {
+    signing: 'normal' | 'hang' | 'fail' = 'normal';
+    private finish?: () => void;
+
+    async sign(preimage: string): Promise<string> {
+      if (this.signing === 'fail') throw new Error('Signer unavailable');
+      if (this.signing === 'hang') await new Promise<void>((resolve) => (this.finish = resolve));
+      return super.sign(preimage);
+    }
+
+    finishSigning(): void {
+      this.finish?.();
+    }
+  }
+
+  /**
+   * Routes WaaS requests like `stubWaas`; a handler returning `undefined` leaves the request
+   * unanswered until it is aborted, as `fetch` does.
+   */
+  function stubWaasWithSignal(handlers: Record<string, () => Response | undefined>) {
+    const fetchMock = vi.fn((input: RequestInfo | URL, init?: RequestInit) => {
+      const endpoint = '/' + input.toString().split('/').pop();
+      const handler = handlers[endpoint];
+      if (!handler) return Promise.reject(new Error(`Unexpected request: ${endpoint}`));
+      const response = handler();
+      if (response) return Promise.resolve(response);
+      return new Promise<Response>((_, reject) => {
+        init?.signal?.addEventListener('abort', () => reject(init.signal?.reason));
+      });
+    });
+    vi.stubGlobal('fetch', fetchMock);
+    return fetchMock;
+  }
+
+  const sponsoredPrepareResponse = () =>
+    jsonResponse({
+      txnId: 'txn-1',
+      status: 'quoted',
+      feeOptions: [],
+      sponsored: true,
+      expiresAt: '2099-01-01T00:00:00Z'
+    });
+
+  function sendTransaction(wallet: WalletClientImpl) {
+    return wallet
+      .sendTransaction({ network: Networks.polygon, to: walletAddress, value: 0n })
+      .catch((caught: unknown) => caught);
+  }
+
+  it('fails a request WaaS does not answer within 30 seconds and lets later requests run', async () => {
+    vi.useFakeTimers();
+    let answer = false;
+    stubWaasWithSignal({
+      '/SignMessage': () => (answer ? jsonResponse({ signature: '0xsigned' }) : undefined),
+      '/GetCredential': () => credentialResponse('2099-01-01T00:00:00Z')
+    });
+    const wallet = createWalletWithSession(walletAddress);
+
+    const unanswered = signMessage(wallet).catch((caught: unknown) => caught);
+    await vi.advanceTimersByTimeAsync(30_000);
+
+    expect(await unanswered).toMatchObject({
+      code: 'OMS_REQUEST_FAILED',
+      operation: 'wallet.signMessage'
+    });
+    expect((wallet as any).signedSessionRequestsInFlight).toBe(0);
+    answer = true;
+    await expect(signMessage(wallet)).resolves.toBe('0xsigned');
+  });
+
+  it('sends nothing when signing finishes after the deadline, and does not hold up expiry reads', async () => {
+    vi.useFakeTimers();
+    const fetchMock = stubWaasWithSignal({
+      '/SignMessage': () => jsonResponse({ signature: '0xsigned' })
+    });
+    const signer = new ControlledSigner();
+    const wallet = createWalletWithSession(walletAddress, undefined, { signer });
+    signer.signing = 'hang';
+
+    const pending = signMessage(wallet).catch((caught: unknown) => caught);
+    await vi.advanceTimersByTimeAsync(30_000);
+
+    expect(await pending).toMatchObject({ code: 'OMS_REQUEST_FAILED' });
+    // The request can no longer reach WaaS, so expiry reads need not wait for the signer.
+    expect((wallet as any).signedSessionRequestsInFlight).toBe(0);
+    signer.finishSigning();
+    await vi.advanceTimersByTimeAsync(0);
+    expect(requestCount(fetchMock, '/SignMessage')).toBe(0);
+  });
+
+  it.each(['hang', 'fail'] as const)(
+    'reports an Execute whose signing does not complete (%s) as a request failure',
+    async (signing) => {
+      vi.useFakeTimers();
+      const signer = new ControlledSigner();
+      const fetchMock = stubWaasWithSignal({
+        '/PrepareEthereumTransaction': () => {
+          signer.signing = signing;
+          return sponsoredPrepareResponse();
+        },
+        '/Execute': () => jsonResponse({ status: 'pending' })
+      });
+      const wallet = createWalletWithSession(walletAddress, undefined, { signer });
+
+      const result = sendTransaction(wallet);
+      await vi.advanceTimersByTimeAsync(30_000);
+      const caught = await result;
+
+      // Nothing was sent, so the outcome is known.
+      expect(caught).toMatchObject({ code: 'OMS_REQUEST_FAILED', operation: 'wallet.execute' });
+      expect((caught as { txnId?: string }).txnId).toBeUndefined();
+      expect(requestCount(fetchMock, '/Execute')).toBe(0);
+    }
+  );
+
+  it('keeps an Execute that timed out after it was sent unconfirmed', async () => {
+    vi.useFakeTimers();
+    stubWaasWithSignal({
+      '/PrepareEthereumTransaction': () => sponsoredPrepareResponse(),
+      '/Execute': () => undefined
+    });
+    const wallet = createWalletWithSession(walletAddress);
+
+    const result = sendTransaction(wallet);
+    await vi.advanceTimersByTimeAsync(30_000);
+
+    expect(await result).toMatchObject({
+      code: 'OMS_TRANSACTION_EXECUTION_UNCONFIRMED',
+      txnId: 'txn-1'
+    });
   });
 });
