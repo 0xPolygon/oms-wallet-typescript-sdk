@@ -68,8 +68,9 @@ sign-in and is not updated.
   load without asking the wallet API.
 - An idle session ends about 10 days after its last use. Reading the expiry also counts as use, so
   after the local expiry the SDK waits until the session would have ended on the wallet API before
-  reading it; without SDK activity, `onSessionExpired` fires up to 5 minutes after the session
-  ended.
+  reading it. While the app makes no wallet calls, `onSessionExpired` can fire up to about 6 hours
+  after the session ended, because the wallet API extends the expiry only in steps of at least 6 hours (within 5 minutes when the lifetime
+  is shorter than the idle window), assuming an accurate device clock and a page in the foreground.
 - When the wallet API rejects the session credential as not found or expired (WaaS `KeyNotFound`
   7202 or `KeyExpired` 7203), the session ends like a local expiry and the operation fails with
   `OMSWalletSessionError` (`OMS_SESSION_EXPIRED`), with the same shape as a local expiry: the WaaS

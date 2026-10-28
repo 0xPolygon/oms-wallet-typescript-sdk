@@ -33,7 +33,7 @@ Before that, the timer re-arms for the computed time, checking again on each fir
 
 Tabs share the last-activity time: each session-signed request also writes `{ signerCredentialId, at }` to the session storage (`omsWallet_session_activity`, best effort), and the timer uses the later of its own `A` and that record when the record names this session's credential. Sign-out deletes the record; a client whose session was replaced by another tab's sign-in leaves it alone.
 
-Without SDK activity, the SDK notices an idle session's end up to 5 minutes after it.
+Without SDK activity, the SDK notices an idle session's end up to about 6 hours after it, because WaaS writes an extension only when it moves the expiry by at least 6 hours (within 5 minutes when the lifetime is shorter than the idle window). This assumes an accurate device clock and a page open in the foreground.
 
 ## Expiry Refresh
 
