@@ -292,6 +292,14 @@ export function isCredentialEndedError(error: unknown): boolean {
   return code === 7202 || code === 7203;
 }
 
+/**
+ * Whether a raw generated WaaS error is `Unauthorized` (7207). Matched by code only: the API gateway
+ * also returns errors named `Unauthorized` (code 1000).
+ */
+export function isUnauthorizedError(error: unknown): boolean {
+  return !isOMSWalletError(error) && generatedCodeFromError(error) === 7207;
+}
+
 /** Whether WaaS does not serve the called method (`WebrpcBadRoute`, code -2). */
 export function isBadRouteError(error: unknown): boolean {
   const name = error instanceof Error ? error.name : undefined;

@@ -319,7 +319,10 @@ export type SignInWithOidcRedirectParams = OidcRedirectAuthParamsBase & {
   );
 
 export interface WalletClient {
-  /** The active wallet, or `undefined` when signed out. Same shape as `listWallets()` entries. */
+  /**
+   * The active wallet, or `undefined` when signed out or while a manual wallet selection is pending.
+   * Same shape as `listWallets()` entries.
+   */
   readonly activeWallet: WalletAccount | undefined;
   /** Expiry and auth metadata for the active session; defined exactly when `activeWallet` is. */
   readonly session: OMSWalletSession | undefined;

@@ -61,16 +61,23 @@ session, when the local expiry is reached, and after wallet activity. Do not tre
 final; listen to `onSessionExpired` instead. `credential.expiresAt` in auth results is the expiry at
 sign-in and is not updated.
 
-- A session whose local expiry has passed is checked with the wallet API before it is ended, so a
-  protected operation can succeed on it. If the wallet API cannot be reached, the session is kept
-  and the operation fails with the request error (for example `OMS_REQUEST_FAILED`) instead of
-  `OMS_SESSION_EXPIRED`.
+- A session active in memory whose local expiry has passed is checked with the wallet API before it
+  is ended, so a protected operation can succeed on it. If the wallet API cannot be reached, the
+  session is kept and the operation fails with the request error (for example `OMS_REQUEST_FAILED`)
+  instead of `OMS_SESSION_EXPIRED`. A stored session whose local expiry has passed is discarded on
+  load without asking the wallet API.
+- An idle session ends about 10 days after its last use. Reading the expiry also counts as use, so
+  after the local expiry the SDK waits until the session would have ended on the wallet API before
+  reading it; without SDK activity, `onSessionExpired` fires up to 5 minutes after the session
+  ended.
 - When the wallet API rejects the session credential as not found or expired (WaaS `KeyNotFound`
   7202 or `KeyExpired` 7203), the session ends like a local expiry and the operation fails with
   `OMSWalletSessionError` (`OMS_SESSION_EXPIRED`), with the same shape as a local expiry: the WaaS
   error is its `cause`, and it has no `upstreamError`. This includes a rejected transaction execute,
   which never ran. A status lookup that fails after a transaction was submitted keeps
-  `OMS_TRANSACTION_STATUS_LOOKUP_FAILED` and its `txnId`.
+  `OMS_TRANSACTION_STATUS_LOOKUP_FAILED` and its `txnId`. The session also ends this way when the
+  SDK's expiry check reports the credential revoked (WaaS `Unauthorized` 7207); `Unauthorized` from
+  other requests is a request error and keeps the session.
 - `MAX_SESSION_LIFETIME_SECONDS` is 180 days (`15552000`); previously lifetimes above 30 days were
   rejected.
 - When `sessionLifetimeSeconds` is omitted, auth now requests 180 days (`DEFAULT_SESSION_LIFETIME_SECONDS`,

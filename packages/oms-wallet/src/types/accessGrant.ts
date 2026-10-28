@@ -5,8 +5,9 @@ import type { Network } from '../networks.js';
 export interface WalletCredential {
   credentialId: string;
   /**
-   * The credential's current expiry. WaaS extends it with use, up to the lifetime requested at
-   * sign-in; for the active session the SDK refreshes `wallet.session.expiresAt`.
+   * The credential's expiry as reported when the credential was returned. WaaS extends it with use,
+   * up to the lifetime requested at sign-in. Auth results carry the value from sign-in and are not
+   * refreshed; the active session's current expiry is `wallet.session.expiresAt`.
    */
   expiresAt: string;
   isCaller: boolean;

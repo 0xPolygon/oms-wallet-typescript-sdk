@@ -18,7 +18,7 @@ import {
   waasErrorResponse
 } from './fixtures/helpers.js';
 
-/** The shared signer plus a `clear` spy for sign-out and expiry cleanup assertions. */
+/** Fixture signer with a `clear` spy for sign-out and expiry cleanup assertions. */
 class MockSigner extends FixtureMockSigner {
   clear = vi.fn(async () => {});
 
@@ -525,7 +525,8 @@ describe('WalletClient session storage', () => {
       }
     );
 
-    await vi.advanceTimersByTimeAsync(119_999);
+    // Without activity, WaaS is asked 5 minutes (the grace period) after the local expiry.
+    await vi.advanceTimersByTimeAsync(119_999 + 5 * 60_000);
     expect(onSessionExpired).not.toHaveBeenCalled();
     expect(wallet.activeWallet?.address).toBe('0x1111111111111111111111111111111111111111');
 
@@ -626,7 +627,7 @@ describe('WalletClient session storage', () => {
     });
     expect(onSessionExpired).not.toHaveBeenCalled();
 
-    await vi.advanceTimersByTimeAsync(120_000);
+    await vi.advanceTimersByTimeAsync(120_000 + 5 * 60_000);
 
     expect(wallet.activeWallet?.address).toBeUndefined();
     expect(signer.clear).toHaveBeenCalledOnce();

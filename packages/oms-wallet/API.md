@@ -29,7 +29,8 @@ export interface OMSWalletParams {
 
 ### `WalletClient.activeWallet`
 
-The active wallet, or `undefined` when signed out. Same shape as `listWallets()` entries.
+The active wallet, or `undefined` when signed out or while a manual wallet selection is pending.
+Same shape as `listWallets()` entries.
 
 ```typescript
 readonly activeWallet: WalletAccount | undefined;

@@ -453,6 +453,11 @@ export declare function toOMSWalletError(error: unknown, operation: OMSWalletOpe
  * Checks a raw generated error and an SDK error that carries it as `upstreamError`.
  */
 export declare function isCredentialEndedError(error: unknown): boolean;
+/**
+ * Whether a raw generated WaaS error is `Unauthorized` (7207). Matched by code only: the API gateway
+ * also returns errors named `Unauthorized` (code 1000).
+ */
+export declare function isUnauthorizedError(error: unknown): boolean;
 /** Whether WaaS does not serve the called method (`WebrpcBadRoute`, code -2). */
 export declare function isBadRouteError(error: unknown): boolean;
 export declare function errorMessage(error: unknown): string;
@@ -784,8 +789,9 @@ import type { Network } from '../networks.js';
 export interface WalletCredential {
     credentialId: string;
     /**
-     * The credential's current expiry. WaaS extends it with use, up to the lifetime requested at
-     * sign-in; for the active session the SDK refreshes `wallet.session.expiresAt`.
+     * The credential's expiry as reported when the credential was returned. WaaS extends it with use,
+     * up to the lifetime requested at sign-in. Auth results carry the value from sign-in and are not
+     * refreshed; the active session's current expiry is `wallet.session.expiresAt`.
      */
     expiresAt: string;
     isCaller: boolean;
@@ -1331,7 +1337,10 @@ export type SignInWithOidcRedirectParams = OidcRedirectAuthParamsBase & {
     authorizeParams?: Record<string, string>;
 });
 export interface WalletClient {
-    /** The active wallet, or `undefined` when signed out. Same shape as `listWallets()` entries. */
+    /**
+     * The active wallet, or `undefined` when signed out or while a manual wallet selection is pending.
+     * Same shape as `listWallets()` entries.
+     */
     readonly activeWallet: WalletAccount | undefined;
     /** Expiry and auth metadata for the active session; defined exactly when `activeWallet` is. */
     readonly session: OMSWalletSession | undefined;

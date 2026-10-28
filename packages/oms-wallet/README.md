@@ -92,7 +92,7 @@ The SDK stores completed wallet-session metadata in the configured storage so ap
 
 In browsers, wallet API requests are signed with a non-extractable WebCrypto P-256 credential. Persisted session data contains wallet and auth metadata only; the browser credential remains managed by WebCrypto. Non-browser runtimes fall back to in-memory storage unless you provide a custom `StorageManager`.
 
-Completed auth requests ask for the maximum session lifetime, 180 days, by default; you can request a shorter one. The session's `expiresAt` is its current expiry: the wallet API extends it with use, up to the requested lifetime, and the SDK refreshes it. A session whose local expiry has passed is checked with the wallet API before a protected operation and ends only if the wallet API confirms it; call `signOut()` to end the session and clear active wallet state.
+Completed auth requests ask for the maximum session lifetime, 180 days, by default; you can request a shorter one. The session's `expiresAt` is its current expiry: the wallet API extends it with use, up to the requested lifetime, and the SDK refreshes it. A session active in memory whose local expiry has passed is checked with the wallet API before it is treated as ended; a stored session whose local expiry has passed is discarded on restore without asking the wallet API. Call `signOut()` to end the session and clear active wallet state.
 
 ## Authentication Flow
 
@@ -251,7 +251,7 @@ Pass `sessionLifetimeSeconds` to `startEmailAuth`, `signInWithOidcIdToken`, `sta
 
 Use `omsWallet.wallet.activeWallet` for the active wallet. It has the same shape as the entries `listWallets()` returns and is `undefined` when signed out. Narrow on `type` to get the address type for that wallet family; Ethereum addresses are typed as viem `Address`. Use `omsWallet.wallet.session` for credential expiry and structured auth metadata. It is defined exactly when `activeWallet` is.
 
-`session.expiresAt` is the current expiry, not a fixed end time. The wallet API slides it forward while the session is used, up to the lifetime requested at sign-in, and the SDK refreshes it: after restoring a stored session, when the local expiry is reached, and in the background after wallet activity. `credential.expiresAt` in auth results is the expiry at sign-in. When the local expiry is reached while the wallet API is unreachable, the SDK keeps the session and checks again later; protected operations then fail with the request error rather than `OMS_SESSION_EXPIRED`.
+`session.expiresAt` is the current expiry, not a fixed end time. The wallet API slides it forward while the session is used, up to the lifetime requested at sign-in, and the SDK refreshes it: after restoring a stored session, after the local expiry is reached, and in the background after wallet activity. An idle session ends about 10 days after its last use. Reading the expiry also counts as use, so after the local expiry the SDK waits until the session would have ended on the wallet API before reading it; without SDK activity, it notices the end up to 5 minutes later. `credential.expiresAt` in auth results is the expiry at sign-in. When the local expiry is reached while the wallet API is unreachable, the SDK keeps the session and checks again later; protected operations then fail with the request error rather than `OMS_SESSION_EXPIRED`.
 
 ```typescript
 import { WalletType } from '@polygonlabs/oms-wallet'
@@ -278,7 +278,7 @@ Use `omsWallet.wallet.getIdToken({ ttlSeconds, customClaims })` to request an ID
 
 Pending email OTP and OIDC redirect state are not exposed through `session`; use the auth method results to drive pending UI.
 
-When the local expiry has passed and the wallet API confirms the session ended (or does not support extending it), the SDK makes the session inactive before protected wallet operations and throws `OMSWalletSessionError` with code `OMS_SESSION_EXPIRED`. The same happens when the wallet API reports that the session credential no longer exists or has expired. It clears the active signer/session state, but keeps the expired session metadata in storage until the app explicitly starts a new auth flow or calls `signOut()`. Subscribe with `omsWallet.wallet.onSessionExpired` to route the user back to sign-in while preserving the expired session snapshot for email OTP reauth or Google account hints, including after a page refresh:
+When the local expiry has passed and the wallet API confirms the session ended (or does not support extending it), the SDK makes the session inactive before protected wallet operations and throws `OMSWalletSessionError` with code `OMS_SESSION_EXPIRED`. The same happens when the wallet API reports that the session credential no longer exists or has expired, or, when the SDK checks the expiry, that the credential was revoked. It clears the active signer/session state, but keeps the expired session metadata in storage until the app explicitly starts a new auth flow or calls `signOut()`. Subscribe with `omsWallet.wallet.onSessionExpired` to route the user back to sign-in while preserving the expired session snapshot for email OTP reauth or Google account hints, including after a page refresh:
 
 ```typescript
 const omsWallet = new OMSWallet({
@@ -901,6 +901,8 @@ Public methods throw `OMSWalletError` subclasses with stable SDK fields such as 
 
 For transaction writes, `OMS_TRANSACTION_EXECUTION_UNCONFIRMED` means the SDK has a `txnId` from preparation, but the execute request failed before the SDK could confirm whether the transaction was submitted; do not blindly resend the same write. If the wallet API rejects the session credential (WaaS `KeyNotFound` 7202 or `KeyExpired` 7203), the write fails with `OMS_SESSION_EXPIRED` instead; nothing was submitted. If the wallet API refuses the transaction because simulation shows it would revert (WaaS `TransactionSimulationFailed`, `upstreamError.code` `'7314'`), the write fails with `OMSWalletRequestError` (`OMS_REQUEST_FAILED`, status 400) instead: the transaction was closed as failed and never submitted. `OMS_TRANSACTION_STATUS_LOOKUP_FAILED` means the transaction was submitted but status polling failed, so retry status lookup with the returned `txnId`. `retryable` describes the failed SDK operation, not the whole user intent.
 
+When the wallet API rejects a signed request's nonce (WaaS `PreconditionFailed`, 7206), which concurrent requests can cause, the SDK signs the request again with a fresh nonce and resends it, up to 2 times, before the error surfaces. The wallet API rejects the nonce before running the method, so this applies to transaction writes too.
+
 Wallet import reports an already-managed address as `OMS_WALLET_ADDRESS_ALREADY_IMPORTED` and a
 missing, malformed, stale, or untrusted enclave attestation as
 `OMS_ATTESTATION_VERIFICATION_FAILED`. Do not retry or send key material after an attestation
@@ -983,6 +985,10 @@ await omsWallet.wallet.revokeAccess({
   sessionId: session.sessionId,
 })
 ```
+
+A wallet can have up to 100 active remote sessions by default. Beyond that, `authorizeRemoteAccess`
+fails with `OMSWalletRequestError` (`OMS_REQUEST_FAILED`, status 409, `upstreamError.code` `'7208'`,
+not retryable); revoke an existing session with `revokeAccess` and authorize again.
 
 A backend uses `RemoteAccessClient` with its own persistent credential signer. Registration returns
 the WaaS credential ID that the owner authorizes; it is distinct from the signer's public address.

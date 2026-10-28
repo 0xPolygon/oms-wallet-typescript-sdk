@@ -7,9 +7,11 @@ Sessions now stay signed in while they are used: the session expiry extends with
 ### Session expiry
 
 - **`wallet.session.expiresAt`** is the current expiry. The wallet API extends it with use, up to the lifetime requested at sign-in, and the SDK refreshes it after restoring a session, when the local expiry is reached, and after wallet activity.
-- A session whose local expiry has passed is checked with the wallet API before it ends, so protected operations can continue on an extended session.
+- A session whose local expiry has passed is checked with the wallet API before it ends, so protected operations can continue on an extended session. A stored session whose local expiry has passed is discarded on load without asking the wallet API.
+- An idle session ends about 10 days after its last use. Reading the expiry also counts as use, so after the local expiry the SDK waits until the session would have ended on the wallet API before reading it; without SDK activity, `onSessionExpired` fires up to 5 minutes after the session ended.
 - If the wallet API cannot be reached when the local expiry is reached, the session is kept and checked again later. Protected operations then fail with the request error (for example `OMS_REQUEST_FAILED`) instead of `OMS_SESSION_EXPIRED`.
-- When the wallet API reports that the session credential no longer exists or has expired, the session ends as on local expiry: `onSessionExpired` fires once and the operation fails with `OMSWalletSessionError` (`OMS_SESSION_EXPIRED`), shaped like a local expiry (the wallet API error is its `cause`). This includes a rejected transaction execute, which never ran; a status lookup that fails after submission keeps `OMS_TRANSACTION_STATUS_LOOKUP_FAILED` and its `txnId`.
+- When the wallet API reports that the session credential no longer exists or has expired, or the expiry check reports it revoked (`Unauthorized`, 7207), the session ends as on local expiry: `onSessionExpired` fires once and the operation fails with `OMSWalletSessionError` (`OMS_SESSION_EXPIRED`), shaped like a local expiry (the wallet API error is its `cause`). This includes a rejected transaction execute, which never ran; a status lookup that fails after submission keeps `OMS_TRANSACTION_STATUS_LOOKUP_FAILED` and its `txnId`. `Unauthorized` from other requests is a request error and keeps the session.
+- If the credential signer no longer holds the session's key, for example after a sign-in in another tab, the expiry check clears the session without sending a request, as protected operations do. When that sign-in stored its own session, both now leave its stored session and key in place instead of deleting them.
 
 ### Session lifetime
 

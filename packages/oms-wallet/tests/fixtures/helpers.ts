@@ -58,13 +58,23 @@ export function jsonResponse(body: unknown, status = 200): Response {
   });
 }
 
-/** A WaaS error body: `KeyExpired` (7203) by default, or `KeyNotFound` (7202), `WebrpcBadRoute` (-2). */
+/**
+ * A WaaS error body: `KeyExpired` (7203) by default, or `KeyNotFound` (7202), `PreconditionFailed`
+ * (7206), `Unauthorized` (7207), `WebrpcBadRoute` (-2).
+ */
 export function waasErrorResponse(
-  name: 'KeyExpired' | 'KeyNotFound' | 'WebrpcBadRoute' = 'KeyExpired'
+  name:
+    | 'KeyExpired'
+    | 'KeyNotFound'
+    | 'PreconditionFailed'
+    | 'Unauthorized'
+    | 'WebrpcBadRoute' = 'KeyExpired'
 ) {
   const { code, status } = {
     KeyExpired: { code: 7203, status: 400 },
     KeyNotFound: { code: 7202, status: 404 },
+    PreconditionFailed: { code: 7206, status: 412 },
+    Unauthorized: { code: 7207, status: 401 },
     WebrpcBadRoute: { code: -2, status: 404 }
   }[name];
   return jsonResponse({ code, name, message: name, status }, status);

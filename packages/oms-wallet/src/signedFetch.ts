@@ -4,6 +4,13 @@ import { RequestUtils } from './utils/requestUtils.js';
 
 type Fetch = (input: RequestInfo, init?: RequestInit) => Promise<Response>;
 
+/**
+ * Resends after WaaS rejects a nonce as not higher than the last one (`PreconditionFailed`, 7206),
+ * which concurrent requests can cause. WaaS rejects it before running any method, so resending is
+ * safe even for writes.
+ */
+const MAX_NONCE_RETRIES = 2;
+
 async function buildWalletSignatureHeader(
   endpoint: string,
   signer: CredentialSigner,
@@ -23,6 +30,17 @@ async function buildWalletSignatureHeader(
   );
 }
 
+/** Whether a WaaS response rejects the request nonce (`PreconditionFailed`, 7206). */
+async function isNonceRejectedResponse(response: Response): Promise<boolean> {
+  if (response.status !== 412) return false;
+  try {
+    const body = (await response.clone().json()) as { code?: unknown };
+    return body?.code === 7206;
+  } catch {
+    return false;
+  }
+}
+
 export function createSignedFetch(
   publishableKey: string,
   signer: CredentialSigner,
@@ -35,8 +53,6 @@ export function createSignedFetch(
 
     const body = typeof init?.body === 'string' ? init.body : '';
 
-    const signatureHeader = await buildWalletSignatureHeader(endpoint, signer, body, projectId);
-
     const headers: Record<string, string> = {};
     if (init?.headers instanceof Headers) {
       init.headers.forEach((value, key) => {
@@ -48,8 +64,17 @@ export function createSignedFetch(
       Object.assign(headers, init.headers);
     }
     headers['Api-Key'] = publishableKey;
-    headers['OMS-Wallet-Signature'] = signatureHeader;
 
-    return globalThis.fetch(input, { ...init, headers });
+    for (let retry = 0; ; retry += 1) {
+      // Each attempt is signed again, so a resent request carries a fresh, higher nonce.
+      const signatureHeader = await buildWalletSignatureHeader(endpoint, signer, body, projectId);
+      const response = await globalThis.fetch(input, {
+        ...init,
+        headers: { ...headers, 'OMS-Wallet-Signature': signatureHeader }
+      });
+      if (retry >= MAX_NONCE_RETRIES || !(await isNonceRejectedResponse(response))) {
+        return response;
+      }
+    }
   };
 }

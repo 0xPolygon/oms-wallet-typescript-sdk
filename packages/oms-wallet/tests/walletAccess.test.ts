@@ -284,6 +284,38 @@ describe('WalletClient access management', () => {
     ]);
   });
 
+  it('surfaces the per-wallet session cap as a request error from authorizeRemoteAccess', async () => {
+    const message =
+      'Too many active sessions for this wallet; revoke one before authorizing another';
+    const fetchMock = vi.fn(async () =>
+      jsonResponse({ code: 7208, name: 'SessionCapExceeded', message, status: 409 }, 409)
+    );
+    vi.stubGlobal('fetch', fetchMock);
+    const wallet = createWalletWithSession();
+
+    const error = await wallet
+      .authorizeRemoteAccess({
+        credentialId: 'credential-id',
+        network: Networks.polygon,
+        grants: [
+          { kind: 'nativeTransfer', to: '0x1111111111111111111111111111111111111111', limit: 1n }
+        ],
+        expiresAt: '2099-01-01T00:00:00Z'
+      })
+      .catch((reason: unknown) => reason);
+
+    expect(error).toMatchObject({
+      name: 'OMSWalletRequestError',
+      code: 'OMS_REQUEST_FAILED',
+      operation: 'wallet.authorizeRemoteAccess',
+      status: 409,
+      retryable: false,
+      upstreamError: { service: 'waas', name: 'SessionCapExceeded', code: '7208', status: 409 }
+    });
+    expect(requestCount(fetchMock, '/AuthorizeRemoteAccess')).toBe(1);
+    expect(wallet.session).toBeDefined();
+  });
+
   it('creates, activates, and signs a message with a Solana wallet', async () => {
     const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
       const url = input.toString();

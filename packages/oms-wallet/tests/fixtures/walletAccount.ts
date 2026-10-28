@@ -1,6 +1,9 @@
 import type { WalletAccount } from '../../src/index.js';
 
-/** Builds a wallet account for seeding sessions; non-hex addresses default to Solana. */
+/**
+ * Builds a wallet account for seeding sessions. Addresses without a `0x` prefix default to Solana;
+ * pass `type` for Tron.
+ */
 export function testWalletAccount(
   id: string,
   address: string,

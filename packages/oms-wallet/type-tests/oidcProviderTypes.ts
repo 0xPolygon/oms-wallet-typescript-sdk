@@ -246,9 +246,9 @@ if (false) {
     void wallet.isValidMessageSignature({ message: 'hello', signature: '0xsignature' });
     void wallet.isValidTypedDataSignature({ typedData: {}, signature: '0xsignature' });
     void wallet.isValidSolanaMessageSignature({ message: 'hello', signature: 'signature' });
-    // @ts-expect-error signature verification no longer takes walletId.
+    // @ts-expect-error Signature verification takes walletAddress, not walletId.
     void wallet.isValidMessageSignature({ walletId: 'id', message: 'hello', signature: '0x' });
-    // @ts-expect-error signature verification no longer takes walletId.
+    // @ts-expect-error Tron signature verification takes walletAddress, not walletId.
     void wallet.isValidTronMessageSignature({ walletId: 'id', message: 'hello', signature: '0x' });
 
     void wallet.signTronMessage({ message: 'Sign in to Example' });
@@ -378,7 +378,7 @@ const sessionExpiredListener: OMSWalletSessionExpiredListener = ({ expiredAt }) 
   void expiredAt;
 };
 void defaultClient.wallet.onSessionExpired(sessionExpiredListener);
-// @ts-expect-error walletAddress was replaced by activeWallet.
+// @ts-expect-error There is no walletAddress property; read the active account from activeWallet.
 void defaultClient.wallet.walletAddress;
 const idTokenParams: GetIdTokenParams = { ttlSeconds: 300, customClaims: { role: 'admin' } };
 const idToken: Promise<string> = defaultClient.wallet.getIdToken(idTokenParams);
