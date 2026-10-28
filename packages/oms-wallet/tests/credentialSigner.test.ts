@@ -3,6 +3,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import { AuthMode, IdentityType, Waas } from '../src/generated/waas.gen';
 import { Networks } from '../src/networks';
 import { WebCryptoP256CredentialSigner, type CredentialSigner } from '../src/credentialSigner';
+import { RemoteAccessClient } from '../src/clients/remoteAccessClient';
 import { createSerialFetch, createSignedFetch } from '../src/signedFetch';
 import {
   MockSigner,
@@ -107,7 +108,7 @@ describe('wallet request ordering', () => {
           return waasErrorResponse('PreconditionFailed');
         }
         lastNonce = nonce;
-        return jsonResponse({ signature: '0xsigned' });
+        return jsonResponse({ signature: '0xsigned', status: 'pending' });
       } finally {
         inFlight -= 1;
       }
@@ -161,10 +162,39 @@ describe('wallet request ordering', () => {
 
     await wallet.signMessage({ network: Networks.polygon, message: 'hello' });
 
-    expect(requested[0]).toBe(
-      `oms-wallet-signed-requests:project-id@https://wallet.example:0x04${'11'.repeat(64)}`
-    );
+    expect(requested[0]).toBe(`oms-wallet-signed-requests:0x04${'11'.repeat(64)}`);
     await vi.waitFor(() => expect(held).toBe(0));
+  });
+
+  it.each([
+    {
+      label: 'wallet clients with separate storage',
+      clients: (signer: IncreasingNonceSigner) =>
+        [0, 1].map(() => {
+          const wallet = createWalletWithSession(walletAddress, undefined, { signer });
+          return () => wallet.signMessage({ network: Networks.polygon, message: 'hello' });
+        })
+    },
+    {
+      label: 'remote access clients',
+      clients: (signer: IncreasingNonceSigner) =>
+        [0, 1].map(() => {
+          const client = new RemoteAccessClient({
+            publishableKey: 'pk_dev_sdbx_project_key1',
+            credentialSigner: signer
+          });
+          return () => client.getTransactionStatus({ txnId: 'txn-1' });
+        })
+    }
+  ])('orders the requests of $label that share one signer', async ({ clients }) => {
+    // Clients in one process share a credential's queue, Web Locks or not.
+    const { stats } = stubWaasNonceRule();
+    const calls = clients(new IncreasingNonceSigner());
+
+    await Promise.all(Array.from({ length: 6 }, () => calls.map((call) => call())).flat());
+
+    expect(stats.maxInFlight).toBe(1);
+    expect(stats.rejected).toBe(0);
   });
 
   it('does not hold a request signed with a new credential behind one of the old credential', async () => {

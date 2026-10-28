@@ -1654,6 +1654,31 @@ describe('WalletClient request deadline', () => {
     await expect(signMessage(wallet)).resolves.toBe('0xsigned');
   });
 
+  it('fails a request whose response body WaaS does not finish within 30 seconds', async () => {
+    // The headers can arrive in time and the body stall.
+    vi.useFakeTimers();
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async (_input: RequestInfo | URL, init?: RequestInit) => {
+        const body = new ReadableStream({
+          start(controller) {
+            init?.signal?.addEventListener('abort', () => controller.error(init.signal?.reason));
+          }
+        });
+        return new Response(body, { status: 200, headers: { 'Content-Type': 'application/json' } });
+      })
+    );
+    const wallet = createWalletWithSession(walletAddress);
+
+    const pending = signMessage(wallet).catch((caught: unknown) => caught);
+    await vi.advanceTimersByTimeAsync(30_000);
+
+    expect(await pending).toMatchObject({
+      code: 'OMS_REQUEST_FAILED',
+      operation: 'wallet.signMessage'
+    });
+  });
+
   it('sends nothing when signing finishes after the deadline, and does not hold up expiry reads', async () => {
     vi.useFakeTimers();
     const fetchMock = stubWaasWithSignal({

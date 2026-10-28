@@ -110,8 +110,9 @@ export function createSignedFetch(
 }
 
 /**
- * Bounds a signed request, from its waits at the request gates to its response, by
- * `SIGNED_REQUEST_TIMEOUT_MS`. The request runs under its own signal, which aborts at the deadline:
+ * Bounds a signed request, from its waits at the request gates to the end of its response body, by
+ * `SIGNED_REQUEST_TIMEOUT_MS`. The body is read inside the deadline, because a response can arrive
+ * and its body stall, and handed on buffered. The request runs under its own signal, which aborts at the deadline:
  * the signed fetch then sends nothing, and an aborted `fetch` ends a request in flight. A caller's
  * signal aborts it too, and is marked sent when the request was.
  */
@@ -133,7 +134,14 @@ export function createDeadlineFetch(fetch: Fetch, timeoutMs = SIGNED_REQUEST_TIM
       else controller.signal.addEventListener('abort', rejectWithReason, { once: true });
     });
     aborted.catch(() => {});
-    const request = fetch(input, { ...init, signal: controller.signal });
+    const request = fetch(input, { ...init, signal: controller.signal }).then(async (response) => {
+      const body = await response.arrayBuffer();
+      return new Response(body.byteLength > 0 ? body : null, {
+        status: response.status,
+        statusText: response.statusText,
+        headers: response.headers
+      });
+    });
     // A signer can finish after the deadline; the request then fails without being sent.
     request.catch(() => {});
     return Promise.race([request, aborted]).finally(() => {
@@ -145,9 +153,9 @@ export function createDeadlineFetch(fetch: Fetch, timeoutMs = SIGNED_REQUEST_TIM
 }
 
 /**
- * Sends the requests signed with one credential one at a time, in order, and across browser contexts
- * of one origin (tabs, frames, workers) under a Web Lock named after `lockNamePrefix` and the
- * credential, where the browser has Web Locks. WaaS accepts a credential's nonce only when it is
+ * Sends the requests signed with one credential one at a time, in order: across every client in this
+ * process (the queues are shared, by credential), and across browser contexts of one origin (tabs,
+ * frames, workers) under a Web Lock named after the credential, where the browser has Web Locks. WaaS accepts a credential's nonce only when it is
  * higher than the last one it stored, with an atomic conditional write (waas v1.2.0
  * data/credential.go), so requests sent one at a time from one nonce source are never rejected for
  * their nonce. Requests signed with different credentials cannot reject each other's nonces, so they
@@ -157,12 +165,8 @@ export function createDeadlineFetch(fetch: Fetch, timeoutMs = SIGNED_REQUEST_TIM
  * A request leaves the queue when it settles, or when its signal aborts before it was sent: it can
  * no longer reach WaaS then, even if its signer finishes later.
  */
-export function createSerialFetch(
-  fetch: Fetch,
-  signer: CredentialSigner,
-  lockNamePrefix?: string
-): Fetch {
-  const queues = new Map<string, Promise<void>>();
+export function createSerialFetch(fetch: Fetch, signer: CredentialSigner): Fetch {
+  const queues = signedRequestQueues();
   return async (input: RequestInfo, init?: RequestInit): Promise<Response> => {
     const signal = init?.signal ?? undefined;
     const credentialId = (await untilAborted(signer.credentialId(), signal)).toLowerCase();
@@ -188,7 +192,7 @@ export function createSerialFetch(
       if (signal && !wasRequestSent(signal)) release();
     };
     signal?.addEventListener('abort', releaseIfNotSent, { once: true });
-    const lockName = lockNamePrefix && `${lockNamePrefix}:${credentialId}`;
+    const lockName = `oms-wallet-signed-requests:${credentialId}`;
     try {
       return await withWebLock(lockName, signal, () => fetch(input, init));
     } finally {
@@ -196,6 +200,16 @@ export function createSerialFetch(
       release();
     }
   };
+}
+
+/** On `globalThis`, so every client, and every copy of this SDK version, shares one queue per credential. */
+const signedRequestQueuesKey = Symbol.for('@polygonlabs/oms-wallet/signed-request-queues/v1');
+
+/** The tail of each credential's queue of signed requests, by lowercase credential ID. */
+function signedRequestQueues(): Map<string, Promise<void>> {
+  const holder = globalThis as { [signedRequestQueuesKey]?: Map<string, Promise<void>> };
+  holder[signedRequestQueuesKey] ??= new Map();
+  return holder[signedRequestQueuesKey];
 }
 
 /** The parts of the Web Locks API `createSerialFetch` uses. */
@@ -209,12 +223,12 @@ interface WebLocks {
 
 /** Runs `run` holding the Web Lock `name`, or just runs it where Web Locks are unavailable. */
 async function withWebLock<T>(
-  name: string | undefined,
+  name: string,
   signal: AbortSignal | undefined,
   run: () => Promise<T>
 ): Promise<T> {
   const locks = (globalThis as { navigator?: { locks?: WebLocks } }).navigator?.locks;
-  if (!name || !locks?.request) return run();
+  if (!locks?.request) return run();
   let result!: Promise<T>;
   await locks.request(name, signal ? { signal } : {}, async () => {
     result = run();

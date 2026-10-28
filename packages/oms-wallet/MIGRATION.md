@@ -105,8 +105,10 @@ before it was sent) fail the same way. Other execute failures keep
 ### Signed requests time out after 30 seconds
 
 Requests signed with the session credential, including the expiry read, now fail with
-`OMS_REQUEST_FAILED` (`retryable: true`) when they get no response within 30 seconds, counted from
-the start, including the wait for other session requests and the signing. Previously a request that
+`OMS_REQUEST_FAILED` (`retryable: true`) when they do not complete within 30 seconds, counted from
+the start, including the wait for other session requests, the signing and reading the whole
+response. The call returns by then even if the signer has not finished; a signature that finishes
+later is never sent. Previously a request that
 never completed could block every later wallet call. An execute request that was already sent when it
 timed out keeps `OMS_TRANSACTION_EXECUTION_UNCONFIRMED`.
 
@@ -278,9 +280,11 @@ nothing to migrate.
 ### Signed requests go one at a time
 
 Requests signed with one credential, including the session expiry read, are sent one at a time, in
-order, and across tabs where the browser supports Web Locks. Concurrent calls no longer fail with a
-stale nonce (`PreconditionFailed`, 7206), but a burst of calls takes longer: each waits for the one
-before it, within its 30-second deadline.
+order, by every client in the process and across tabs where the browser supports Web Locks.
+Concurrent calls from this app no longer fail with a stale nonce (`PreconditionFailed`, 7206), but a
+burst of calls takes longer: each waits for the one before it, within its 30-second deadline.
+Requests signed elsewhere with the same credential (another process or device, or an older SDK
+version) can still interleave, so the SDK keeps resending a rejected nonce.
 
 ### Wagmi connector
 

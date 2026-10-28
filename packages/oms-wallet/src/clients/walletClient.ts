@@ -570,8 +570,7 @@ export class WalletClientImpl implements WalletClient {
     // Session requests and expiry reads signed with one credential reach WaaS one at a time.
     const signedFetch = createSerialFetch(
       createSignedFetch(publishableKey, this.credentialSigner, this.projectId),
-      this.credentialSigner,
-      `oms-wallet-signed-requests:${this.storageKeys.scope}`
+      this.credentialSigner
     );
     const sessionFetch = this.sessionActivityFetch(this.sessionRequestFetch(signedFetch));
     this.client = new WaasClient(
