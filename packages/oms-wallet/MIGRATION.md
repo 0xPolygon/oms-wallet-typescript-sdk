@@ -50,8 +50,9 @@ wallet selection was still pending.
 
 ### One-time sign-in after upgrading
 
-Saved sessions now record the wallet's type. Sessions saved by 0.3.x do not, so 0.4.0 discards them
-on load and users sign in once after upgrading.
+Saved sessions now record the wallet's type and are stored under project-scoped keys (see "Stored
+sessions are kept per project and environment" below). 0.4.0 does not restore sessions saved by
+0.3.x, so users sign in once after upgrading. The 0.3.x records are left in storage unread.
 
 ### Session expiry extends with use
 
@@ -71,6 +72,8 @@ sign-in and is not updated.
   reading it. While the app makes no wallet calls, `onSessionExpired` can fire up to about 6 hours
   after the session ended, because the wallet API extends the expiry only in steps of at least 6 hours (within 5 minutes when the lifetime
   is shorter than the idle window), assuming an accurate device clock and a page in the foreground.
+  When the expiry read after restoring a session cannot reach the wallet API and no wallet call
+  follows, it can fire up to about one idle window (10 days) late.
 - When the wallet API rejects the session credential as not found or expired (WaaS `KeyNotFound`
   7202 or `KeyExpired` 7203), the session ends like a local expiry and the operation fails with
   `OMSWalletSessionError` (`OMS_SESSION_EXPIRED`), with the same shape as a local expiry: the WaaS
@@ -104,7 +107,8 @@ before it was sent) fail the same way. Other execute failures keep
 
 ### Signed requests time out after 30 seconds
 
-Requests signed with the session credential, including the expiry read, now fail with
+Requests signed with the session credential, including the expiry read, and requests of a
+`RemoteAccessClient` now fail with
 `OMS_REQUEST_FAILED` (`retryable: true`) when they do not complete within 30 seconds, counted from
 the start, including the wait for other session requests, the signing and reading the whole
 response. The call returns by then even if the signer has not finished; a signature that finishes
@@ -268,14 +272,15 @@ same wallet instead of a separate copy of the session. Signing out, switching wa
 expiry through one instance apply to the other. A rotated publishable key of the same project keeps
 the session. Node defaults, and instances with different storage objects, stay separate sessions.
 Passing one `storage` object with a different `credentialSigner` or `redirectAuthStorage` now throws
-`OMSWalletValidationError`.
+`OMSWalletValidationError`. Outside a browser the default signer keeps its key in memory, so two
+instances sharing one `storage` must also share one `credentialSigner`.
 
 ### Stored sessions are kept per project and environment
 
 The session, its signing key, redirect state and activity record are stored under keys that name the
 project and wallet API origin, so several projects or environments on one origin no longer replace
-each other's session. Sessions saved by 0.3.x are discarded on upgrade anyway (see above), so there is
-nothing to migrate.
+each other's session. 0.4.0 does not restore 0.3.x sessions anyway (see above), so there is nothing
+to migrate; the unscoped 0.3.x records are left in storage unread.
 
 ### Signed requests go one at a time
 
@@ -290,6 +295,8 @@ version) can still interleave, so the SDK keeps resending a rejected nonce.
 
 `@polygonlabs/oms-wallet-wagmi-connector` now reads `wallet.activeWallet` instead of
 `wallet.walletAddress`. Upgrade both packages together; they are released with the same version.
+Custom `OMSWalletLike` implementations need `activeWallet` and `onSessionExpired`; see the
+connector's `MIGRATION.md`.
 It now observes session expiry from `connect` on, so a wagmi config that never connects leaves no
 listener on the wallet.
 

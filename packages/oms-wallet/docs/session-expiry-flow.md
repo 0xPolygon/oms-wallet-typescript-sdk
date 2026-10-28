@@ -13,7 +13,7 @@ This note documents the wallet session expiry flow for maintainers. Public API b
 - A successful session request refreshes the expiry in the background when the last read (sign-in or refresh) is at least 6 hours old.
 - Pending manual wallet selection uses the same auth metadata and expiry timer before a wallet is activated. It expires locally without a refresh.
 - `signOut()` or a new auth flow clears or replaces stored session metadata, which cancels stale expired-session replay.
-- Records that are not version 2 (SDK 0.3.x), are malformed, lack a valid idle window and expiry ceiling (pre-release 0.4.0 builds), or have a different scope are deleted on load and never replayed; the user signs in again.
+- Sessions saved by SDK 0.3.x are under unscoped keys that 0.4.0 does not read, so they are not restored. Records under this project's key that are not version 2, are malformed, lack a valid idle window and expiry ceiling (pre-release 0.4.0 builds), or have a different scope are deleted on load and never replayed; the user signs in again.
 
 Activating another wallet of the active session (`useWallet`, `claimWallet`, `createWallet`, an import) keeps the session's current expiry, bounds, and last read: a read applied while the activation was in flight is not overwritten by the expiry captured before it.
 
@@ -31,9 +31,9 @@ When the session is locally expired at `L`, the timer reads the expiry at:
 
 Before that, the timer re-arms for the computed time, checking again on each fire. `C` is the sign-in request's send time or the completion of the last successful `GetCredential` in this client; a restore leaves it unset until a read succeeds. `A` is the completion (response or error) of the last session-signed request: a request can reach WaaS until then. It includes every `GetCredential` (the restore read, the 6-hour background read, the read before an operation), whatever its outcome, since WaaS may have extended the credential when the response was lost, except the timer's own reads: those are sent past the bound, so if they reach WaaS the credential has ended there, and a failed one is retried after the backoff delay. A restore sets `A` to the restore time, which bounds the requests of the process that stored the session.
 
-Tabs share the last-activity time: each session-signed request also writes `{ signerCredentialId, at }` to the session storage (`omsWallet_session_activity`, best effort), and the timer uses the later of its own `A` and that record when the record names this session's credential. Sign-out deletes the record; a client whose session was replaced by another tab's sign-in leaves it alone.
+Tabs share the last-activity time: each session-signed request also writes `{ signerCredentialId, at }` to the session storage (`omsWallet_session_activity:<projectId>@<wallet API origin>`, best effort), and the timer uses the later of its own `A` and that record when the record names this session's credential. Sign-out deletes the record; a client whose session was replaced by another tab's sign-in leaves it alone.
 
-Without SDK activity, the SDK notices an idle session's end up to about 6 hours after it, because WaaS writes an extension only when it moves the expiry by at least 6 hours (within 5 minutes when the lifetime is shorter than the idle window). This assumes an accurate device clock and a page open in the foreground.
+Without SDK activity, the SDK notices an idle session's end up to about 6 hours after it, because WaaS writes an extension only when it moves the expiry by at least 6 hours (within 5 minutes when the lifetime is shorter than the idle window). This assumes an accurate device clock and a page open in the foreground. After a restore whose expiry read could not reach WaaS, with no later wallet call, the end can be noticed up to about one idle window late, because the restore time counts as the last activity.
 
 ## Expiry Refresh
 
