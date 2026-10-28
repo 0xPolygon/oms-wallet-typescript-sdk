@@ -2097,6 +2097,7 @@ export interface OMSWalletUpstreamError {
     name?: string;
     code?: string;
     message?: string;
+    cause?: string;
     status?: number;
 }
 ```

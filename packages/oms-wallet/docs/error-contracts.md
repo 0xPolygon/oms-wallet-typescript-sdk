@@ -10,6 +10,9 @@ supports, whether `upstreamError` should be present, and which test owns the con
   failure. It is for logging and service-specific troubleshooting. Application logic should usually
   branch on the SDK-level `code`.
 - `upstreamError.code` is a string; numeric WebRPC codes are stringified (e.g. `"7313"`).
+- `upstreamError.cause` is the reason the service gave for the error, when it gave one, such as why a
+  request was invalid. It is set only from the service's response, never from the SDK's own
+  transport failures, and is meant for logs and troubleshooting rather than branching.
 - `retryable` describes the failed SDK operation, not the whole user intent. A retryable status
   lookup failure does not mean a transaction write should be blindly resent.
 - `OMS_TRANSACTION_EXECUTION_UNCONFIRMED` means transaction preparation succeeded, but the execute

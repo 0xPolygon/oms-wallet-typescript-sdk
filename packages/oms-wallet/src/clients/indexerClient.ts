@@ -1256,6 +1256,7 @@ function indexerResponseError(
     name: stringField(payload, 'name') ?? stringField(payload, 'error'),
     code: codeField(payload),
     message: gatewayErrorMessage(payload) ?? fallbackMessage,
+    cause: stringField(payload, 'cause') || undefined,
     status
   };
 }

@@ -25,6 +25,8 @@ export interface OMSWalletUpstreamError {
   /** Upstream error code. Numeric WebRPC codes are stringified, for example `'7313'`. */
   code?: string;
   message?: string;
+  /** The service's reason for this error, when it gives one, for example why a request was invalid. */
+  cause?: string;
   status?: number;
 }
 
@@ -360,6 +362,17 @@ function upstreamErrorFromError(
     name,
     code: code === undefined ? undefined : String(code),
     message: errorMessage(error),
+    cause: code !== undefined && code >= 0 ? upstreamCause(error) : undefined,
     status
   };
+}
+
+/**
+ * The reason a service error carries in `cause` alongside its generic message. Only errors the
+ * service sent (code 0 and up) qualify: the client's own transport errors (negative codes) put
+ * local details there, such as the raw body of a response it could not parse.
+ */
+function upstreamCause(error: unknown): string | undefined {
+  const cause = (error as { cause?: unknown } | undefined)?.cause;
+  return typeof cause === 'string' && cause.length > 0 ? cause : undefined;
 }

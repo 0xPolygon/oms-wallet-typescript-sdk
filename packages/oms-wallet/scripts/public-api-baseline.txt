@@ -391,6 +391,8 @@ export interface OMSWalletUpstreamError {
     /** Upstream error code. Numeric WebRPC codes are stringified, for example `'7313'`. */
     code?: string;
     message?: string;
+    /** The service's reason for this error, when it gives one, for example why a request was invalid. */
+    cause?: string;
     status?: number;
 }
 export interface OMSWalletErrorParams<Code extends OMSWalletErrorCode = OMSWalletErrorCode> {

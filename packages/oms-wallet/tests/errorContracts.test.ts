@@ -115,6 +115,7 @@ describe('public API error contracts', () => {
               code: 7008,
               name: 'CommitmentConsumed',
               message: 'The authentication commitment has already been used',
+              cause: 'commitment was completed at 2026-01-01T00:00:00Z',
               status: 400
             },
             400
@@ -130,23 +131,24 @@ describe('public API error contracts', () => {
 
     await expect(publicError(() => oms.wallet.completeEmailAuth({ code: '123456' }))).resolves
       .toMatchInlineSnapshot(`
-          {
-            "code": "OMS_AUTH_COMMITMENT_CONSUMED",
-            "message": "The authentication commitment has already been used",
-            "name": "OMSWalletRequestError",
-            "operation": "wallet.completeEmailAuth",
-            "retryable": false,
-            "status": 400,
-            "txnId": null,
-            "upstreamError": {
-              "code": "7008",
-              "message": "The authentication commitment has already been used",
-              "name": "CommitmentConsumed",
-              "service": "waas",
-              "status": 400,
-            },
-          }
-        `);
+      {
+        "code": "OMS_AUTH_COMMITMENT_CONSUMED",
+        "message": "The authentication commitment has already been used",
+        "name": "OMSWalletRequestError",
+        "operation": "wallet.completeEmailAuth",
+        "retryable": false,
+        "status": 400,
+        "txnId": null,
+        "upstreamError": {
+          "cause": "commitment was completed at 2026-01-01T00:00:00Z",
+          "code": "7008",
+          "message": "The authentication commitment has already been used",
+          "name": "CommitmentConsumed",
+          "service": "waas",
+          "status": 400,
+        },
+      }
+    `);
   });
 
   it('snapshots WaaS HTTP responses with upstream details', async () => {
@@ -1505,7 +1507,8 @@ describe('public API error contracts', () => {
           {
             error: 'Unavailable',
             code: 'INDEXER_UNAVAILABLE',
-            message: 'Indexer is unavailable'
+            message: 'Indexer is unavailable',
+            cause: 'upstream node timed out'
           },
           503
         )
@@ -1523,23 +1526,24 @@ describe('public API error contracts', () => {
         })
       )
     ).resolves.toMatchInlineSnapshot(`
-          {
-            "code": "OMS_HTTP_ERROR",
-            "message": "Indexer is unavailable",
-            "name": "OMSWalletRequestError",
-            "operation": "indexer.getBalances",
-            "retryable": true,
-            "status": 503,
-            "txnId": null,
-            "upstreamError": {
-              "code": "INDEXER_UNAVAILABLE",
-              "message": "Indexer is unavailable",
-              "name": "Unavailable",
-              "service": "indexer",
-              "status": 503,
-            },
-          }
-        `);
+      {
+        "code": "OMS_HTTP_ERROR",
+        "message": "Indexer is unavailable",
+        "name": "OMSWalletRequestError",
+        "operation": "indexer.getBalances",
+        "retryable": true,
+        "status": 503,
+        "txnId": null,
+        "upstreamError": {
+          "cause": "upstream node timed out",
+          "code": "INDEXER_UNAVAILABLE",
+          "message": "Indexer is unavailable",
+          "name": "Unavailable",
+          "service": "indexer",
+          "status": 503,
+        },
+      }
+    `);
   });
 
   it('snapshots Solana indexer backend errors with upstream details', async () => {
@@ -1985,6 +1989,7 @@ function serializeUpstreamError(error: unknown): SerializedUpstreamError | null 
     name?: unknown;
     code?: unknown;
     message?: unknown;
+    cause?: unknown;
     status?: unknown;
   };
   return {
@@ -1992,6 +1997,8 @@ function serializeUpstreamError(error: unknown): SerializedUpstreamError | null 
     name: stringOrNull(value.name),
     code: numberOrStringOrNull(value.code),
     message: stringOrNull(value.message),
+    // Only present when the service gave a reason.
+    ...(value.cause === undefined ? {} : { cause: stringOrNull(value.cause) }),
     status: numberOrNull(value.status)
   };
 }
@@ -2129,5 +2136,6 @@ interface SerializedUpstreamError {
   name: string | null;
   code: number | string | null;
   message: string | null;
+  cause?: string | null;
   status: number | null;
 }
