@@ -9,7 +9,10 @@ import {
   MockSigner,
   createWalletWithSession,
   jsonResponse,
-  testEnvironment
+  requestCount,
+  testCredential,
+  testEnvironment,
+  waasErrorResponse
 } from './fixtures/helpers.js';
 
 afterEach(() => {
@@ -1276,3 +1279,47 @@ function solanaNativeBalance(accountAddress: string, balance: string) {
     verificationSource: 'none'
   };
 }
+
+describe('WalletClient Execute refused before submission', () => {
+  it.each([
+    { name: 'InvalidSignature', code: '7201', status: 400 },
+    { name: 'UsageLimitExceeded', code: '7205', status: 429 },
+    { name: 'Unauthorized', code: '7207', status: 401 }
+  ] as const)(
+    'reports an Execute refused with $name ($code) as a request failure',
+    async ({ name, code, status }) => {
+      const walletAddress = '0x1111111111111111111111111111111111111111';
+      const fetchMock = vi.fn(async (input: RequestInfo | URL) => {
+        const url = input.toString();
+        if (url.endsWith('/PrepareEthereumTransaction')) {
+          return jsonResponse({
+            txnId: 'txn-1',
+            status: 'quoted',
+            feeOptions: [],
+            sponsored: true,
+            expiresAt: '2099-01-01T00:00:00Z'
+          });
+        }
+        if (url.endsWith('/Execute')) return waasErrorResponse(name);
+        if (url.endsWith('/GetCredential')) return jsonResponse({ credential: testCredential() });
+        throw new Error(`Unexpected request: ${url}`);
+      });
+      vi.stubGlobal('fetch', fetchMock);
+      const wallet = createWalletWithSession(walletAddress);
+
+      // WaaS refuses these before anything is submitted, so the outcome is known.
+      const error = await wallet
+        .sendTransaction({ network: Networks.polygon, to: walletAddress, value: 0n })
+        .catch((caught: unknown) => caught);
+      expect(error).toMatchObject({
+        name: 'OMSWalletRequestError',
+        code: 'OMS_REQUEST_FAILED',
+        operation: 'wallet.execute',
+        status,
+        upstreamError: { service: 'waas', name, code }
+      });
+      expect((error as { txnId?: string }).txnId).toBeUndefined();
+      expect(requestCount(fetchMock, '/Execute')).toBe(1);
+    }
+  );
+});

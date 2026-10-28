@@ -9,6 +9,7 @@ import {
   MockSigner,
   jsonResponse,
   testEnvironment,
+  testStoredExpiryBounds,
   waasErrorResponse
 } from './fixtures/helpers.js';
 
@@ -133,7 +134,8 @@ describe('WalletClient errors', () => {
         expiresAt: '2099-01-01T00:00:00Z',
         auth: { type: 'email', email: 'user@example.com' },
         signerCredentialId: '0x04' + '11'.repeat(64),
-        signerKeyType: 'ecdsa-p256-sha256'
+        signerKeyType: 'ecdsa-p256-sha256',
+        ...testStoredExpiryBounds('2099-01-01T00:00:00Z')
       })
     );
     // The restored session's expiry refresh answers as a server without GetCredential.

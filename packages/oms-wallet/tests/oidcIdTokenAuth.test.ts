@@ -108,6 +108,10 @@ describe('WalletClient OIDC ID-token auth', () => {
     expect(JSON.parse(storage.get(Constants.sessionStorageKey) ?? 'null').auth).toEqual(
       wallet.session?.auth
     );
+    // The idle window and lifetime ceiling derived from CompleteAuth are stored with the session.
+    const stored = JSON.parse(storage.get(Constants.sessionStorageKey) ?? 'null');
+    expect(stored.idleWindowMs).toBeGreaterThan(0);
+    expect(stored.expiryCeiling).toBe('2099-01-01T00:00:00.000Z');
     expect(requestCount(fetchMock, '/CommitVerifier')).toBe(1);
     expect(requestCount(fetchMock, '/CompleteAuth')).toBe(1);
     expect(requestCount(fetchMock, '/UseWallet')).toBe(1);

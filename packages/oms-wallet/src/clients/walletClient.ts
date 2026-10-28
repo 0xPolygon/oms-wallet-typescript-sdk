@@ -211,11 +211,34 @@ interface PendingOidcRedirectAuth {
   consumed?: boolean;
 }
 
+/**
+ * What sign-in reveals about how far WaaS can extend the session expiry. Undefined when unknown (a
+ * sign-in response without a usable expiry).
+ */
+interface SessionExpiryBounds {
+  /**
+   * The server's idle window: how far a session-signed request can move the expiry past its own
+   * send time. Derived at sign-in, where WaaS sets the expiry to an idle window after the request.
+   */
+  idleWindowMs: number;
+  /** The latest the server can extend the expiry to (sign-in plus the requested lifetime), epoch ms. */
+  expiryCeilingMs: number;
+}
+
+/** When a `CompleteAuth` request was sent (epoch ms) and the session lifetime it requested. */
+interface CompleteAuthSent {
+  sentAt: number;
+  lifetimeSeconds: number;
+}
+
 interface WalletSessionMetadata {
   expiresAt: string;
   auth: OMSWalletSessionAuth;
   signerCredentialId: string;
   signerKeyType: CredentialSigningAlgorithm;
+  expiryBounds?: SessionExpiryBounds;
+  /** Send time of the `CompleteAuth` that returned `expiresAt`, in epoch ms; set only at sign-in. */
+  signInSentAt?: number;
 }
 
 /** A point-in-time view of a session; `wallet` is undefined while a wallet selection is pending. */
@@ -242,6 +265,13 @@ interface StoredSessionRecord {
   auth: OMSWalletSessionAuth;
   signerCredentialId: string;
   signerKeyType: CredentialSigningAlgorithm;
+  /**
+   * `SessionExpiryBounds.idleWindowMs`. Absent when unknown; a record without valid bounds is
+   * discarded on load.
+   */
+  idleWindowMs?: number;
+  /** `SessionExpiryBounds.expiryCeilingMs` as an ISO 8601 timestamp; absent when unknown. */
+  expiryCeiling?: string;
 }
 
 interface LoadedSessionRecord {
@@ -257,6 +287,14 @@ interface LoadedSessionRecord {
  * `signerMismatch`: the signer no longer holds the session's key, so the session was cleared
  * without a request.
  */
+/**
+ * Who starts an expiry read. `timer`: the expiry timer's check, sent past the bound on the server
+ * expiry, so it is not recorded as activity. `operation`: an operation on a locally expired session,
+ * which reports the outcome itself. `background`: a restore, the 6-hour refresh, or a check after an
+ * `Unauthorized` request; when it finds the signer key replaced, it notifies `onSessionExpired`.
+ */
+type CredentialReadOrigin = 'timer' | 'operation' | 'background';
+
 type CredentialRefreshResult =
   | { outcome: 'refreshed' | 'unsupported' | 'stale' | 'signerMismatch' }
   | { outcome: 'ended' | 'unavailable'; error: unknown };
@@ -405,6 +443,7 @@ export class WalletClientImpl implements WalletClient {
   private sessionAuth: OMSWalletSessionAuth | undefined;
   private sessionSignerCredentialId: string | undefined;
   private sessionSignerKeyType: CredentialSigningAlgorithm | undefined;
+  private sessionExpiryBounds: SessionExpiryBounds | undefined;
   private activePendingWalletSelection: ActivePendingWalletSelection | undefined;
   private activeEmailAuthAttempt: ActiveEmailAuthAttempt | undefined;
   private nextPendingWalletSelectionId = 1;
@@ -429,12 +468,25 @@ export class WalletClientImpl implements WalletClient {
   /** Set once WaaS answers `GetCredential` with `WebrpcBadRoute`; kept for the client's lifetime. */
   private credentialRefreshUnsupported = false;
   /**
-   * When the session expiry was last read from WaaS, in epoch ms: sign-in, or the send time of the
-   * last successful `GetCredential`.
+   * When the session expiry was last read from WaaS in this client, in epoch ms: the send time of
+   * the sign-in `CompleteAuth`, or the completion of the last successful `GetCredential`. Unset
+   * after a restore until a read succeeds.
    */
   private lastCredentialRefreshAt: number | undefined;
-  /** Send time of the last session-signed request other than `GetCredential`, in epoch ms. */
+  /**
+   * Completion (response or error) of the last session-signed request, in epoch ms: until then it
+   * can reach WaaS and extend the credential. `GetCredential` counts whatever its outcome (WaaS may
+   * have extended the credential when the response was lost), except the expiry timer's own check.
+   * A restore sets it to the restore time, which bounds the requests of the process that stored
+   * the session.
+   */
   private lastSessionActivityAt: number | undefined;
+  /** Completion of the last `GetCredential`, in epoch ms. Reads never overlap, so it is the current read's. */
+  private lastCredentialReadCompletedAt: number | undefined;
+  /** Whether the next `GetCredential` send counts as activity; false only for the timer's check. */
+  private nextCredentialReadRecordsActivity = true;
+  /** The shared activity record this client last wrote, to skip writes that would not move it. */
+  private lastSharedSessionActivity: { signerCredentialId: string; at: number } | undefined;
   private credentialRefreshRetryDelayMs = CREDENTIAL_REFRESH_RETRY_MIN_MS;
 
   /** The active wallet's ID, or `''` without an active wallet. */
@@ -481,6 +533,10 @@ export class WalletClientImpl implements WalletClient {
         this.sessionAuth = restoredSession.auth;
         this.sessionSignerCredentialId = record.signerCredentialId;
         this.sessionSignerKeyType = record.signerKeyType;
+        this.sessionExpiryBounds = storedSessionExpiryBounds(record);
+        // The process that stored the session may have used it after its last read, but not later
+        // than now. The expiry is not read in this client yet, so `lastCredentialRefreshAt` stays unset.
+        this.lastSessionActivityAt = Date.now();
         this.scheduleSessionExpiry(restoredSession);
       }
     } else {
@@ -489,6 +545,7 @@ export class WalletClientImpl implements WalletClient {
       this.sessionAuth = undefined;
       this.sessionSignerCredentialId = undefined;
       this.sessionSignerKeyType = undefined;
+      this.sessionExpiryBounds = undefined;
     }
 
     const signedFetch = createSignedFetch(
@@ -518,8 +575,12 @@ export class WalletClientImpl implements WalletClient {
     });
 
     if (this.activeWalletAccount) {
-      // A restored session may have been extended or ended on the server since it was saved.
-      void this.refreshSessionCredential();
+      // A restored session may have been extended or ended on the server since it was saved. The
+      // read extends an active session, so a hidden or prerendered page waits until it is shown.
+      const revision = this.sessionRevision;
+      whenInForeground(() => {
+        if (this.sessionRevision === revision) void this.refreshSessionCredential('background');
+      });
     }
   }
 
@@ -687,9 +748,11 @@ export class WalletClientImpl implements WalletClient {
         answer: params.idToken,
         lifetime: sessionLifetimeSeconds
       };
+      const sentAt = Date.now();
       const response = await this.client.completeAuth(completeRequest);
       return this.completeWalletAuth(
         response,
+        { sentAt, lifetimeSeconds: sessionLifetimeSeconds },
         params.walletType ?? WalletType.Ethereum,
         params.walletSelection ?? 'automatic',
         this.oidcIdTokenSessionAuthFromParams(params, response),
@@ -896,9 +959,11 @@ export class WalletClientImpl implements WalletClient {
           answer: callback.code,
           lifetime: sessionLifetimeSeconds
         };
+        const sentAt = Date.now();
         const response = await this.client.completeAuth(request);
         const result = await this.completeWalletAuth(
           response,
+          { sentAt, lifetimeSeconds: sessionLifetimeSeconds },
           pending.walletType,
           walletSelection,
           this.oidcRedirectSessionAuthFromPending(pending, response),
@@ -994,7 +1059,7 @@ export class WalletClientImpl implements WalletClient {
         context,
         WalletOperation.useWallet
       );
-      return this.activateWallet(wallet, context.metadata, WalletOperation.useWallet);
+      return this.activateWallet(wallet, context.metadata, WalletOperation.useWallet, true);
     });
   }
 
@@ -1006,7 +1071,7 @@ export class WalletClientImpl implements WalletClient {
         context,
         WalletOperation.claimWallet
       );
-      return this.activateWallet(wallet, context.metadata, WalletOperation.claimWallet);
+      return this.activateWallet(wallet, context.metadata, WalletOperation.claimWallet, true);
     });
   }
 
@@ -1023,7 +1088,7 @@ export class WalletClientImpl implements WalletClient {
         context,
         WalletOperation.createWallet
       );
-      return this.activateWallet(wallet, context.metadata, WalletOperation.createWallet);
+      return this.activateWallet(wallet, context.metadata, WalletOperation.createWallet, true);
     });
   }
 
@@ -1058,7 +1123,12 @@ export class WalletClientImpl implements WalletClient {
           context,
           WalletOperation.importWallet
         );
-        return this.activateWallet(wallet, context.metadata, WalletOperation.importWallet);
+        return this.activateWallet(
+          wallet,
+          context.metadata,
+          WalletOperation.importWallet,
+          context.type === 'active'
+        );
       });
     });
   }
@@ -1095,7 +1165,8 @@ export class WalletClientImpl implements WalletClient {
           return this.activateWallet(
             wallet,
             context.metadata,
-            WalletOperation.importEncryptedWallet
+            WalletOperation.importEncryptedWallet,
+            context.type === 'active'
           );
         }
       );
@@ -1140,6 +1211,11 @@ export class WalletClientImpl implements WalletClient {
         storageFailure = error;
       }
       try {
+        this.storage.delete(Constants.sessionActivityStorageKey);
+      } catch {
+        // Best effort: a leftover record names this credential, so later sessions ignore it.
+      }
+      try {
         this.clearPendingOidcRedirectAuth();
       } catch (error) {
         storageFailure ??= error;
@@ -1156,10 +1232,12 @@ export class WalletClientImpl implements WalletClient {
     this.sessionAuth = undefined;
     this.sessionSignerCredentialId = undefined;
     this.sessionSignerKeyType = undefined;
+    this.sessionExpiryBounds = undefined;
     this.activePendingWalletSelection = undefined;
     this.activeEmailAuthAttempt = undefined;
     this.lastCredentialRefreshAt = undefined;
     this.lastSessionActivityAt = undefined;
+    this.lastSharedSessionActivity = undefined;
     this.credentialRefreshRetryDelayMs = CREDENTIAL_REFRESH_RETRY_MIN_MS;
     this.clearSessionExpiryTimer();
     if (!keepSharedState) await this.credentialSigner.clear?.();
@@ -1685,18 +1763,32 @@ export class WalletClientImpl implements WalletClient {
     return fromGeneratedWallet(response.wallet);
   }
 
+  /**
+   * Activates `wallet` and persists the session. `inActiveSession`: another wallet of the active
+   * session is replaced. An expiry read may have moved the expiry since `metadata` was captured, so
+   * the session's current expiry, bounds, and last read are kept; only the wallet changes.
+   */
   private activateWallet(
     wallet: WalletAccount,
     metadata: WalletSessionMetadata,
-    operation?: WalletOperation
+    operation?: WalletOperation,
+    inActiveSession = false
   ): WalletActivationResult {
-    this.persistSession(wallet, metadata, operation);
+    const current = inActiveSession ? this.currentSessionMetadata() : undefined;
+    const isSameSession =
+      !!current &&
+      !!this.activeWalletAccount &&
+      normalizeCredentialId(current.signerCredentialId) ===
+        normalizeCredentialId(metadata.signerCredentialId) &&
+      current.signerKeyType === metadata.signerKeyType;
+    this.persistSession(wallet, isSameSession && current ? current : metadata, operation);
     this.activePendingWalletSelection = undefined;
     return { wallet: cloneWalletAccount(wallet) };
   }
 
   private async completeWalletAuth(
     response: CompleteAuthResponse,
+    sent: CompleteAuthSent,
     walletType: WalletType,
     walletSelection: WalletSelectionBehavior,
     auth: OMSWalletSessionAuth,
@@ -1705,7 +1797,7 @@ export class WalletClientImpl implements WalletClient {
   ): Promise<CompleteWalletAuthResult | PendingWalletSelection> {
     this.activePendingWalletSelection = undefined;
 
-    const metadata = await this.sessionMetadataFromAuthResponse(response, auth);
+    const metadata = await this.sessionMetadataFromAuthResponse(response, sent, auth);
     const wallets = await this.listAllWalletsFromAuthResponse(response);
     // CompleteAuth is the only place WaaS reports preallocated wallets; ListWallets omits them.
     const claimableWallets = (response.claimable ?? []).map(fromGeneratedWallet);
@@ -1768,10 +1860,12 @@ export class WalletClientImpl implements WalletClient {
       answer,
       lifetime: attempt.sessionLifetimeSeconds
     };
+    const sentAt = Date.now();
     const response = await this.client.completeAuth(request);
     this.requireActiveEmailAuthAttempt(attempt, WalletOperation.completeEmailAuth);
     const result = await this.completeWalletAuth(
       response,
+      { sentAt, lifetimeSeconds: attempt.sessionLifetimeSeconds },
       params.walletType,
       params.walletSelection,
       this.emailSessionAuthFromResponse(response, attempt.email),
@@ -1888,7 +1982,13 @@ export class WalletClientImpl implements WalletClient {
       expiresAt: metadata.expiresAt,
       auth: cloneSessionAuth(metadata.auth),
       signerCredentialId: metadata.signerCredentialId,
-      signerKeyType: metadata.signerKeyType
+      signerKeyType: metadata.signerKeyType,
+      ...(metadata.expiryBounds
+        ? {
+            idleWindowMs: metadata.expiryBounds.idleWindowMs,
+            expiryCeiling: new Date(metadata.expiryBounds.expiryCeilingMs).toISOString()
+          }
+        : {})
     };
     // Sign-in reads the expiry; activating another wallet keeps the session's last read.
     const isActiveSessionExpiry =
@@ -1909,7 +2009,8 @@ export class WalletClientImpl implements WalletClient {
     this.sessionAuth = cloneSessionAuth(metadata.auth);
     this.sessionSignerCredentialId = metadata.signerCredentialId;
     this.sessionSignerKeyType = metadata.signerKeyType;
-    if (!isActiveSessionExpiry) this.lastCredentialRefreshAt = Date.now();
+    this.sessionExpiryBounds = metadata.expiryBounds && { ...metadata.expiryBounds };
+    if (!isActiveSessionExpiry) this.lastCredentialRefreshAt = metadata.signInSentAt ?? Date.now();
     this.scheduleSessionExpiry(this.sessionFromMetadata(this.activeWalletAccount, metadata));
   }
 
@@ -1951,6 +2052,12 @@ export class WalletClientImpl implements WalletClient {
         return undefined;
       }
 
+      // Records without the expiry bounds (pre-release 0.4.0 builds) are discarded too.
+      const expiryBounds = storedSessionExpiryBounds(parsed);
+      if (!expiryBounds) {
+        this.storage.delete(Constants.sessionStorageKey);
+        return undefined;
+      }
       return {
         serialized,
         record: {
@@ -1960,7 +2067,9 @@ export class WalletClientImpl implements WalletClient {
           expiresAt: parsed.expiresAt,
           auth,
           signerCredentialId,
-          signerKeyType
+          signerKeyType,
+          idleWindowMs: expiryBounds.idleWindowMs,
+          expiryCeiling: new Date(expiryBounds.expiryCeilingMs).toISOString()
         }
       };
     } catch {
@@ -1989,7 +2098,8 @@ export class WalletClientImpl implements WalletClient {
       expiresAt: this.sessionExpiresAt,
       auth: cloneSessionAuth(this.sessionAuth),
       signerCredentialId: this.sessionSignerCredentialId,
-      signerKeyType: this.sessionSignerKeyType
+      signerKeyType: this.sessionSignerKeyType,
+      ...(this.sessionExpiryBounds ? { expiryBounds: { ...this.sessionExpiryBounds } } : {})
     };
   }
 
@@ -2279,13 +2389,17 @@ export class WalletClientImpl implements WalletClient {
 
   private async sessionMetadataFromAuthResponse(
     response: CompleteAuthResponse,
+    sent: CompleteAuthSent,
     auth: OMSWalletSessionAuth
   ): Promise<WalletSessionMetadata> {
+    const expiryBounds = signInExpiryBounds(response.credential.expiresAt, sent);
     return {
       expiresAt: response.credential.expiresAt,
       auth,
       signerCredentialId: await this.credentialSigner.credentialId(),
-      signerKeyType: this.credentialSigner.signingAlgorithm
+      signerKeyType: this.credentialSigner.signingAlgorithm,
+      ...(expiryBounds ? { expiryBounds } : {}),
+      signInSentAt: sent.sentAt
     };
   }
 
@@ -2540,6 +2654,16 @@ export class WalletClientImpl implements WalletClient {
       if (sdkError.upstreamError?.service === 'waas' && sdkError.upstreamError.code === '7314') {
         // TransactionSimulationFailed: the relayer refused to dispatch a reverting transaction and
         // WaaS closed it as failed, so the outcome is known; report the request failure as is.
+        throw sdkError;
+      }
+      if (
+        sdkError.upstreamError?.service === 'waas' &&
+        EXECUTE_REFUSED_BEFORE_SUBMISSION_CODES.has(sdkError.upstreamError.code ?? '')
+      ) {
+        // WaaS refused the Execute before submitting anything: its credential middleware
+        // (InvalidSignature 7201, UsageLimitExceeded 7205, PreconditionFailed 7206 after the
+        // stale-nonce resends, Unauthorized 7207 for a revoked credential), or the handler's checks
+        // before submission (Unauthorized 7207). Report the request failure as is.
         throw sdkError;
       }
       throw new OMSWalletTransactionError({
@@ -2910,7 +3034,9 @@ export class WalletClientImpl implements WalletClient {
       return false;
     }
 
-    const signerCredentialId = await this.credentialSigner.credentialId();
+    const signerCredentialId: unknown = await this.credentialSigner.credentialId();
+    // A custom signer may report no credential: that is not the session's key.
+    if (typeof signerCredentialId !== 'string' || !signerCredentialId) return false;
     return (
       !!this.sessionSignerCredentialId &&
       !!this.sessionSignerKeyType &&
@@ -3131,9 +3257,12 @@ export class WalletClientImpl implements WalletClient {
       }
     }
 
-    // The server may have extended the credential since the expiry was last read.
+    // The server may have extended the credential since the expiry was last read. This read is sent
+    // only once past the bound on the server expiry, so it is not recorded as activity: if it
+    // reaches WaaS, the credential has ended there and nothing moves. Counting it would put the
+    // next check (a retry when WaaS is unreachable) an idle window later.
     const revision = this.sessionRevision;
-    const result = await this.refreshSessionCredential();
+    const result = await this.refreshSessionCredential('timer');
     const current = this.activeSessionSnapshot();
     if (this.sessionRevision !== revision || !current) return;
     if (result.outcome === 'refreshed' && !this.isSessionExpired(current)) return;
@@ -3148,18 +3277,102 @@ export class WalletClientImpl implements WalletClient {
   }
 
   /**
-   * When the expiry timer may ask WaaS about a locally expired session, in epoch ms. Every
-   * session-signed request moves the server expiry to an idle window after it, so activity after the
-   * last read moves it by about as much: the check waits for that, plus a grace period for latency.
+   * When the expiry timer may ask WaaS about a locally expired session, in epoch ms. Reading the
+   * expiry extends an active credential, so the check waits until the session would have ended on
+   * the server, plus a grace period for latency. `L` is the local expiry, `C` the completion of the
+   * last successful read in this client (or the sign-in request's send), and `A` the completion of
+   * the last session-signed request of any tab (reads included, except the timer's own checks):
+   *
+   * - No request since the last read (`A <= C`): `L`.
+   * - Otherwise, with the idle window `I` and ceiling `N` derived at sign-in:
+   *   `max(L, min(A + I, N))`. A session-signed request moves the server expiry toward
+   *   `min(t + I, N)` and never past it (WaaS skips small moves, which only keeps it lower), so
+   *   after the last request, done by `A`, the server expiry is at most `min(A + I, N)`. It never
+   *   moves earlier, so it is at least `L`, which the server reported. With a lifetime shorter than
+   *   the idle window, the expiry is `N` from sign-in and activity cannot move it.
+   * - Without `I` and `N` (a sign-in response without a usable expiry; restored sessions always
+   *   have them): `L + max(0, A - C) + 6 hours`, or `L + 6 hours` without a read, allowing for the
+   *   6-hour dampening as well.
    */
   private sessionExpiryCheckAt(session: SessionSnapshot): number {
+    const expiresAtMs = Date.parse(session.expiresAt);
     const readAt = this.lastCredentialRefreshAt;
-    const activityAt = this.lastSessionActivityAt;
-    const activitySinceRead =
-      readAt !== undefined && activityAt !== undefined && activityAt > readAt
-        ? activityAt - readAt
-        : 0;
-    return Date.parse(session.expiresAt) + activitySinceRead + SESSION_EXPIRY_CHECK_GRACE_MS;
+    const activityAt = this.latestSessionActivityAt();
+    const bounds = this.sessionExpiryBounds;
+    if (!bounds) {
+      const activitySinceRead =
+        readAt !== undefined && activityAt !== undefined ? Math.max(0, activityAt - readAt) : 0;
+      return (
+        expiresAtMs +
+        activitySinceRead +
+        SERVER_EXPIRY_SLIDE_DAMPENING_MS +
+        SESSION_EXPIRY_CHECK_GRACE_MS
+      );
+    }
+    if (activityAt === undefined || (readAt !== undefined && activityAt <= readAt)) {
+      return expiresAtMs + SESSION_EXPIRY_CHECK_GRACE_MS;
+    }
+    const serverExpiryBound = Math.min(activityAt + bounds.idleWindowMs, bounds.expiryCeilingMs);
+    return Math.max(expiresAtMs, serverExpiryBound) + SESSION_EXPIRY_CHECK_GRACE_MS;
+  }
+
+  /**
+   * The last session-signed request of this client or, through the shared activity record, of
+   * another client (tab) signing with the same credential key, in epoch ms.
+   */
+  private latestSessionActivityAt(): number | undefined {
+    const ownActivityAt = this.lastSessionActivityAt;
+    const sharedActivityAt = this.sharedSessionActivityAt();
+    if (sharedActivityAt === undefined) return ownActivityAt;
+    return ownActivityAt === undefined
+      ? sharedActivityAt
+      : Math.max(ownActivityAt, sharedActivityAt);
+  }
+
+  /** Reads the shared activity record; undefined when absent, malformed, or for another credential. */
+  private sharedSessionActivityAt(): number | undefined {
+    const signerCredentialId = this.sessionSignerCredentialId;
+    if (!signerCredentialId) return undefined;
+    try {
+      const serialized = this.storage.get(Constants.sessionActivityStorageKey);
+      if (!serialized) return undefined;
+      const parsed = JSON.parse(serialized) as Record<string, unknown> | null;
+      if (
+        !parsed ||
+        typeof parsed.signerCredentialId !== 'string' ||
+        normalizeCredentialId(parsed.signerCredentialId) !==
+          normalizeCredentialId(signerCredentialId) ||
+        typeof parsed.at !== 'number' ||
+        !Number.isFinite(parsed.at)
+      ) {
+        return undefined;
+      }
+      return parsed.at;
+    } catch {
+      return undefined;
+    }
+  }
+
+  /**
+   * Records a session-signed request completed at `at` (epoch ms), for this client and, through shared
+   * storage, for other clients (tabs) signing with the same credential key. Best effort: a storage
+   * failure never fails the request.
+   */
+  private recordSessionActivity(at: number): void {
+    this.lastSessionActivityAt = at;
+    const signerCredentialId = this.sessionSignerCredentialId;
+    if (!signerCredentialId) return;
+    const written = this.lastSharedSessionActivity;
+    if (written && written.signerCredentialId === signerCredentialId && written.at >= at) return;
+    try {
+      this.storage.set(
+        Constants.sessionActivityStorageKey,
+        JSON.stringify({ signerCredentialId, at })
+      );
+      this.lastSharedSessionActivity = { signerCredentialId, at };
+    } catch {
+      // Other tabs only lose this request's time; this client still has it.
+    }
   }
 
   /**
@@ -3169,7 +3382,7 @@ export class WalletClientImpl implements WalletClient {
    */
   private async refreshLocallyExpiredSession(operation: WalletOperation): Promise<void> {
     const revision = this.sessionRevision;
-    const result = await this.refreshSessionCredential();
+    const result = await this.refreshSessionCredential('operation');
     const current = this.activeSessionSnapshot();
     const isSameSession = this.sessionRevision === revision && !!current;
     if (result.outcome === 'refreshed' && isSameSession && !this.isSessionExpired(current)) return;
@@ -3197,14 +3410,17 @@ export class WalletClientImpl implements WalletClient {
   /**
    * Reads the active session credential's current expiry from WaaS. Concurrent callers share one
    * request, and a result is applied only while the same session is current. Never rejects.
+   * `origin` is the caller that starts the read: see `CredentialReadOrigin`.
    */
-  private refreshSessionCredential(): Promise<CredentialRefreshResult> {
+  private refreshSessionCredential(
+    origin: CredentialReadOrigin = 'background'
+  ): Promise<CredentialRefreshResult> {
     if (!this.activeWalletAccount) return Promise.resolve({ outcome: 'stale' });
     if (this.credentialRefreshUnsupported) return Promise.resolve({ outcome: 'unsupported' });
     const revision = this.sessionRevision;
     if (this.credentialRefresh?.revision === revision) return this.credentialRefresh.promise;
 
-    const promise = this.requestCredentialRefresh(revision);
+    const promise = this.requestCredentialRefresh(revision, origin);
     const refresh = { revision, promise };
     this.credentialRefresh = refresh;
     void promise.finally(() => {
@@ -3213,7 +3429,10 @@ export class WalletClientImpl implements WalletClient {
     return promise;
   }
 
-  private async requestCredentialRefresh(revision: number): Promise<CredentialRefreshResult> {
+  private async requestCredentialRefresh(
+    revision: number,
+    origin: CredentialReadOrigin
+  ): Promise<CredentialRefreshResult> {
     const signerCredentialId = this.sessionSignerCredentialId;
     const isCurrent = () =>
       this.sessionRevision === revision &&
@@ -3229,18 +3448,31 @@ export class WalletClientImpl implements WalletClient {
     if (!isCurrent()) return { outcome: 'stale' };
     if (!signerMatches) {
       // The session cannot sign its requests any more: clear it without asking WaaS.
+      const session = this.activeSessionSnapshot();
       try {
         await this.clearSessionWithMismatchedSigner();
       } catch {
         // The session is cleared in memory even when storage or credential cleanup fails.
       }
+      if (origin !== 'operation' && session && !this.activeWalletAccount) {
+        // No operation reports this, so tell listeners the session ended, as a local expiry does.
+        this.notifySessionExpired({
+          ...sessionExpiredEvent(session),
+          expiredAt: this.isSessionExpired(session) ? session.expiresAt : new Date().toISOString()
+        });
+      }
       return { outcome: 'signerMismatch' };
     }
 
     let expiresAt: unknown;
-    const sentAt = Date.now();
+    let readAt = Date.now();
     try {
+      // The read fetch takes this synchronously when `getCredential` calls it.
+      this.nextCredentialReadRecordsActivity = origin !== 'timer';
       const response = await this.credentialClient.getCredential();
+      // The read fetch records its completion also as session activity, so a successful read with no
+      // later request leaves the activity no later than the read.
+      readAt = this.lastCredentialReadCompletedAt ?? readAt;
       expiresAt = response.credential?.expiresAt;
     } catch (error) {
       if (isBadRouteError(error)) {
@@ -3264,11 +3496,11 @@ export class WalletClientImpl implements WalletClient {
         error: new OMSWalletResponseError({ message: 'Credential expiry response is invalid' })
       };
     }
-    this.applyRefreshedSessionExpiry(expiresAt, sentAt);
+    this.applyRefreshedSessionExpiry(expiresAt, readAt);
     return { outcome: 'refreshed' };
   }
 
-  /** Applies an expiry read by a `GetCredential` request sent at `readAt` (epoch ms). */
+  /** Applies an expiry read by a `GetCredential` request completed at `readAt` (epoch ms). */
   private applyRefreshedSessionExpiry(expiresAt: string, readAt: number): void {
     const wallet = this.activeWalletAccount;
     const metadata = this.currentSessionMetadata();
@@ -3276,28 +3508,56 @@ export class WalletClientImpl implements WalletClient {
     this.credentialRefreshRetryDelayMs = CREDENTIAL_REFRESH_RETRY_MIN_MS;
     const refreshed: WalletSessionMetadata = { ...metadata, expiresAt };
     try {
-      this.persistSession(wallet, refreshed);
-      this.lastCredentialRefreshAt = readAt;
+      this.persistRefreshedSessionExpiry(wallet, refreshed);
     } catch {
       // Storage failed: keep the refreshed expiry in memory; the stored record keeps the old one.
       this.sessionExpiresAt = expiresAt;
-      this.lastCredentialRefreshAt = readAt;
       this.scheduleSessionExpiry(this.sessionFromMetadata(wallet, refreshed));
     }
+    this.lastCredentialRefreshAt = readAt;
   }
 
   /**
-   * Signs a session request once no expiry read is in flight, records when it was sent (WaaS can
+   * Stores a refreshed expiry. Clients (tabs) signing with the same key share the stored record,
+   * and another one may have activated another wallet in it since this client last wrote it, so
+   * only its expiry changes; this client keeps its own wallet. A record of another credential
+   * belongs to a newer session elsewhere and is left alone. Throws when storage fails.
+   */
+  private persistRefreshedSessionExpiry(
+    wallet: WalletAccount,
+    refreshed: WalletSessionMetadata
+  ): void {
+    const stored = this.loadStoredSessionRecord()?.record;
+    if (!stored) {
+      this.persistSession(wallet, refreshed);
+      return;
+    }
+    if (
+      normalizeCredentialId(stored.signerCredentialId) ===
+      normalizeCredentialId(refreshed.signerCredentialId)
+    ) {
+      const record: StoredSessionRecord = { ...stored, expiresAt: refreshed.expiresAt };
+      this.storage.set(Constants.sessionStorageKey, JSON.stringify(record));
+    }
+    this.latestSessionExpiredEvent = undefined;
+    this.sessionExpiresAt = refreshed.expiresAt;
+    this.scheduleSessionExpiry(this.sessionFromMetadata(wallet, refreshed));
+  }
+
+  /**
+   * Signs a session request once no expiry read is in flight, records when it completed (WaaS can
    * extend the credential whatever the outcome), and counts it while in flight.
    */
   private sessionRequestFetch(fetch: Fetch): Fetch {
     return async (input: RequestInfo, init?: RequestInit): Promise<Response> => {
       while (this.credentialReadInFlight) await this.credentialReadInFlight;
-      this.lastSessionActivityAt = Date.now();
       this.signedSessionRequestsInFlight += 1;
       try {
         return await fetch(input, init);
       } finally {
+        // Recorded at completion: a request can reach WaaS, and extend the credential, any time
+        // until then.
+        this.recordSessionActivity(Date.now());
         this.signedSessionRequestsInFlight -= 1;
         if (this.signedSessionRequestsInFlight === 0) {
           for (const resume of this.signedSessionRequestsIdleWaiters.splice(0)) resume();
@@ -3309,6 +3569,8 @@ export class WalletClientImpl implements WalletClient {
   /** Signs an expiry read once no other signed session request or read is in flight. */
   private credentialReadFetch(fetch: Fetch): Fetch {
     return async (input: RequestInfo, init?: RequestInit): Promise<Response> => {
+      const recordsActivity = this.nextCredentialReadRecordsActivity;
+      this.nextCredentialReadRecordsActivity = true;
       while (this.signedSessionRequestsInFlight > 0 || this.credentialReadInFlight) {
         await (this.credentialReadInFlight ??
           new Promise<void>((resume) => this.signedSessionRequestsIdleWaiters.push(resume)));
@@ -3318,6 +3580,12 @@ export class WalletClientImpl implements WalletClient {
       try {
         return await fetch(input, init);
       } finally {
+        // A read is session activity too: WaaS extends an active credential when it receives it.
+        // Reads never overlap other session requests, so a successful read's completion is also
+        // when its expiry was current.
+        const completedAt = Date.now();
+        this.lastCredentialReadCompletedAt = completedAt;
+        if (recordsActivity) this.recordSessionActivity(completedAt);
         this.credentialReadInFlight = undefined;
         release();
       }
@@ -3338,8 +3606,16 @@ export class WalletClientImpl implements WalletClient {
       if (!hadActiveSession) return response;
       if (response.ok) {
         if (this.sessionRevision === revision) this.refreshSessionCredentialIfDue();
-      } else if (await isCredentialEndedResponse(response)) {
+        return response;
+      }
+      const errorCode = await waasErrorCode(response);
+      if (errorCode === 7202 || errorCode === 7203) {
         this.rejectedSessionCredentialRevision = revision;
+      } else if (errorCode === 7207 && this.sessionRevision === revision) {
+        // Unauthorized: a wallet access error, or a revoked credential. `GetCredential` involves no
+        // wallet, so it tells them apart: it fails with 7207 and ends the session only when the
+        // credential was revoked. One read in flight at a time is shared.
+        void this.refreshSessionCredential('background');
       }
       return response;
     };
@@ -3354,7 +3630,7 @@ export class WalletClientImpl implements WalletClient {
     ) {
       return;
     }
-    void this.refreshSessionCredential();
+    void this.refreshSessionCredential('background');
   }
 
   private isCurrentSessionSnapshot(session: SessionSnapshot): boolean {
@@ -3565,13 +3841,13 @@ function normalizeCredentialId(value: string): string {
 }
 
 /** Whether a failed WaaS response is `KeyNotFound` (7202) or `KeyExpired` (7203). */
-async function isCredentialEndedResponse(response: Response): Promise<boolean> {
-  if (response.status !== 400 && response.status !== 404) return false;
+/** The WaaS error code of a failed response, or undefined when its body has none. */
+async function waasErrorCode(response: Response): Promise<number | undefined> {
   try {
-    const body = (await response.clone().json()) as { code?: unknown };
-    return body?.code === 7202 || body?.code === 7203;
+    const body = (await response.clone().json()) as { code?: unknown } | null;
+    return typeof body?.code === 'number' ? body.code : undefined;
   } catch {
-    return false;
+    return undefined;
   }
 }
 
@@ -3598,6 +3874,71 @@ function sessionExpiredEvent(session: SessionSnapshot): OMSWalletSessionExpiredE
     session: { expiresAt: session.expiresAt, auth: { ...session.auth } },
     expiredAt: session.expiresAt
   };
+}
+
+/** The parts of a browser `Document` that `whenInForeground` uses. */
+interface ForegroundDocument {
+  visibilityState?: string;
+  prerendering?: boolean;
+  addEventListener?(type: string, listener: () => void): void;
+  removeEventListener?(type: string, listener: () => void): void;
+}
+
+/**
+ * Runs `action` now when the page is visible and not prerendering, or outside a browser (no
+ * `document`); otherwise once, when both hold.
+ */
+function whenInForeground(action: () => void): void {
+  const doc = (globalThis as { document?: ForegroundDocument }).document;
+  const isForeground = () => doc?.visibilityState === 'visible' && !doc.prerendering;
+  if (!doc?.addEventListener || isForeground()) {
+    action();
+    return;
+  }
+  const onChange = () => {
+    if (!isForeground()) return;
+    doc.removeEventListener?.('visibilitychange', onChange);
+    doc.removeEventListener?.('prerenderingchange', onChange);
+    action();
+  };
+  doc.addEventListener('visibilitychange', onChange);
+  doc.addEventListener('prerenderingchange', onChange);
+}
+
+/**
+ * Derives the expiry bounds from a sign-in. WaaS sets the new credential's expiry to the earlier of
+ * an idle window after the request and the requested lifetime, so the expiry minus the send time is
+ * the idle window (slightly more, by the request's latency). The ceiling is at least the send time
+ * plus the requested lifetime; the server's clock can only put it later. Undefined when the
+ * response's expiry is not usable.
+ */
+function signInExpiryBounds(
+  expiresAt: string,
+  sent: CompleteAuthSent
+): SessionExpiryBounds | undefined {
+  const expiresAtMs = Date.parse(expiresAt);
+  if (!Number.isFinite(expiresAtMs)) return undefined;
+  const idleWindowMs = expiresAtMs - sent.sentAt;
+  if (idleWindowMs <= 0) return undefined;
+  return {
+    idleWindowMs,
+    expiryCeilingMs: Math.max(sent.sentAt + sent.lifetimeSeconds * 1000, expiresAtMs)
+  };
+}
+
+/** Reads the expiry bounds of a stored session record; undefined when absent or invalid. */
+function storedSessionExpiryBounds(record: {
+  idleWindowMs?: unknown;
+  expiryCeiling?: unknown;
+}): SessionExpiryBounds | undefined {
+  const { idleWindowMs, expiryCeiling } = record;
+  if (typeof idleWindowMs !== 'number' || !Number.isFinite(idleWindowMs) || idleWindowMs <= 0) {
+    return undefined;
+  }
+  if (typeof expiryCeiling !== 'string') return undefined;
+  const expiryCeilingMs = Date.parse(expiryCeiling);
+  if (!Number.isFinite(expiryCeilingMs)) return undefined;
+  return { idleWindowMs, expiryCeilingMs };
 }
 
 function parseStoredWalletAccount(value: unknown): WalletAccount | undefined {
@@ -3701,9 +4042,21 @@ function normalizeJsonBigInts<T>(value: T): T {
   ) as T;
 }
 
+/** WaaS codes with which an Execute is refused before anything is submitted. */
+const EXECUTE_REFUSED_BEFORE_SUBMISSION_CODES: ReadonlySet<string> = new Set([
+  '7201',
+  '7205',
+  '7206',
+  '7207'
+]);
 const MAX_SESSION_EXPIRY_TIMER_MS = 2_147_483_647;
 /** How long after the predicted server expiry the expiry timer asks WaaS (5 minutes). */
 const SESSION_EXPIRY_CHECK_GRACE_MS = 5 * 60_000;
+/**
+ * WaaS writes an extended expiry only when it moves by at least this much (6 hours) or reaches the
+ * session's ceiling, so the last read's expiry trails the server's by less than this.
+ */
+const SERVER_EXPIRY_SLIDE_DAMPENING_MS = 6 * 60 * 60 * 1000;
 /** Refresh the expiry after session activity once the last read is at least this old (6 hours). */
 const CREDENTIAL_REFRESH_INTERVAL_MS = 6 * 60 * 60 * 1000;
 /** Retry delays for an expiry check that could not reach WaaS (1 minute, doubling to 15 minutes). */

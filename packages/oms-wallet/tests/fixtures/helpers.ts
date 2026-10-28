@@ -59,11 +59,14 @@ export function jsonResponse(body: unknown, status = 200): Response {
 }
 
 /**
- * A WaaS error body: `KeyExpired` (7203) by default, or `KeyNotFound` (7202), `PreconditionFailed`
- * (7206), `Unauthorized` (7207), `WebrpcBadRoute` (-2).
+ * A WaaS error body: `KeyExpired` (7203) by default, or `InvalidSignature` (7201), `KeyNotFound`
+ * (7202), `UsageLimitExceeded` (7205), `PreconditionFailed` (7206), `Unauthorized` (7207),
+ * `WebrpcBadRoute` (-2).
  */
 export function waasErrorResponse(
   name:
+    | 'InvalidSignature'
+    | 'UsageLimitExceeded'
     | 'KeyExpired'
     | 'KeyNotFound'
     | 'PreconditionFailed'
@@ -71,6 +74,8 @@ export function waasErrorResponse(
     | 'WebrpcBadRoute' = 'KeyExpired'
 ) {
   const { code, status } = {
+    InvalidSignature: { code: 7201, status: 400 },
+    UsageLimitExceeded: { code: 7205, status: 429 },
     KeyExpired: { code: 7203, status: 400 },
     KeyNotFound: { code: 7202, status: 404 },
     PreconditionFailed: { code: 7206, status: 412 },
@@ -109,13 +114,47 @@ export function createWalletWithSession(
     storage: options.storage ?? new MemoryStorageManager(),
     credentialSigner: options.signer ?? new MockSigner()
   });
+  const expiresAt = options.expiresAt ?? '2099-01-01T00:00:00Z';
   (wallet as any).persistSession(testWalletAccount('wallet-id', walletAddress, walletType), {
-    expiresAt: options.expiresAt ?? '2099-01-01T00:00:00Z',
+    expiresAt,
     auth: { type: 'email', email: 'user@example.com' },
     signerCredentialId: '0x04' + '11'.repeat(64),
-    signerKeyType: 'ecdsa-p256-sha256'
+    signerKeyType: 'ecdsa-p256-sha256',
+    expiryBounds: testExpiryBounds(expiresAt)
   });
   return wallet;
+}
+
+/**
+ * The expiry bounds a sign-in now would derive from a `CompleteAuth` returning `expiresAt` with the
+ * default 180-day lifetime: the idle window is the time until `expiresAt`. Undefined for an expiry
+ * that has passed, as a sign-in would leave them.
+ */
+export function testExpiryBounds(
+  expiresAt: string
+): { idleWindowMs: number; expiryCeilingMs: number } | undefined {
+  const expiresAtMs = Date.parse(expiresAt);
+  const idleWindowMs = expiresAtMs - Date.now();
+  if (!(idleWindowMs > 0)) return undefined;
+  return {
+    idleWindowMs,
+    expiryCeilingMs: Math.max(Date.now() + 180 * 24 * 60 * 60 * 1000, expiresAtMs)
+  };
+}
+
+/** The stored-record form of `testExpiryBounds`, for seeding a stored session. */
+export function testStoredExpiryBounds(expiresAt: string): {
+  idleWindowMs: number;
+  expiryCeiling: string;
+} {
+  const bounds = testExpiryBounds(expiresAt) ?? {
+    idleWindowMs: 10 * 24 * 60 * 60 * 1000,
+    expiryCeilingMs: Date.parse(expiresAt)
+  };
+  return {
+    idleWindowMs: bounds.idleWindowMs,
+    expiryCeiling: new Date(bounds.expiryCeilingMs).toISOString()
+  };
 }
 
 /** Waits (macrotask ticks) until `fetchMock` has sent `count` requests to `endpoint`. */

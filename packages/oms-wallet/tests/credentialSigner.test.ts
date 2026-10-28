@@ -2,6 +2,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import { AuthMode, IdentityType, Waas } from '../src/generated/waas.gen';
 import { Networks } from '../src/networks';
+import { WebCryptoP256CredentialSigner } from '../src/credentialSigner';
 import { createSignedFetch } from '../src/signedFetch';
 import {
   MockSigner,
@@ -145,6 +146,42 @@ describe('wallet request nonce rejection', () => {
     expect(second).toBeGreaterThan(first);
   });
 
+  it('reports an Execute still rejected for its nonce after two resends as a request failure', async () => {
+    const fetchMock = vi.fn(async (input: RequestInfo | URL, _init?: RequestInit) => {
+      const url = input.toString();
+      if (url.endsWith('/PrepareEthereumTransaction')) {
+        return jsonResponse({
+          txnId: 'txn-1',
+          status: 'quoted',
+          feeOptions: [],
+          sponsored: true,
+          expiresAt: '2099-01-01T00:00:00Z'
+        });
+      }
+      if (url.endsWith('/Execute')) return waasErrorResponse('PreconditionFailed');
+      throw new Error(`Unexpected request: ${url}`);
+    });
+    vi.stubGlobal('fetch', fetchMock);
+    const wallet = createWalletWithSession(walletAddress, undefined, {
+      signer: new IncreasingNonceSigner()
+    });
+
+    // WaaS rejects the nonce before Execute runs, so the transaction was never submitted.
+    const error = await wallet
+      .sendTransaction({ network: Networks.polygon, to: walletAddress, value: 0n })
+      .catch((caught: unknown) => caught);
+    expect(error).toMatchObject({
+      name: 'OMSWalletRequestError',
+      code: 'OMS_REQUEST_FAILED',
+      operation: 'wallet.execute',
+      status: 412,
+      retryable: false,
+      upstreamError: { service: 'waas', name: 'PreconditionFailed', code: '7206' }
+    });
+    expect((error as { txnId?: string }).txnId).toBeUndefined();
+    expect(requestCount(fetchMock, '/Execute')).toBe(3);
+  });
+
   it('surfaces the nonce rejection after two resends', async () => {
     const fetchMock = vi.fn(async (_input: RequestInfo | URL, _init?: RequestInit) =>
       waasErrorResponse('PreconditionFailed')
@@ -167,5 +204,64 @@ describe('wallet request nonce rejection', () => {
 
     expect(requestCount(fetchMock, '/SignMessage')).toBe(3);
     expect(wallet.session).toBeDefined();
+  });
+});
+
+/**
+ * A minimal in-memory `indexedDB` for the WebCrypto signer: one database whose object stores keep
+ * records by `id`. Requests succeed in a microtask; a transaction completes in the next macrotask,
+ * after the requests chained on it.
+ */
+function stubIndexedDb(): Map<string, unknown> {
+  const records = new Map<string, unknown>();
+  const request = <T>(run: () => T) => {
+    const req: { result?: T; error?: unknown; onsuccess?: () => void; onerror?: () => void } = {};
+    queueMicrotask(() => {
+      try {
+        req.result = run();
+        req.onsuccess?.();
+      } catch (error) {
+        req.error = error;
+        req.onerror?.();
+      }
+    });
+    return req;
+  };
+  const store = {
+    get: (id: string) => request(() => records.get(id)),
+    put: (record: { id: string }) => request(() => void records.set(record.id, record)),
+    delete: (id: string) => request(() => void records.delete(id))
+  };
+  const db = {
+    objectStoreNames: { contains: () => true },
+    createObjectStore: () => store,
+    close: () => {},
+    transaction: () => {
+      const tx: { oncomplete?: () => void; objectStore: () => typeof store } = {
+        objectStore: () => store
+      };
+      setTimeout(() => tx.oncomplete?.(), 0);
+      return tx;
+    }
+  };
+  vi.stubGlobal('indexedDB', { open: () => request(() => db) });
+  return records;
+}
+
+describe('WebCryptoP256CredentialSigner', () => {
+  it('loads or creates a key again after another client removed the stored one', async () => {
+    const records = stubIndexedDb();
+    const signer = new WebCryptoP256CredentialSigner();
+    const first = await signer.credentialId();
+    expect(first).toMatch(/^0x04/);
+
+    // Another tab signed out and removed the shared key.
+    records.clear();
+    await expect(signer.nextNonce()).rejects.toThrow('WebCrypto credential signer was cleared');
+
+    const next = await signer.credentialId();
+    expect(next).toMatch(/^0x04/);
+    expect(next).not.toBe(first);
+    await expect(signer.nextNonce()).resolves.toMatch(/^\d+$/);
   });
 });

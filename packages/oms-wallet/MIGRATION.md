@@ -86,13 +86,17 @@ sign-in and is not updated.
   the requested lifetime is clamped to the server maximum (30 days) and there is no idle timeout, so
   the default gives a fixed 30-day session there.
 
-### Simulation-reverted transactions fail as request errors
+### Transactions refused before submission fail as request errors
 
 When the wallet API refuses to submit a transaction because simulation shows it would revert (WaaS
 `TransactionSimulationFailed`, 7314), the write now fails with `OMSWalletRequestError`
 (`OMS_REQUEST_FAILED`, status 400, `upstreamError.code` `'7314'`) instead of
 `OMS_TRANSACTION_EXECUTION_UNCONFIRMED`. The transaction was closed as failed and never submitted, so
-there is no `txnId` to check. Other execute failures keep `OMS_TRANSACTION_EXECUTION_UNCONFIRMED`.
+there is no `txnId` to check. The same applies when the wallet API refuses the execute request
+before submitting anything: an invalid request signature (`'7201'`, status 400), an exceeded
+credential usage limit (`'7205'`, status 429), a nonce still rejected after the SDK's resends
+(`'7206'`, status 412), or `Unauthorized` (`'7207'`, status 401). Other execute failures keep
+`OMS_TRANSACTION_EXECUTION_UNCONFIRMED`.
 
 ### Invalid Ethereum wallet addresses are rejected
 

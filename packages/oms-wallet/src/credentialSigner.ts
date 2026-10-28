@@ -40,7 +40,10 @@ export class WebCryptoP256CredentialSigner implements CredentialSigner {
 
   async credentialId(): Promise<string> {
     await this.ensureInitialized();
-    return this.credential!;
+    // A concurrent `nextNonce` may have found the stored key removed and reset this signer.
+    if (!this.credential) await this.ensureInitialized();
+    if (!this.credential) throw new Error('WebCrypto credential signer was cleared');
+    return this.credential;
   }
 
   async nextNonce(): Promise<string> {
@@ -60,7 +63,9 @@ export class WebCryptoP256CredentialSigner implements CredentialSigner {
         store.get(this.id)
       );
       if (!isUsableStoredCredential(stored)) {
+        // Removed elsewhere (another tab signed out): the next use loads or creates a key again.
         this.clearMemory();
+        this.initialized = undefined;
         throw new Error('WebCrypto credential signer was cleared');
       }
 

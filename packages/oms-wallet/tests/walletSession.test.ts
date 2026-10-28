@@ -15,6 +15,8 @@ import {
   requestCount,
   testCredential,
   testEnvironment,
+  testExpiryBounds,
+  testStoredExpiryBounds,
   waasErrorResponse
 } from './fixtures/helpers.js';
 
@@ -103,7 +105,8 @@ function seedStoredSession(
       expiresAt: params.expiresAt ?? '2099-01-01T00:00:00Z',
       auth: params.auth ?? emailAuth(),
       signerCredentialId: params.signerCredentialId ?? '0x04' + '11'.repeat(64),
-      signerKeyType: params.signerKeyType ?? 'ecdsa-p256-sha256'
+      signerKeyType: params.signerKeyType ?? 'ecdsa-p256-sha256',
+      ...testStoredExpiryBounds(params.expiresAt ?? '2099-01-01T00:00:00Z')
     })
   );
 }
@@ -521,7 +524,8 @@ describe('WalletClient session storage', () => {
         expiresAt: '2026-01-01T00:02:00Z',
         auth: emailAuth(),
         signerCredentialId: '0x04' + '11'.repeat(64),
-        signerKeyType: 'ecdsa-p256-sha256'
+        signerKeyType: 'ecdsa-p256-sha256',
+        expiryBounds: testExpiryBounds('2026-01-01T00:02:00Z')
       }
     );
 
@@ -569,7 +573,8 @@ describe('WalletClient session storage', () => {
         expiresAt: '2026-01-01T00:02:00Z',
         auth: emailAuth(),
         signerCredentialId: '0x04' + '11'.repeat(64),
-        signerKeyType: 'ecdsa-p256-sha256'
+        signerKeyType: 'ecdsa-p256-sha256',
+        expiryBounds: testExpiryBounds('2026-01-01T00:02:00Z')
       }
     );
 
@@ -606,7 +611,8 @@ describe('WalletClient session storage', () => {
         expiresAt: '2026-01-01T00:02:00Z',
         auth: emailAuth('old@example.com'),
         signerCredentialId: '0x04' + '11'.repeat(64),
-        signerKeyType: 'ecdsa-p256-sha256'
+        signerKeyType: 'ecdsa-p256-sha256',
+        expiryBounds: testExpiryBounds('2026-01-01T00:02:00Z')
       }
     );
     (wallet as any).persistSession(
@@ -615,7 +621,8 @@ describe('WalletClient session storage', () => {
         expiresAt: '2026-01-01T00:04:00Z',
         auth: googleAuth('new@example.com'),
         signerCredentialId: '0x04' + '11'.repeat(64),
-        signerKeyType: 'ecdsa-p256-sha256'
+        signerKeyType: 'ecdsa-p256-sha256',
+        expiryBounds: testExpiryBounds('2026-01-01T00:04:00Z')
       }
     );
 

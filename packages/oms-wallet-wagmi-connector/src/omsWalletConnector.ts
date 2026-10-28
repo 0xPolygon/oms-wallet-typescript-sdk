@@ -239,10 +239,10 @@ export function omsWalletConnector(parameters: OMSWalletConnectorParameters) {
         return provider;
       },
       async isAuthorized() {
-        return (
-          !(await isManuallyDisconnected()) &&
-          Boolean((await resolveOmsWallet()).wallet.activeWallet)
-        );
+        if (await isManuallyDisconnected()) return false;
+        // Only an Ethereum active wallet can connect, as `getAccounts` requires.
+        const activeWallet = (await resolveOmsWallet()).wallet.activeWallet;
+        return activeWallet?.type === 'ethereum' && isAddress(activeWallet.address);
       },
       async switchChain({
         chainId: requestedChainId
