@@ -264,4 +264,37 @@ describe('WebCryptoP256CredentialSigner', () => {
     expect(next).not.toBe(first);
     await expect(signer.nextNonce()).resolves.toMatch(/^\d+$/);
   });
+
+  it('reports the stored key after another tab replaced it', async () => {
+    stubIndexedDb();
+    const tab = new WebCryptoP256CredentialSigner();
+    const otherTab = new WebCryptoP256CredentialSigner();
+    const oldId = await tab.credentialId();
+
+    // The other tab signs out and in again, which replaces the shared key.
+    await otherTab.clear();
+    const newId = await otherTab.credentialId();
+    expect(newId).not.toBe(oldId);
+
+    await expect(tab.hasCredential()).resolves.toBe(true);
+    await expect(tab.credentialId()).resolves.toBe(newId);
+    await otherTab.clear();
+    await expect(tab.hasCredential()).resolves.toBe(false);
+  });
+
+  it('refuses a nonce when the key was replaced after its credential ID was read', async () => {
+    stubIndexedDb();
+    const tab = new WebCryptoP256CredentialSigner();
+    const otherTab = new WebCryptoP256CredentialSigner();
+    const oldId = await tab.credentialId();
+
+    await otherTab.clear();
+    const newId = await otherTab.credentialId();
+
+    // A request signed now would carry the old ID with a signature from the new key.
+    await expect(tab.nextNonce()).rejects.toThrow('WebCrypto credential signer key was replaced');
+    expect(oldId).not.toBe(newId);
+    await expect(tab.credentialId()).resolves.toBe(newId);
+    await expect(tab.nextNonce()).resolves.toMatch(/^\d+$/);
+  });
 });
