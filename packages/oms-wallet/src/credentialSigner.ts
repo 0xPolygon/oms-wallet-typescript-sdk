@@ -69,16 +69,12 @@ export class WebCryptoP256CredentialSigner implements CredentialSigner {
         this.initialized = undefined;
         throw new Error('WebCrypto credential signer was cleared');
       }
-      if (stored.credentialId !== this.credential) {
-        // Replaced elsewhere (another tab signed in again) after the caller read the credential ID,
-        // which a signature from the new key would not match. The next check sees the new key.
-        this.useStoredCredential(stored);
-        throw new Error('WebCrypto credential signer key was replaced');
-      }
 
       const nonce = nextNonceValue(parseNonce(stored.nonce));
       const nextRecord = { ...stored, nonce: nonce.toString() };
       this.nonce = nonce;
+      this.keyPair = stored.keyPair;
+      this.credential = stored.credentialId;
 
       await idbRequestToPromise(store.put(nextRecord));
       await txDone;

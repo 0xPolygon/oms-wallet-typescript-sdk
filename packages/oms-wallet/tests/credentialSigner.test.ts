@@ -2,7 +2,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import { AuthMode, IdentityType, Waas } from '../src/generated/waas.gen';
 import { Networks } from '../src/networks';
-import { WebCryptoP256CredentialSigner } from '../src/credentialSigner';
+import { WebCryptoP256CredentialSigner, type CredentialSigner } from '../src/credentialSigner';
 import { createSignedFetch } from '../src/signedFetch';
 import {
   MockSigner,
@@ -282,19 +282,55 @@ describe('WebCryptoP256CredentialSigner', () => {
     await expect(tab.hasCredential()).resolves.toBe(false);
   });
 
-  it('refuses a nonce when the key was replaced after its credential ID was read', async () => {
+  it('sends no request signed by a key another tab replaced while it was being signed', async () => {
     stubIndexedDb();
     const tab = new WebCryptoP256CredentialSigner();
     const otherTab = new WebCryptoP256CredentialSigner();
-    const oldId = await tab.credentialId();
+    await tab.credentialId();
 
+    // Two concurrent requests read the credential ID; the other tab then replaces the key.
+    let idsRead = 0;
+    let bothRead!: () => void;
+    const bothReadId = new Promise<void>((resolve) => (bothRead = resolve));
+    let replaced!: () => void;
+    const keyReplaced = new Promise<void>((resolve) => (replaced = resolve));
+    const signer: CredentialSigner = {
+      signingAlgorithm: tab.signingAlgorithm,
+      credentialId: async () => {
+        const id = await tab.credentialId();
+        idsRead += 1;
+        if (idsRead <= 2) {
+          if (idsRead === 2) bothRead();
+          await keyReplaced;
+        }
+        return id;
+      },
+      nextNonce: () => tab.nextNonce(),
+      sign: (preimage) => tab.sign(preimage)
+    };
+    const fetchMock = vi.fn(async () => jsonResponse({}));
+    vi.stubGlobal('fetch', fetchMock);
+    const signedFetch = createSignedFetch('publishable-key', signer, 'project-id');
+    const url = 'https://waas.test/rpc/Waas/SignMessage';
+
+    const requests = Promise.allSettled([
+      signedFetch(url, { method: 'POST', body: '{"n":1}' }),
+      signedFetch(url, { method: 'POST', body: '{"n":2}' })
+    ]);
+    await bothReadId;
     await otherTab.clear();
-    const newId = await otherTab.credentialId();
+    await otherTab.credentialId();
+    replaced();
 
-    // A request signed now would carry the old ID with a signature from the new key.
-    await expect(tab.nextNonce()).rejects.toThrow('WebCrypto credential signer key was replaced');
-    expect(oldId).not.toBe(newId);
-    await expect(tab.credentialId()).resolves.toBe(newId);
-    await expect(tab.nextNonce()).resolves.toMatch(/^\d+$/);
+    for (const result of await requests) {
+      expect(result).toMatchObject({
+        status: 'rejected',
+        reason: new Error('Credential signer key changed while signing the request')
+      });
+    }
+    expect(fetchMock).not.toHaveBeenCalled();
+    // A request signed with the replacement key from the start is sent.
+    await signedFetch(url, { method: 'POST', body: '{"n":3}' });
+    expect(fetchMock).toHaveBeenCalledTimes(1);
   });
 });

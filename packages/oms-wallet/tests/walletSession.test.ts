@@ -2132,7 +2132,8 @@ async function waitForRequest(
   fetchMock: ReturnType<typeof vi.fn>,
   endpoint: string
 ): Promise<void> {
-  for (let attempt = 0; attempt < 10; attempt += 1) {
+  // Microtask turns only, so the wait also works under fake timers; signing a request takes several.
+  for (let attempt = 0; attempt < 50; attempt += 1) {
     if (requestCount(fetchMock, endpoint) > 0) {
       return;
     }

@@ -360,8 +360,12 @@ export declare class WebCryptoP256CredentialSigner implements CredentialSigner {
     clear(): Promise<void>;
     private ensureInitialized;
     private loadOrCreate;
+    /** The stored key, `null` when there is none, or `undefined` without IndexedDB. */
     private load;
     private persistNewCredentialOrLoadExisting;
+    /** Matches memory to the stored key: a removed key resets this signer, a replaced one is loaded. */
+    private syncWithStoredCredential;
+    private useStoredCredential;
     private clearMemory;
     private toRecord;
 }

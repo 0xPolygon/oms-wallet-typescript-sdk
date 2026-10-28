@@ -21,6 +21,11 @@ async function buildWalletSignatureHeader(
   const nonce = await signer.nextNonce();
   const preimage = RequestUtils.buildWalletRequestPreimage(endpoint, nonce, projectId, payload);
   const signature = await signer.sign(preimage);
+  // Another tab can replace a shared key while concurrent requests are signed, so the signature may
+  // come from a key the header's credential ID does not name. Such a request is never sent.
+  if ((await signer.credentialId()) !== credentialId) {
+    throw new Error('Credential signer key changed while signing the request');
+  }
   return RequestUtils.buildWalletSignatureHeader(
     signer.signingAlgorithm,
     projectId,
