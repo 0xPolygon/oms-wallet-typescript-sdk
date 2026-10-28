@@ -495,6 +495,11 @@ export class WalletClientImpl implements WalletClient {
    * the session.
    */
   private lastSessionActivityAt: number | undefined;
+  /**
+   * When the current session was restored from storage, in epoch ms. While no read and no request
+   * has completed since, the server expiry is bounded by the saved expiry (`latestServerExpiryOfSaved`).
+   */
+  private restoredAt: number | undefined;
   /** Completion of the last `GetCredential`, in epoch ms. Reads never overlap, so it is the current read's. */
   private lastCredentialReadCompletedAt: number | undefined;
   /** Whether the next `GetCredential` send counts as activity; false only for the timer's check. */
@@ -536,7 +541,10 @@ export class WalletClientImpl implements WalletClient {
         auth: record.auth
       };
 
-      if (this.isSessionExpired(restoredSession)) {
+      if (
+        this.isSessionExpired(restoredSession) &&
+        !mayBeActiveOnServer(restoredSession.expiresAt, storedSessionExpiryBounds(record))
+      ) {
         this.activeWalletAccount = undefined;
         this.sessionExpiresAt = undefined;
         this.sessionAuth = undefined;
@@ -554,6 +562,7 @@ export class WalletClientImpl implements WalletClient {
         // The process that stored the session may have used it after its last read, but not later
         // than now. The expiry is not read in this client yet, so `lastCredentialRefreshAt` stays unset.
         this.lastSessionActivityAt = Date.now();
+        this.restoredAt = this.lastSessionActivityAt;
         this.scheduleSessionExpiry(restoredSession);
       }
     } else {
@@ -602,7 +611,12 @@ export class WalletClientImpl implements WalletClient {
       // Ending the session cancels the wait so its listeners don't keep this client alive.
       this.cancelRestoredSessionRead = whenInForeground(() => {
         this.cancelRestoredSessionRead = undefined;
-        void this.refreshSessionCredential('background');
+        void this.refreshSessionCredential('background').then(() => {
+          // A read that could not settle a session restored past its saved expiry (unsupported or
+          // unreachable) hands it to the expiry timer, which ends or rechecks it.
+          const current = this.activeSessionSnapshot();
+          if (current && this.isSessionExpired(current)) this.scheduleSessionExpiry(current);
+        });
       });
     }
   }
@@ -1269,6 +1283,7 @@ export class WalletClientImpl implements WalletClient {
     this.activeEmailAuthAttempt = undefined;
     this.lastCredentialRefreshAt = undefined;
     this.lastSessionActivityAt = undefined;
+    this.restoredAt = undefined;
     this.lastSharedSessionActivity = undefined;
     this.credentialRefreshRetryDelayMs = CREDENTIAL_REFRESH_RETRY_MIN_MS;
     this.clearSessionExpiryTimer();
@@ -3109,6 +3124,22 @@ export class WalletClientImpl implements WalletClient {
     await this.clearSession({ operation, keepSharedState });
   }
 
+  /** Whether the stored record is still this session's while the signer holds no key at all. */
+  private async isSessionKeyClearedByExpiry(): Promise<boolean> {
+    try {
+      const stored = this.loadStoredSessionRecord()?.record;
+      return (
+        !!stored &&
+        normalizeCredentialId(stored.signerCredentialId) ===
+          normalizeCredentialId(this.sessionSignerCredentialId ?? '') &&
+        !!this.credentialSigner.hasCredential &&
+        !(await this.credentialSigner.hasCredential())
+      );
+    } catch {
+      return false;
+    }
+  }
+
   private async isSessionReplacedElsewhere(): Promise<boolean> {
     try {
       const stored = this.loadStoredSessionRecord()?.record;
@@ -3349,6 +3380,24 @@ export class WalletClientImpl implements WalletClient {
     const readAt = this.lastCredentialRefreshAt;
     const activityAt = this.latestSessionActivityAt();
     const bounds = this.sessionExpiryBounds;
+    // Restored with no read or request since: the saved expiry bounds the server's, which is
+    // tighter than counting the restore as a request when the restore read did not settle it.
+    if (readAt === undefined && activityAt !== undefined && activityAt === this.restoredAt) {
+      return Math.min(
+        this.activityExpiryCheckAt(expiresAtMs, readAt, activityAt, bounds),
+        latestServerExpiryOfSaved(expiresAtMs, bounds)
+      );
+    }
+    return this.activityExpiryCheckAt(expiresAtMs, readAt, activityAt, bounds);
+  }
+
+  /** The check time from the reads and requests alone, without the restore bound. */
+  private activityExpiryCheckAt(
+    expiresAtMs: number,
+    readAt: number | undefined,
+    activityAt: number | undefined,
+    bounds: SessionExpiryBounds | undefined
+  ): number {
     if (!bounds) {
       const activitySinceRead =
         readAt !== undefined && activityAt !== undefined ? Math.max(0, activityAt - readAt) : 0;
@@ -3502,8 +3551,18 @@ export class WalletClientImpl implements WalletClient {
     }
     if (!isCurrent()) return { outcome: 'stale' };
     if (!signerMatches) {
-      // The session cannot sign its requests any more: clear it without asking WaaS.
       const session = this.activeSessionSnapshot();
+      if (session && this.isSessionExpired(session) && (await this.isSessionKeyClearedByExpiry())) {
+        // An earlier load ended this session, clearing its key but keeping its record as the sign-in
+        // hint: end it as that expiry did, so the record stays and later loads replay it too.
+        if (!isCurrent()) return { outcome: 'stale' };
+        await this.expireSession(session);
+        return {
+          outcome: 'ended',
+          error: new Error('Session key was cleared when the session expired')
+        };
+      }
+      // The session cannot sign its requests any more: clear it without asking WaaS.
       try {
         await this.clearSessionWithMismatchedSigner();
       } catch {
@@ -4025,6 +4084,36 @@ function signInExpiryBounds(
     idleWindowMs,
     expiryCeilingMs: Math.max(sent.sentAt + sent.lifetimeSeconds * 1000, expiresAtMs)
   };
+}
+
+/**
+ * Whether a session whose saved expiry has passed may still be active on the server, so the restored
+ * session's read decides instead of ending it here. The saved expiry is the last read's. Reading it
+ * moved the server expiry unless the move was under the 6-hour dampening, so it trailed the server
+ * by less than that; requests after the read moved the server expiry at most until the next read,
+ * which follows the first request once the read is 6 hours old. The server expiry is therefore
+ * before the saved one plus both, and never past the session's ceiling.
+ */
+function mayBeActiveOnServer(expiresAt: string, bounds: SessionExpiryBounds | undefined): boolean {
+  const expiresAtMs = Date.parse(expiresAt);
+  return (
+    Number.isFinite(expiresAtMs) && Date.now() < latestServerExpiryOfSaved(expiresAtMs, bounds)
+  );
+}
+
+/**
+ * The latest the server expiry of a session saved with expiry `expiresAtMs` can be, plus the grace,
+ * in epoch ms: see `mayBeActiveOnServer`. It holds while every read and its save succeeded; a missed
+ * one can only leave the server expiry later, which ends the session early.
+ */
+function latestServerExpiryOfSaved(
+  expiresAtMs: number,
+  bounds: SessionExpiryBounds | undefined
+): number {
+  const latest = expiresAtMs + SERVER_EXPIRY_SLIDE_DAMPENING_MS + CREDENTIAL_REFRESH_INTERVAL_MS;
+  return (
+    (bounds ? Math.min(latest, bounds.expiryCeilingMs) : latest) + SESSION_EXPIRY_CHECK_GRACE_MS
+  );
 }
 
 /** Reads the expiry bounds of a stored session record; undefined when absent or invalid. */

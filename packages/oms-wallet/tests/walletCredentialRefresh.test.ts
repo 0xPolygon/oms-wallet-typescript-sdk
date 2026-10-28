@@ -1580,6 +1580,172 @@ describe('WalletClient restore read in the foreground', () => {
     await settle();
     expect(requestCount(fetchMock, '/GetCredential')).toBe(1);
   });
+
+  describe('of a session whose saved expiry has passed', () => {
+    const HOUR = 60 * 60 * 1000;
+    const signedInAt = Date.parse('2026-01-01T00:00:00Z');
+    const savedExpiry = '2026-01-11T00:00:00.000Z';
+
+    /** Saves a session signed in at `signedInAt` with a 10-day idle window. */
+    function saveSession(): MemoryStorageManager {
+      vi.setSystemTime(signedInAt);
+      const storage = new MemoryStorageManager();
+      const signedIn = createWalletWithSession(walletAddress, undefined, {
+        storage,
+        expiresAt: savedExpiry
+      });
+      (signedIn as any).clearSessionExpiryTimer();
+      return storage;
+    }
+
+    /** Loads the saved session at `now`. */
+    function load(storage: MemoryStorageManager, now: number, signer = new MockSigner()) {
+      vi.setSystemTime(now);
+      const wallet = new WalletClientImpl({
+        publishableKey: 'publishable-key',
+        projectId: 'project-id',
+        environment: testEnvironment(),
+        storage,
+        credentialSigner: signer
+      });
+      const onSessionExpired = vi.fn();
+      wallet.onSessionExpired(onSessionExpired);
+      return { wallet, onSessionExpired };
+    }
+
+    function restoreAt(now: number, getCredential: () => Response | Promise<Response>) {
+      vi.useFakeTimers({ toFake: ['Date'] });
+      const storage = saveSession();
+      const fetchMock = stubWaas({ '/GetCredential': getCredential });
+      return { fetchMock, storage, ...load(storage, now) };
+    }
+
+    it('keeps it when the read finds it extended on the server', async () => {
+      // Requests after the last read extended the server expiry the saved one does not show.
+      const { fetchMock, wallet, onSessionExpired } = restoreAt(
+        Date.parse(savedExpiry) + 4 * HOUR,
+        () => credentialResponse('2026-01-21T04:00:00Z')
+      );
+      expect(wallet.session).toBeDefined();
+      await settle();
+
+      expect(requestCount(fetchMock, '/GetCredential')).toBe(1);
+      expect(wallet.session?.expiresAt).toBe('2026-01-21T04:00:00Z');
+      expect(onSessionExpired).not.toHaveBeenCalled();
+    });
+
+    it('ends it when the read finds it ended on the server', async () => {
+      const { fetchMock, wallet, onSessionExpired } = restoreAt(
+        Date.parse(savedExpiry) + 4 * HOUR,
+        () => waasErrorResponse('KeyExpired')
+      );
+      await settle();
+
+      expect(requestCount(fetchMock, '/GetCredential')).toBe(1);
+      expect(wallet.session).toBeUndefined();
+      expect(onSessionExpired).toHaveBeenCalledOnce();
+    });
+
+    it('ends it on the expiry timer when the read cannot reach the wallet API', async () => {
+      // Real timer order: the expiry timer runs before the read answers.
+      vi.useFakeTimers();
+      const storage = saveSession();
+      let reads = 0;
+      const fetchMock = stubWaas({
+        '/GetCredential': () =>
+          ++reads === 1
+            ? Promise.reject(new TypeError('fetch failed'))
+            : waasErrorResponse('KeyExpired')
+      });
+      const { wallet, onSessionExpired } = load(storage, Date.parse(savedExpiry) + 4 * HOUR);
+      await vi.advanceTimersByTimeAsync(0);
+      expect(requestCount(fetchMock, '/GetCredential')).toBe(1);
+      expect(wallet.session).toBeDefined();
+
+      // The timer asks once the server expiry must have passed, not an idle window after the restore.
+      await vi.advanceTimersByTimeAsync(8 * HOUR - 1000);
+      expect(requestCount(fetchMock, '/GetCredential')).toBe(1);
+      await vi.advanceTimersByTimeAsync(EXPIRY_CHECK_GRACE_MS + 1000);
+
+      expect(requestCount(fetchMock, '/GetCredential')).toBe(2);
+      expect(wallet.session).toBeUndefined();
+      expect(onSessionExpired).toHaveBeenCalledOnce();
+    });
+
+    it('ends it at once when the wallet API has no GetCredential', async () => {
+      vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout', 'Date'] });
+      const storage = saveSession();
+      // The answer takes a second, so the expiry timer runs first.
+      stubWaas({
+        '/GetCredential': () =>
+          new Promise<Response>((resolve) =>
+            setTimeout(() => resolve(waasErrorResponse('WebrpcBadRoute')), 1000)
+          )
+      });
+      const { wallet, onSessionExpired } = load(storage, Date.parse(savedExpiry) + 4 * HOUR);
+      await vi.advanceTimersByTimeAsync(0);
+      expect(wallet.session).toBeDefined();
+      await vi.advanceTimersByTimeAsync(1000);
+      // Reading the response body takes real event-loop turns; then the timer runs.
+      for (let turn = 0; turn < 20 && wallet.session; turn++) {
+        await new Promise((resolve) => setImmediate(resolve));
+        await vi.advanceTimersByTimeAsync(1);
+      }
+
+      expect(wallet.session).toBeUndefined();
+      expect(onSessionExpired).toHaveBeenCalledOnce();
+    });
+
+    it('ends it without a read past the ceiling', async () => {
+      vi.useFakeTimers({ toFake: ['Date'] });
+      const storage = saveSession();
+      const record = JSON.parse(storage.get(testStorageKeys.session) ?? '{}');
+      record.expiryCeiling = new Date(Date.parse(savedExpiry) + HOUR).toISOString();
+      storage.set(testStorageKeys.session, JSON.stringify(record));
+      const fetchMock = stubWaas({
+        '/GetCredential': () => credentialResponse('2026-01-21T04:00:00Z')
+      });
+      const { wallet } = load(storage, Date.parse(savedExpiry) + HOUR + EXPIRY_CHECK_GRACE_MS);
+      await settle();
+
+      expect(wallet.session).toBeUndefined();
+      expect(fetchMock).not.toHaveBeenCalled();
+    });
+
+    it('keeps replaying the expiry on later loads after a read ended it', async () => {
+      const { storage, onSessionExpired } = restoreAt(Date.parse(savedExpiry) + 4 * HOUR, () =>
+        waasErrorResponse('KeyExpired')
+      );
+      await settle();
+      expect(onSessionExpired).toHaveBeenCalledOnce();
+
+      // The expiry cleared the signing key and kept the record as the sign-in hint.
+      for (const hours of [5, 6]) {
+        const next = load(
+          storage,
+          Date.parse(savedExpiry) + hours * HOUR,
+          new MockSigner(undefined, false)
+        );
+        await settle();
+        expect(next.wallet.session).toBeUndefined();
+        expect(next.onSessionExpired).toHaveBeenCalledOnce();
+        expect(storage.get(testStorageKeys.session)).toBeTruthy();
+      }
+    });
+
+    it('ends it without a read once the server expiry must have passed', async () => {
+      // 6 hours of dampening, 6 hours of requests before the next read, and the 5-minute grace.
+      const { fetchMock, wallet, onSessionExpired } = restoreAt(
+        Date.parse(savedExpiry) + 12 * HOUR + EXPIRY_CHECK_GRACE_MS,
+        () => credentialResponse('2026-01-21T04:00:00Z')
+      );
+      expect(wallet.session).toBeUndefined();
+      await settle();
+
+      expect(fetchMock).not.toHaveBeenCalled();
+      expect(onSessionExpired).toHaveBeenCalledOnce();
+    });
+  });
 });
 
 describe('WalletClient request deadline', () => {
