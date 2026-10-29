@@ -74,8 +74,8 @@ sign-in and is not updated.
   is shorter than the idle window), assuming an accurate device clock and a page in the foreground.
   A stored session whose saved expiry passed less than about 12 hours ago is restored and the
   expiry read after the restore decides whether it continues. When that read cannot reach the
-  wallet API and no wallet call follows, `onSessionExpired` fires about 12 hours after the saved
-  expiry at the latest.
+  wallet API, the SDK retries it while the page is shown, so the session is settled soon after
+  the network returns.
 - When the wallet API rejects the session credential as not found or expired (WaaS `KeyNotFound`
   7202 or `KeyExpired` 7203), the session ends like a local expiry and the operation fails with
   `OMSWalletSessionError` (`OMS_SESSION_EXPIRED`), with the same shape as a local expiry: the WaaS

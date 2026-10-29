@@ -495,11 +495,8 @@ export class WalletClientImpl implements WalletClient {
    * the session.
    */
   private lastSessionActivityAt: number | undefined;
-  /**
-   * When the current session was restored from storage, in epoch ms. While no read and no request
-   * has completed since, the server expiry is bounded by the saved expiry (`latestServerExpiryOfSaved`).
-   */
-  private restoredAt: number | undefined;
+  /** The next delay before retrying a restored session's read that could not reach WaaS. */
+  private restoredSessionReadRetryDelayMs = CREDENTIAL_REFRESH_RETRY_MIN_MS;
   /** Completion of the last `GetCredential`, in epoch ms. Reads never overlap, so it is the current read's. */
   private lastCredentialReadCompletedAt: number | undefined;
   /** Whether the next `GetCredential` send counts as activity; false only for the timer's check. */
@@ -562,7 +559,6 @@ export class WalletClientImpl implements WalletClient {
         // The process that stored the session may have used it after its last read, but not later
         // than now. The expiry is not read in this client yet, so `lastCredentialRefreshAt` stays unset.
         this.lastSessionActivityAt = Date.now();
-        this.restoredAt = this.lastSessionActivityAt;
         this.scheduleSessionExpiry(restoredSession);
       }
     } else {
@@ -609,16 +605,46 @@ export class WalletClientImpl implements WalletClient {
       // A restored session may have been extended or ended on the server since it was saved. The
       // read extends an active session, so a hidden or prerendered page waits until it is shown.
       // Ending the session cancels the wait so its listeners don't keep this client alive.
+      const revision = this.sessionRevision;
       this.cancelRestoredSessionRead = whenInForeground(() => {
         this.cancelRestoredSessionRead = undefined;
-        void this.refreshSessionCredential('background').then(() => {
-          // A read that could not settle a session restored past its saved expiry (unsupported or
-          // unreachable) hands it to the expiry timer, which ends or rechecks it.
-          const current = this.activeSessionSnapshot();
-          if (current && this.isSessionExpired(current)) this.scheduleSessionExpiry(current);
-        });
+        this.readRestoredSession(revision);
       });
     }
+  }
+
+  /**
+   * Reads a restored session's expiry. Until a read succeeds, one that could not reach WaaS is
+   * retried with a backoff, each time once the page is in the foreground, where reading counts as
+   * use: a session restored offline is settled soon after the network returns. The expiry timer
+   * reads no sooner for it, since the saved expiry may be older than the server's.
+   */
+  private readRestoredSession(revision: number): void {
+    void this.refreshSessionCredential('background').then((result) => {
+      const current = this.activeSessionSnapshot();
+      if (this.sessionRevision !== revision || !current) return;
+      if (result.outcome === 'unavailable' && this.lastCredentialRefreshAt === undefined) {
+        this.scheduleRestoredSessionReadRetry(revision);
+      }
+      // Without `GetCredential` the local expiry is final: the timer ends a locally expired session.
+      if (this.isSessionExpired(current)) this.scheduleSessionExpiry(current);
+    });
+  }
+
+  private scheduleRestoredSessionReadRetry(revision: number): void {
+    const delayMs = this.restoredSessionReadRetryDelayMs;
+    this.restoredSessionReadRetryDelayMs = Math.min(delayMs * 2, CREDENTIAL_REFRESH_RETRY_MAX_MS);
+    this.cancelRestoredSessionRead?.();
+    const timer = setTimeout(() => {
+      this.cancelRestoredSessionRead = whenInForeground(() => {
+        this.cancelRestoredSessionRead = undefined;
+        // A wallet call may have read the expiry meanwhile.
+        if (this.sessionRevision !== revision || this.lastCredentialRefreshAt !== undefined) return;
+        this.readRestoredSession(revision);
+      });
+    }, delayMs);
+    (timer as { unref?: () => void }).unref?.();
+    this.cancelRestoredSessionRead = () => clearTimeout(timer);
   }
 
   /**
@@ -1283,8 +1309,8 @@ export class WalletClientImpl implements WalletClient {
     this.activeEmailAuthAttempt = undefined;
     this.lastCredentialRefreshAt = undefined;
     this.lastSessionActivityAt = undefined;
-    this.restoredAt = undefined;
     this.lastSharedSessionActivity = undefined;
+    this.restoredSessionReadRetryDelayMs = CREDENTIAL_REFRESH_RETRY_MIN_MS;
     this.credentialRefreshRetryDelayMs = CREDENTIAL_REFRESH_RETRY_MIN_MS;
     this.clearSessionExpiryTimer();
     this.cancelRestoredSessionRead?.();
@@ -3380,24 +3406,6 @@ export class WalletClientImpl implements WalletClient {
     const readAt = this.lastCredentialRefreshAt;
     const activityAt = this.latestSessionActivityAt();
     const bounds = this.sessionExpiryBounds;
-    // Restored with no read or request since: the saved expiry bounds the server's, which is
-    // tighter than counting the restore as a request when the restore read did not settle it.
-    if (readAt === undefined && activityAt !== undefined && activityAt === this.restoredAt) {
-      return Math.min(
-        this.activityExpiryCheckAt(expiresAtMs, readAt, activityAt, bounds),
-        latestServerExpiryOfSaved(expiresAtMs, bounds)
-      );
-    }
-    return this.activityExpiryCheckAt(expiresAtMs, readAt, activityAt, bounds);
-  }
-
-  /** The check time from the reads and requests alone, without the restore bound. */
-  private activityExpiryCheckAt(
-    expiresAtMs: number,
-    readAt: number | undefined,
-    activityAt: number | undefined,
-    bounds: SessionExpiryBounds | undefined
-  ): number {
     if (!bounds) {
       const activitySinceRead =
         readAt !== undefined && activityAt !== undefined ? Math.max(0, activityAt - readAt) : 0;
@@ -4102,9 +4110,10 @@ function mayBeActiveOnServer(expiresAt: string, bounds: SessionExpiryBounds | un
 }
 
 /**
- * The latest the server expiry of a session saved with expiry `expiresAtMs` can be, plus the grace,
- * in epoch ms: see `mayBeActiveOnServer`. It holds while every read and its save succeeded; a missed
- * one can only leave the server expiry later, which ends the session early.
+ * The latest the server expiry of a session saved with expiry `expiresAtMs` normally is, plus the
+ * grace, in epoch ms: see `mayBeActiveOnServer`. A read that was missed or not saved can leave the
+ * server expiry later, so it only decides whether a restored session's read may settle it; the
+ * expiry timer never reads by it, since reading a live credential would extend an idle session.
  */
 function latestServerExpiryOfSaved(
   expiresAtMs: number,
