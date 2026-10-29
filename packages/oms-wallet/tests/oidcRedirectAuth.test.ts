@@ -643,9 +643,8 @@ describe('WalletClient OIDC redirect auth', () => {
       providerLabel: 'Custom SSO',
       email: undefined
     });
-    // The idle window and lifetime ceiling derived from CompleteAuth are stored with the session.
+    // The lifetime cap derived from CompleteAuth is stored with the session.
     const stored = JSON.parse(sessionStorage.get(testStorageKeys.session) ?? 'null');
-    expect(stored.idleWindowMs).toBeGreaterThan(0);
     expect(stored.expiryCeiling).toBe('2099-01-01T00:00:00.000Z');
     expect(requestCount(fetchMock, '/CommitVerifier')).toBe(1);
     expect(requestCount(fetchMock, '/CompleteAuth')).toBe(1);

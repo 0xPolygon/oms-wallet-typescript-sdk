@@ -1,8 +1,6 @@
 export const Constants = {
   sessionStorageKey: 'omsWallet_session',
-  redirectAuthStorageKey: 'omsWallet_oidc_redirect_auth',
-  /** Last session-signed request time shared by clients (tabs) signing with the same key. */
-  sessionActivityStorageKey: 'omsWallet_session_activity'
+  redirectAuthStorageKey: 'omsWallet_oidc_redirect_auth'
 } as const;
 
 /**
@@ -15,7 +13,6 @@ export function sessionStorageKeys(projectId: string, walletApiUrl: string) {
     /** The session scope these keys belong to. */
     scope,
     session: `${Constants.sessionStorageKey}:${scope}`,
-    sessionActivity: `${Constants.sessionActivityStorageKey}:${scope}`,
     redirectAuth: `${Constants.redirectAuthStorageKey}:${scope}`,
     /** The IndexedDB record of the default WebCrypto signing key. */
     webCryptoCredential: `webcrypto-p256:${scope}`

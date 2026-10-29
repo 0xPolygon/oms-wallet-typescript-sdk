@@ -26,9 +26,6 @@ afterEach(() => {
 
 const walletAddress = '0x1111111111111111111111111111111111111111';
 
-/** How long after the predicted server expiry the expiry timer asks WaaS. */
-const EXPIRY_CHECK_GRACE_MS = 5 * 60_000;
-
 function credentialResponse(expiresAt: string): Response {
   return jsonResponse({ credential: { ...testCredential(), expiresAt } });
 }
@@ -69,8 +66,8 @@ describe('WalletClient sliding credential expiry', () => {
     });
     const onSessionChange = listenToSessionChanges(wallet);
 
-    // Without activity, the timer asks WaaS a grace period after the local expiry (00:07).
-    await vi.advanceTimersByTimeAsync(120_000 + EXPIRY_CHECK_GRACE_MS - 1);
+    // The timer reads at the local expiry (00:02).
+    await vi.advanceTimersByTimeAsync(120_000 - 1);
     expect(requestCount(fetchMock, '/GetCredential')).toBe(0);
     await vi.advanceTimersByTimeAsync(1);
 
@@ -79,7 +76,7 @@ describe('WalletClient sliding credential expiry', () => {
     expect(storedExpiresAt(storage)).toBe('2026-01-01T00:10:00Z');
     expect(sessionChangeReasons(onSessionChange)).toEqual(['expiryUpdated']);
 
-    // The rescheduled timer checks again a grace period after the new expiry (00:15).
+    // The rescheduled timer reads again at the new expiry (00:10).
     getCredential = () => waasErrorResponse('KeyExpired');
     await vi.advanceTimersByTimeAsync(479_999);
     expect(requestCount(fetchMock, '/GetCredential')).toBe(1);
@@ -108,14 +105,14 @@ describe('WalletClient sliding credential expiry', () => {
     process.on('unhandledRejection', unhandledRejection);
 
     try {
-      await vi.advanceTimersByTimeAsync(120_000 + EXPIRY_CHECK_GRACE_MS);
+      await vi.advanceTimersByTimeAsync(120_000);
 
       expect(requestCount(fetchMock, '/GetCredential')).toBe(1);
       expect(wallet.session?.expiresAt).toBe('2026-01-01T00:10:00Z');
       expect(storedExpiresAt(storage)).toBe('2026-01-01T00:02:00Z');
       expect(sessionChangeReasons(onSessionChange)).toEqual(['expiryUpdated']);
 
-      // The timer was rescheduled to the in-memory expiry (checked at 00:15).
+      // The timer was rescheduled to the in-memory expiry (00:10).
       getCredential = () => waasErrorResponse('KeyExpired');
       await vi.advanceTimersByTimeAsync(479_999);
       expect(requestCount(fetchMock, '/GetCredential')).toBe(1);
@@ -262,7 +259,7 @@ describe('WalletClient sliding credential expiry', () => {
     });
     const onSessionChange = listenToSessionChanges(wallet);
 
-    await vi.advanceTimersByTimeAsync(120_000 + EXPIRY_CHECK_GRACE_MS);
+    await vi.advanceTimersByTimeAsync(120_000);
 
     expect(wallet.session).toBeUndefined();
     expect(sessionChangeReasons(onSessionChange)).toEqual(['expired']);
@@ -287,7 +284,7 @@ describe('WalletClient sliding credential expiry', () => {
     const wallet = createWalletWithSession(walletAddress, undefined, {
       expiresAt: '2026-01-01T00:02:00Z'
     });
-    await vi.advanceTimersByTimeAsync(120_000 + EXPIRY_CHECK_GRACE_MS);
+    await vi.advanceTimersByTimeAsync(120_000);
     expect(wallet.session).toBeUndefined();
 
     await vi.advanceTimersByTimeAsync(15 * 60_000);
@@ -316,7 +313,7 @@ describe('WalletClient sliding credential expiry', () => {
     });
     const onSessionChange = listenToSessionChanges(wallet);
 
-    await vi.advanceTimersByTimeAsync(120_000 + EXPIRY_CHECK_GRACE_MS);
+    await vi.advanceTimersByTimeAsync(120_000);
 
     expect(requestCount(fetchMock, '/GetCredential')).toBe(1);
     expect(wallet.session?.expiresAt).toBe('2026-01-01T00:02:00Z');
@@ -330,10 +327,9 @@ describe('WalletClient sliding credential expiry', () => {
     expect(wallet.session).toBeDefined();
     expect(requestCount(fetchMock, '/GetCredential')).toBe(2);
 
-    // WaaS may have received the operation's read, so it counts as activity: the timer's retry
-    // waits for an idle window after it (2 minutes in this fixture) plus the grace period (00:14).
+    // The timer's read is retried a minute after it failed, doubling after that.
     getCredential = async () => credentialResponse('2026-02-01T00:00:00Z');
-    await vi.advanceTimersByTimeAsync(2 * 60_000 + EXPIRY_CHECK_GRACE_MS - 1);
+    await vi.advanceTimersByTimeAsync(60_000 - 1);
     expect(requestCount(fetchMock, '/GetCredential')).toBe(2);
     await vi.advanceTimersByTimeAsync(1);
 
@@ -498,7 +494,7 @@ describe('WalletClient credential revocation', () => {
     });
     const onSessionChange = listenToSessionChanges(wallet);
 
-    await vi.advanceTimersByTimeAsync(120_000 + EXPIRY_CHECK_GRACE_MS);
+    await vi.advanceTimersByTimeAsync(120_000);
 
     expect(requestCount(fetchMock, '/GetCredential')).toBe(1);
     expect(wallet.session).toBeUndefined();
@@ -687,54 +683,7 @@ describe('WalletClient wallet activation and refreshed expiry', () => {
   });
 });
 
-describe('WalletClient idle session expiry check', () => {
-  it('reschedules the expiry check without asking WaaS when the session was used after the last read', async () => {
-    vi.useFakeTimers();
-    vi.setSystemTime(new Date('2026-01-01T00:00:00Z'));
-    const fetchMock = stubWaas({
-      '/GetCredential': () => waasErrorResponse('KeyExpired'),
-      '/SignMessage': () => jsonResponse({ signature: '0xsigned' })
-    });
-    const wallet = createWalletWithSession(walletAddress, undefined, {
-      expiresAt: '2026-01-01T00:02:00Z'
-    });
-    const onSessionChange = listenToSessionChanges(wallet);
-
-    // Used one minute after sign-in: WaaS now expires the session about one minute later too.
-    await vi.advanceTimersByTimeAsync(60_000);
-    await signMessage(wallet);
-
-    // Checked at the local expiry (00:02) plus the minute of activity plus the grace period.
-    await vi.advanceTimersByTimeAsync(60_000 + 60_000 + EXPIRY_CHECK_GRACE_MS - 1);
-    expect(requestCount(fetchMock, '/GetCredential')).toBe(0);
-    expect(wallet.session).toBeDefined();
-    expect(sessionChangeReasons(onSessionChange)).toEqual([]);
-
-    await vi.advanceTimersByTimeAsync(1);
-    expect(requestCount(fetchMock, '/GetCredential')).toBe(1);
-    expect(wallet.session).toBeUndefined();
-    expect(sessionChangeReasons(onSessionChange)).toEqual(['expired']);
-  });
-
-  it('asks WaaS about an unused session only a grace period after the local expiry', async () => {
-    vi.useFakeTimers();
-    vi.setSystemTime(new Date('2026-01-01T00:00:00Z'));
-    const fetchMock = stubWaas({ '/GetCredential': () => waasErrorResponse('KeyExpired') });
-    const wallet = createWalletWithSession(walletAddress, undefined, {
-      expiresAt: '2026-01-01T00:02:00Z'
-    });
-    const onSessionChange = listenToSessionChanges(wallet);
-
-    await vi.advanceTimersByTimeAsync(120_000 + EXPIRY_CHECK_GRACE_MS - 1);
-    expect(requestCount(fetchMock, '/GetCredential')).toBe(0);
-    expect(wallet.session).toBeDefined();
-
-    await vi.advanceTimersByTimeAsync(1);
-    expect(requestCount(fetchMock, '/GetCredential')).toBe(1);
-    expect(wallet.session).toBeUndefined();
-    expect(sessionChangeReasons(onSessionChange)).toEqual(['expired']);
-  });
-
+describe('WalletClient expiry timer', () => {
   it('re-arms the expiry timer of a 180-day session at the timer limit without a request', async () => {
     const maxTimerMs = 2_147_483_647;
     const lifetimeMs = 180 * 24 * 60 * 60 * 1000;
@@ -751,12 +700,12 @@ describe('WalletClient idle session expiry check', () => {
     expect(fetchMock).not.toHaveBeenCalled();
     expect(wallet.session).toBeDefined();
 
-    // The re-armed timer reaches the expiry check.
-    await vi.advanceTimersByTimeAsync(lifetimeMs - maxTimerMs + EXPIRY_CHECK_GRACE_MS - 1);
-    expect(fetchMock).not.toHaveBeenCalled();
+    // The re-armed timer ends it at its expiry, which is also its lifetime cap.
+    await vi.advanceTimersByTimeAsync(lifetimeMs - maxTimerMs - 1);
+    expect(wallet.session).toBeDefined();
     await vi.advanceTimersByTimeAsync(1);
-    expect(requestCount(fetchMock, '/GetCredential')).toBe(1);
     expect(wallet.session).toBeUndefined();
+    expect(fetchMock).not.toHaveBeenCalled();
   });
 });
 
@@ -781,7 +730,7 @@ describe('WalletClient session signer check', () => {
 
     // Another tab signed in and replaced the shared signer key.
     signer.setCredential(otherCredentialId);
-    await vi.advanceTimersByTimeAsync(120_000 + EXPIRY_CHECK_GRACE_MS);
+    await vi.advanceTimersByTimeAsync(120_000);
 
     expect(fetchMock).not.toHaveBeenCalled();
     expect(signer.preimages).toHaveLength(0);
@@ -849,7 +798,7 @@ describe('WalletClient session signer check', () => {
     const onSessionChange = listenToSessionChanges(wallet);
 
     vi.spyOn(signer, 'credentialId').mockResolvedValue(undefined as unknown as string);
-    await vi.advanceTimersByTimeAsync(120_000 + EXPIRY_CHECK_GRACE_MS);
+    await vi.advanceTimersByTimeAsync(120_000);
 
     expect(fetchMock).not.toHaveBeenCalled();
     expect(wallet.session).toBeUndefined();
@@ -878,7 +827,7 @@ describe('WalletClient session signer check', () => {
     });
     storage.set(testStorageKeys.session, newerSession);
     signer.setCredential(otherCredentialId);
-    await vi.advanceTimersByTimeAsync(120_000 + EXPIRY_CHECK_GRACE_MS);
+    await vi.advanceTimersByTimeAsync(120_000);
 
     expect(fetchMock).not.toHaveBeenCalled();
     expect(wallet.session).toBeUndefined();
@@ -916,7 +865,7 @@ describe('WalletClient session signer check', () => {
   });
 });
 
-describe('WalletClient expiry check bounds from sign-in', () => {
+describe('WalletClient lifetime cap', () => {
   const MINUTE = 60_000;
   const HOUR = 60 * MINUTE;
   const DAY = 24 * HOUR;
@@ -987,168 +936,71 @@ describe('WalletClient expiry check bounds from sign-in', () => {
     return storage;
   }
 
-  it('waits an idle window after the last activity when a dampened read trails the server expiry', async () => {
+  it('ends a session at its lifetime cap at its expiry, without a request', async () => {
+    // A 70-second lifetime: WaaS reports the cap as the expiry, and nothing can extend it.
     vi.useFakeTimers();
     vi.setSystemTime(T0);
-    let getCredential: () => Response = () => credentialResponse(iso(T0 + 10 * DAY));
     const fetchMock = stubWaas({
-      ...emailSignInHandlers(T0 + 10 * DAY),
-      '/GetCredential': () => getCredential(),
-      '/SignMessage': () => jsonResponse({ signature: '0xsigned' })
+      ...emailSignInHandlers(T0 + 70_000),
+      '/GetCredential': () => credentialResponse(iso(T0 + 10 * DAY))
     });
     const wallet = newClient(new MemoryStorageManager());
-    await signIn(wallet, 180 * 24 * 60 * 60);
     const onSessionChange = listenToSessionChanges(wallet);
+    await signIn(wallet, 70);
 
-    // A read an hour later (as a restore makes) returns the sign-in expiry: WaaS skipped the move.
-    await advanceTo(T0 + HOUR);
-    await (wallet as any).refreshSessionCredential();
-    expect(requestCount(fetchMock, '/GetCredential')).toBe(1);
-    expect(wallet.session?.expiresAt).toBe(iso(T0 + 10 * DAY));
-
-    // Used 6h50m after sign-in, which WaaS writes: the server expiry is now 10 days after it.
-    await advanceTo(T0 + 6 * HOUR + 50 * MINUTE);
-    await signMessage(wallet);
-    expect(requestCount(fetchMock, '/GetCredential')).toBe(1);
-
-    // Not asked before the server expiry (activity + 10 days) plus the grace period, although the
-    // activity since the read (5h50m) would have ended the wait an hour earlier.
-    getCredential = () => waasErrorResponse('KeyExpired');
-    const checkAt = T0 + 6 * HOUR + 50 * MINUTE + 10 * DAY + EXPIRY_CHECK_GRACE_MS;
-    await advanceTo(checkAt - 1);
-    expect(requestCount(fetchMock, '/GetCredential')).toBe(1);
+    await advanceTo(T0 + 70_000 - 1);
     expect(wallet.session).toBeDefined();
+    await advanceTo(T0 + 70_000);
 
-    await advanceTo(checkAt);
-    expect(requestCount(fetchMock, '/GetCredential')).toBe(2);
     expect(wallet.session).toBeUndefined();
-    expect(sessionChangeReasons(onSessionChange)).toEqual(['expired']);
+    expect(sessionChangeReasons(onSessionChange)).toEqual(['signedIn', 'expired']);
+    expect(requestCount(fetchMock, '/GetCredential')).toBe(0);
   });
 
-  it('asks at the local expiry of a session shorter than the idle window despite activity', async () => {
-    vi.useFakeTimers();
+  it('fails a call on a session past its lifetime cap without a request', async () => {
+    vi.useFakeTimers({ toFake: ['Date'] });
     vi.setSystemTime(T0);
     const fetchMock = stubWaas({
-      ...emailSignInHandlers(T0 + HOUR),
-      '/GetCredential': () => waasErrorResponse('KeyExpired'),
+      ...emailSignInHandlers(T0 + 70_000),
+      '/GetCredential': () => credentialResponse(iso(T0 + 10 * DAY)),
       '/SignMessage': () => jsonResponse({ signature: '0xsigned' })
     });
     const wallet = newClient(new MemoryStorageManager());
-    await signIn(wallet, 60 * 60);
-    const onSessionChange = listenToSessionChanges(wallet);
+    await signIn(wallet, 70);
 
-    // Activity cannot move the expiry past the one-hour lifetime.
-    await advanceTo(T0 + 30 * MINUTE);
-    await signMessage(wallet);
+    // Past the cap before the expiry timer ran.
+    vi.setSystemTime(T0 + 70_000);
+    await expect(signMessage(wallet)).rejects.toMatchObject({ code: 'OMS_SESSION_EXPIRED' });
 
-    await advanceTo(T0 + HOUR + EXPIRY_CHECK_GRACE_MS - 1);
-    expect(requestCount(fetchMock, '/GetCredential')).toBe(0);
-
-    await advanceTo(T0 + HOUR + EXPIRY_CHECK_GRACE_MS);
-    expect(requestCount(fetchMock, '/GetCredential')).toBe(1);
     expect(wallet.session).toBeUndefined();
-    expect(sessionChangeReasons(onSessionChange)).toEqual(['expired']);
+    expect(requestCount(fetchMock, '/GetCredential')).toBe(0);
+    expect(requestCount(fetchMock, '/SignMessage')).toBe(0);
   });
 
-  it('caps the wait at the lifetime ceiling', async () => {
+  it('ends a session at its lifetime cap after use moved its expiry there', async () => {
     vi.useFakeTimers();
     vi.setSystemTime(T0);
-    const ceiling = T0 + 12 * DAY;
-    let getCredential: () => Response = () => credentialResponse(iso(ceiling));
+    const ceiling = T0 + 10 * DAY + 3 * HOUR;
     const fetchMock = stubWaas({
       ...emailSignInHandlers(T0 + 10 * DAY),
-      '/GetCredential': () => getCredential(),
-      '/SignMessage': () => jsonResponse({ signature: '0xsigned' })
+      '/GetCredential': () => credentialResponse(iso(ceiling))
     });
     const wallet = newClient(new MemoryStorageManager());
-    await signIn(wallet, 12 * 24 * 60 * 60);
+    await signIn(wallet, (10 * DAY + 3 * HOUR) / 1000);
+    expect((wallet as any).sessionExpiryBounds).toMatchObject({ expiryCeilingMs: ceiling });
 
-    // Day 5: the activity's background read finds the expiry moved to the 12-day ceiling.
-    await advanceTo(T0 + 5 * DAY);
-    await signMessage(wallet);
-    await vi.advanceTimersByTimeAsync(0);
+    // Below the cap at the sign-in expiry: the timer reads, and WaaS reports the cap.
+    await advanceTo(T0 + 10 * DAY);
     expect(requestCount(fetchMock, '/GetCredential')).toBe(1);
     expect(wallet.session?.expiresAt).toBe(iso(ceiling));
 
-    // Day 9: used again; its background read fails, so nothing reads the expiry after it.
-    getCredential = () => {
-      throw new TypeError('network down');
-    };
-    await advanceTo(T0 + 9 * DAY);
-    await signMessage(wallet);
-    await vi.advanceTimersByTimeAsync(0);
-    expect(requestCount(fetchMock, '/GetCredential')).toBe(2);
-
-    // Day 9 + 10 days is past the ceiling, so the check is at the ceiling plus the grace period.
-    getCredential = () => waasErrorResponse('KeyExpired');
-    await advanceTo(ceiling + EXPIRY_CHECK_GRACE_MS - 1);
-    expect(requestCount(fetchMock, '/GetCredential')).toBe(2);
-
-    await advanceTo(ceiling + EXPIRY_CHECK_GRACE_MS);
-    expect(requestCount(fetchMock, '/GetCredential')).toBe(3);
+    // At the cap it ends without another read.
+    await advanceTo(ceiling);
     expect(wallet.session).toBeUndefined();
+    expect(requestCount(fetchMock, '/GetCredential')).toBe(1);
   });
 
-  it('asks a grace period after the local expiry when nothing was sent after the last read', async () => {
-    vi.useFakeTimers();
-    vi.setSystemTime(T0);
-    let getCredential: () => Response = () => credentialResponse(iso(T0 + 10 * DAY));
-    const fetchMock = stubWaas({
-      ...emailSignInHandlers(T0 + 10 * DAY),
-      '/GetCredential': () => getCredential(),
-      '/SignMessage': () => jsonResponse({ signature: '0xsigned' })
-    });
-    const wallet = newClient(new MemoryStorageManager());
-    await signIn(wallet, 180 * 24 * 60 * 60);
-
-    // Used at 5h, then read: the read returns the sign-in expiry (WaaS skipped the 5-hour move).
-    await advanceTo(T0 + 5 * HOUR);
-    await signMessage(wallet);
-    await (wallet as any).refreshSessionCredential();
-    expect(requestCount(fetchMock, '/GetCredential')).toBe(1);
-
-    getCredential = () => waasErrorResponse('KeyExpired');
-    await advanceTo(T0 + 10 * DAY + EXPIRY_CHECK_GRACE_MS - 1);
-    expect(requestCount(fetchMock, '/GetCredential')).toBe(1);
-
-    await advanceTo(T0 + 10 * DAY + EXPIRY_CHECK_GRACE_MS);
-    expect(requestCount(fetchMock, '/GetCredential')).toBe(2);
-    expect(wallet.session).toBeUndefined();
-  });
-
-  it('counts an expiry read whose response was lost as activity', async () => {
-    vi.useFakeTimers();
-    vi.setSystemTime(T0);
-    let getCredential: () => Response = () => {
-      throw new TypeError('network down');
-    };
-    const fetchMock = stubWaas({
-      ...emailSignInHandlers(T0 + 10 * DAY),
-      '/GetCredential': () => getCredential(),
-      '/SignMessage': () => jsonResponse({ signature: '0xsigned' })
-    });
-    const wallet = newClient(new MemoryStorageManager());
-    await signIn(wallet, 180 * 24 * 60 * 60);
-
-    // An operation on the locally expired session reads the expiry; the response is lost, but WaaS
-    // may have received the read and extended the credential by an idle window.
-    const lostReadAt = T0 + 10 * DAY + MINUTE;
-    await advanceTo(lostReadAt);
-    await expect(signMessage(wallet)).rejects.toMatchObject({ code: 'OMS_REQUEST_FAILED' });
-    expect(requestCount(fetchMock, '/GetCredential')).toBe(1);
-
-    getCredential = () => waasErrorResponse('KeyExpired');
-    const checkAt = lostReadAt + 10 * DAY + EXPIRY_CHECK_GRACE_MS;
-    await advanceTo(checkAt - 1);
-    expect(requestCount(fetchMock, '/GetCredential')).toBe(1);
-    expect(wallet.session).toBeDefined();
-
-    await advanceTo(checkAt);
-    expect(requestCount(fetchMock, '/GetCredential')).toBe(2);
-    expect(wallet.session).toBeUndefined();
-  });
-
-  it('records the idle window and ceiling at a manual wallet selection', async () => {
+  it('records the lifetime cap at a manual wallet selection', async () => {
     vi.useFakeTimers();
     vi.setSystemTime(T0);
     stubWaas(emailSignInHandlers(T0 + 10 * DAY));
@@ -1160,103 +1012,15 @@ describe('WalletClient expiry check bounds from sign-in', () => {
     await (selection as any).selectWallet({ walletId: 'wallet-id' });
 
     expect(storedRecord(storage)).toMatchObject({
-      idleWindowMs: 10 * DAY,
       expiryCeiling: iso(T0 + 180 * DAY)
     });
-  });
-
-  it('persists the idle window and ceiling and uses them after a restore', async () => {
-    vi.useFakeTimers();
-    vi.setSystemTime(T0);
-    const ceiling = T0 + 10 * DAY + 3 * HOUR;
-    let getCredential: () => Response = () => credentialResponse(iso(T0 + 10 * DAY));
-    const fetchMock = stubWaas({
-      ...emailSignInHandlers(T0 + 10 * DAY),
-      '/GetCredential': () => getCredential(),
-      '/SignMessage': () => jsonResponse({ signature: '0xsigned' })
-    });
-    const signInStorage = new MemoryStorageManager();
-    const signedIn = newClient(signInStorage);
-    await signIn(signedIn, (10 * DAY + 3 * HOUR) / 1000);
-    expect(storedRecord(signInStorage)).toMatchObject({
-      version: 2,
-      expiresAt: iso(T0 + 10 * DAY),
-      idleWindowMs: 10 * DAY,
-      expiryCeiling: iso(ceiling)
-    });
-    const storage = copyStoredSession(signInStorage);
-    await signedIn.signOut();
-
-    // Restored an hour later; its read returns the sign-in expiry, and the refreshed record keeps
-    // the bounds.
-    await advanceTo(T0 + HOUR);
-    const wallet = newClient(storage);
-    await vi.advanceTimersByTimeAsync(0);
-    expect(requestCount(fetchMock, '/GetCredential')).toBe(1);
-    expect(storedRecord(storage)).toMatchObject({
-      idleWindowMs: 10 * DAY,
-      expiryCeiling: iso(ceiling)
-    });
-
-    // Used at 6h50m: WaaS moves the expiry to the ceiling (10d3h), not 10 days after the use.
-    await advanceTo(T0 + 6 * HOUR + 50 * MINUTE);
-    await signMessage(wallet);
-
-    getCredential = () => waasErrorResponse('KeyExpired');
-    await advanceTo(ceiling + EXPIRY_CHECK_GRACE_MS - 1);
-    expect(requestCount(fetchMock, '/GetCredential')).toBe(1);
-
-    await advanceTo(ceiling + EXPIRY_CHECK_GRACE_MS);
-    expect(requestCount(fetchMock, '/GetCredential')).toBe(2);
-    expect(wallet.session).toBeUndefined();
-  });
-
-  it('never reads early for a session restored in the background with a stale saved expiry', async () => {
-    vi.useFakeTimers();
-    vi.setSystemTime(T0);
-    const fetchMock = stubWaas({
-      ...emailSignInHandlers(T0 + 10 * DAY),
-      '/GetCredential': () => waasErrorResponse('KeyExpired')
-    });
-    const signInStorage = new MemoryStorageManager();
-    const signedIn = newClient(signInStorage);
-    await signIn(signedIn, 180 * 24 * 60 * 60);
-    // The saved expiry is older than the server's, as when saving a refreshed one failed.
-    const storage = copyStoredSession(signInStorage, (record) => {
-      record.expiresAt = iso(T0 + 5 * DAY);
-    });
-    await signedIn.signOut();
-
-    // A background start: the page stays hidden, so the restore read waits.
-    vi.stubGlobal('document', {
-      visibilityState: 'hidden',
-      prerendering: false,
-      addEventListener: () => undefined,
-      removeEventListener: () => undefined
-    });
-    const restoredAt = T0 + HOUR;
-    await advanceTo(restoredAt);
-    const wallet = newClient(storage);
-    await vi.advanceTimersByTimeAsync(0);
-    expect(wallet.session).toBeDefined();
-
-    // Reading would extend a session WaaS still holds, so the timer waits until the server expiry
-    // must have passed whatever was saved: an idle window after the restore.
-    const checkAt = restoredAt + 10 * DAY + EXPIRY_CHECK_GRACE_MS;
-    await advanceTo(checkAt - 1);
-    expect(requestCount(fetchMock, '/GetCredential')).toBe(0);
-
-    await advanceTo(checkAt);
-    expect(requestCount(fetchMock, '/GetCredential')).toBe(1);
-    expect(wallet.session).toBeUndefined();
   });
 
   it.each([
     ['without the bounds', (record: Record<string, unknown>) => record],
     [
       'with invalid bounds',
-      (record: Record<string, unknown>) =>
-        Object.assign(record, { idleWindowMs: -1, expiryCeiling: 'not a date' })
+      (record: Record<string, unknown>) => Object.assign(record, { expiryCeiling: 'not a date' })
     ]
   ])('discards a session stored %s on restore', async (_label, edit) => {
     vi.useFakeTimers();
@@ -1270,7 +1034,6 @@ describe('WalletClient expiry check bounds from sign-in', () => {
       storage: signInStorage
     });
     const storage = copyStoredSession(signInStorage, (record) => {
-      delete record.idleWindowMs;
       delete record.expiryCeiling;
       edit(record);
     });
@@ -1282,207 +1045,6 @@ describe('WalletClient expiry check bounds from sign-in', () => {
     expect(wallet.session).toBeUndefined();
     expect(storage.get(testStorageKeys.session)).toBeNull();
     expect(fetchMock).not.toHaveBeenCalled();
-  });
-
-  it('allows for the 6-hour dampening when the sign-in gave no idle window', async () => {
-    vi.useFakeTimers();
-    vi.setSystemTime(T0);
-    const fetchMock = stubWaas({
-      '/GetCredential': () => waasErrorResponse('KeyExpired'),
-      '/SignMessage': () => jsonResponse({ signature: '0xsigned' })
-    });
-    const wallet = newClient(new MemoryStorageManager());
-    // A session without expiry bounds, as a sign-in leaves one whose response had no usable expiry.
-    (wallet as any).persistSession(testWalletAccount('wallet-id', walletAddress), {
-      expiresAt: iso(T0 + 2 * HOUR),
-      auth: { type: 'email', email: 'user@example.com' },
-      signerCredentialId: sessionCredentialId,
-      signerKeyType: 'ecdsa-p256-sha256'
-    });
-
-    await advanceTo(T0 + HOUR);
-    await signMessage(wallet);
-
-    // The local expiry plus the activity since the read (1 hour) plus the dampening and the grace.
-    const checkAt = T0 + 2 * HOUR + HOUR + 6 * HOUR + EXPIRY_CHECK_GRACE_MS;
-    await advanceTo(checkAt - 1);
-    expect(requestCount(fetchMock, '/GetCredential')).toBe(0);
-
-    await advanceTo(checkAt);
-    expect(requestCount(fetchMock, '/GetCredential')).toBe(1);
-    expect(wallet.session).toBeUndefined();
-  });
-
-  it("retries the timer's failed check after the backoff delay, not an idle window later", async () => {
-    vi.useFakeTimers();
-    vi.setSystemTime(T0);
-    let getCredential: () => Response = () => {
-      throw new TypeError('network down');
-    };
-    const fetchMock = stubWaas({
-      ...emailSignInHandlers(T0 + 10 * DAY),
-      '/GetCredential': () => getCredential()
-    });
-    const wallet = newClient(new MemoryStorageManager());
-    await signIn(wallet, 180 * 24 * 60 * 60);
-
-    // The timer's check is sent past the bound on the server expiry, so it is not activity.
-    const checkAt = T0 + 10 * DAY + EXPIRY_CHECK_GRACE_MS;
-    await advanceTo(checkAt);
-    expect(requestCount(fetchMock, '/GetCredential')).toBe(1);
-
-    await advanceTo(checkAt + MINUTE);
-    expect(requestCount(fetchMock, '/GetCredential')).toBe(2);
-    expect(wallet.session).toBeDefined();
-
-    getCredential = () => waasErrorResponse('KeyExpired');
-    await advanceTo(checkAt + 3 * MINUTE - 1);
-    expect(requestCount(fetchMock, '/GetCredential')).toBe(2);
-    await advanceTo(checkAt + 3 * MINUTE);
-    expect(requestCount(fetchMock, '/GetCredential')).toBe(3);
-    expect(wallet.session).toBeUndefined();
-  });
-
-  it('waits an idle window after a request completes, not after it was sent', async () => {
-    vi.useFakeTimers();
-    vi.setSystemTime(T0);
-    const fetchMock = stubWaas({
-      ...emailSignInHandlers(T0 + 10 * DAY),
-      '/GetCredential': () => waasErrorResponse('KeyExpired'),
-      // The request takes 20 seconds to reach WaaS and complete, within the request deadline.
-      '/SignMessage': () =>
-        new Promise<Response>((resolve) =>
-          setTimeout(() => resolve(jsonResponse({ signature: '0xsigned' })), 20_000)
-        )
-    });
-    const wallet = newClient(new MemoryStorageManager());
-    await signIn(wallet, 180 * 24 * 60 * 60);
-
-    await advanceTo(T0 + HOUR);
-    const signed = signMessage(wallet);
-    await advanceTo(T0 + HOUR + 20_000);
-    await expect(signed).resolves.toBe('0xsigned');
-
-    const checkAt = T0 + HOUR + 20_000 + 10 * DAY + EXPIRY_CHECK_GRACE_MS;
-    await advanceTo(checkAt - 1);
-    expect(requestCount(fetchMock, '/GetCredential')).toBe(0);
-
-    await advanceTo(checkAt);
-    expect(requestCount(fetchMock, '/GetCredential')).toBe(1);
-    expect(wallet.session).toBeUndefined();
-  });
-
-  describe('activity shared between tabs', () => {
-    it('waits for a request another tab sent after this tab read the expiry', async () => {
-      vi.useFakeTimers();
-      vi.setSystemTime(T0);
-      let getCredential: () => Response = () => credentialResponse(iso(T0 + 10 * DAY));
-      const fetchMock = stubWaas({
-        ...emailSignInHandlers(T0 + 10 * DAY),
-        '/GetCredential': () => getCredential(),
-        '/SignMessage': () => jsonResponse({ signature: '0xsigned' })
-      });
-      const storage = new MemoryStorageManager();
-      const tab1 = newClient(storage);
-      await signIn(tab1, 180 * 24 * 60 * 60);
-
-      // Tab 2 opens an hour later and reads the expiry.
-      await advanceTo(T0 + HOUR);
-      const tab2 = newClient(storage);
-      await vi.advanceTimersByTimeAsync(0);
-      expect(requestCount(fetchMock, '/GetCredential')).toBe(1);
-
-      // Tab 1 signs at 5h with the shared key, after tab 2's read.
-      const tab1ActivityAt = T0 + 5 * HOUR;
-      await advanceTo(tab1ActivityAt);
-      await signMessage(tab1);
-      expect(JSON.parse(storage.get(testStorageKeys.sessionActivity) ?? 'null')).toEqual({
-        signerCredentialId: sessionCredentialId,
-        at: tab1ActivityAt
-      });
-
-      getCredential = () => waasErrorResponse('KeyExpired');
-      const checkAt = tab1ActivityAt + 10 * DAY + EXPIRY_CHECK_GRACE_MS;
-      await advanceTo(checkAt - 1);
-      expect(requestCount(fetchMock, '/GetCredential')).toBe(1);
-      expect(tab2.session).toBeDefined();
-
-      // Both tabs check now; neither timer check counts as activity for the other.
-      await advanceTo(checkAt);
-      expect(requestCount(fetchMock, '/GetCredential')).toBe(3);
-      expect(tab1.session).toBeUndefined();
-      expect(tab2.session).toBeUndefined();
-    });
-
-    it('ignores shared activity of another credential', async () => {
-      vi.useFakeTimers();
-      vi.setSystemTime(T0);
-      const fetchMock = stubWaas({
-        ...emailSignInHandlers(T0 + 10 * DAY),
-        '/GetCredential': () => waasErrorResponse('KeyExpired')
-      });
-      const storage = new MemoryStorageManager();
-      const wallet = newClient(storage);
-      await signIn(wallet, 180 * 24 * 60 * 60);
-      storage.set(
-        testStorageKeys.sessionActivity,
-        JSON.stringify({ signerCredentialId: '0x04' + '33'.repeat(64), at: T0 + 5 * DAY })
-      );
-
-      await advanceTo(T0 + 10 * DAY + EXPIRY_CHECK_GRACE_MS - 1);
-      expect(requestCount(fetchMock, '/GetCredential')).toBe(0);
-
-      await advanceTo(T0 + 10 * DAY + EXPIRY_CHECK_GRACE_MS);
-      expect(requestCount(fetchMock, '/GetCredential')).toBe(1);
-      expect(wallet.session).toBeUndefined();
-    });
-
-    it('deletes the shared activity on sign-out', async () => {
-      vi.useFakeTimers();
-      vi.setSystemTime(T0);
-      stubWaas({
-        ...emailSignInHandlers(T0 + 10 * DAY),
-        '/SignMessage': () => jsonResponse({ signature: '0xsigned' })
-      });
-      const storage = new MemoryStorageManager();
-      const wallet = newClient(storage);
-      await signIn(wallet, 180 * 24 * 60 * 60);
-      await signMessage(wallet);
-      expect(storage.get(testStorageKeys.sessionActivity)).not.toBeNull();
-
-      await wallet.signOut();
-      expect(storage.get(testStorageKeys.sessionActivity)).toBeNull();
-    });
-
-    it("keeps another tab's shared activity when a newer sign-in there replaced this session", async () => {
-      vi.useFakeTimers();
-      vi.setSystemTime(T0);
-      const otherCredentialId = '0x04' + '33'.repeat(64);
-      const fetchMock = stubWaas({
-        '/GetCredential': () => credentialResponse('2026-02-01T00:00:00Z')
-      });
-      const storage = new MemoryStorageManager();
-      const signer = new MockSigner();
-      const wallet = createWalletWithSession(walletAddress, undefined, {
-        expiresAt: '2026-01-01T00:02:00Z',
-        storage,
-        signer
-      });
-
-      // Another tab signed in, stored its session, and used it.
-      storage.set(
-        testStorageKeys.session,
-        JSON.stringify({ ...storedRecord(storage), signerCredentialId: otherCredentialId })
-      );
-      const sharedActivity = JSON.stringify({ signerCredentialId: otherCredentialId, at: T0 });
-      storage.set(testStorageKeys.sessionActivity, sharedActivity);
-      signer.setCredential(otherCredentialId);
-      await vi.advanceTimersByTimeAsync(120_000 + EXPIRY_CHECK_GRACE_MS);
-
-      expect(fetchMock).not.toHaveBeenCalled();
-      expect(wallet.session).toBeUndefined();
-      expect(storage.get(testStorageKeys.sessionActivity)).toBe(sharedActivity);
-    });
   });
 });
 
@@ -1583,7 +1145,7 @@ describe('WalletClient restore read in the foreground', () => {
     const signedInAt = Date.parse('2026-01-01T00:00:00Z');
     const savedExpiry = '2026-01-11T00:00:00.000Z';
 
-    /** Saves a session signed in at `signedInAt` with a 10-day idle window. */
+    /** Saves a session signed in at `signedInAt` expiring 10 days later. */
     function saveSession(): MemoryStorageManager {
       vi.setSystemTime(signedInAt);
       const storage = new MemoryStorageManager();
@@ -1746,7 +1308,7 @@ describe('WalletClient restore read in the foreground', () => {
       expect(sessionChangeReasons(onSessionChange)).toEqual(['expired']);
     });
 
-    it('ends it without a read past the ceiling', async () => {
+    it('ends it without a read once its lifetime cap has passed', async () => {
       vi.useFakeTimers({ toFake: ['Date'] });
       const storage = saveSession();
       const record = JSON.parse(storage.get(testStorageKeys.session) ?? '{}');
@@ -1755,7 +1317,7 @@ describe('WalletClient restore read in the foreground', () => {
       const fetchMock = stubWaas({
         '/GetCredential': () => credentialResponse('2026-01-21T04:00:00Z')
       });
-      const { wallet } = load(storage, Date.parse(savedExpiry) + HOUR + EXPIRY_CHECK_GRACE_MS);
+      const { wallet } = load(storage, Date.parse(savedExpiry) + HOUR);
       await settle();
 
       expect(wallet.session).toBeUndefined();
@@ -1783,16 +1345,17 @@ describe('WalletClient restore read in the foreground', () => {
       }
     });
 
-    it('ends it without a read once the server expiry must have passed', async () => {
-      // 6 hours of dampening, 6 hours of requests before the next read, and the 5-minute grace.
+    it('restores it however long ago its saved expiry passed, and its read decides', async () => {
+      // Within its 180-day lifetime cap, only WaaS knows whether it is still active.
       const { fetchMock, wallet, onSessionChange } = restoreAt(
-        Date.parse(savedExpiry) + 12 * HOUR + EXPIRY_CHECK_GRACE_MS,
-        () => credentialResponse('2026-01-21T04:00:00Z')
+        Date.parse(savedExpiry) + 30 * 24 * HOUR,
+        () => waasErrorResponse('KeyExpired')
       );
-      expect(wallet.session).toBeUndefined();
+      expect(wallet.session).toBeDefined();
       await settle();
 
-      expect(fetchMock).not.toHaveBeenCalled();
+      expect(requestCount(fetchMock, '/GetCredential')).toBe(1);
+      expect(wallet.session).toBeUndefined();
       expect(sessionChangeReasons(onSessionChange)).toEqual(['expired']);
     });
   });
@@ -1939,44 +1502,6 @@ describe('WalletClient request deadline', () => {
       expect(requestCount(fetchMock, '/Execute')).toBe(0);
     }
   );
-
-  it('does not count a request that was never sent as session activity', async () => {
-    // WaaS never saw it, so it did not extend the session.
-    stubWaasWithSignal({ '/SignMessage': () => jsonResponse({ signature: '0xsigned' }) });
-    const signer = new ControlledSigner();
-    const wallet = createWalletWithSession(walletAddress, undefined, { signer });
-    const before = (wallet as any).lastSessionActivityAt;
-    signer.signing = 'fail';
-
-    await expect(signMessage(wallet)).rejects.toMatchObject({ code: 'OMS_REQUEST_FAILED' });
-
-    expect((wallet as any).lastSessionActivityAt).toBe(before);
-  });
-
-  it("does not count an earlier session's request as the current session's activity", async () => {
-    let answerOld!: (response: Response) => void;
-    vi.stubGlobal(
-      'fetch',
-      vi.fn(() => new Promise<Response>((resolve) => (answerOld = resolve)))
-    );
-    const wallet = createWalletWithSession(walletAddress);
-    const oldRequest = signMessage(wallet).catch(() => undefined);
-    await vi.waitFor(() => expect(answerOld).toBeDefined());
-
-    // The user signs out and in again while the old request is in flight.
-    await wallet.signOut();
-    (wallet as any).persistSession(testWalletAccount('wallet-id', walletAddress), {
-      expiresAt: '2099-01-01T00:00:00Z',
-      auth: { type: 'email', email: 'user@example.com' },
-      signerCredentialId: '0x04' + '11'.repeat(64),
-      signerKeyType: 'ecdsa-p256-sha256'
-    });
-    const before = (wallet as any).lastSessionActivityAt;
-    answerOld(jsonResponse({ signature: '0xold' }));
-    await oldRequest;
-
-    expect((wallet as any).lastSessionActivityAt).toBe(before);
-  });
 
   it('keeps an Execute that timed out after it was sent unconfirmed', async () => {
     vi.useFakeTimers();

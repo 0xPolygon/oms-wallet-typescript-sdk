@@ -191,7 +191,6 @@ describe('a session that ends on its own', () => {
       signerCredentialId: credentialId,
       signerKeyType: 'ecdsa-p256-sha256',
       expiryBounds: {
-        idleWindowMs: 10 * 24 * 60 * 60 * 1000,
         expiryCeilingMs: Date.parse('2099-01-01T00:00:00Z')
       }
     });

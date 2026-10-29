@@ -391,8 +391,8 @@ describe('WalletClient session storage', () => {
     );
     wallet.onSessionChange(onSessionChange);
 
-    // Without activity, WaaS is asked 5 minutes (the grace period) after the local expiry.
-    await vi.advanceTimersByTimeAsync(119_999 + 5 * 60_000);
+    // The timer reads the expiry at the local expiry (00:02).
+    await vi.advanceTimersByTimeAsync(119_999);
     expect(sessionChangeReasons(onSessionChange)).toEqual([]);
     expect(wallet.activeWallet?.address).toBe('0x1111111111111111111111111111111111111111');
 

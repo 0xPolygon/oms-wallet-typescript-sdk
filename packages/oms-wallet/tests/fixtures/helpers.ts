@@ -128,35 +128,22 @@ export function createWalletWithSession(
 }
 
 /**
- * The expiry bounds a sign-in now would derive from a `CompleteAuth` returning `expiresAt` with the
- * default 180-day lifetime: the idle window is the time until `expiresAt`. Undefined for an expiry
- * that has passed, as a sign-in would leave them.
+ * The lifetime cap a sign-in now would record for a `CompleteAuth` returning `expiresAt` with the
+ * default 180-day lifetime. Undefined for an expiry that has passed, as a sign-in would leave it.
  */
-export function testExpiryBounds(
-  expiresAt: string
-): { idleWindowMs: number; expiryCeilingMs: number } | undefined {
+export function testExpiryBounds(expiresAt: string): { expiryCeilingMs: number } | undefined {
   const expiresAtMs = Date.parse(expiresAt);
-  const idleWindowMs = expiresAtMs - Date.now();
-  if (!(idleWindowMs > 0)) return undefined;
-  return {
-    idleWindowMs,
-    expiryCeilingMs: Math.max(Date.now() + 180 * 24 * 60 * 60 * 1000, expiresAtMs)
-  };
+  if (!(expiresAtMs > Date.now())) return undefined;
+  return { expiryCeilingMs: Math.max(Date.now() + 180 * 24 * 60 * 60 * 1000, expiresAtMs) };
 }
 
-/** The stored-record form of `testExpiryBounds`, for seeding a stored session. */
-export function testStoredExpiryBounds(expiresAt: string): {
-  idleWindowMs: number;
-  expiryCeiling: string;
-} {
-  const bounds = testExpiryBounds(expiresAt) ?? {
-    idleWindowMs: 10 * 24 * 60 * 60 * 1000,
-    expiryCeilingMs: Date.parse(expiresAt)
-  };
-  return {
-    idleWindowMs: bounds.idleWindowMs,
-    expiryCeiling: new Date(bounds.expiryCeilingMs).toISOString()
-  };
+/**
+ * The stored-record form of `testExpiryBounds`, for seeding a stored session. A passed expiry is
+ * stored as its own cap.
+ */
+export function testStoredExpiryBounds(expiresAt: string): { expiryCeiling: string } {
+  const bounds = testExpiryBounds(expiresAt) ?? { expiryCeilingMs: Date.parse(expiresAt) };
+  return { expiryCeiling: new Date(bounds.expiryCeilingMs).toISOString() };
 }
 
 /** Waits (macrotask ticks) until `fetchMock` has sent `count` requests to `endpoint`. */

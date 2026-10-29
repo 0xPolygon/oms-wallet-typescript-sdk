@@ -95,17 +95,15 @@ sign-in and is not updated.
 - A session active in memory whose local expiry has passed is checked with the wallet API before it
   is ended, so a protected operation can succeed on it. If the wallet API cannot be reached, the
   session is kept and the operation fails with the request error (for example `OMS_REQUEST_FAILED`)
-  instead of `OMS_SESSION_EXPIRED`. A stored session whose local expiry has passed is discarded on
-  load without asking the wallet API.
-- An idle session ends about 10 days after its last use. Reading the expiry also counts as use, so
-  after the local expiry the SDK waits until the session would have ended on the wallet API before
-  reading it. While the app makes no wallet calls, the `expired` change can arrive up to about 6 hours
-  after the session ended, because the wallet API extends the expiry only in steps of at least 6 hours (within 5 minutes when the lifetime
-  is shorter than the idle window), assuming an accurate device clock and a page in the foreground.
-  A stored session whose saved expiry passed less than about 12 hours ago is restored and the
-  expiry read after the restore decides whether it continues. When that read cannot reach the
-  wallet API, the SDK retries it while the page is shown, so the session is settled soon after
-  the network returns.
+  instead of `OMS_SESSION_EXPIRED`.
+- An idle session ends about 10 days after its last use, and never after the requested lifetime.
+  When the local expiry passes, a session whose lifetime has run out ends at once, without asking
+  the wallet API; otherwise the SDK reads the expiry (once the page is shown, since reading counts
+  as use) and the wallet API decides. With a page in the foreground and an accurate device clock,
+  the `expired` change arrives at the expiry. A stored session whose saved expiry has passed is
+  restored unless its lifetime has run out, and the expiry read after the restore decides whether
+  it continues. When a read cannot reach the wallet API, the SDK keeps the session and retries the
+  read while the page is shown, so the session is settled soon after the network returns.
 - When the wallet API rejects the session credential as not found or expired (WaaS `KeyNotFound`
   7202 or `KeyExpired` 7203), the session ends like a local expiry and the operation fails with
   `OMSWalletSessionError` (`OMS_SESSION_EXPIRED`), with the same shape as a local expiry: the WaaS
@@ -309,7 +307,7 @@ instances sharing one `storage` must also share one `credentialSigner`.
 
 ### Stored sessions are kept per project and environment
 
-The session, its signing key, redirect state and activity record are stored under keys that name the
+The session, its signing key and redirect state are stored under keys that name the
 project and wallet API origin, so several projects or environments on one origin no longer replace
 each other's session. 0.4.0 does not restore 0.3.x sessions anyway (see above), so there is nothing
 to migrate; the unscoped 0.3.x records are left in storage unread.
