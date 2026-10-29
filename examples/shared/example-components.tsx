@@ -1,6 +1,6 @@
 import type {
   FeeOptionWithBalance,
-  OMSWalletSessionExpiredEvent,
+  OMSWalletExpiredSession,
   WalletAccount,
   PendingWalletSelection
 } from '@polygonlabs/oms-wallet';
@@ -328,7 +328,7 @@ export function SessionExpiredDialog({
   onReauthenticate,
   onDismiss
 }: {
-  event: OMSWalletSessionExpiredEvent;
+  event: OMSWalletExpiredSession;
   disabled: boolean;
   onReauthenticate: () => void;
   onDismiss: () => void;

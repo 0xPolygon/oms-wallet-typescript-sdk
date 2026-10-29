@@ -19,8 +19,9 @@ const fixed = [releasePackages.map(({ name }) => name)];
 
 test('orders every publishable package by the Changesets fixed group', () => {
   const workspaces = [
+    releasePackages[1],
     { name: 'private-example', version: '0.0.0', private: true },
-    ...releasePackages
+    releasePackages[0]
   ];
   assert.deepEqual(validateReleasePackages(workspaces, { fixed }), releasePackages);
 });
@@ -59,6 +60,15 @@ test('requires GitHub Actions OIDC before staging', () => {
     () => assertTrustedPublishingEnvironment({ GITHUB_ACTIONS: 'true' }),
     /OIDC is unavailable/
   );
+  for (const credential of [
+    { ACTIONS_ID_TOKEN_REQUEST_TOKEN: 'token' },
+    { ACTIONS_ID_TOKEN_REQUEST_URL: 'https://example.test/oidc' }
+  ]) {
+    assert.throws(
+      () => assertTrustedPublishingEnvironment({ GITHUB_ACTIONS: 'true', ...credential }),
+      /OIDC is unavailable/
+    );
+  }
   assert.doesNotThrow(() =>
     assertTrustedPublishingEnvironment({
       GITHUB_ACTIONS: 'true',

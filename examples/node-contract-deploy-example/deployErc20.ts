@@ -286,14 +286,6 @@ function requiredEnv(name: string, value: string | undefined): string {
   return value;
 }
 
-function requiredAddress(name: string, value: string | undefined): Address {
-  const address = requiredEnv(name, value);
-  if (!isAddress(address)) {
-    throw new Error(`${name} must be an EVM address`);
-  }
-  return address;
-}
-
 function optionalAddress(name: string, value: string | undefined): Address | undefined {
   if (!value) {
     return undefined;

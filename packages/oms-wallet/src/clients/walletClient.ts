@@ -3,10 +3,12 @@ import type { ContractFunctionName, Abi, Address, EncodeFunctionDataParameters }
 import { encodeFunctionData, isAddress } from 'viem';
 
 import type { CredentialSigner, CredentialSigningAlgorithm } from '../credentialSigner.js';
+import type { OMSWalletError } from '../errors.js';
 import type {
   CommitVerifierRequest,
   CompleteAuthRequest,
   CompleteAuthResponse,
+  ClaimWalletRequest,
   CreateWalletRequest,
   UseWalletRequest,
   ListAccessRequest,
@@ -21,6 +23,8 @@ import type {
   PrepareEthereumTransactionRequest,
   PrepareEthereumContractCallRequest,
   PrepareSolanaTransferRequest,
+  PrepareTronTransactionRequest,
+  PrepareTronContractCallRequest,
   ExecuteRequest,
   ExecuteResponse,
   TransactionStatusRequest,
@@ -29,7 +33,7 @@ import type {
   HPKEPayload,
   FeeOption as GeneratedFeeOption
 } from '../generated/waas.gen.js';
-import type { Network, SolanaNetwork } from '../networks.js';
+import type { Network, SolanaNetwork, TronNetwork } from '../networks.js';
 import type { ResolvedOidcProviderConfig } from '../oidc.js';
 import type { OMSWalletEnvironment } from '../omsEnvironment.js';
 import type { StorageManager } from '../storageManager.js';
@@ -38,6 +42,7 @@ import type {
   AccessGrantPage,
   AuthorizeRemoteAccessParams,
   AuthorizedRemoteAccess,
+  ListAccessPageParams,
   ListAccessParams,
   RemoteCredentialMetadata,
   RevokeAccessParams,
@@ -54,6 +59,8 @@ import type {
   SendSolanaTransferParams,
   SendTransactionParams,
   SendTransactionResponse,
+  SendTronTransactionParams,
+  CallTronContractParams,
   TransactionStatusPollingOptions
 } from '../types/transactionTypes.js';
 import type {
@@ -64,6 +71,7 @@ import type {
   TransactionStatusResponse,
   WalletImportCipherSuite
 } from '../types/waas.js';
+import type { SessionStorageKeys } from '../utils/constants.js';
 import type {
   AutomaticWalletSelectionParams,
   CompleteEmailAuthParams,
@@ -76,23 +84,28 @@ import type {
   IsValidMessageSignatureParams,
   IsValidSolanaMessageSignatureParams,
   IsValidTypedDataSignatureParams,
+  IsValidTronMessageSignatureParams,
+  IsValidTronTypedDataSignatureParams,
   ImportEncryptedWalletParams,
   ImportWalletParams,
   ManualWalletSelectionParams,
-  OMSWalletClient,
+  WalletClient,
   OMSWalletEmailSessionAuth,
   OMSWalletOidcSessionAuth,
   OMSWalletOidcSessionAuthFlow,
   OMSWalletSessionAuth,
-  OMSWalletSessionExpiredEvent,
-  OMSWalletSessionExpiredListener,
-  OMSWalletSessionState,
+  OMSWalletExpiredSession,
+  OMSWalletSessionChangeEvent,
+  OMSWalletSessionChangeListener,
+  OMSWalletSession,
   PendingWalletSelection,
   SignInWithOidcIdTokenParams,
   SignInWithOidcRedirectParams,
   SignMessageParams,
   SignSolanaMessageParams,
   SignTypedDataParams,
+  SignTronMessageParams,
+  SignTronTypedDataParams,
   StartEmailAuthParams,
   StartOidcRedirectAuthParams,
   StartOidcRedirectAuthResult,
@@ -104,9 +117,17 @@ import type {
 import type { TokenBalance } from './indexerClient.js';
 
 import { createAttestedFetch } from '../attestation.js';
-import { WebCryptoP256CredentialSigner } from '../credentialSigner.js';
 import {
+  WebCryptoP256CredentialSigner,
+  deleteStoredWebCryptoCredential
+} from '../credentialSigner.js';
+import {
+  isBadRouteError,
+  isCredentialEndedError,
+  isUnauthorizedError,
+  OMSWalletResponseError,
   OMSWalletSessionError,
+  OMSWalletValidationError,
   OMSWalletStorageError,
   OMSWalletTransactionError,
   OMSWalletSelectionError,
@@ -122,9 +143,16 @@ import {
   KeyFormat as GeneratedKeyFormat,
   TransportPurpose as GeneratedTransportPurpose
 } from '../generated/waas.gen.js';
+import { TronNetworks } from '../networks.js';
 import { isOmsRelayOidcProvider, resolveOidcProviderConfig } from '../oidc.js';
 import { WalletOperation } from '../operations.js';
-import { createSignedFetch } from '../signedFetch.js';
+import {
+  createDeadlineFetch,
+  createSerialFetch,
+  createSignedFetch,
+  untilAborted,
+  wasRequestSent
+} from '../signedFetch.js';
 import { createDefaultStorage, SessionStorageManager } from '../storageManager.js';
 import { feeOptionSelection } from '../types/transactionTypes.js';
 import {
@@ -132,6 +160,7 @@ import {
   TransactionMode,
   TransactionStatus,
   WalletImportCipherSuite as WalletImportCipherSuiteValues,
+  WalletKeyOrigin,
   WalletType
 } from '../types/waas.js';
 import {
@@ -139,7 +168,7 @@ import {
   fromGeneratedSmartSessionGrantUsages,
   toGeneratedSmartSessionGrant
 } from '../utils/accessGrant.js';
-import { Constants } from '../utils/constants.js';
+import { sessionStorageKeys } from '../utils/constants.js';
 import { oidcIdTokenExpiresAtEpochSeconds, oidcIdTokenHandleHash } from '../utils/oidcIdToken.js';
 import {
   buildOidcAuthorizationUrl,
@@ -167,13 +196,14 @@ import {
   fromGeneratedRemoteCredentialMetadata,
   fromGeneratedWallet
 } from '../utils/walletResponse.js';
+import { DEFAULT_SESSION_LIFETIME_SECONDS, MAX_SESSION_LIFETIME_SECONDS } from '../wallet.js';
 import {
   requireBase64,
   sealWalletImportPrivateKey,
   validateWalletImportReference,
   walletImportPlaintext
 } from '../walletImport.js';
-import { IndexerClient } from './indexerClient.js';
+import { IndexerClientImpl } from './indexerClient.js';
 
 interface PendingOidcRedirectAuth {
   verifier: string;
@@ -192,37 +222,86 @@ interface PendingOidcRedirectAuth {
   consumed?: boolean;
 }
 
+/**
+ * The session's lifetime cap from sign-in: WaaS never extends the expiry past it. Undefined when
+ * unknown (a sign-in response without a usable expiry).
+ */
+interface SessionExpiryBounds {
+  /** Sign-in plus the requested lifetime, epoch ms. */
+  expiryCeilingMs: number;
+}
+
+/** When a `CompleteAuth` request was sent (epoch ms) and the session lifetime it requested. */
+interface CompleteAuthSent {
+  sentAt: number;
+  lifetimeSeconds: number;
+}
+
 interface WalletSessionMetadata {
   expiresAt: string;
   auth: OMSWalletSessionAuth;
   signerCredentialId: string;
   signerKeyType: CredentialSigningAlgorithm;
+  expiryBounds?: SessionExpiryBounds;
+  /** Send time of the `CompleteAuth` that returned `expiresAt`, in epoch ms; set only at sign-in. */
+  signInSentAt?: number;
 }
 
-interface StoredSessionSnapshot {
-  serializedRecord: string;
-  session: OMSWalletSessionState;
+/** A point-in-time view of a session; `wallet` is undefined while a wallet selection is pending. */
+interface SessionSnapshot {
+  wallet: WalletAccount | undefined;
+  expiresAt: string;
+  auth: OMSWalletSessionAuth;
 }
+
+interface PublishedSessionState {
+  activeWallet: WalletAccount | undefined;
+  session: OMSWalletSession | undefined;
+}
+
+/**
+ * What changed the session, for its change event. `activation` (a wallet became active) is published as
+ * `walletChanged` when a wallet was active before, and as `signedIn` otherwise.
+ */
+type SessionChange =
+  | { reason: 'activation' | 'signedIn' | 'walletChanged' | 'expiryUpdated' | 'signedOut' }
+  | { reason: 'expired'; expiredSession: OMSWalletExpiredSession };
 
 interface StoredSessionRecord {
-  version: 1;
+  version: 2;
   scope: {
     projectId: string;
     walletApiUrl: string;
     indexerGatewayUrl: string;
   };
-  walletId: string;
-  walletAddress: string;
+  wallet: WalletAccount;
   expiresAt: string;
   auth: OMSWalletSessionAuth;
   signerCredentialId: string;
   signerKeyType: CredentialSigningAlgorithm;
+  /**
+   * `SessionExpiryBounds.expiryCeilingMs` as an ISO 8601 timestamp. Absent when unknown; a record
+   * without it is discarded on load.
+   */
+  expiryCeiling?: string;
 }
 
 interface LoadedSessionRecord {
   record: StoredSessionRecord;
   serialized: string;
 }
+
+/**
+ * Result of reading the session credential's current expiry from WaaS. `ended`: WaaS no longer
+ * accepts the credential and the session was ended. `unsupported`: the server has no
+ * `GetCredential`. `unavailable`: the request failed and the session is unchanged. `stale`: the
+ * session changed while the request was in flight, so the result was not applied.
+ * `signerMismatch`: the signer no longer holds the session's key, so the session was cleared
+ * without a request.
+ */
+type CredentialRefreshResult =
+  | { outcome: 'refreshed' | 'unsupported' | 'stale' | 'signerMismatch' }
+  | { outcome: 'ended' | 'unavailable'; error: unknown };
 
 interface PolledTransactionStatus {
   response: TransactionStatusResponse;
@@ -283,18 +362,24 @@ interface ActiveEmailAuthAttempt {
 
 class PendingWalletSelectionImpl implements PendingWalletSelection {
   private readonly availableWalletIds: Set<string>;
+  private readonly claimableWalletIds: Set<string>;
 
   constructor(
     public readonly walletType: WalletType,
     public readonly wallets: ReadonlyArray<WalletAccount>,
+    public readonly claimableWallets: ReadonlyArray<WalletAccount>,
     public readonly credential: Readonly<WalletCredential>,
     private readonly selectWalletAction: (walletId: string) => Promise<WalletActivationResult>,
     private readonly createAndSelectWalletAction: (
       reference?: string
     ) => Promise<WalletActivationResult>,
+    private readonly claimAndSelectWalletAction: (
+      walletId: string
+    ) => Promise<WalletActivationResult>,
     private readonly runExclusiveAction: PendingWalletSelectionActionRunner
   ) {
     this.availableWalletIds = new Set(wallets.map((wallet) => wallet.id));
+    this.claimableWalletIds = new Set(claimableWallets.map((wallet) => wallet.id));
   }
 
   async selectWallet(params: { walletId: string }): Promise<WalletActivationResult> {
@@ -318,38 +403,113 @@ class PendingWalletSelectionImpl implements PendingWalletSelection {
       () => this.createAndSelectWalletAction(params.reference)
     );
   }
+
+  async claimAndSelectWallet(params: { walletId: string }): Promise<WalletActivationResult> {
+    return this.runExclusiveAction(
+      WalletOperation.pendingWalletSelectionClaimAndSelectWallet,
+      async () => {
+        if (!this.claimableWalletIds.has(params.walletId)) {
+          throw new OMSWalletSelectionError({
+            code: 'OMS_WALLET_SELECTION_UNAVAILABLE',
+            operation: WalletOperation.pendingWalletSelectionClaimAndSelectWallet,
+            message: 'Selected wallet is not one of the claimable wallets'
+          });
+        }
+        return this.claimAndSelectWalletAction(params.walletId);
+      }
+    );
+  }
 }
 
-export class WalletClient implements OMSWalletClient {
+export class WalletClientImpl implements WalletClient {
   private readonly client: WaasClient;
+  /** Reads the session credential's expiry, never overlapping another signed session request. */
+  private readonly credentialClient: WaasClient;
   private readonly walletImportClient?: WaasClient;
   private readonly publicClient: WaasPublicClient;
   private readonly storage: StorageManager;
+  private readonly storageKeys: SessionStorageKeys;
+  /** Whether the signer is the default WebCrypto one, whose key other tabs share. */
+  private readonly usesDefaultSigner: boolean;
   private readonly redirectAuthStorage?: StorageManager;
   private readonly credentialSigner: CredentialSigner;
-  private readonly indexerClient: IndexerClient;
+  private readonly indexerClient: IndexerClientImpl;
   private readonly environment: OMSWalletEnvironment;
   private readonly projectId: string;
-  private readonly sessionExpiredListeners = new Set<OMSWalletSessionExpiredListener>();
+  /** The key sent with each request; a rotated key of the same project replaces it. */
+  private publishableKey: string;
+  private readonly sessionChangeListeners = new Set<OMSWalletSessionChangeListener>();
   private readonly fastTransactionStatusPollIntervalMs = 400;
   private readonly fastTransactionStatusPollCount = 5;
   private readonly transactionStatusPollIntervalMs = 2_000;
   private readonly transactionStatusPollTimeoutMs = 60_000;
 
-  private activeWalletAddress: string | undefined;
+  private activeWalletAccount: WalletAccount | undefined;
   private sessionExpiresAt: string | undefined;
   private sessionAuth: OMSWalletSessionAuth | undefined;
   private sessionSignerCredentialId: string | undefined;
   private sessionSignerKeyType: CredentialSigningAlgorithm | undefined;
+  private sessionExpiryBounds: SessionExpiryBounds | undefined;
   private activePendingWalletSelection: ActivePendingWalletSelection | undefined;
   private activeEmailAuthAttempt: ActiveEmailAuthAttempt | undefined;
   private nextPendingWalletSelectionId = 1;
   private sessionExpiryTimer: ReturnType<typeof setTimeout> | undefined;
-  private latestSessionExpiredEvent: OMSWalletSessionExpiredEvent | undefined;
+  /** Cancels an expiry read waiting for the foreground, or its retry. */
+  private cancelSessionRead: (() => void) | undefined;
+  /** Whether an expiry read is waiting for the foreground, in flight, or waiting to retry. */
+  private sessionReadPending = false;
+  /** What `activeWallet` and `session` return until the session changes. */
+  private activeWalletView: WalletAccount | undefined;
+  private sessionView: OMSWalletSession | undefined;
+  /** The `activeWallet` and `session` of the last published change; a change is published only when they differ. */
+  private publishedSessionState: PublishedSessionState = {
+    activeWallet: undefined,
+    session: undefined
+  };
+  /** Changes not yet delivered, each with the listeners registered when it happened. */
+  private pendingSessionChanges: Array<{
+    event: OMSWalletSessionChangeEvent;
+    listeners: OMSWalletSessionChangeListener[];
+  }> = [];
+  private sessionChangeDrainScheduled = false;
+  /** The last `expired` change, replayed to listeners added before the next sign-in or sign-out. */
+  private latestExpiredChange: OMSWalletSessionChangeEvent | undefined;
+  /** Whether a reconcile with the stored session is running, and whether another pass is due. */
+  private reconcilingStoredSession = false;
+  private reconcileStoredSessionAgain = false;
   private sessionRevision = 0;
-  private dispatchingSessionExpiredEvent = false;
+  /** Revision of the last session that ended by expiry, locally or reported by WaaS. */
+  private expiredSessionRevision: number | undefined;
+  /**
+   * Signed requests share a per-credential nonce that WaaS requires to increase, so an expiry read
+   * never overlaps another signed session request: it waits until none is in flight, and requests
+   * started during the read wait for it before signing.
+   */
+  private signedSessionRequestsInFlight = 0;
+  private signedSessionRequestsIdleWaiters: Array<() => void> = [];
+  private credentialReadInFlight: Promise<void> | undefined;
+  /** Session revision of the last session-signed request that WaaS rejected with 7202 or 7203. */
+  private rejectedSessionCredentialRevision: number | undefined;
+  private credentialRefresh:
+    { revision: number; promise: Promise<CredentialRefreshResult> } | undefined;
+  /**
+   * Until when, in epoch ms, the expiry is not read after WaaS answered `GetCredential` with
+   * `WebrpcBadRoute` (a server without it, or a misrouted request); it is asked again after that.
+   */
+  private credentialRefreshUnsupportedUntil: number | undefined;
+  /**
+   * When the session expiry was last read from WaaS in this client, in epoch ms: the send time of
+   * the sign-in `CompleteAuth`, or the completion of the last successful `GetCredential`. Unset
+   * after a restore until a read succeeds.
+   */
+  private lastCredentialRefreshAt: number | undefined;
+  /** The next delay before retrying an expiry read that could not reach WaaS. */
+  private sessionReadRetryDelayMs = CREDENTIAL_REFRESH_RETRY_MIN_MS;
 
-  private walletId: string;
+  /** The active wallet's ID, or `''` without an active wallet. */
+  private get walletId(): string {
+    return this.activeWalletAccount?.id ?? '';
+  }
 
   constructor(params: {
     publishableKey: string;
@@ -361,105 +521,398 @@ export class WalletClient implements OMSWalletClient {
     walletImportTrustedPcr0s?: ReadonlyArray<string>;
   }) {
     this.environment = params.environment;
+    this.storageKeys = sessionStorageKeys(params.projectId, params.environment.walletApiUrl);
     this.storage = params.storage ?? createDefaultStorage();
     this.redirectAuthStorage = params.redirectAuthStorage ?? defaultRedirectAuthStorage();
-    this.credentialSigner = params.credentialSigner ?? new WebCryptoP256CredentialSigner();
+    this.credentialSigner =
+      params.credentialSigner ??
+      new WebCryptoP256CredentialSigner(this.storageKeys.webCryptoCredential);
+    this.usesDefaultSigner = params.credentialSigner === undefined;
     this.projectId = params.projectId;
 
     const storedSession = this.loadStoredSessionRecord();
-
+    let restoredRecord: StoredSessionRecord | undefined;
     if (storedSession) {
       const { record } = storedSession;
-      const restoredSession = {
-        walletAddress: record.walletAddress,
-        expiresAt: record.expiresAt,
-        auth: record.auth
-      };
-
-      if (this.isSessionExpired(restoredSession)) {
-        this.walletId = '';
-        this.activeWalletAddress = undefined;
-        this.sessionExpiresAt = undefined;
-        this.sessionAuth = undefined;
-        this.scheduleStoredSessionExpiryNotification({
-          serializedRecord: storedSession.serialized,
-          session: restoredSession
+      const session = { wallet: record.wallet, expiresAt: record.expiresAt, auth: record.auth };
+      if (
+        this.isSessionExpired(session) &&
+        hasPassedLifetimeCap(storedSessionExpiryBounds(record))
+      ) {
+        // Nothing can extend a session past its lifetime cap, so it ended without asking WaaS. Its
+        // record stays as the sign-in hint; listeners get its expiry when they subscribe.
+        this.latestExpiredChange = Object.freeze({
+          reason: 'expired',
+          activeWallet: undefined,
+          session: undefined,
+          expiredSession: expiredSessionOf(session, session.expiresAt)
         });
+        this.clearSessionSignerKey(record.signerCredentialId)?.catch(() => {});
       } else {
-        this.walletId = record.walletId;
-        this.activeWalletAddress = restoredSession.walletAddress;
-        this.sessionExpiresAt = restoredSession.expiresAt;
-        this.sessionAuth = restoredSession.auth;
-        this.sessionSignerCredentialId = record.signerCredentialId;
-        this.sessionSignerKeyType = record.signerKeyType;
-        this.scheduleSessionExpiry(restoredSession);
+        restoredRecord = record;
       }
-    } else {
-      this.walletId = '';
-      this.activeWalletAddress = undefined;
-      this.sessionExpiresAt = undefined;
-      this.sessionAuth = undefined;
-      this.sessionSignerCredentialId = undefined;
-      this.sessionSignerKeyType = undefined;
     }
 
-    const signedFetch = createSignedFetch(
-      params.publishableKey,
-      this.credentialSigner,
-      this.projectId
+    this.publishableKey = params.publishableKey;
+    const publishableKey = () => this.publishableKey;
+    // Session requests and expiry reads signed with one credential reach WaaS one at a time.
+    const signedFetch = createSerialFetch(
+      createSignedFetch(publishableKey, this.credentialSigner, this.projectId),
+      this.credentialSigner
     );
-    this.client = new WaasClient(params.environment.walletApiUrl, signedFetch);
+    const sessionFetch = this.sessionActivityFetch(this.sessionRequestFetch(signedFetch));
+    this.client = new WaasClient(
+      params.environment.walletApiUrl,
+      createDeadlineFetch(sessionFetch)
+    );
+    this.credentialClient = new WaasClient(
+      params.environment.walletApiUrl,
+      createDeadlineFetch(this.credentialReadFetch(signedFetch))
+    );
     this.walletImportClient = params.walletImportTrustedPcr0s
       ? new WaasClient(
           params.environment.walletApiUrl,
-          createAttestedFetch(signedFetch, params.walletImportTrustedPcr0s)
+          createDeadlineFetch(createAttestedFetch(sessionFetch, params.walletImportTrustedPcr0s))
         )
       : undefined;
     this.publicClient = new WaasPublicClient(
       params.environment.walletApiUrl,
-      createApiKeyFetch(params.publishableKey)
+      createApiKeyFetch(publishableKey)
     );
-    this.indexerClient = new IndexerClient({
+    this.indexerClient = new IndexerClientImpl({
       publishableKey: params.publishableKey,
       environment: params.environment
     });
+
+    if (restoredRecord) {
+      this.installStoredSession(restoredRecord);
+      // The saved session may have been extended or ended on the server since it was saved.
+      this.readSessionExpiryInForeground();
+    }
+    // Nobody can be subscribed yet: the restored session is the state later changes compare with.
+    this.publishedSessionState = { activeWallet: this.activeWallet, session: this.session };
+    this.listenForStoredSessionChanges();
   }
 
-  /** The on-chain address of this wallet. Undefined until auth completes or a session is restored. */
-  get walletAddress(): string | undefined {
-    return this.activeWalletAddress;
+  /**
+   * Makes a stored session this client's session: the one restored on load, or a sign-in another
+   * tab stored.
+   */
+  private installStoredSession(record: StoredSessionRecord): void {
+    const session: SessionSnapshot = {
+      wallet: cloneWalletAccount(record.wallet),
+      expiresAt: record.expiresAt,
+      auth: cloneSessionAuth(record.auth)
+    };
+    this.activeWalletAccount = session.wallet;
+    this.sessionExpiresAt = session.expiresAt;
+    this.sessionAuth = session.auth;
+    this.sessionSignerCredentialId = record.signerCredentialId;
+    this.sessionSignerKeyType = record.signerKeyType;
+    this.sessionExpiryBounds = storedSessionExpiryBounds(record);
+    // The expiry is not read in this client yet, so `lastCredentialRefreshAt` stays unset.
+    this.scheduleSessionExpiry(session);
   }
 
-  /** Durable metadata for the completed wallet session. */
-  get session(): OMSWalletSessionState {
-    if (!this.activeWalletAddress) {
-      return {
-        walletAddress: undefined,
-        expiresAt: undefined,
-        auth: undefined
-      };
+  /**
+   * Follows the session other tabs store. Their sign-ins, sign-outs, wallet switches and expiry
+   * reads write the shared record, which fires `storage` here. A session that ended on its own in
+   * another tab only loses its key, so the page also checks when it becomes visible. Outside a
+   * browser nothing is shared.
+   */
+  private listenForStoredSessionChanges(): void {
+    const target = globalThis as {
+      addEventListener?: (type: string, listener: (event: { key?: string | null }) => void) => void;
+      document?: ForegroundDocument;
+    };
+    if (typeof target.addEventListener !== 'function') return;
+    target.addEventListener('storage', (event) => {
+      if (event.key === null || event.key === this.storageKeys.session) {
+        this.reconcileWithStoredSession();
+      }
+    });
+    const doc = target.document;
+    doc?.addEventListener?.('visibilitychange', () => {
+      if (doc.visibilityState === 'visible') this.reconcileWithStoredSession();
+    });
+  }
+
+  /** Runs `reconcileOnceWithStoredSession`, once more if triggered while it runs. */
+  private reconcileWithStoredSession(): void {
+    if (this.reconcilingStoredSession) {
+      this.reconcileStoredSessionAgain = true;
+      return;
+    }
+    this.reconcilingStoredSession = true;
+    void (async () => {
+      do {
+        this.reconcileStoredSessionAgain = false;
+        try {
+          await this.reconcileOnceWithStoredSession();
+        } catch {
+          // Best effort: the next trigger or wallet call checks again.
+        }
+      } while (this.reconcileStoredSessionAgain);
+      this.reconcilingStoredSession = false;
+    })();
+  }
+
+  /**
+   * Makes this client's session match the stored one, which another tab may have changed. It reads
+   * storage and the signer only: it never writes storage or deletes a key, except as ending a
+   * session whose key is gone does.
+   */
+  private async reconcileOnceWithStoredSession(): Promise<void> {
+    const serialized = this.storage.get(this.storageKeys.session);
+    const stored = serialized ? this.parseStoredSessionRecord(serialized) : undefined;
+    // An invalid record is left to the next load, which discards it.
+    if (serialized && !stored) return;
+
+    if (!stored) {
+      // Another tab signed out or started a sign-in; both delete the record and the key.
+      if (this.activeWalletAccount)
+        await this.clearSession({ keepSharedState: true, automatic: true });
+      return;
     }
 
-    return {
-      walletAddress: this.activeWalletAddress,
-      expiresAt: this.sessionExpiresAt,
-      auth: cloneSessionAuth(this.sessionAuth)
-    };
+    const revision = this.sessionRevision;
+    if (
+      this.activeWalletAccount &&
+      normalizeCredentialId(stored.signerCredentialId) ===
+        normalizeCredentialId(this.sessionSignerCredentialId ?? '')
+    ) {
+      // The same sign-in: follow its wallet and a later expiry, unless its key is gone.
+      const holdsKey = await this.sessionSignerMatches().catch(() => true);
+      if (this.sessionRevision !== revision || !this.activeWalletAccount) return;
+      // A wallet switch or expiry read here meanwhile rewrote the record, without a new revision.
+      if (this.storage.get(this.storageKeys.session) !== serialized) {
+        this.reconcileStoredSessionAgain = true;
+        return;
+      }
+      if (!holdsKey) {
+        await this.clearSessionWithMismatchedSigner();
+        return;
+      }
+      const walletChanged = !isSameFlatRecord(this.activeWalletAccount, stored.wallet);
+      if (walletChanged) this.activeWalletAccount = cloneWalletAccount(stored.wallet);
+      const current = this.activeSessionSnapshot();
+      if (current && Date.parse(stored.expiresAt) > Date.parse(current.expiresAt)) {
+        this.sessionExpiresAt = stored.expiresAt;
+        this.scheduleSessionExpiry({ ...current, expiresAt: stored.expiresAt });
+      }
+      this.publishSessionChange({ reason: walletChanged ? 'walletChanged' : 'expiryUpdated' });
+      return;
+    }
+
+    // Another tab's sign-in. Only a live session whose key this signer holds is followed.
+    if (
+      this.isSessionExpired({
+        wallet: stored.wallet,
+        expiresAt: stored.expiresAt,
+        auth: stored.auth
+      })
+    ) {
+      return;
+    }
+    const holdsKey = await this.signerHoldsKeyOf(stored);
+    if (
+      this.sessionRevision !== revision ||
+      this.storage.get(this.storageKeys.session) !== serialized
+    ) {
+      this.reconcileStoredSessionAgain = true;
+      return;
+    }
+    if (!holdsKey) return;
+    // This client's session or pending sign-in used a key that sign-in replaced.
+    this.resetSessionStateInMemory();
+    this.installStoredSession(stored);
+    this.publishSessionChange({ reason: 'signedIn' });
   }
 
-  onSessionExpired(listener: OMSWalletSessionExpiredListener): () => void {
-    this.sessionExpiredListeners.add(listener);
-
-    if (this.latestSessionExpiredEvent && !this.dispatchingSessionExpiredEvent) {
-      this.callSessionExpiredListener(
-        listener,
-        cloneSessionExpiredEvent(this.latestSessionExpiredEvent)
+  /** Whether the signer holds the key `record` was signed in with. */
+  private async signerHoldsKeyOf(record: StoredSessionRecord): Promise<boolean> {
+    try {
+      if (this.credentialSigner.hasCredential && !(await this.credentialSigner.hasCredential())) {
+        return false;
+      }
+      const credentialId: unknown = await this.credentialSigner.credentialId();
+      return (
+        typeof credentialId === 'string' &&
+        normalizeCredentialId(credentialId) === normalizeCredentialId(record.signerCredentialId) &&
+        this.credentialSigner.signingAlgorithm === record.signerKeyType
       );
+    } catch {
+      return false;
     }
+  }
 
+  /**
+   * Reads the session's expiry from WaaS once the page is in the foreground, where reading counts as
+   * use: after a restore, and when the local expiry passes. A read that cannot reach WaaS is retried
+   * with a backoff (1 minute, doubling to 15), each time in the foreground, until a read succeeds or
+   * the session ends. A session whose local expiry passed ends unless WaaS extended it. Ending the
+   * session cancels the wait, so its listeners don't keep this client alive.
+   */
+  private readSessionExpiryInForeground(): void {
+    // One read at a time: the restore and the timer of a restored, locally expired session share it.
+    if (this.sessionReadPending) return;
+    this.sessionReadPending = true;
+    const revision = this.sessionRevision;
+    this.cancelSessionRead = whenInForeground(() => {
+      this.cancelSessionRead = undefined;
+      void this.readSessionExpiry(revision);
+    });
+  }
+
+  private async readSessionExpiry(revision: number): Promise<void> {
+    const result = await this.refreshSessionCredential();
+    const current = this.activeSessionSnapshot();
+    if (this.sessionRevision !== revision || !current) return;
+    if (result.outcome === 'unavailable') {
+      this.scheduleSessionReadRetry(revision);
+      return;
+    }
+    this.sessionReadPending = false;
+    this.sessionReadRetryDelayMs = CREDENTIAL_REFRESH_RETRY_MIN_MS;
+    // WaaS did not extend it, or has no `GetCredential`, which makes the local expiry final.
+    if (this.isSessionExpired(current)) await this.expireSession(current);
+  }
+
+  private scheduleSessionReadRetry(revision: number): void {
+    const delayMs = this.sessionReadRetryDelayMs;
+    this.sessionReadRetryDelayMs = Math.min(delayMs * 2, CREDENTIAL_REFRESH_RETRY_MAX_MS);
+    const readBefore = this.lastCredentialRefreshAt;
+    const timer = setTimeout(() => {
+      this.cancelSessionRead = undefined;
+      this.sessionReadPending = false;
+      // A wallet call may have read the expiry meanwhile.
+      if (this.sessionRevision !== revision || this.lastCredentialRefreshAt !== readBefore) return;
+      this.readSessionExpiryInForeground();
+    }, delayMs);
+    (timer as { unref?: () => void }).unref?.();
+    this.cancelSessionRead = () => clearTimeout(timer);
+  }
+
+  /**
+   * Sends later requests with `publishableKey`, a rotated key of the same project and environment.
+   * The session belongs to the project, not to a key, so it is kept.
+   */
+  usePublishableKey(publishableKey: string): void {
+    this.publishableKey = publishableKey;
+    this.indexerClient.usePublishableKey(publishableKey);
+  }
+
+  /**
+   * The active wallet. Undefined until a wallet is activated (automatic sign-in, a restored session,
+   * or a choice from a pending manual selection), while a manual selection is pending, and after
+   * sign-out or session expiry. Narrow on `type` to get the family-specific address type.
+   */
+  get activeWallet(): WalletAccount | undefined {
+    const wallet = this.activeWalletAccount;
+    if (!wallet) return (this.activeWalletView = undefined);
+    // The same frozen object until the wallet changes, so a caller can compare reads by reference.
+    if (!this.activeWalletView || !isSameFlatRecord(this.activeWalletView, wallet)) {
+      this.activeWalletView = Object.freeze(cloneWalletAccount(wallet));
+    }
+    return this.activeWalletView;
+  }
+
+  /**
+   * Durable metadata for the active wallet session. Defined exactly when `activeWallet` is. The same
+   * frozen object until it changes.
+   */
+  get session(): OMSWalletSession | undefined {
+    const expiresAt = this.sessionExpiresAt;
+    const auth = this.sessionAuth;
+    if (!this.activeWalletAccount || !expiresAt || !auth) return (this.sessionView = undefined);
+    const view = this.sessionView;
+    if (!view || view.expiresAt !== expiresAt || !isSameFlatRecord(view.auth, auth)) {
+      this.sessionView = Object.freeze({ expiresAt, auth: Object.freeze({ ...auth }) });
+    }
+    return this.sessionView;
+  }
+
+  onSessionChange(listener: OMSWalletSessionChangeListener): () => void {
+    this.sessionChangeListeners.add(listener);
+    // An expiry since the last sign-in or sign-out (for example while the page was closed) is
+    // replayed to this listener only. Events queued before it registered are not delivered to it.
+    if (this.latestExpiredChange && !this.activeWalletAccount) {
+      this.queueSessionChange(this.latestExpiredChange, [listener]);
+    }
     return () => {
-      this.sessionExpiredListeners.delete(listener);
+      this.sessionChangeListeners.delete(listener);
     };
+  }
+
+  /**
+   * Publishes a change of `activeWallet` or `session` to the listeners registered now. Every change
+   * except `expired` is published only when they differ from the last published ones. Call it after
+   * the state changed; listeners run later, never during the caller.
+   */
+  private publishSessionChange(change: SessionChange): void {
+    const activeWallet = this.activeWallet;
+    const session = this.session;
+    const previous = this.publishedSessionState;
+    // An expiry is published even when nothing changes (a pending wallet selection expiring), but
+    // never over an active session.
+    const isExpiry = change.reason === 'expired' && !activeWallet;
+    if (!isExpiry && previous.activeWallet === activeWallet && previous.session === session) return;
+    this.publishedSessionState = { activeWallet, session };
+
+    let event: OMSWalletSessionChangeEvent;
+    if (change.reason === 'expired' && isExpiry) {
+      event = {
+        reason: 'expired',
+        activeWallet: undefined,
+        session: undefined,
+        expiredSession: change.expiredSession
+      };
+      this.latestExpiredChange = event;
+    } else if (activeWallet && session) {
+      // The reason follows the state: a wallet active now was activated, or its expiry moved.
+      const reason =
+        change.reason === 'signedIn' ||
+        change.reason === 'expiryUpdated' ||
+        change.reason === 'walletChanged'
+          ? change.reason
+          : previous.activeWallet
+            ? 'walletChanged'
+            : 'signedIn';
+      event = { reason, activeWallet, session };
+      this.latestExpiredChange = undefined;
+    } else {
+      event = { reason: 'signedOut', activeWallet: undefined, session: undefined };
+    }
+    this.queueSessionChange(Object.freeze(event), Array.from(this.sessionChangeListeners));
+  }
+
+  private queueSessionChange(
+    event: OMSWalletSessionChangeEvent,
+    listeners: OMSWalletSessionChangeListener[]
+  ): void {
+    if (listeners.length === 0) return;
+    this.pendingSessionChanges.push({ event, listeners });
+    if (this.sessionChangeDrainScheduled) return;
+    this.sessionChangeDrainScheduled = true;
+    queueMicrotask(() => this.deliverSessionChanges());
+  }
+
+  /** Delivers queued changes in order; a change published by a listener is delivered after. */
+  private deliverSessionChanges(): void {
+    let next = this.pendingSessionChanges.shift();
+    while (next) {
+      for (const listener of next.listeners) {
+        if (!this.sessionChangeListeners.has(listener)) continue;
+        try {
+          const result = listener(next.event);
+          if (isPromiseLike(result)) void result.catch(() => {});
+        } catch {
+          // Listener errors must not affect the SDK or other listeners.
+        }
+      }
+      next = this.pendingSessionChanges.shift();
+    }
+    this.sessionChangeDrainScheduled = false;
   }
 
   /**
@@ -590,9 +1043,11 @@ export class WalletClient implements OMSWalletClient {
         answer: params.idToken,
         lifetime: sessionLifetimeSeconds
       };
+      const sentAt = Date.now();
       const response = await this.client.completeAuth(completeRequest);
       return this.completeWalletAuth(
         response,
+        { sentAt, lifetimeSeconds: sessionLifetimeSeconds },
         params.walletType ?? WalletType.Ethereum,
         params.walletSelection ?? 'automatic',
         this.oidcIdTokenSessionAuthFromParams(params, response),
@@ -707,7 +1162,7 @@ export class WalletClient implements OMSWalletClient {
         authorizeParams,
         loginHint: this.loginHintForProvider(
           provider,
-          params.loginHint ?? previousSession.auth?.email
+          params.loginHint ?? previousSession?.auth.email
         )
       });
       this.requireCurrentSessionRevision(authRevision, WalletOperation.startOidcRedirectAuth);
@@ -799,9 +1254,11 @@ export class WalletClient implements OMSWalletClient {
           answer: callback.code,
           lifetime: sessionLifetimeSeconds
         };
+        const sentAt = Date.now();
         const response = await this.client.completeAuth(request);
         const result = await this.completeWalletAuth(
           response,
+          { sentAt, lifetimeSeconds: sessionLifetimeSeconds },
           pending.walletType,
           walletSelection,
           this.oidcRedirectSessionAuthFromPending(pending, response),
@@ -815,7 +1272,7 @@ export class WalletClient implements OMSWalletClient {
           }
         );
 
-        if (walletSelection === 'automatic' && !this.activeWalletAddress) {
+        if (walletSelection === 'automatic' && !this.activeWalletAccount) {
           throw new Error('OIDC auth completed without an active wallet');
         }
 
@@ -897,24 +1354,36 @@ export class WalletClient implements OMSWalletClient {
         context,
         WalletOperation.useWallet
       );
-      return this.activateWallet(wallet, context.metadata, WalletOperation.useWallet);
+      return this.activateWallet(wallet, context.metadata, WalletOperation.useWallet, true);
+    });
+  }
+
+  async claimWallet(params: { walletId: string }): Promise<WalletActivationResult> {
+    return this.runOperation(WalletOperation.claimWallet, async () => {
+      const context = await this.activeWalletActivationContext(WalletOperation.claimWallet);
+      const wallet = await this.requestClaimWallet(params.walletId);
+      await this.requireActiveWalletActivationContextStillActive(
+        context,
+        WalletOperation.claimWallet
+      );
+      return this.activateWallet(wallet, context.metadata, WalletOperation.claimWallet, true);
     });
   }
 
   async createWallet(
-    params: { type?: WalletType; reference?: string } = {}
+    params: { walletType?: WalletType; reference?: string } = {}
   ): Promise<WalletActivationResult> {
     return this.runOperation(WalletOperation.createWallet, async () => {
       const context = await this.activeWalletActivationContext(WalletOperation.createWallet);
       const wallet = await this.requestCreateWallet(
-        params.type ?? WalletType.Ethereum,
+        params.walletType ?? WalletType.Ethereum,
         params.reference
       );
       await this.requireActiveWalletActivationContextStillActive(
         context,
         WalletOperation.createWallet
       );
-      return this.activateWallet(wallet, context.metadata, WalletOperation.createWallet);
+      return this.activateWallet(wallet, context.metadata, WalletOperation.createWallet, true);
     });
   }
 
@@ -937,7 +1406,7 @@ export class WalletClient implements OMSWalletClient {
           privateKey.fill(0);
         }
         const wallet = await this.requestImportWallet({
-          type: params.type,
+          walletType: params.type,
           reference: params.reference,
           keyMaterial: {
             keyId: recipientKey.keyId,
@@ -949,7 +1418,12 @@ export class WalletClient implements OMSWalletClient {
           context,
           WalletOperation.importWallet
         );
-        return this.activateWallet(wallet, context.metadata, WalletOperation.importWallet);
+        return this.activateWallet(
+          wallet,
+          context.metadata,
+          WalletOperation.importWallet,
+          context.type === 'active'
+        );
       });
     });
   }
@@ -970,7 +1444,7 @@ export class WalletClient implements OMSWalletClient {
   ): Promise<WalletActivationResult> {
     return this.runOperation(WalletOperation.importEncryptedWallet, async () => {
       const context = await this.walletImportActivationContext(
-        params.type,
+        params.walletType,
         WalletOperation.importEncryptedWallet
       );
       return this.runWalletImportActivation(
@@ -986,7 +1460,8 @@ export class WalletClient implements OMSWalletClient {
           return this.activateWallet(
             wallet,
             context.metadata,
-            WalletOperation.importEncryptedWallet
+            WalletOperation.importEncryptedWallet,
+            context.type === 'active'
           );
         }
       );
@@ -1006,44 +1481,68 @@ export class WalletClient implements OMSWalletClient {
     });
   }
 
+  /**
+   * Ends the session in this client. `keepSharedState` leaves the stored session, pending OIDC redirect
+   * state, and signer key alone because a newer session elsewhere (another tab) owns them.
+   */
   private async clearSession(
     options: {
       clearStorage?: boolean;
+      keepSharedState?: boolean;
+      /**
+       * The session ended on its own (expiry, or a signer that no longer holds its key), not by a
+       * sign-out or new sign-in here: only a signing key that is still this session's is deleted,
+       * and pending redirect state, which may belong to a sign-in started elsewhere, is kept.
+       */
+      automatic?: boolean;
+      /** The change listeners hear of; `signedOut` by default. */
+      end?: SessionChange;
       operation?: WalletOperation;
     } = {}
   ): Promise<void> {
-    this.sessionRevision += 1;
-    const clearStorage = options.clearStorage ?? true;
+    const sessionCredentialId =
+      this.sessionSignerCredentialId ?? this.activePendingWalletSelection?.signerCredentialId;
+    const keepSharedState = options.keepSharedState ?? false;
+    const clearStorage = !keepSharedState && (options.clearStorage ?? true);
+    // A sign-out or new sign-in makes an earlier expiry old news, whether or not a change is published.
+    if (!options.automatic) this.latestExpiredChange = undefined;
     let storageFailure: unknown;
-    if (clearStorage) {
-      this.latestSessionExpiredEvent = undefined;
+    if (keepSharedState) {
+      // Nothing shared to clean up.
+    } else if (clearStorage) {
       try {
-        this.storage.delete(Constants.sessionStorageKey);
+        this.storage.delete(this.storageKeys.session);
       } catch (error) {
         storageFailure = error;
       }
-      try {
-        this.clearPendingOidcRedirectAuth();
-      } catch (error) {
-        storageFailure ??= error;
+      if (!options.automatic) {
+        try {
+          this.clearPendingOidcRedirectAuth();
+        } catch (error) {
+          storageFailure ??= error;
+        }
       }
-    } else {
+    } else if (!options.automatic) {
       try {
         this.clearPendingOidcRedirectAuth();
       } catch (error) {
         storageFailure = error;
       }
     }
-    this.walletId = '';
-    this.activeWalletAddress = undefined;
-    this.sessionExpiresAt = undefined;
-    this.sessionAuth = undefined;
-    this.sessionSignerCredentialId = undefined;
-    this.sessionSignerKeyType = undefined;
-    this.activePendingWalletSelection = undefined;
-    this.activeEmailAuthAttempt = undefined;
-    this.clearSessionExpiryTimer();
-    await this.credentialSigner.clear?.();
+    this.resetSessionStateInMemory();
+    const revision = this.sessionRevision;
+    try {
+      if (!keepSharedState) {
+        if (options.automatic) await this.clearSessionSignerKey(sessionCredentialId);
+        else await this.credentialSigner.clear?.();
+      }
+    } finally {
+      // Listeners hear of the end once its cleanup is done, so a sign-in they start keeps its new
+      // key; a newer change made meanwhile publishes its own.
+      if (this.sessionRevision === revision) {
+        this.publishSessionChange(options.end ?? { reason: 'signedOut' });
+      }
+    }
     if (storageFailure !== undefined) {
       throw new OMSWalletStorageError({
         operation: options.operation,
@@ -1053,8 +1552,43 @@ export class WalletClient implements OMSWalletClient {
     }
   }
 
+  /** Ends this client's session and pending sign-in in memory, leaving storage and the signer alone. */
+  private resetSessionStateInMemory(): void {
+    this.sessionRevision += 1;
+    this.activeWalletAccount = undefined;
+    this.sessionExpiresAt = undefined;
+    this.sessionAuth = undefined;
+    this.sessionSignerCredentialId = undefined;
+    this.sessionSignerKeyType = undefined;
+    this.sessionExpiryBounds = undefined;
+    this.activePendingWalletSelection = undefined;
+    this.activeEmailAuthAttempt = undefined;
+    this.lastCredentialRefreshAt = undefined;
+    this.sessionReadRetryDelayMs = CREDENTIAL_REFRESH_RETRY_MIN_MS;
+    this.clearSessionExpiryTimer();
+    this.cancelSessionRead?.();
+    this.cancelSessionRead = undefined;
+    this.sessionReadPending = false;
+  }
+
+  /**
+   * Deletes the signing key of a session that ended on its own. The default signer's key is shared
+   * with other tabs, and one may already hold a newer sign-in's key, so only a key that is still
+   * `credentialId` is deleted, in one IndexedDB transaction; without IndexedDB the key is only in
+   * this signer's memory. A custom signer is cleared as before.
+   */
+  private clearSessionSignerKey(credentialId: string | undefined): Promise<void> | undefined {
+    if (!this.usesDefaultSigner) return this.credentialSigner.clear?.();
+    if (credentialId === undefined) return undefined;
+    return deleteStoredWebCryptoCredential(this.storageKeys.webCryptoCredential, credentialId).then(
+      async (deleted) => {
+        if (!deleted) await this.credentialSigner.clear?.();
+      }
+    );
+  }
+
   private clearPendingOidcRedirectAuth(): void {
-    this.redirectAuthStorage?.delete(Constants.redirectAuthStorageKey);
+    this.redirectAuthStorage?.delete(this.storageKeys.redirectAuth);
   }
 
   async signMessage(params: SignMessageParams): Promise<string> {
@@ -1101,8 +1635,12 @@ export class WalletClient implements OMSWalletClient {
       const request: IsValidMessageSignatureRequest = {
         network: params.network?.id.toString(),
         networkFamily: GeneratedNetworkFamily.EVM,
-        walletAddress: params.walletAddress,
-        walletId: params.walletId ?? (params.walletAddress ? undefined : this.activeWalletId()),
+        walletAddress: await this.signatureVerificationAddress(
+          params.walletAddress,
+          WalletType.Ethereum,
+          'Ethereum',
+          WalletOperation.isValidMessageSignature
+        ),
         message: params.message,
         signature: params.signature
       };
@@ -1117,8 +1655,12 @@ export class WalletClient implements OMSWalletClient {
     return this.runOperation(WalletOperation.isValidSolanaMessageSignature, async () => {
       const request: IsValidMessageSignatureRequest = {
         networkFamily: GeneratedNetworkFamily.Solana,
-        walletAddress: params.walletAddress,
-        walletId: params.walletId ?? (params.walletAddress ? undefined : this.activeWalletId()),
+        walletAddress: await this.signatureVerificationAddress(
+          params.walletAddress,
+          WalletType.Solana,
+          'Solana',
+          WalletOperation.isValidSolanaMessageSignature
+        ),
         message: params.message,
         signature: params.signature
       };
@@ -1131,8 +1673,77 @@ export class WalletClient implements OMSWalletClient {
     return this.runOperation(WalletOperation.isValidTypedDataSignature, async () => {
       const request: IsValidTypedDataSignatureRequest = {
         network: params.network?.id.toString(),
-        walletAddress: params.walletAddress,
-        walletId: params.walletId ?? (params.walletAddress ? undefined : this.activeWalletId()),
+        networkFamily: GeneratedNetworkFamily.EVM,
+        walletAddress: await this.signatureVerificationAddress(
+          params.walletAddress,
+          WalletType.Ethereum,
+          'Ethereum',
+          WalletOperation.isValidTypedDataSignature
+        ),
+        typedData: normalizeJsonBigInts(params.typedData),
+        signature: params.signature
+      };
+      const response = await this.publicClient.isValidTypedDataSignature(request);
+      return response.isValid;
+    });
+  }
+
+  async signTronMessage(params: SignTronMessageParams): Promise<string> {
+    return this.runOperation(WalletOperation.signTronMessage, async () => {
+      await this.requireActiveTronSession(WalletOperation.signTronMessage);
+      const request: SignMessageRequest = {
+        network: '',
+        walletId: this.walletId,
+        message: params.message
+      };
+      const response = await this.client.signMessage(request);
+      return response.signature;
+    });
+  }
+
+  async signTronTypedData(params: SignTronTypedDataParams): Promise<string> {
+    return this.runOperation(WalletOperation.signTronTypedData, async () => {
+      await this.requireActiveTronSession(WalletOperation.signTronTypedData);
+      const request: SignTypedDataRequest = {
+        network: '',
+        walletId: this.walletId,
+        typedData: normalizeJsonBigInts(params.typedData)
+      };
+      const response = await this.client.signTypedData(request);
+      return response.signature;
+    });
+  }
+
+  async isValidTronMessageSignature(params: IsValidTronMessageSignatureParams): Promise<boolean> {
+    return this.runOperation(WalletOperation.isValidTronMessageSignature, async () => {
+      const request: IsValidMessageSignatureRequest = {
+        networkFamily: GeneratedNetworkFamily.Tron,
+        walletAddress: await this.signatureVerificationAddress(
+          params.walletAddress,
+          WalletType.Tron,
+          'Tron',
+          WalletOperation.isValidTronMessageSignature
+        ),
+        message: params.message,
+        signature: params.signature
+      };
+      const response = await this.publicClient.isValidMessageSignature(request);
+      return response.isValid;
+    });
+  }
+
+  async isValidTronTypedDataSignature(
+    params: IsValidTronTypedDataSignatureParams
+  ): Promise<boolean> {
+    return this.runOperation(WalletOperation.isValidTronTypedDataSignature, async () => {
+      const request: IsValidTypedDataSignatureRequest = {
+        networkFamily: GeneratedNetworkFamily.Tron,
+        walletAddress: await this.signatureVerificationAddress(
+          params.walletAddress,
+          WalletType.Tron,
+          'Tron',
+          WalletOperation.isValidTronTypedDataSignature
+        ),
         typedData: normalizeJsonBigInts(params.typedData),
         signature: params.signature
       };
@@ -1196,6 +1807,55 @@ export class WalletClient implements OMSWalletClient {
     });
   }
 
+  async sendTronTransaction(params: SendTronTransactionParams): Promise<SendTransactionResponse> {
+    return this.runOperation(WalletOperation.sendTronTransaction, async () => {
+      await this.requireActiveTronSession(WalletOperation.sendTronTransaction);
+      // `data` is forwarded as given: omitted means a TRX transfer, while any value (even '0x')
+      // makes this a contract call.
+      const request: PrepareTronTransactionRequest = {
+        network: params.network,
+        walletId: this.walletId,
+        to: params.to,
+        value: (params.value ?? 0n).toString(),
+        ...(params.data === undefined ? {} : { data: params.data }),
+        mode: toGeneratedTransactionMode(TransactionMode.Native)
+      };
+
+      const prepared = await this.client.prepareTronTransaction(request);
+      return this.executePreparedTransaction({
+        prepared,
+        network: params.network,
+        selectFeeOption: params.selectFeeOption,
+        waitForStatus: params.waitForStatus,
+        statusPolling: params.statusPolling
+      });
+    });
+  }
+
+  async callTronContract(params: CallTronContractParams): Promise<SendTransactionResponse> {
+    return this.runOperation(WalletOperation.callTronContract, async () => {
+      await this.requireActiveTronSession(WalletOperation.callTronContract);
+      requireContractMethodName(params.method);
+      const request: PrepareTronContractCallRequest = {
+        network: params.network,
+        walletId: this.walletId,
+        contract: params.contractAddress,
+        method: params.method,
+        args: params.args,
+        mode: toGeneratedTransactionMode(TransactionMode.Native)
+      };
+
+      const prepared = await this.client.prepareTronContractCall(request);
+      return this.executePreparedTransaction({
+        prepared,
+        network: params.network,
+        selectFeeOption: params.selectFeeOption,
+        waitForStatus: params.waitForStatus,
+        statusPolling: params.statusPolling
+      });
+    });
+  }
+
   async callContract(params: {
     network: Network;
     contractAddress: Address;
@@ -1208,6 +1868,7 @@ export class WalletClient implements OMSWalletClient {
   }): Promise<SendTransactionResponse> {
     return this.runOperation(WalletOperation.callContract, async () => {
       await this.requireActiveEthereumSession(WalletOperation.callContract);
+      requireContractMethodName(params.method);
       const request: PrepareEthereumContractCallRequest = {
         network: params.network.id.toString(),
         walletId: this.walletId,
@@ -1282,11 +1943,31 @@ export class WalletClient implements OMSWalletClient {
     });
   }
 
+  async listAccessPage(params: ListAccessPageParams = {}): Promise<AccessGrantPage> {
+    return this.runOperation(WalletOperation.listAccessPage, async () => {
+      await this.requireActiveSession(WalletOperation.listAccessPage);
+      const walletId = this.walletId;
+      return this.requestListAccessPage(
+        walletId,
+        params,
+        params.cursor || undefined,
+        WalletOperation.listAccessPage
+      );
+    });
+  }
+
   async *listAccessPages(params: ListAccessParams = {}): AsyncIterable<AccessGrantPage> {
+    const revision = this.sessionRevision;
+    const hadActiveSession = this.activeWalletAccount !== undefined;
     try {
       yield* this.listAccessPagesUnchecked(params, WalletOperation.listAccessPages);
     } catch (error) {
-      throw toOMSWalletError(error, WalletOperation.listAccessPages);
+      throw await this.operationError(
+        error,
+        WalletOperation.listAccessPages,
+        revision,
+        hadActiveSession
+      );
     }
   }
 
@@ -1339,10 +2020,8 @@ export class WalletClient implements OMSWalletClient {
   }
 
   /**
-   * Creates a new wallet of the requested type for the authenticated user.
-   *
-   * The wallet ID and address are persisted to storage so the session can be
-   * restored when the configured credential signer is also available.
+   * Requests a new wallet of the requested type from WaaS for the authenticated user. Does not
+   * activate or persist it.
    */
   private async requestCreateWallet(type: WalletType, reference?: string): Promise<WalletAccount> {
     const params: CreateWalletRequest = {
@@ -1377,9 +2056,7 @@ export class WalletClient implements OMSWalletClient {
   private async requestImportWallet(params: ImportEncryptedWalletParams): Promise<WalletAccount> {
     const client = this.requireWalletImportClient();
     if (!params.keyMaterial.keyId.trim()) throw new Error('keyMaterial.keyId is required');
-    // Webrpc's TypeScript generator declares Go []byte fields as string arrays,
-    // while the JSON transport encodes them as base64 strings.
-    const keyMaterial = {
+    const keyMaterial: HPKEPayload = {
       keyId: params.keyMaterial.keyId,
       suite: toGeneratedWalletImportCipherSuite(params.keyMaterial.cipherSuite),
       encapsulatedKey: requireBase64(
@@ -1387,9 +2064,9 @@ export class WalletClient implements OMSWalletClient {
         'keyMaterial.encapsulatedKey'
       ),
       ciphertext: requireBase64(params.keyMaterial.ciphertext, 'keyMaterial.ciphertext')
-    } as unknown as HPKEPayload;
+    };
     const response = await client.importWallet({
-      networkFamily: toGeneratedNetworkFamily(params.type),
+      networkFamily: toGeneratedNetworkFamily(params.walletType),
       format: GeneratedKeyFormat.PrivateKey,
       keyMaterial,
       reference: params.reference
@@ -1405,9 +2082,7 @@ export class WalletClient implements OMSWalletClient {
   }
 
   /**
-   * Loads an existing wallet by its server-side ID.
-   *
-   * The wallet ID and address are persisted to storage.
+   * Requests an existing wallet by its server-side ID from WaaS. Does not activate or persist it.
    */
   private async requestUseWallet(walletId: string): Promise<WalletAccount> {
     const params: UseWalletRequest = { walletId };
@@ -1415,18 +2090,42 @@ export class WalletClient implements OMSWalletClient {
     return fromGeneratedWallet(response.wallet);
   }
 
+  /**
+   * Claims a preallocated wallet for the authenticated user. WaaS grants the session credential
+   * access to it. Does not activate or persist it.
+   */
+  private async requestClaimWallet(walletId: string): Promise<WalletAccount> {
+    const params: ClaimWalletRequest = { walletId };
+    const response = await this.client.claimWallet(params);
+    return fromGeneratedWallet(response.wallet);
+  }
+
+  /**
+   * Activates `wallet` and persists the session. `inActiveSession`: another wallet of the active
+   * session is replaced. An expiry read may have moved the expiry since `metadata` was captured, so
+   * the session's current expiry, bounds, and last read are kept; only the wallet changes.
+   */
   private activateWallet(
     wallet: WalletAccount,
     metadata: WalletSessionMetadata,
-    operation?: WalletOperation
+    operation?: WalletOperation,
+    inActiveSession = false
   ): WalletActivationResult {
-    this.persistSession(wallet.id, wallet.address, metadata, operation);
+    const current = inActiveSession ? this.currentSessionMetadata() : undefined;
+    const isSameSession =
+      !!current &&
+      !!this.activeWalletAccount &&
+      normalizeCredentialId(current.signerCredentialId) ===
+        normalizeCredentialId(metadata.signerCredentialId) &&
+      current.signerKeyType === metadata.signerKeyType;
+    this.persistSession(wallet, isSameSession && current ? current : metadata, operation);
     this.activePendingWalletSelection = undefined;
-    return { walletAddress: wallet.address, wallet };
+    return { wallet: cloneWalletAccount(wallet) };
   }
 
   private async completeWalletAuth(
     response: CompleteAuthResponse,
+    sent: CompleteAuthSent,
     walletType: WalletType,
     walletSelection: WalletSelectionBehavior,
     auth: OMSWalletSessionAuth,
@@ -1435,8 +2134,10 @@ export class WalletClient implements OMSWalletClient {
   ): Promise<CompleteWalletAuthResult | PendingWalletSelection> {
     this.activePendingWalletSelection = undefined;
 
-    const metadata = await this.sessionMetadataFromAuthResponse(response, auth);
+    const metadata = await this.sessionMetadataFromAuthResponse(response, sent, auth);
     const wallets = await this.listAllWalletsFromAuthResponse(response);
+    // CompleteAuth is the only place WaaS reports preallocated wallets; ListWallets omits them.
+    const claimableWallets = (response.claimable ?? []).map(fromGeneratedWallet);
     const credential = fromGeneratedAccessGrant(response.credential);
     const candidateWallets = wallets.filter((wallet) => wallet.type === walletType);
     const requireCurrentAuth = () => guard?.validate();
@@ -1448,6 +2149,7 @@ export class WalletClient implements OMSWalletClient {
         {
           walletType,
           wallets: candidateWallets,
+          claimableWallets: claimableWallets.filter((wallet) => wallet.type === walletType),
           credential,
           metadata
         },
@@ -1456,18 +2158,26 @@ export class WalletClient implements OMSWalletClient {
       return selection;
     }
 
+    // An owned wallet wins; otherwise claim a preallocated wallet before creating a new one.
     const wallet = candidateWallets[0];
+    const claimable = wallet
+      ? undefined
+      : claimableWallets.find((claimableWallet) => claimableWallet.type === walletType);
     const selectedWallet = wallet
       ? await this.requestUseWallet(wallet.id)
-      : await this.requestCreateWallet(walletType);
+      : claimable
+        ? await this.requestClaimWallet(claimable.id)
+        : await this.requestCreateWallet(walletType);
     requireCurrentAuth();
     const activated = this.activateWallet(selectedWallet, metadata, operation);
     const resultWallets = wallet ? wallets : [...wallets, activated.wallet];
 
     return {
-      walletAddress: activated.walletAddress,
       wallet: activated.wallet,
       wallets: resultWallets,
+      claimableWallets: claimable
+        ? claimableWallets.filter((claimableWallet) => claimableWallet.id !== claimable.id)
+        : claimableWallets,
       credential
     };
   }
@@ -1487,10 +2197,12 @@ export class WalletClient implements OMSWalletClient {
       answer,
       lifetime: attempt.sessionLifetimeSeconds
     };
+    const sentAt = Date.now();
     const response = await this.client.completeAuth(request);
     this.requireActiveEmailAuthAttempt(attempt, WalletOperation.completeEmailAuth);
     const result = await this.completeWalletAuth(
       response,
+      { sentAt, lifetimeSeconds: attempt.sessionLifetimeSeconds },
       params.walletType,
       params.walletSelection,
       this.emailSessionAuthFromResponse(response, attempt.email),
@@ -1513,21 +2225,38 @@ export class WalletClient implements OMSWalletClient {
 
     let cursor: string | undefined;
     do {
-      await this.requireSameActiveWalletSession(walletId, operation);
-      const page = this.buildListAccessPage(params.pageSize, cursor);
-      const request: ListAccessRequest = {
-        walletId,
-        page,
-        type: this.toGeneratedCredentialType(params.type)
-      };
-      const response = await this.client.listAccess(request);
-      await this.requireSameActiveWalletSession(walletId, operation);
-
-      cursor = response.page?.cursor || undefined;
-      yield {
-        grants: response.credentials.map(fromGeneratedAccessGrant)
-      };
+      const page = await this.requestListAccessPage(walletId, params, cursor, operation);
+      cursor = page.page?.cursor;
+      yield page;
     } while (cursor);
+  }
+
+  private async requestListAccessPage(
+    walletId: string,
+    params: ListAccessParams,
+    cursor: string | undefined,
+    operation: WalletOperation
+  ): Promise<AccessGrantPage> {
+    await this.requireSameActiveWalletSession(walletId, operation);
+    const request: ListAccessRequest = {
+      walletId,
+      page: this.buildListAccessPage(params.pageSize, cursor),
+      type: this.toGeneratedCredentialType(params.type)
+    };
+    const response = await this.client.listAccess(request);
+    await this.requireSameActiveWalletSession(walletId, operation);
+
+    const grants = response.credentials.map(fromGeneratedAccessGrant);
+    const limit = response.page?.limit;
+    const nextCursor = response.page?.cursor || undefined;
+    if (limit === undefined && nextCursor === undefined) return { grants };
+    return {
+      grants,
+      page: {
+        ...(limit === undefined ? {} : { limit }),
+        ...(nextCursor === undefined ? {} : { cursor: nextCursor })
+      }
+    };
   }
 
   private buildListAccessPage(
@@ -1577,25 +2306,33 @@ export class WalletClient implements OMSWalletClient {
     return type === 'direct' ? CredentialType.Direct : CredentialType.Remote;
   }
 
-  /** Saves wallet metadata. The non-extractable credential key is owned by the signer. */
+  /**
+   * Saves wallet metadata and makes it this client's session, publishing `change`. The
+   * non-extractable credential key is owned by the signer.
+   */
   private persistSession(
-    walletId: string,
-    walletAddress: string,
+    wallet: WalletAccount,
     metadata: WalletSessionMetadata,
-    operation?: WalletOperation
+    operation?: WalletOperation,
+    change: SessionChange = { reason: 'activation' }
   ): void {
     const record: StoredSessionRecord = {
-      version: 1,
+      version: 2,
       scope: this.sessionScope(),
-      walletId,
-      walletAddress,
+      wallet: cloneWalletAccount(wallet),
       expiresAt: metadata.expiresAt,
       auth: cloneSessionAuth(metadata.auth),
       signerCredentialId: metadata.signerCredentialId,
-      signerKeyType: metadata.signerKeyType
+      signerKeyType: metadata.signerKeyType,
+      ...(metadata.expiryBounds
+        ? { expiryCeiling: new Date(metadata.expiryBounds.expiryCeilingMs).toISOString() }
+        : {})
     };
+    // Sign-in reads the expiry; activating another wallet keeps the session's last read.
+    const isActiveSessionExpiry =
+      this.activeWalletAccount !== undefined && this.sessionExpiresAt === metadata.expiresAt;
     try {
-      this.storage.set(Constants.sessionStorageKey, JSON.stringify(record));
+      this.storage.set(this.storageKeys.session, JSON.stringify(record));
     } catch (error) {
       throw new OMSWalletStorageError({
         operation,
@@ -1604,30 +2341,44 @@ export class WalletClient implements OMSWalletClient {
       });
     }
 
-    this.latestSessionExpiredEvent = undefined;
-    this.walletId = walletId;
-    this.activeWalletAddress = walletAddress;
+    this.activeWalletAccount = cloneWalletAccount(wallet);
     this.sessionExpiresAt = metadata.expiresAt;
     this.sessionAuth = cloneSessionAuth(metadata.auth);
     this.sessionSignerCredentialId = metadata.signerCredentialId;
     this.sessionSignerKeyType = metadata.signerKeyType;
-    this.scheduleSessionExpiry(this.session);
+    this.sessionExpiryBounds = metadata.expiryBounds && { ...metadata.expiryBounds };
+    if (!isActiveSessionExpiry) this.lastCredentialRefreshAt = metadata.signInSentAt ?? Date.now();
+    this.scheduleSessionExpiry(this.sessionFromMetadata(this.activeWalletAccount, metadata));
+    this.publishSessionChange(change);
   }
 
   private loadStoredSessionRecord(): LoadedSessionRecord | undefined {
-    const serialized = this.storage.get(Constants.sessionStorageKey);
+    const serialized = this.storage.get(this.storageKeys.session);
     if (!serialized) return undefined;
+    const record = this.parseStoredSessionRecord(serialized);
+    if (!record) {
+      this.storage.delete(this.storageKeys.session);
+      return undefined;
+    }
+    return { serialized, record };
+  }
 
+  /**
+   * Parses a stored session record of this client's scope. Undefined for an invalid record, a
+   * version 1 record (SDK 0.3.x, which carries no wallet type: the user signs in again), another
+   * scope's, or one without the expiry bounds (pre-release 0.4.0 builds).
+   */
+  private parseStoredSessionRecord(serialized: string): StoredSessionRecord | undefined {
     try {
       const parsed = JSON.parse(serialized) as Record<string, unknown>;
       const scope = parsed.scope as Record<string, unknown> | undefined;
       const auth = normalizeSessionAuth(parsed.auth);
       const signerCredentialId = parsed.signerCredentialId;
       const signerKeyType = parsed.signerKeyType;
+      const wallet = parseStoredWalletAccount(parsed.wallet);
       if (
-        parsed.version !== 1 ||
-        typeof parsed.walletId !== 'string' ||
-        typeof parsed.walletAddress !== 'string' ||
+        parsed.version !== 2 ||
+        !wallet ||
         typeof parsed.expiresAt !== 'string' ||
         typeof signerCredentialId !== 'string' ||
         !isCredentialSigningAlgorithm(signerKeyType) ||
@@ -1637,7 +2388,6 @@ export class WalletClient implements OMSWalletClient {
         typeof scope.indexerGatewayUrl !== 'string' ||
         !auth
       ) {
-        this.storage.delete(Constants.sessionStorageKey);
         return undefined;
       }
 
@@ -1647,25 +2397,22 @@ export class WalletClient implements OMSWalletClient {
         scope.walletApiUrl !== expectedScope.walletApiUrl ||
         scope.indexerGatewayUrl !== expectedScope.indexerGatewayUrl
       ) {
-        this.storage.delete(Constants.sessionStorageKey);
         return undefined;
       }
 
+      const expiryBounds = storedSessionExpiryBounds(parsed);
+      if (!expiryBounds) return undefined;
       return {
-        serialized,
-        record: {
-          version: 1,
-          scope: expectedScope,
-          walletId: parsed.walletId,
-          walletAddress: parsed.walletAddress,
-          expiresAt: parsed.expiresAt,
-          auth,
-          signerCredentialId,
-          signerKeyType
-        }
+        version: 2,
+        scope: expectedScope,
+        wallet,
+        expiresAt: parsed.expiresAt,
+        auth,
+        signerCredentialId,
+        signerKeyType,
+        expiryCeiling: new Date(expiryBounds.expiryCeilingMs).toISOString()
       };
     } catch {
-      this.storage.delete(Constants.sessionStorageKey);
       return undefined;
     }
   }
@@ -1690,7 +2437,8 @@ export class WalletClient implements OMSWalletClient {
       expiresAt: this.sessionExpiresAt,
       auth: cloneSessionAuth(this.sessionAuth),
       signerCredentialId: this.sessionSignerCredentialId,
-      signerKeyType: this.sessionSignerKeyType
+      signerKeyType: this.sessionSignerKeyType,
+      ...(this.sessionExpiryBounds ? { expiryBounds: { ...this.sessionExpiryBounds } } : {})
     };
   }
 
@@ -1774,13 +2522,7 @@ export class WalletClient implements OMSWalletClient {
     context: ActiveWalletActivationContext,
     operation: WalletOperation
   ): Promise<void> {
-    await this.requireActiveSession(operation);
-    if (this.walletId !== context.walletId) {
-      throw new OMSWalletSessionError({
-        operation,
-        message: 'Active wallet session changed'
-      });
-    }
+    await this.requireSameActiveWalletSession(context.walletId, operation);
   }
 
   private async requireSameActiveWalletSession(
@@ -1846,6 +2588,7 @@ export class WalletClient implements OMSWalletClient {
     params: {
       walletType: WalletType;
       wallets: Array<WalletAccount>;
+      claimableWallets: Array<WalletAccount>;
       credential: WalletCredential;
       metadata: WalletSessionMetadata;
     },
@@ -1865,11 +2608,13 @@ export class WalletClient implements OMSWalletClient {
     this.scheduleSessionExpiry(this.sessionFromMetadata(undefined, params.metadata));
 
     const wallets = params.wallets.map((wallet) => ({ ...wallet }));
+    const claimableWallets = params.claimableWallets.map((wallet) => ({ ...wallet }));
     const credential = { ...params.credential };
 
     return new PendingWalletSelectionImpl(
       params.walletType,
       wallets,
+      claimableWallets,
       credential,
       async (walletId) => {
         const operation = WalletOperation.pendingWalletSelectionSelectWallet;
@@ -1882,6 +2627,13 @@ export class WalletClient implements OMSWalletClient {
         const operation = WalletOperation.pendingWalletSelectionCreateAndSelectWallet;
         await this.requireActivePendingWalletSelection(selectionSession, operation);
         const wallet = await this.requestCreateWallet(selectionSession.walletType, reference);
+        await this.requireActivePendingWalletSelection(selectionSession, operation);
+        return this.activateWallet(wallet, selectionSession.metadata, operation);
+      },
+      async (walletId) => {
+        const operation = WalletOperation.pendingWalletSelectionClaimAndSelectWallet;
+        await this.requireActivePendingWalletSelection(selectionSession, operation);
+        const wallet = await this.requestClaimWallet(walletId);
         await this.requireActivePendingWalletSelection(selectionSession, operation);
         return this.activateWallet(wallet, selectionSession.metadata, operation);
       },
@@ -1976,13 +2728,17 @@ export class WalletClient implements OMSWalletClient {
 
   private async sessionMetadataFromAuthResponse(
     response: CompleteAuthResponse,
+    sent: CompleteAuthSent,
     auth: OMSWalletSessionAuth
   ): Promise<WalletSessionMetadata> {
+    const expiryBounds = signInExpiryBounds(response.credential.expiresAt, sent);
     return {
       expiresAt: response.credential.expiresAt,
       auth,
       signerCredentialId: await this.credentialSigner.credentialId(),
-      signerKeyType: this.credentialSigner.signingAlgorithm
+      signerKeyType: this.credentialSigner.signingAlgorithm,
+      ...(expiryBounds ? { expiryBounds } : {}),
+      signInSentAt: sent.sentAt
     };
   }
 
@@ -2062,7 +2818,7 @@ export class WalletClient implements OMSWalletClient {
     pending: PendingOidcRedirectAuth
   ): void {
     try {
-      storage.set(Constants.redirectAuthStorageKey, JSON.stringify(pending));
+      storage.set(this.storageKeys.redirectAuth, JSON.stringify(pending));
     } catch (error) {
       throw new OMSWalletStorageError({
         operation: WalletOperation.startOidcRedirectAuth,
@@ -2073,7 +2829,7 @@ export class WalletClient implements OMSWalletClient {
   }
 
   private loadPendingOidcRedirectAuth(storage: StorageManager): PendingOidcRedirectAuth {
-    const stored = storage.get(Constants.redirectAuthStorageKey);
+    const stored = storage.get(this.storageKeys.redirectAuth);
     if (!stored) {
       throw new Error('No pending OIDC redirect auth found');
     }
@@ -2085,6 +2841,7 @@ export class WalletClient implements OMSWalletClient {
         typeof parsed.verifier !== 'string' ||
         typeof parsed.nonce !== 'string' ||
         !isOidcAuthMode(parsed.authMode) ||
+        !isWalletType(parsed.walletType) ||
         typeof parsed.signerCredentialId !== 'string' ||
         !isCredentialSigningAlgorithm(signerKeyType) ||
         typeof parsed.expectedCallbackUri !== 'string' ||
@@ -2101,7 +2858,7 @@ export class WalletClient implements OMSWalletClient {
         authMode: parsed.authMode,
         provider: typeof parsed.provider === 'string' ? parsed.provider : undefined,
         providerLabel: typeof parsed.providerLabel === 'string' ? parsed.providerLabel : undefined,
-        walletType: isWalletType(parsed.walletType) ? parsed.walletType : WalletType.Ethereum,
+        walletType: parsed.walletType,
         walletSelection: isWalletSelectionBehavior(parsed.walletSelection)
           ? parsed.walletSelection
           : undefined,
@@ -2117,7 +2874,7 @@ export class WalletClient implements OMSWalletClient {
         consumed: parsed.consumed
       };
     } catch (error) {
-      throw error instanceof Error ? error : new Error('Pending OIDC redirect auth is invalid');
+      throw new Error('Pending OIDC redirect auth is invalid', { cause: error });
     }
   }
 
@@ -2126,7 +2883,7 @@ export class WalletClient implements OMSWalletClient {
     pending: PendingOidcRedirectAuth
   ): void {
     try {
-      storage.set(Constants.redirectAuthStorageKey, JSON.stringify({ ...pending, consumed: true }));
+      storage.set(this.storageKeys.redirectAuth, JSON.stringify({ ...pending, consumed: true }));
     } catch (error) {
       throw new OMSWalletStorageError({
         operation: WalletOperation.completeOidcRedirectAuth,
@@ -2203,7 +2960,7 @@ export class WalletClient implements OMSWalletClient {
 
   private async executePreparedTransaction(params: {
     prepared: PrepareResponse;
-    network?: Network | SolanaNetwork;
+    network?: Network | SolanaNetwork | TronNetwork;
     selectFeeOption?: FeeOptionSelector;
     waitForStatus?: boolean;
     statusPolling?: TransactionStatusPollingOptions;
@@ -2223,10 +2980,47 @@ export class WalletClient implements OMSWalletClient {
     }
 
     let executed: ExecuteResponse;
+    const revision = this.sessionRevision;
+    // Records whether the Execute request reached `fetch`; it aborts with nothing else.
+    const executeSignal = new AbortController().signal;
     try {
-      executed = await this.client.execute(request);
+      executed = await this.client.execute(request, undefined, executeSignal);
     } catch (error) {
       const sdkError = toOMSWalletError(error, WalletOperation.execute);
+      if (!wasRequestSent(executeSignal)) {
+        // The request never left this client: it timed out at a request gate or while it was
+        // signed, or signing failed. Nothing was submitted, so report the request failure as is.
+        throw sdkError;
+      }
+      if (isCredentialEndedError(sdkError) && this.rejectedSessionCredentialRevision === revision) {
+        // WaaS rejected the session credential before running Execute, so nothing was submitted;
+        // the operation maps this to `OMS_SESSION_EXPIRED` and ends the session.
+        throw error;
+      }
+      if (sdkError.upstreamError?.service === 'waas' && sdkError.upstreamError.code === '7314') {
+        // TransactionSimulationFailed: the relayer refused to dispatch a reverting transaction and
+        // WaaS closed it as failed, so the outcome is known; report the request failure as is.
+        throw sdkError;
+      }
+      if (
+        sdkError.upstreamError?.service === 'waas' &&
+        EXECUTE_REFUSED_BEFORE_SUBMISSION_CODES.has(sdkError.upstreamError.code ?? '')
+      ) {
+        // WaaS refused the Execute before submitting anything: its credential middleware
+        // (InvalidSignature 7201, UsageLimitExceeded 7205, PreconditionFailed 7206 after the
+        // stale-nonce resends, Unauthorized 7207 for a revoked credential), or the handler's checks
+        // before submission (Unauthorized 7207). Report the request failure as is.
+        throw sdkError;
+      }
+      if (
+        typeof params.network === 'string' &&
+        isTronNetwork(params.network) &&
+        sdkError.upstreamError?.service === 'waas' &&
+        TRON_EXECUTE_REFUSED_BEFORE_SUBMISSION_CODES.has(sdkError.upstreamError.code ?? '')
+      ) {
+        // A Tron Execute refused while WaaS priced it again, before anything was broadcast.
+        throw sdkError;
+      }
       throw new OMSWalletTransactionError({
         code: 'OMS_TRANSACTION_EXECUTION_UNCONFIRMED',
         operation: WalletOperation.execute,
@@ -2278,7 +3072,7 @@ export class WalletClient implements OMSWalletClient {
   private async selectFeeOption(params: {
     feeOptions: GeneratedFeeOption[];
     sponsored: boolean;
-    network?: Network | SolanaNetwork;
+    network?: Network | SolanaNetwork | TronNetwork;
     selectFeeOption?: FeeOptionSelector;
   }): Promise<FeeOptionSelection | undefined> {
     if (params.sponsored) {
@@ -2309,14 +3103,16 @@ export class WalletClient implements OMSWalletClient {
   }
 
   private async enrichFeeOptionsWithBalances(
-    network: Network | SolanaNetwork,
+    network: Network | SolanaNetwork | TronNetwork,
     feeOptions: FeeOption[]
   ): Promise<FeeOptionWithBalance[]> {
     if (typeof network === 'string') {
-      return this.enrichSolanaFeeOptionsWithBalances(network, feeOptions);
+      return isTronNetwork(network)
+        ? this.enrichTronFeeOptionsWithBalances(network, feeOptions)
+        : this.enrichSolanaFeeOptionsWithBalances(network, feeOptions);
     }
 
-    const walletAddress = this.walletAddress;
+    const walletAddress = this.activeWalletAccount?.address;
     if (!walletAddress) {
       throw new Error('No active wallet session');
     }
@@ -2365,16 +3161,73 @@ export class WalletClient implements OMSWalletClient {
     });
   }
 
-  private async enrichSolanaFeeOptionsWithBalances(
+  private enrichSolanaFeeOptionsWithBalances(
     network: SolanaNetwork,
     feeOptions: FeeOption[]
   ): Promise<FeeOptionWithBalance[]> {
-    const walletAddress = this.walletAddress;
+    return this.enrichGatewayFeeOptionsWithBalances(
+      feeOptions,
+      async (walletAddress, tokenAddresses, omitNativeBalances) => {
+        const result = await this.indexerClient.getSolanaBalances({
+          networks: [network],
+          walletAddress,
+          mintAddresses: tokenAddresses,
+          includeMetadata: false,
+          omitNativeBalances
+        });
+        return result.balances
+          .filter((balance) => balance.network === network)
+          .map((balance) => ({ ...balance, tokenAddress: balance.mintAddress }));
+      }
+    );
+  }
+
+  private enrichTronFeeOptionsWithBalances(
+    network: TronNetwork,
+    feeOptions: FeeOption[]
+  ): Promise<FeeOptionWithBalance[]> {
+    return this.enrichGatewayFeeOptionsWithBalances(
+      feeOptions,
+      async (walletAddress, tokenAddresses, omitNativeBalances) => {
+        const result = await this.indexerClient.getTronBalances({
+          networks: [network],
+          walletAddress,
+          contractAddresses: tokenAddresses,
+          includeMetadata: false,
+          omitNativeBalances
+        });
+        return result.balances
+          .filter((balance) => balance.network === network)
+          .map((balance) => ({ ...balance, tokenAddress: balance.contractAddress }));
+      }
+    );
+  }
+
+  /**
+   * Shared by the Solana and Tron families: `fetchBalances` returns the network's balances, with
+   * `tokenAddress` set to the mint or contract address of fungible-token entries.
+   */
+  private async enrichGatewayFeeOptionsWithBalances(
+    feeOptions: FeeOption[],
+    fetchBalances: (
+      walletAddress: string,
+      tokenAddresses: string[],
+      omitNativeBalances: boolean
+    ) => Promise<
+      Array<{
+        assetType: 'native' | 'fungible-token';
+        tokenAddress: string | undefined;
+        balance: string;
+        decimals: number;
+      }>
+    >
+  ): Promise<FeeOptionWithBalance[]> {
+    const walletAddress = this.activeWalletAccount?.address;
     if (!walletAddress) {
       throw new Error('No active wallet session');
     }
 
-    const mintAddresses = Array.from(
+    const tokenAddresses = Array.from(
       new Set(
         feeOptions
           .filter((option) => !this.isNativeToken(option))
@@ -2382,28 +3235,22 @@ export class WalletClient implements OMSWalletClient {
           .filter((address): address is string => Boolean(address))
       )
     );
-    const balances = await this.indexerClient
-      .getSolanaBalances({
-        networks: [network],
-        walletAddress,
-        mintAddresses,
-        includeMetadata: false,
-        omitNativeBalances: !feeOptions.some((option) => this.isNativeToken(option))
-      })
-      .catch(() => undefined);
-    const nativeBalance = balances?.balances.find(
-      (balance) => balance.network === network && balance.assetType === 'native'
-    );
-    const balancesByMint = new Map(
-      balances?.balances
-        .filter((balance) => balance.network === network && balance.assetType === 'fungible-token')
-        .map((balance) => [balance.mintAddress, balance]) ?? []
+    const balances = await fetchBalances(
+      walletAddress,
+      tokenAddresses,
+      !feeOptions.some((option) => this.isNativeToken(option))
+    ).catch(() => undefined);
+    const nativeBalance = balances?.find((balance) => balance.assetType === 'native');
+    const balancesByToken = new Map(
+      balances
+        ?.filter((balance) => balance.assetType === 'fungible-token')
+        .map((balance) => [balance.tokenAddress, balance]) ?? []
     );
 
     return feeOptions.map((feeOption, index) => {
       const balance = this.isNativeToken(feeOption)
         ? nativeBalance
-        : balancesByMint.get(feeOption.token.contractAddress?.trim() ?? '');
+        : balancesByToken.get(feeOption.token.contractAddress?.trim() ?? '');
       const decimals = balance?.decimals ?? feeOption.token.decimals;
 
       return {
@@ -2506,70 +3353,191 @@ export class WalletClient implements OMSWalletClient {
     }
   }
 
-  private async requireActiveSession(operation: WalletOperation): Promise<void> {
-    if (!this.walletId) {
+  private async requireActiveSession(
+    operation: WalletOperation,
+    { requireCredential = true }: { requireCredential?: boolean } = {}
+  ): Promise<void> {
+    const session = this.activeSessionSnapshot();
+    if (!session) {
       throw new OMSWalletSessionError({
         operation,
         message: 'No active wallet session'
       });
     }
-
-    const session = this.session;
     if (this.isSessionExpired(session)) {
-      await this.expireSession(session);
-      throw new OMSWalletSessionError({
-        code: 'OMS_SESSION_EXPIRED',
-        operation,
-        message: 'Wallet session expired'
-      });
+      await this.refreshLocallyExpiredSession(operation);
     }
+    if (!requireCredential) return;
 
+    const revision = this.sessionRevision;
+    if (!(await this.sessionSignerMatches())) {
+      // An expiry refresh may have found the mismatch and cleared the session meanwhile.
+      const expired =
+        this.sessionRevision === revision &&
+        (await this.clearSessionWithMismatchedSigner(operation));
+      throw expired
+        ? new OMSWalletSessionError({
+            code: 'OMS_SESSION_EXPIRED',
+            operation,
+            message: 'Wallet session expired'
+          })
+        : new OMSWalletSessionError({ operation, message: 'No active wallet session' });
+    }
+  }
+
+  /**
+   * Whether the credential signer still holds the key the session signed in with. The key can be
+   * removed or replaced outside this client, for example by a sign-in in another tab.
+   */
+  private async sessionSignerMatches(): Promise<boolean> {
     if (this.credentialSigner.hasCredential && !(await this.credentialSigner.hasCredential())) {
-      await this.clearSession({ operation });
-      throw new OMSWalletSessionError({
-        operation,
-        message: 'No active wallet session'
-      });
+      return false;
     }
 
-    const signerCredentialId = await this.credentialSigner.credentialId();
-    if (
-      !this.sessionSignerCredentialId ||
-      !this.sessionSignerKeyType ||
-      normalizeCredentialId(signerCredentialId) !==
-        normalizeCredentialId(this.sessionSignerCredentialId) ||
-      this.credentialSigner.signingAlgorithm !== this.sessionSignerKeyType
-    ) {
-      await this.clearSession({ operation });
-      throw new OMSWalletSessionError({
-        operation,
-        message: 'No active wallet session'
-      });
+    const signerCredentialId: unknown = await this.credentialSigner.credentialId();
+    // A custom signer may report no credential: that is not the session's key.
+    if (typeof signerCredentialId !== 'string' || !signerCredentialId) return false;
+    return (
+      !!this.sessionSignerCredentialId &&
+      !!this.sessionSignerKeyType &&
+      normalizeCredentialId(signerCredentialId) ===
+        normalizeCredentialId(this.sessionSignerCredentialId) &&
+      this.credentialSigner.signingAlgorithm === this.sessionSignerKeyType
+    );
+  }
+
+  /**
+   * Clears a session whose signer no longer holds its key, and resolves to whether it ended as
+   * expired. A stored record still this session's while the signer holds no key means the session
+   * ended on its own (expiry, or WaaS rejecting it), here or in another tab: it ends as expired and
+   * keeps the record. When the stored session now belongs to the signer's key, a sign-in elsewhere
+   * replaced this session, so only this client's state is dropped and the newer session keeps its
+   * stored record and key. A replaced session is signed out, unless its expiry had passed.
+   */
+  private async clearSessionWithMismatchedSigner(operation?: WalletOperation): Promise<boolean> {
+    const revision = this.sessionRevision;
+    const session = this.activeSessionSnapshot();
+    const endedOnItsOwn = await this.hasSessionEndedOnItsOwn();
+    const keepSharedState = !endedOnItsOwn && (await this.isSessionReplacedElsewhere());
+    // Another caller may have cleared the session while the stored record was checked.
+    if (this.sessionRevision !== revision || !session) return false;
+    // The session ended when that was found, unless its expiry passed first.
+    const expiredAt = this.isSessionExpired(session) ? session.expiresAt : new Date().toISOString();
+    if (endedOnItsOwn) {
+      await this.expireSession(session, expiredAt);
+      return true;
+    }
+    const expired = this.isSessionExpired(session);
+    await this.clearSession({
+      operation,
+      keepSharedState,
+      automatic: true,
+      ...(expired
+        ? { end: { reason: 'expired', expiredSession: expiredSessionOf(session, expiredAt) } }
+        : {})
+    });
+    return expired;
+  }
+
+  /**
+   * Whether the stored record is still this session's while the signer holds no key at all: the
+   * session ended on its own (expiry, or WaaS rejecting it), in this client or another tab.
+   */
+  private async hasSessionEndedOnItsOwn(): Promise<boolean> {
+    try {
+      const stored = this.loadStoredSessionRecord()?.record;
+      return (
+        !!stored &&
+        normalizeCredentialId(stored.signerCredentialId) ===
+          normalizeCredentialId(this.sessionSignerCredentialId ?? '') &&
+        !!this.credentialSigner.hasCredential &&
+        !(await this.credentialSigner.hasCredential())
+      );
+    } catch {
+      return false;
+    }
+  }
+
+  private async isSessionReplacedElsewhere(): Promise<boolean> {
+    try {
+      const stored = this.loadStoredSessionRecord()?.record;
+      if (
+        !stored ||
+        normalizeCredentialId(stored.signerCredentialId) ===
+          normalizeCredentialId(this.sessionSignerCredentialId ?? '')
+      ) {
+        return false;
+      }
+      if (this.credentialSigner.hasCredential && !(await this.credentialSigner.hasCredential())) {
+        return false;
+      }
+      return (
+        normalizeCredentialId(await this.credentialSigner.credentialId()) ===
+          normalizeCredentialId(stored.signerCredentialId) &&
+        this.credentialSigner.signingAlgorithm === stored.signerKeyType
+      );
+    } catch {
+      return false;
     }
   }
 
   private async requireActiveEthereumSession(operation: WalletOperation): Promise<void> {
-    await this.requireActiveSession(operation);
-    if (!isAddress(this.activeWalletAddress!)) {
-      throw new Error('An active Ethereum wallet is required');
-    }
+    await this.requireActiveWalletType(WalletType.Ethereum, 'Ethereum', operation);
   }
 
   private async requireActiveSolanaSession(operation: WalletOperation): Promise<void> {
-    await this.requireActiveSession(operation);
-    if (isAddress(this.activeWalletAddress!)) {
-      throw new Error('An active Solana wallet is required');
-    }
+    await this.requireActiveWalletType(WalletType.Solana, 'Solana', operation);
   }
 
-  private activeWalletId(): string | undefined {
-    return this.walletId || undefined;
+  private async requireActiveTronSession(operation: WalletOperation): Promise<void> {
+    await this.requireActiveWalletType(WalletType.Tron, 'Tron', operation);
+  }
+
+  private async requireActiveWalletType(
+    type: WalletType,
+    label: string,
+    operation: WalletOperation,
+    options?: { requireCredential?: boolean }
+  ): Promise<WalletAccount> {
+    await this.requireActiveSession(operation, options);
+    if (this.activeWalletAccount?.type !== type) {
+      throw new Error(`An active ${label} wallet is required`);
+    }
+    return this.activeWalletAccount;
+  }
+
+  /**
+   * Returns the address a signature is verified against: `walletAddress` when given (no session is
+   * needed for the public verification request), otherwise the active wallet's address. A given
+   * but empty or whitespace-only `walletAddress` is rejected rather than treated as omitted.
+   */
+  private async signatureVerificationAddress(
+    walletAddress: string | undefined,
+    type: WalletType,
+    label: string,
+    operation: WalletOperation
+  ): Promise<string> {
+    if (walletAddress !== undefined && walletAddress !== null) {
+      if (!walletAddress.trim()) {
+        throw new OMSWalletValidationError({
+          operation,
+          message: 'walletAddress must not be empty'
+        });
+      }
+      return walletAddress;
+    }
+
+    // The public verification request needs no credential, only the active wallet's address.
+    const wallet = await this.requireActiveWalletType(type, label, operation, {
+      requireCredential: false
+    });
+    return wallet.address;
   }
 
   private isNativeToken(feeOption: FeeOption): boolean {
     return (
       feeOption.token.type.toLowerCase() === 'native' ||
-      (!feeOption.token.contractAddress && !feeOption.token.tokenID)
+      (!feeOption.token.contractAddress && !feeOption.token.tokenId)
     );
   }
 
@@ -2604,47 +3572,64 @@ export class WalletClient implements OMSWalletClient {
     return new Promise((resolve) => setTimeout(resolve, ms));
   }
 
-  private isSessionExpired(session: OMSWalletSessionState): boolean {
-    if (!session.expiresAt) return false;
+  private activeSessionSnapshot(): SessionSnapshot | undefined {
+    if (!this.activeWalletAccount || !this.sessionExpiresAt || !this.sessionAuth) return undefined;
+    return {
+      wallet: cloneWalletAccount(this.activeWalletAccount),
+      expiresAt: this.sessionExpiresAt,
+      auth: { ...this.sessionAuth }
+    };
+  }
+
+  private isSessionExpired(session: SessionSnapshot): boolean {
     const expiresAtMs = Date.parse(session.expiresAt);
     return Number.isFinite(expiresAtMs) && expiresAtMs <= Date.now();
   }
 
   private sessionFromMetadata(
-    walletAddress: string | undefined,
+    wallet: WalletAccount | undefined,
     metadata: WalletSessionMetadata
-  ): OMSWalletSessionState {
+  ): SessionSnapshot {
     return {
-      walletAddress,
+      wallet: wallet ? cloneWalletAccount(wallet) : undefined,
       expiresAt: metadata.expiresAt,
-      auth: cloneSessionAuth(metadata.auth)
+      auth: { ...metadata.auth }
     };
   }
 
-  private async expireSession(session: OMSWalletSessionState): Promise<void> {
-    const expiredAt = session.expiresAt;
+  /**
+   * Ends `session` as expired: its stored record stays as the sign-in hint the expiry replays.
+   * `expiredAt` defaults to its expiry; pass when the session was found ended earlier than that.
+   */
+  private async expireSession(
+    session: SessionSnapshot,
+    expiredAt = session.expiresAt
+  ): Promise<void> {
+    this.expiredSessionRevision = this.sessionRevision;
     try {
-      await this.clearSession({ clearStorage: false });
+      await this.clearSession({
+        clearStorage: false,
+        automatic: true,
+        end: { reason: 'expired', expiredSession: expiredSessionOf(session, expiredAt) }
+      });
     } catch {
-      // Expiry notification should not depend on credential cleanup succeeding.
-    }
-    if (expiredAt) {
-      this.notifySessionExpired({ session, expiredAt });
+      // The expiry is published even when credential cleanup fails.
     }
   }
 
-  private scheduleSessionExpiry(session: OMSWalletSessionState): void {
+  private scheduleSessionExpiry(session: SessionSnapshot): void {
     this.clearSessionExpiryTimer();
 
-    if (!session.expiresAt) return;
     const expiresAtMs = Date.parse(session.expiresAt);
     if (!Number.isFinite(expiresAtMs)) return;
 
-    const delayMs = Math.min(Math.max(0, expiresAtMs - Date.now()), MAX_SESSION_EXPIRY_TIMER_MS);
-    const timer = setTimeout(() => {
-      this.sessionExpiryTimer = undefined;
-      void this.expireSessionFromTimer(session);
-    }, delayMs);
+    const timer = setTimeout(
+      () => {
+        this.sessionExpiryTimer = undefined;
+        void this.expireSessionFromTimer(session);
+      },
+      Math.min(Math.max(0, expiresAtMs - Date.now()), MAX_SESSION_EXPIRY_TIMER_MS)
+    );
     this.sessionExpiryTimer = timer;
     const unrefTimer = timer as { unref?: () => void };
     unrefTimer.unref?.();
@@ -2656,19 +3641,306 @@ export class WalletClient implements OMSWalletClient {
     this.sessionExpiryTimer = undefined;
   }
 
-  private async expireSessionFromTimer(session: OMSWalletSessionState): Promise<void> {
+  /**
+   * At the local expiry, a session at its lifetime cap, a pending wallet selection, or a session on a
+   * server without `GetCredential` ends; any other is read from WaaS, which may have extended it.
+   */
+  private async expireSessionFromTimer(session: SessionSnapshot): Promise<void> {
     if (!this.isCurrentSessionSnapshot(session)) return;
     if (!this.isSessionExpired(session)) {
       this.scheduleSessionExpiry(session);
       return;
     }
-    await this.expireSession(session);
+    if (!session.wallet || this.hasPassedLifetimeCap() || this.isCredentialRefreshUnsupported()) {
+      await this.expireSession(session);
+      return;
+    }
+    this.readSessionExpiryInForeground();
   }
 
-  private isCurrentSessionSnapshot(session: OMSWalletSessionState): boolean {
-    if (session.walletAddress) {
+  /** Whether the session's lifetime cap has passed, so nothing can extend it. */
+  private hasPassedLifetimeCap(): boolean {
+    return hasPassedLifetimeCap(this.sessionExpiryBounds);
+  }
+
+  /**
+   * Refreshes a session found expired before an operation. Returns when WaaS extended it; throws
+   * `OMS_SESSION_EXPIRED` when it ended (or the server cannot extend it), or the request error when
+   * WaaS was unreachable, leaving the session in place.
+   */
+  private async refreshLocallyExpiredSession(operation: WalletOperation): Promise<void> {
+    const revision = this.sessionRevision;
+    const session = this.activeSessionSnapshot();
+    if (session && this.hasPassedLifetimeCap()) {
+      // Nothing can extend a session past its lifetime cap: it ended without asking WaaS.
+      await this.expireSession(session);
+      throw new OMSWalletSessionError({
+        code: 'OMS_SESSION_EXPIRED',
+        operation,
+        message: 'Wallet session expired'
+      });
+    }
+    const result = await this.refreshSessionCredential();
+    const current = this.activeSessionSnapshot();
+    const isSameSession = this.sessionRevision === revision && !!current;
+    if (result.outcome === 'refreshed' && isSameSession && !this.isSessionExpired(current)) return;
+    if (result.outcome === 'signerMismatch') {
+      throw new OMSWalletSessionError({
+        operation,
+        message: 'No active wallet session'
+      });
+    }
+    if (result.outcome === 'unavailable' && isSameSession) {
+      throw toOMSWalletError(result.error, operation);
+    }
+    if (isSameSession) {
+      await this.expireSession(current);
+    }
+    throw new OMSWalletSessionError({
+      code: 'OMS_SESSION_EXPIRED',
+      operation,
+      message: 'Wallet session expired',
+      // Server-reported and local expiry share one shape: the WaaS error is kept only as `cause`.
+      ...(result.outcome === 'ended' ? { cause: result.error } : {})
+    });
+  }
+
+  /**
+   * Reads the active session credential's current expiry from WaaS. Concurrent callers share one
+   * request, and a result is applied only while the same session is current. Never rejects.
+   */
+  private refreshSessionCredential(): Promise<CredentialRefreshResult> {
+    if (!this.activeWalletAccount) return Promise.resolve({ outcome: 'stale' });
+    if (this.isCredentialRefreshUnsupported()) return Promise.resolve({ outcome: 'unsupported' });
+    const revision = this.sessionRevision;
+    if (this.credentialRefresh?.revision === revision) return this.credentialRefresh.promise;
+
+    const promise = this.requestCredentialRefresh(revision);
+    const refresh = { revision, promise };
+    this.credentialRefresh = refresh;
+    void promise.finally(() => {
+      if (this.credentialRefresh === refresh) this.credentialRefresh = undefined;
+    });
+    return promise;
+  }
+
+  private async requestCredentialRefresh(revision: number): Promise<CredentialRefreshResult> {
+    const signerCredentialId = this.sessionSignerCredentialId;
+    const isCurrent = () =>
+      this.sessionRevision === revision &&
+      !!this.activeWalletAccount &&
+      this.sessionSignerCredentialId === signerCredentialId;
+
+    let signerMatches: boolean;
+    try {
+      signerMatches = await this.sessionSignerMatches();
+    } catch (error) {
+      return isCurrent() ? { outcome: 'unavailable', error } : { outcome: 'stale' };
+    }
+    if (!isCurrent()) return { outcome: 'stale' };
+    if (!signerMatches) {
+      // The session cannot sign its requests any more: end it without asking WaaS.
+      let expired = false;
+      try {
+        expired = await this.clearSessionWithMismatchedSigner();
+      } catch {
+        // The session is cleared in memory even when storage or credential cleanup fails.
+      }
+      return expired
+        ? { outcome: 'ended', error: new Error('Session key is gone') }
+        : { outcome: 'signerMismatch' };
+    }
+
+    let expiresAt: unknown;
+    try {
+      const response = await this.credentialClient.getCredential();
+      expiresAt = response.credential?.expiresAt;
+    } catch (error) {
+      if (isBadRouteError(error)) {
+        this.credentialRefreshUnsupportedUntil =
+          Date.now() + CREDENTIAL_REFRESH_UNSUPPORTED_RETRY_MS;
+        return { outcome: isCurrent() ? 'unsupported' : 'stale' };
+      }
+      if (!isCurrent()) return { outcome: 'stale' };
+      // GetCredential involves no wallet, so `Unauthorized` (7207) means the credential was revoked.
+      if (isCredentialEndedError(error) || isUnauthorizedError(error)) {
+        const session = this.activeSessionSnapshot();
+        if (session) await this.expireSession(session);
+        return { outcome: 'ended', error };
+      }
+      return { outcome: 'unavailable', error };
+    }
+
+    if (!isCurrent()) return { outcome: 'stale' };
+    if (typeof expiresAt !== 'string' || !Number.isFinite(Date.parse(expiresAt))) {
+      return {
+        outcome: 'unavailable',
+        error: new OMSWalletResponseError({ message: 'Credential expiry response is invalid' })
+      };
+    }
+    this.applyRefreshedSessionExpiry(expiresAt, Date.now());
+    return { outcome: 'refreshed' };
+  }
+
+  /** Applies an expiry read by a `GetCredential` request completed at `readAt` (epoch ms). */
+  private applyRefreshedSessionExpiry(expiresAt: string, readAt: number): void {
+    const wallet = this.activeWalletAccount;
+    const metadata = this.currentSessionMetadata();
+    if (!wallet || !metadata) return;
+    const refreshed: WalletSessionMetadata = { ...metadata, expiresAt };
+    try {
+      this.persistRefreshedSessionExpiry(wallet, refreshed);
+    } catch {
+      // Storage failed: keep the refreshed expiry in memory; the stored record keeps the old one.
+      this.sessionExpiresAt = expiresAt;
+      this.scheduleSessionExpiry(this.sessionFromMetadata(wallet, refreshed));
+    }
+    this.lastCredentialRefreshAt = readAt;
+    this.publishSessionChange({ reason: 'expiryUpdated' });
+  }
+
+  /**
+   * Stores a refreshed expiry. Clients (tabs) signing with the same key share the stored record,
+   * and another one may have activated another wallet in it since this client last wrote it (this
+   * client follows that through `reconcileWithStoredSession`), so only its expiry changes. A record
+   * of another credential belongs to a newer session elsewhere and is left alone. Throws when
+   * storage fails.
+   */
+  private persistRefreshedSessionExpiry(
+    wallet: WalletAccount,
+    refreshed: WalletSessionMetadata
+  ): void {
+    const stored = this.loadStoredSessionRecord()?.record;
+    if (!stored) {
+      this.persistSession(wallet, refreshed, undefined, { reason: 'expiryUpdated' });
+      return;
+    }
+    if (
+      normalizeCredentialId(stored.signerCredentialId) ===
+      normalizeCredentialId(refreshed.signerCredentialId)
+    ) {
+      const record: StoredSessionRecord = { ...stored, expiresAt: refreshed.expiresAt };
+      this.storage.set(this.storageKeys.session, JSON.stringify(record));
+    }
+    this.sessionExpiresAt = refreshed.expiresAt;
+    this.scheduleSessionExpiry(this.sessionFromMetadata(wallet, refreshed));
+  }
+
+  /** Signs a session request once no expiry read is in flight, and counts it while in flight. */
+  private sessionRequestFetch(fetch: Fetch): Fetch {
+    return async (input: RequestInfo, init?: RequestInit): Promise<Response> => {
+      const signal = init?.signal ?? undefined;
+      while (this.credentialReadInFlight) await untilAborted(this.credentialReadInFlight, signal);
+      this.signedSessionRequestsInFlight += 1;
+      let inFlight = true;
+      const finish = () => {
+        if (!inFlight) return;
+        inFlight = false;
+        this.signedSessionRequestsInFlight -= 1;
+        if (this.signedSessionRequestsInFlight === 0) {
+          for (const resume of this.signedSessionRequestsIdleWaiters.splice(0)) resume();
+        }
+      };
+      // Aborted before it was sent, the request can no longer reach WaaS, so it stops holding up
+      // expiry reads even while a slow signer is still finishing.
+      const finishIfNotSent = () => {
+        if (signal && !wasRequestSent(signal)) finish();
+      };
+      signal?.addEventListener('abort', finishIfNotSent, { once: true });
+      try {
+        return await fetch(input, init);
+      } finally {
+        signal?.removeEventListener('abort', finishIfNotSent);
+        finish();
+      }
+    };
+  }
+
+  /** Signs an expiry read once no other signed session request or read is in flight. */
+  private credentialReadFetch(fetch: Fetch): Fetch {
+    return async (input: RequestInfo, init?: RequestInit): Promise<Response> => {
+      const signal = init?.signal ?? undefined;
+      while (this.signedSessionRequestsInFlight > 0 || this.credentialReadInFlight) {
+        await untilAborted(
+          this.credentialReadInFlight ??
+            new Promise<void>((resume) => this.signedSessionRequestsIdleWaiters.push(resume)),
+          signal
+        );
+      }
+      let release!: () => void;
+      this.credentialReadInFlight = new Promise<void>((resolve) => (release = resolve));
+      let inFlight = true;
+      const finish = () => {
+        if (!inFlight) return;
+        inFlight = false;
+        this.credentialReadInFlight = undefined;
+        release();
+      };
+      // As for session requests: a read aborted before it was sent releases the requests waiting
+      // for it.
+      const finishIfNotSent = () => {
+        if (signal && !wasRequestSent(signal)) finish();
+      };
+      signal?.addEventListener('abort', finishIfNotSent, { once: true });
+      try {
+        return await fetch(input, init);
+      } finally {
+        signal?.removeEventListener('abort', finishIfNotSent);
+        finish();
+      }
+    };
+  }
+
+  /**
+   * Wraps the fetch of the clients that sign with the session credential. After a successful session
+   * request it starts a background expiry refresh once the last read (sign-in or refresh) is at
+   * least 6 hours old, and it records when WaaS rejects the session credential, so
+   * only those rejections end the session (public requests can return 7202 for other credentials).
+   */
+  private sessionActivityFetch(fetch: Fetch): Fetch {
+    return async (input: RequestInfo, init?: RequestInit): Promise<Response> => {
+      const revision = this.sessionRevision;
+      const hadActiveSession = this.activeWalletAccount !== undefined;
+      const response = await fetch(input, init);
+      if (!hadActiveSession) return response;
+      if (response.ok) {
+        if (this.sessionRevision === revision) this.refreshSessionCredentialIfDue();
+        return response;
+      }
+      const errorCode = await waasErrorCode(response);
+      if (errorCode === 7202 || errorCode === 7203) {
+        this.rejectedSessionCredentialRevision = revision;
+      } else if (errorCode === 7207 && this.sessionRevision === revision) {
+        // Unauthorized: a wallet access error, or a revoked credential. `GetCredential` involves no
+        // wallet, so it tells them apart: it fails with 7207 and ends the session only when the
+        // credential was revoked. One read in flight at a time is shared.
+        void this.refreshSessionCredential();
+      }
+      return response;
+    };
+  }
+
+  private isCredentialRefreshUnsupported(): boolean {
+    const until = this.credentialRefreshUnsupportedUntil;
+    return until !== undefined && Date.now() < until;
+  }
+
+  private refreshSessionCredentialIfDue(): void {
+    if (!this.activeWalletAccount || this.isCredentialRefreshUnsupported()) return;
+    const lastRefreshAt = this.lastCredentialRefreshAt;
+    if (
+      lastRefreshAt !== undefined &&
+      Date.now() - lastRefreshAt < CREDENTIAL_REFRESH_INTERVAL_MS
+    ) {
+      return;
+    }
+    void this.refreshSessionCredential();
+  }
+
+  private isCurrentSessionSnapshot(session: SessionSnapshot): boolean {
+    if (session.wallet) {
       return (
-        this.activeWalletAddress === session.walletAddress &&
+        this.activeWalletAccount?.id === session.wallet.id &&
         this.sessionExpiresAt === session.expiresAt
       );
     }
@@ -2677,60 +3949,6 @@ export class WalletClient implements OMSWalletClient {
       !!this.activePendingWalletSelection &&
       this.activePendingWalletSelection.metadata.expiresAt === session.expiresAt
     );
-  }
-
-  private scheduleStoredSessionExpiryNotification(snapshot: StoredSessionSnapshot): void {
-    const session = snapshot.session;
-    const expiredAt = session.expiresAt;
-    void Promise.resolve()
-      .then(async () => {
-        if (!this.matchesStoredSessionSnapshot(snapshot)) return;
-
-        try {
-          await this.credentialSigner.clear?.();
-        } catch {
-          // Expiry replay should still happen if credential cleanup fails.
-        }
-
-        if (!this.matchesStoredSessionSnapshot(snapshot)) return;
-
-        if (expiredAt) {
-          this.notifySessionExpired({ session, expiredAt });
-        }
-      })
-      .catch(() => {});
-  }
-
-  private matchesStoredSessionSnapshot(snapshot: StoredSessionSnapshot): boolean {
-    return this.storage.get(Constants.sessionStorageKey) === snapshot.serializedRecord;
-  }
-
-  private notifySessionExpired(event: OMSWalletSessionExpiredEvent): void {
-    const eventSnapshot = cloneSessionExpiredEvent(event);
-    this.latestSessionExpiredEvent = eventSnapshot;
-
-    this.dispatchingSessionExpiredEvent = true;
-    try {
-      for (const listener of Array.from(this.sessionExpiredListeners)) {
-        this.callSessionExpiredListener(listener, cloneSessionExpiredEvent(eventSnapshot));
-      }
-    } finally {
-      this.dispatchingSessionExpiredEvent = false;
-    }
-  }
-
-  private callSessionExpiredListener(
-    listener: OMSWalletSessionExpiredListener,
-    event: OMSWalletSessionExpiredEvent
-  ): void {
-    try {
-      const result = listener(event);
-      if (isPromiseLike(result)) {
-        void result.catch(() => {});
-      }
-    } catch {
-      // User callbacks must not change the SDK operation error.
-    }
   }
 
   private loginHintForProvider(
@@ -2760,11 +3978,56 @@ export class WalletClient implements OMSWalletClient {
   }
 
   private async runOperation<T>(operation: WalletOperation, action: () => Promise<T>): Promise<T> {
+    const revision = this.sessionRevision;
+    const hadActiveSession = this.activeWalletAccount !== undefined;
     try {
       return await action();
     } catch (error) {
-      throw toOMSWalletError(error, operation);
+      throw await this.operationError(error, operation, revision, hadActiveSession);
     }
+  }
+
+  /**
+   * Maps an operation failure. When WaaS rejected a request signed with the active session's
+   * credential as not found or expired, the session ends like a local expiry and the operation fails with
+   * `OMS_SESSION_EXPIRED`. A rejected Execute is mapped the same way (it never ran); status-polling
+   * errors after a submitted transaction keep their shape so `txnId` is not lost.
+   */
+  private async operationError(
+    error: unknown,
+    operation: WalletOperation,
+    revision: number,
+    hadActiveSession: boolean
+  ): Promise<OMSWalletError> {
+    const sdkError = toOMSWalletError(error, operation);
+    if (
+      !hadActiveSession ||
+      !isCredentialEndedError(sdkError) ||
+      this.rejectedSessionCredentialRevision !== revision
+    ) {
+      return sdkError;
+    }
+
+    const session = this.activeSessionSnapshot();
+    if (this.sessionRevision === revision && session) {
+      await this.expireSession(session);
+    } else if (this.expiredSessionRevision !== revision) {
+      // The session changed for another reason (sign-out or a new sign-in) while in flight.
+      return sdkError;
+    }
+    if (
+      sdkError instanceof OMSWalletSessionError ||
+      sdkError instanceof OMSWalletTransactionError
+    ) {
+      return sdkError;
+    }
+    return new OMSWalletSessionError({
+      code: 'OMS_SESSION_EXPIRED',
+      operation,
+      message: 'Wallet session expired',
+      // Server-reported and local expiry share one shape: the WaaS error is kept only as `cause`.
+      cause: error
+    });
   }
 }
 
@@ -2772,16 +4035,31 @@ function defaultRedirectAuthStorage(): StorageManager | undefined {
   return SessionStorageManager.isAvailable() ? new SessionStorageManager() : undefined;
 }
 
-function createApiKeyFetch(publishableKey: string): Fetch {
+function createApiKeyFetch(publishableKey: () => string): Fetch {
   return async (input: RequestInfo, init?: RequestInit): Promise<Response> => {
     const existingHeaders = (init?.headers ?? {}) as Record<string, string>;
     const headers: Record<string, string> = {
       ...existingHeaders,
-      'Api-Key': publishableKey
+      'Api-Key': publishableKey()
     };
 
     return globalThis.fetch(input, { ...init, headers });
   };
+}
+
+// Mirrors the wallet service: it builds the signature from the arg types and accepts a bare name.
+const contractMethodNamePattern = /^[a-zA-Z_][a-zA-Z0-9_]*$/;
+
+function requireContractMethodName(method: string): void {
+  if (!contractMethodNamePattern.test(method)) {
+    throw new Error(
+      `method must be a function name such as 'transfer', not a signature; got '${method}'`
+    );
+  }
+}
+
+function isTronNetwork(network: SolanaNetwork | TronNetwork): network is TronNetwork {
+  return (Object.values(TronNetworks) as string[]).includes(network);
 }
 
 function isWalletType(value: unknown): value is WalletType {
@@ -2815,6 +4093,17 @@ function normalizeCredentialId(value: string): string {
   return value.trim().toLowerCase();
 }
 
+/** Whether a failed WaaS response is `KeyNotFound` (7202) or `KeyExpired` (7203). */
+/** The WaaS error code of a failed response, or undefined when its body has none. */
+async function waasErrorCode(response: Response): Promise<number | undefined> {
+  try {
+    const body = (await response.clone().json()) as { code?: unknown } | null;
+    return typeof body?.code === 'number' ? body.code : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
 function isPromiseLike(value: unknown): value is Promise<void> {
   return !!value && typeof (value as { catch?: unknown }).catch === 'function';
 }
@@ -2828,21 +4117,126 @@ function cloneSessionAuth(
   return auth ? { ...auth } : undefined;
 }
 
-function cloneSessionState(session: OMSWalletSessionState): OMSWalletSessionState {
-  return {
-    walletAddress: session.walletAddress,
-    expiresAt: session.expiresAt,
-    auth: cloneSessionAuth(session.auth)
-  };
+function cloneWalletAccount<T extends WalletAccount>(wallet: T): T {
+  return { ...wallet };
 }
 
-function cloneSessionExpiredEvent(
-  event: OMSWalletSessionExpiredEvent
-): OMSWalletSessionExpiredEvent {
-  return {
-    session: cloneSessionState(event.session),
-    expiredAt: event.expiredAt
+function expiredSessionOf(session: SessionSnapshot, expiredAt: string): OMSWalletExpiredSession {
+  return Object.freeze({
+    wallet: session.wallet ? Object.freeze(cloneWalletAccount(session.wallet)) : undefined,
+    session: Object.freeze({
+      expiresAt: session.expiresAt,
+      auth: Object.freeze({ ...session.auth })
+    }),
+    expiredAt
+  });
+}
+
+/** Whether two records with only primitive fields hold the same values. */
+function isSameFlatRecord(a: object, b: object): boolean {
+  const aEntries = Object.entries(a).filter(([, value]) => value !== undefined);
+  const bRecord = b as Record<string, unknown>;
+  return (
+    aEntries.length === Object.values(b).filter((value) => value !== undefined).length &&
+    aEntries.every(([key, value]) => bRecord[key] === value)
+  );
+}
+
+/** The parts of a browser `Document` that `whenInForeground` uses. */
+interface ForegroundDocument {
+  visibilityState?: string;
+  prerendering?: boolean;
+  addEventListener?(type: string, listener: () => void): void;
+  removeEventListener?(type: string, listener: () => void): void;
+}
+
+/**
+ * Runs `action` now when the page is visible and not prerendering, or outside a browser (no
+ * `document`); otherwise once, when both hold. Returns a function that cancels a pending wait.
+ */
+function whenInForeground(action: () => void): (() => void) | undefined {
+  const doc = (globalThis as { document?: ForegroundDocument }).document;
+  const isForeground = () => doc?.visibilityState === 'visible' && !doc.prerendering;
+  if (!doc?.addEventListener || isForeground()) {
+    action();
+    return undefined;
+  }
+  const cancel = () => {
+    doc.removeEventListener?.('visibilitychange', onChange);
+    doc.removeEventListener?.('prerenderingchange', onChange);
   };
+  const onChange = () => {
+    if (!isForeground()) return;
+    cancel();
+    action();
+  };
+  doc.addEventListener('visibilitychange', onChange);
+  doc.addEventListener('prerenderingchange', onChange);
+  return cancel;
+}
+
+/**
+ * Derives the lifetime cap from a sign-in: at least the send time plus the requested lifetime (the
+ * server's clock can only put it later), and never before the expiry WaaS reported. Undefined when
+ * the response's expiry is not usable (not after the send time).
+ */
+function signInExpiryBounds(
+  expiresAt: string,
+  sent: CompleteAuthSent
+): SessionExpiryBounds | undefined {
+  const expiresAtMs = Date.parse(expiresAt);
+  if (!Number.isFinite(expiresAtMs) || expiresAtMs <= sent.sentAt) return undefined;
+  return { expiryCeilingMs: Math.max(sent.sentAt + sent.lifetimeSeconds * 1000, expiresAtMs) };
+}
+
+/**
+ * Whether the session's lifetime cap has passed. WaaS never extends a session past it, so the session
+ * has ended without asking. The cap is estimated from the sign-in's send time, so it can be earlier
+ * than WaaS's by that request's latency.
+ */
+function hasPassedLifetimeCap(bounds: SessionExpiryBounds | undefined): boolean {
+  return !!bounds && Date.now() >= bounds.expiryCeilingMs;
+}
+
+/** Reads the lifetime cap of a stored session record; undefined when absent or invalid. */
+function storedSessionExpiryBounds(record: {
+  expiryCeiling?: unknown;
+}): SessionExpiryBounds | undefined {
+  if (typeof record.expiryCeiling !== 'string') return undefined;
+  const expiryCeilingMs = Date.parse(record.expiryCeiling);
+  return Number.isFinite(expiryCeilingMs) ? { expiryCeilingMs } : undefined;
+}
+
+function parseStoredWalletAccount(value: unknown): WalletAccount | undefined {
+  if (!value || typeof value !== 'object') return undefined;
+  const wallet = value as Record<string, unknown>;
+  if (
+    typeof wallet.id !== 'string' ||
+    !wallet.id ||
+    typeof wallet.address !== 'string' ||
+    !wallet.address ||
+    !isWalletType(wallet.type) ||
+    !isWalletKeyOrigin(wallet.keyOrigin) ||
+    (wallet.reference !== undefined && typeof wallet.reference !== 'string')
+  ) {
+    return undefined;
+  }
+  if (wallet.type === WalletType.Ethereum && !isAddress(wallet.address, { strict: false })) {
+    return undefined;
+  }
+  return {
+    id: wallet.id,
+    type: wallet.type,
+    address: wallet.address,
+    ...(wallet.reference === undefined ? {} : { reference: wallet.reference }),
+    keyOrigin: wallet.keyOrigin
+  } as WalletAccount;
+}
+
+function isWalletKeyOrigin(value: unknown): value is WalletKeyOrigin {
+  return (
+    typeof value === 'string' && Object.values(WalletKeyOrigin).includes(value as WalletKeyOrigin)
+  );
 }
 
 function normalizeSessionAuth(value: unknown): OMSWalletSessionAuth | undefined {
@@ -2904,8 +4298,28 @@ function normalizeJsonBigInts<T>(value: T): T {
   ) as T;
 }
 
-const DEFAULT_SESSION_LIFETIME_SECONDS = 604_800;
-const MAX_SESSION_LIFETIME_SECONDS = 30 * 24 * 60 * 60;
+/** WaaS codes with which an Execute is refused before anything is submitted. */
+const EXECUTE_REFUSED_BEFORE_SUBMISSION_CODES: ReadonlySet<string> = new Set([
+  '7201',
+  '7205',
+  '7206',
+  '7207'
+]);
+/**
+ * WaaS codes with which a Tron Execute is refused before anything is submitted. In WaaS v1.2.0,
+ * `executeTron` raises InvalidRequest (7200) and InvalidFeeOption (7310) only while it prices the
+ * transaction again, before it claims the transaction as pending and broadcasts it
+ * (rpc/tron_transaction.go `executeTron`). TransactionExpired is left out: WaaS also returns it for a
+ * transaction an earlier Execute already claimed.
+ */
+const TRON_EXECUTE_REFUSED_BEFORE_SUBMISSION_CODES: ReadonlySet<string> = new Set(['7200', '7310']);
+/** After WaaS answers GetCredential with WebrpcBadRoute, how long until it is asked again. */
+const CREDENTIAL_REFRESH_UNSUPPORTED_RETRY_MS = 15 * 60_000;
 const MAX_SESSION_EXPIRY_TIMER_MS = 2_147_483_647;
+/** Refresh the expiry after a successful wallet call once the last read is this old (6 hours). */
+const CREDENTIAL_REFRESH_INTERVAL_MS = 6 * 60 * 60 * 1000;
+/** Retry delays for an expiry read that could not reach WaaS (1 minute, doubling to 15 minutes). */
+const CREDENTIAL_REFRESH_RETRY_MIN_MS = 60_000;
+const CREDENTIAL_REFRESH_RETRY_MAX_MS = 15 * 60_000;
 const GOOGLE_ISSUER = 'https://accounts.google.com';
 const APPLE_ISSUER = 'https://appleid.apple.com';

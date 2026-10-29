@@ -1,26 +1,40 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
-import type { CredentialSigner } from '../src/credentialSigner';
 import { AuthMode, IdentityType, Waas } from '../src/generated/waas.gen';
-import { createSignedFetch } from '../src/signedFetch';
+import { Networks } from '../src/networks';
+import { WebCryptoP256CredentialSigner, type CredentialSigner } from '../src/credentialSigner';
+import { RemoteAccessClient } from '../src/clients/remoteAccessClient';
+import { createSerialFetch, createSignedFetch } from '../src/signedFetch';
+import {
+  MockSigner,
+  createWalletWithSession,
+  jsonResponse,
+  requestCount,
+  testCredential,
+  waasErrorResponse
+} from './fixtures/helpers.js';
 
-class RecordingSigner implements CredentialSigner {
-  readonly signingAlgorithm = 'ecdsa-p256-sha256';
-  readonly preimages: string[] = [];
-
-  async credentialId(): Promise<string> {
-    return `0x04${'11'.repeat(64)}`;
-  }
+/** A fixture signer whose nonces increase with every request, as real signers' do. */
+class IncreasingNonceSigner extends MockSigner {
+  private nonce = 0;
 
   async nextNonce(): Promise<string> {
-    return '42';
-  }
-
-  async sign(preimage: string): Promise<string> {
-    this.preimages.push(preimage);
-    return `0x${'22'.repeat(64)}`;
+    this.nonce += 1;
+    return this.nonce.toString();
   }
 }
+
+/** The nonces of the requests sent to `endpoint`, read from their signature headers. */
+function sentNonces(fetchMock: ReturnType<typeof vi.fn>, endpoint: string): number[] {
+  return fetchMock.mock.calls
+    .filter(([input]) => input.toString().endsWith(endpoint))
+    .map(([, init]) => {
+      const header = (init?.headers as Record<string, string>)['OMS-Wallet-Signature'];
+      return Number(/nonce=(\d+)/.exec(header)?.[1]);
+    });
+}
+
+const walletAddress = '0x1111111111111111111111111111111111111111';
 
 afterEach(() => {
   vi.restoreAllMocks();
@@ -35,7 +49,7 @@ describe('wallet request signing', () => {
       metadata: { email: 'user@example.com' }
     };
     const body = JSON.stringify(request);
-    const signer = new RecordingSigner();
+    const signer = new MockSigner();
     const fetchMock = vi.fn(
       async () =>
         new Response(
@@ -70,5 +84,394 @@ describe('wallet request signing', () => {
       'Content-Type': 'application/json',
       'OMS-Wallet-Signature': `alg="ecdsa-p256-sha256", scope="project-id", cred="0x04${'11'.repeat(64)}", nonce=42, sig="0x${'22'.repeat(64)}"`
     });
+  });
+});
+
+describe('wallet request ordering', () => {
+  /**
+   * Answers like WaaS: a request whose nonce is not above the last one accepted is rejected with
+   * 7206, the others after `delayMs`. Counts how many requests are in flight at once.
+   */
+  function stubWaasNonceRule(delayMs = 5) {
+    let lastNonce = -1;
+    let inFlight = 0;
+    const stats = { maxInFlight: 0, rejected: 0 };
+    const fetchMock = vi.fn(async (_input: RequestInfo | URL, init?: RequestInit) => {
+      inFlight += 1;
+      stats.maxInFlight = Math.max(stats.maxInFlight, inFlight);
+      try {
+        await new Promise((resolve) => setTimeout(resolve, delayMs));
+        const header = (init?.headers as Record<string, string>)['OMS-Wallet-Signature'];
+        const nonce = Number(/nonce=(\d+)/.exec(header)?.[1]);
+        if (nonce <= lastNonce) {
+          stats.rejected += 1;
+          return waasErrorResponse('PreconditionFailed');
+        }
+        lastNonce = nonce;
+        return jsonResponse({ signature: '0xsigned', status: 'pending' });
+      } finally {
+        inFlight -= 1;
+      }
+    });
+    vi.stubGlobal('fetch', fetchMock);
+    return { fetchMock, stats };
+  }
+
+  it('sends concurrent requests one at a time, so WaaS never rejects their nonces', async () => {
+    const { fetchMock, stats } = stubWaasNonceRule();
+    const wallet = createWalletWithSession(walletAddress, undefined, {
+      signer: new IncreasingNonceSigner()
+    });
+
+    const signatures = await Promise.all(
+      Array.from({ length: 10 }, () =>
+        wallet.signMessage({ network: Networks.polygon, message: 'hello' })
+      )
+    );
+
+    expect(signatures).toEqual(Array(10).fill('0xsigned'));
+    expect(stats.maxInFlight).toBe(1);
+    expect(stats.rejected).toBe(0);
+    expect(requestCount(fetchMock, '/SignMessage')).toBe(10);
+  });
+
+  it('holds a Web Lock for the credential while a request is in flight, across tabs', async () => {
+    const requested: string[] = [];
+    let held = 0;
+    vi.stubGlobal('navigator', {
+      locks: {
+        request: async (name: string, _options: object, callback: () => Promise<void>) => {
+          requested.push(name);
+          held += 1;
+          try {
+            await callback();
+          } finally {
+            held -= 1;
+          }
+        }
+      }
+    });
+    const fetchMock = vi.fn(async (input: RequestInfo | URL) => {
+      expect(held).toBe(1);
+      return input.toString().endsWith('/GetCredential')
+        ? jsonResponse({ credential: testCredential() })
+        : jsonResponse({ signature: '0xsigned' });
+    });
+    vi.stubGlobal('fetch', fetchMock);
+    const wallet = createWalletWithSession(walletAddress);
+
+    await wallet.signMessage({ network: Networks.polygon, message: 'hello' });
+
+    expect(requested[0]).toBe(`oms-wallet-signed-requests:0x04${'11'.repeat(64)}`);
+    await vi.waitFor(() => expect(held).toBe(0));
+  });
+
+  it.each([
+    {
+      label: 'wallet clients with separate storage',
+      clients: (signer: IncreasingNonceSigner) =>
+        [0, 1].map(() => {
+          const wallet = createWalletWithSession(walletAddress, undefined, { signer });
+          return () => wallet.signMessage({ network: Networks.polygon, message: 'hello' });
+        })
+    },
+    {
+      label: 'remote access clients',
+      clients: (signer: IncreasingNonceSigner) =>
+        [0, 1].map(() => {
+          const client = new RemoteAccessClient({
+            publishableKey: 'pk_dev_sdbx_project_key1',
+            credentialSigner: signer
+          });
+          return () => client.getTransactionStatus({ txnId: 'txn-1' });
+        })
+    }
+  ])('orders the requests of $label that share one signer', async ({ clients }) => {
+    // Clients in one process share a credential's queue, Web Locks or not.
+    const { stats } = stubWaasNonceRule();
+    const calls = clients(new IncreasingNonceSigner());
+
+    await Promise.all(Array.from({ length: 6 }, () => calls.map((call) => call())).flat());
+
+    expect(stats.maxInFlight).toBe(1);
+    expect(stats.rejected).toBe(0);
+  });
+
+  it('does not hold a request signed with a new credential behind one of the old credential', async () => {
+    // A new sign-in replaces the signing key, so its requests cannot conflict with the old ones.
+    const signer = new IncreasingNonceSigner();
+    let answerOld!: (response: Response) => void;
+    const fetchMock = vi.fn(async (_input: RequestInfo | URL, init?: RequestInit) => {
+      const header = (init?.headers as Record<string, string>)['OMS-Wallet-Signature'];
+      if (header.includes('11'.repeat(64))) {
+        return new Promise<Response>((resolve) => (answerOld = resolve));
+      }
+      return jsonResponse({ signature: '0xnew' });
+    });
+    vi.stubGlobal('fetch', fetchMock);
+    const signedFetch = createSerialFetch(
+      createSignedFetch('publishable-key', signer, 'project-id'),
+      signer
+    );
+    const url = 'https://waas.test/rpc/Waas/SignMessage';
+
+    const oldRequest = signedFetch(url, { method: 'POST', body: '{}' });
+    await vi.waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(1));
+    signer.setCredential('0x04' + '22'.repeat(64));
+    const newResponse = await signedFetch(url, { method: 'POST', body: '{}' });
+
+    await expect(newResponse.json()).resolves.toEqual({ signature: '0xnew' });
+    answerOld(jsonResponse({ signature: '0xold' }));
+    await oldRequest;
+  });
+});
+
+describe('wallet request nonce rejection', () => {
+  it('resends a request rejected for its nonce with a fresh, higher nonce', async () => {
+    const responses = [
+      waasErrorResponse('PreconditionFailed'),
+      jsonResponse({ signature: '0xsigned' })
+    ];
+    const fetchMock = vi.fn(async (_input: RequestInfo | URL, _init?: RequestInit) =>
+      responses.shift()!
+    );
+    vi.stubGlobal('fetch', fetchMock);
+    const wallet = createWalletWithSession(walletAddress, undefined, {
+      signer: new IncreasingNonceSigner()
+    });
+
+    await expect(wallet.signMessage({ network: Networks.polygon, message: 'hello' })).resolves.toBe(
+      '0xsigned'
+    );
+
+    expect(requestCount(fetchMock, '/SignMessage')).toBe(2);
+    const [first, second] = sentNonces(fetchMock, '/SignMessage');
+    expect(second).toBeGreaterThan(first);
+  });
+
+  it('resends an Execute rejected for its nonce and completes the transaction', async () => {
+    let executeCalls = 0;
+    const fetchMock = vi.fn(async (input: RequestInfo | URL, _init?: RequestInit) => {
+      const url = input.toString();
+      if (url.endsWith('/PrepareEthereumTransaction')) {
+        return jsonResponse({
+          txnId: 'txn-1',
+          status: 'quoted',
+          feeOptions: [],
+          sponsored: true,
+          expiresAt: '2099-01-01T00:00:00Z'
+        });
+      }
+      if (url.endsWith('/Execute')) {
+        executeCalls += 1;
+        return executeCalls === 1
+          ? waasErrorResponse('PreconditionFailed')
+          : jsonResponse({ status: 'pending' });
+      }
+      if (url.endsWith('/TransactionStatus')) {
+        return jsonResponse({ status: 'executed', txnHash: '0xtx' });
+      }
+      throw new Error(`Unexpected request: ${url}`);
+    });
+    vi.stubGlobal('fetch', fetchMock);
+    const wallet = createWalletWithSession(walletAddress, undefined, {
+      signer: new IncreasingNonceSigner()
+    });
+
+    await expect(
+      wallet.sendTransaction({ network: Networks.polygon, to: walletAddress, value: 0n })
+    ).resolves.toMatchObject({ txnId: 'txn-1', status: 'executed', txnHash: '0xtx' });
+
+    expect(requestCount(fetchMock, '/Execute')).toBe(2);
+    const [first, second] = sentNonces(fetchMock, '/Execute');
+    expect(second).toBeGreaterThan(first);
+  });
+
+  it('reports an Execute still rejected for its nonce after two resends as a request failure', async () => {
+    const fetchMock = vi.fn(async (input: RequestInfo | URL, _init?: RequestInit) => {
+      const url = input.toString();
+      if (url.endsWith('/PrepareEthereumTransaction')) {
+        return jsonResponse({
+          txnId: 'txn-1',
+          status: 'quoted',
+          feeOptions: [],
+          sponsored: true,
+          expiresAt: '2099-01-01T00:00:00Z'
+        });
+      }
+      if (url.endsWith('/Execute')) return waasErrorResponse('PreconditionFailed');
+      throw new Error(`Unexpected request: ${url}`);
+    });
+    vi.stubGlobal('fetch', fetchMock);
+    const wallet = createWalletWithSession(walletAddress, undefined, {
+      signer: new IncreasingNonceSigner()
+    });
+
+    // WaaS rejects the nonce before Execute runs, so the transaction was never submitted.
+    const error = await wallet
+      .sendTransaction({ network: Networks.polygon, to: walletAddress, value: 0n })
+      .catch((caught: unknown) => caught);
+    expect(error).toMatchObject({
+      name: 'OMSWalletRequestError',
+      code: 'OMS_REQUEST_FAILED',
+      operation: 'wallet.execute',
+      status: 412,
+      retryable: false,
+      upstreamError: { service: 'waas', name: 'PreconditionFailed', code: '7206' }
+    });
+    expect((error as { txnId?: string }).txnId).toBeUndefined();
+    expect(requestCount(fetchMock, '/Execute')).toBe(3);
+  });
+
+  it('surfaces the nonce rejection after two resends', async () => {
+    const fetchMock = vi.fn(async (_input: RequestInfo | URL, _init?: RequestInit) =>
+      waasErrorResponse('PreconditionFailed')
+    );
+    vi.stubGlobal('fetch', fetchMock);
+    const wallet = createWalletWithSession(walletAddress, undefined, {
+      signer: new IncreasingNonceSigner()
+    });
+
+    await expect(
+      wallet.signMessage({ network: Networks.polygon, message: 'hello' })
+    ).rejects.toMatchObject({
+      name: 'OMSWalletRequestError',
+      code: 'OMS_REQUEST_FAILED',
+      operation: 'wallet.signMessage',
+      status: 412,
+      retryable: false,
+      upstreamError: { service: 'waas', name: 'PreconditionFailed', code: '7206' }
+    });
+
+    expect(requestCount(fetchMock, '/SignMessage')).toBe(3);
+    expect(wallet.session).toBeDefined();
+  });
+});
+
+/**
+ * A minimal in-memory `indexedDB` for the WebCrypto signer: one database whose object stores keep
+ * records by `id`. Requests succeed in a microtask; a transaction completes in the next macrotask,
+ * after the requests chained on it.
+ */
+function stubIndexedDb(): Map<string, unknown> {
+  const records = new Map<string, unknown>();
+  const request = <T>(run: () => T) => {
+    const req: { result?: T; error?: unknown; onsuccess?: () => void; onerror?: () => void } = {};
+    queueMicrotask(() => {
+      try {
+        req.result = run();
+        req.onsuccess?.();
+      } catch (error) {
+        req.error = error;
+        req.onerror?.();
+      }
+    });
+    return req;
+  };
+  const store = {
+    get: (id: string) => request(() => records.get(id)),
+    put: (record: { id: string }) => request(() => void records.set(record.id, record)),
+    delete: (id: string) => request(() => void records.delete(id))
+  };
+  const db = {
+    objectStoreNames: { contains: () => true },
+    createObjectStore: () => store,
+    close: () => {},
+    transaction: () => {
+      const tx: { oncomplete?: () => void; objectStore: () => typeof store } = {
+        objectStore: () => store
+      };
+      setTimeout(() => tx.oncomplete?.(), 0);
+      return tx;
+    }
+  };
+  vi.stubGlobal('indexedDB', { open: () => request(() => db) });
+  return records;
+}
+
+describe('WebCryptoP256CredentialSigner', () => {
+  it('loads or creates a key again after another client removed the stored one', async () => {
+    const records = stubIndexedDb();
+    const signer = new WebCryptoP256CredentialSigner();
+    const first = await signer.credentialId();
+    expect(first).toMatch(/^0x04/);
+
+    // Another tab signed out and removed the shared key.
+    records.clear();
+    await expect(signer.nextNonce()).rejects.toThrow('WebCrypto credential signer was cleared');
+
+    const next = await signer.credentialId();
+    expect(next).toMatch(/^0x04/);
+    expect(next).not.toBe(first);
+    await expect(signer.nextNonce()).resolves.toMatch(/^\d+$/);
+  });
+
+  it('reports the stored key after another tab replaced it', async () => {
+    stubIndexedDb();
+    const tab = new WebCryptoP256CredentialSigner();
+    const otherTab = new WebCryptoP256CredentialSigner();
+    const oldId = await tab.credentialId();
+
+    // The other tab signs out and in again, which replaces the shared key.
+    await otherTab.clear();
+    const newId = await otherTab.credentialId();
+    expect(newId).not.toBe(oldId);
+
+    await expect(tab.hasCredential()).resolves.toBe(true);
+    await expect(tab.credentialId()).resolves.toBe(newId);
+    await otherTab.clear();
+    await expect(tab.hasCredential()).resolves.toBe(false);
+  });
+
+  it('sends no request signed by a key another tab replaced while it was being signed', async () => {
+    stubIndexedDb();
+    const tab = new WebCryptoP256CredentialSigner();
+    const otherTab = new WebCryptoP256CredentialSigner();
+    await tab.credentialId();
+
+    // Two concurrent requests read the credential ID; the other tab then replaces the key.
+    let idsRead = 0;
+    let bothRead!: () => void;
+    const bothReadId = new Promise<void>((resolve) => (bothRead = resolve));
+    let replaced!: () => void;
+    const keyReplaced = new Promise<void>((resolve) => (replaced = resolve));
+    const signer: CredentialSigner = {
+      signingAlgorithm: tab.signingAlgorithm,
+      credentialId: async () => {
+        const id = await tab.credentialId();
+        idsRead += 1;
+        if (idsRead <= 2) {
+          if (idsRead === 2) bothRead();
+          await keyReplaced;
+        }
+        return id;
+      },
+      nextNonce: () => tab.nextNonce(),
+      sign: (preimage) => tab.sign(preimage)
+    };
+    const fetchMock = vi.fn(async () => jsonResponse({}));
+    vi.stubGlobal('fetch', fetchMock);
+    const signedFetch = createSignedFetch('publishable-key', signer, 'project-id');
+    const url = 'https://waas.test/rpc/Waas/SignMessage';
+
+    const requests = Promise.allSettled([
+      signedFetch(url, { method: 'POST', body: '{"n":1}' }),
+      signedFetch(url, { method: 'POST', body: '{"n":2}' })
+    ]);
+    await bothReadId;
+    await otherTab.clear();
+    await otherTab.credentialId();
+    replaced();
+
+    for (const result of await requests) {
+      expect(result).toMatchObject({
+        status: 'rejected',
+        reason: new Error('Credential signer key changed while signing the request')
+      });
+    }
+    expect(fetchMock).not.toHaveBeenCalled();
+    // A request signed with the replacement key from the start is sent.
+    await signedFetch(url, { method: 'POST', body: '{"n":3}' });
+    expect(fetchMock).toHaveBeenCalledTimes(1);
   });
 });

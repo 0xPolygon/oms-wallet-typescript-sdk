@@ -39,8 +39,16 @@ Its source and deployment instructions are in `examples/helpers/privy-import-wor
 The deployed example is available at `https://0xpolygon.github.io/oms-wallet-typescript-sdk/react-example/`.
 
 When the active wallet is a Solana wallet, the example shows a Solana operations panel
-(`src/SolanaExample.tsx`) that signs and verifies a message, reads the Devnet SOL balance, and
-sends SOL or SPL transfers on Solana Devnet with fee-option selection.
+(`src/SolanaExample.tsx`) that signs and verifies a message, reads the SOL and USDC balances, and
+sends SOL or SPL transfers with fee-option selection. The panel defaults to Solana Devnet and can
+switch to mainnet, which moves real funds.
+
+When the active wallet is a Tron wallet, the example shows a Tron operations panel
+(`src/TronExample.tsx`) that signs and verifies a message, reads the TRX and USDT balances with
+`getTronBalances`, and sends TRX (`sendTronTransaction`) or TRC-20 tokens (`callTronContract`)
+with fee-option selection. The panel defaults to Tron Nile and can switch to mainnet, which moves
+real funds. The [Nile faucet](https://nileex.io/join/getJoinPage) provides test TRX and USDT. Tron
+is native-mode only, and transactions are often sponsored by the account's daily free bandwidth.
 
 The Amoy-only "ERC20 example" panel includes a WalletKit Dollar example using
 the demo WKUSD contract deployed on Polygon Amoy.

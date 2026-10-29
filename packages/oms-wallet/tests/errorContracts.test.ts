@@ -10,38 +10,13 @@ import {
   OmsRelayOidcProviders,
   SessionStorageManager,
   WalletImportCipherSuite,
-  WalletType,
   WebCryptoP256CredentialSigner,
   isOMSWalletError,
   type CredentialSigner,
   type StorageManager
 } from '../src';
-
-class MockSigner implements CredentialSigner {
-  readonly signingAlgorithm = 'ecdsa-p256-sha256';
-
-  constructor(private credential = '0x04' + '11'.repeat(64)) {}
-
-  async credentialId(): Promise<string> {
-    return this.credential;
-  }
-
-  setCredential(credential: string): void {
-    this.credential = credential;
-  }
-
-  async nextNonce(): Promise<string> {
-    return '42';
-  }
-
-  async sign(): Promise<string> {
-    return '0x' + '22'.repeat(64);
-  }
-
-  async hasCredential(): Promise<boolean> {
-    return true;
-  }
-}
+import { testWalletAccount } from './fixtures/walletAccount.js';
+import { MockSigner, jsonResponse } from './fixtures/helpers.js';
 
 afterEach(() => {
   vi.restoreAllMocks();
@@ -70,7 +45,7 @@ describe('public API error contracts', () => {
             "status": null,
             "txnId": null,
             "upstreamError": {
-              "code": -1,
+              "code": "-1",
               "message": "request failed",
               "name": "WebrpcRequestFailed",
               "service": "waas",
@@ -112,6 +87,18 @@ describe('public API error contracts', () => {
           }
         `);
     expect(fetchMock).toHaveBeenCalledOnce();
+
+    // Development sandbox keys require attestation too.
+    const devOms = createOmsClientWithSession({ publishableKey: 'pk_dev_sdbx_project_key' });
+    await expect(
+      devOms.wallet.getWalletImportRecipientKey({
+        cipherSuite: WalletImportCipherSuite.P256Sha256ChaCha20Poly1305
+      })
+    ).rejects.toMatchObject({
+      code: 'OMS_ATTESTATION_VERIFICATION_FAILED',
+      operation: 'wallet.getWalletImportRecipientKey'
+    });
+    expect(fetchMock).toHaveBeenCalledTimes(2);
   });
 
   it('snapshots WaaS domain errors with upstream details', async () => {
@@ -128,6 +115,7 @@ describe('public API error contracts', () => {
               code: 7008,
               name: 'CommitmentConsumed',
               message: 'The authentication commitment has already been used',
+              cause: 'commitment was completed at 2026-01-01T00:00:00Z',
               status: 400
             },
             400
@@ -143,23 +131,24 @@ describe('public API error contracts', () => {
 
     await expect(publicError(() => oms.wallet.completeEmailAuth({ code: '123456' }))).resolves
       .toMatchInlineSnapshot(`
-          {
-            "code": "OMS_AUTH_COMMITMENT_CONSUMED",
-            "message": "The authentication commitment has already been used",
-            "name": "OMSWalletRequestError",
-            "operation": "wallet.completeEmailAuth",
-            "retryable": false,
-            "status": 400,
-            "txnId": null,
-            "upstreamError": {
-              "code": 7008,
-              "message": "The authentication commitment has already been used",
-              "name": "CommitmentConsumed",
-              "service": "waas",
-              "status": 400,
-            },
-          }
-        `);
+      {
+        "code": "OMS_AUTH_COMMITMENT_CONSUMED",
+        "message": "The authentication commitment has already been used",
+        "name": "OMSWalletRequestError",
+        "operation": "wallet.completeEmailAuth",
+        "retryable": false,
+        "status": 400,
+        "txnId": null,
+        "upstreamError": {
+          "cause": "commitment was completed at 2026-01-01T00:00:00Z",
+          "code": "7008",
+          "message": "The authentication commitment has already been used",
+          "name": "CommitmentConsumed",
+          "service": "waas",
+          "status": 400,
+        },
+      }
+    `);
   });
 
   it('snapshots WaaS HTTP responses with upstream details', async () => {
@@ -187,7 +176,7 @@ describe('public API error contracts', () => {
             "status": 502,
             "txnId": null,
             "upstreamError": {
-              "code": -5,
+              "code": "-5",
               "message": "bad response",
               "name": "WebrpcBadResponse",
               "service": "waas",
@@ -421,34 +410,22 @@ describe('public API error contracts', () => {
         `);
   });
 
-  it('snapshots SDK-local errors without upstream details', async () => {
-    const oms = createOmsClient();
-
-    await expect(
-      publicError(() => oms.wallet.signMessage({ network: Networks.polygon, message: 'hello' }))
-    ).resolves.toMatchInlineSnapshot(`
-          {
-            "code": "OMS_SESSION_MISSING",
-            "message": "No active wallet session",
-            "name": "OMSWalletSessionError",
-            "operation": "wallet.signMessage",
-            "retryable": null,
-            "status": null,
-            "txnId": null,
-            "upstreamError": null,
-          }
-        `);
-  });
-
   it('snapshots missing-session contracts for protected wallet methods', async () => {
+    const fetchMock = vi.fn();
+    vi.stubGlobal('fetch', fetchMock);
     const oms = createOmsClient();
 
     await expect(
       publicErrors([
         ['wallet.listWallets', () => oms.wallet.listWallets()],
         ['wallet.useWallet', () => oms.wallet.useWallet({ walletId: 'wallet-1' })],
+        ['wallet.claimWallet', () => oms.wallet.claimWallet({ walletId: 'wallet-1' })],
         ['wallet.createWallet', () => oms.wallet.createWallet()],
         ['wallet.getIdToken', () => oms.wallet.getIdToken()],
+        [
+          'wallet.signMessage',
+          () => oms.wallet.signMessage({ network: Networks.polygon, message: 'hello' })
+        ],
         [
           'wallet.signTypedData',
           () =>
@@ -472,7 +449,7 @@ describe('public API error contracts', () => {
             oms.wallet.callContract({
               network: Networks.polygon,
               contractAddress: '0x2222222222222222222222222222222222222222',
-              method: 'transfer(address,uint256)',
+              method: 'transfer',
               args: [
                 { type: 'address', value: '0x3333333333333333333333333333333333333333' },
                 { type: 'uint256', value: '1' }
@@ -480,6 +457,7 @@ describe('public API error contracts', () => {
             })
         ],
         ['wallet.listAccess', () => oms.wallet.listAccess()],
+        ['wallet.listAccessPage', () => oms.wallet.listAccessPage()],
         ['wallet.listAccessPages', () => iterateAccessPages(oms.wallet.listAccessPages())],
         ['wallet.revokeAccess', () => oms.wallet.revokeAccess({ credentialId: 'credential-1' })]
       ])
@@ -516,6 +494,19 @@ describe('public API error contracts', () => {
                 "code": "OMS_SESSION_MISSING",
                 "message": "No active wallet session",
                 "name": "OMSWalletSessionError",
+                "operation": "wallet.claimWallet",
+                "retryable": null,
+                "status": null,
+                "txnId": null,
+                "upstreamError": null,
+              },
+              "label": "wallet.claimWallet",
+            },
+            {
+              "error": {
+                "code": "OMS_SESSION_MISSING",
+                "message": "No active wallet session",
+                "name": "OMSWalletSessionError",
                 "operation": "wallet.createWallet",
                 "retryable": null,
                 "status": null,
@@ -536,6 +527,19 @@ describe('public API error contracts', () => {
                 "upstreamError": null,
               },
               "label": "wallet.getIdToken",
+            },
+            {
+              "error": {
+                "code": "OMS_SESSION_MISSING",
+                "message": "No active wallet session",
+                "name": "OMSWalletSessionError",
+                "operation": "wallet.signMessage",
+                "retryable": null,
+                "status": null,
+                "txnId": null,
+                "upstreamError": null,
+              },
+              "label": "wallet.signMessage",
             },
             {
               "error": {
@@ -594,6 +598,19 @@ describe('public API error contracts', () => {
                 "code": "OMS_SESSION_MISSING",
                 "message": "No active wallet session",
                 "name": "OMSWalletSessionError",
+                "operation": "wallet.listAccessPage",
+                "retryable": null,
+                "status": null,
+                "txnId": null,
+                "upstreamError": null,
+              },
+              "label": "wallet.listAccessPage",
+            },
+            {
+              "error": {
+                "code": "OMS_SESSION_MISSING",
+                "message": "No active wallet session",
+                "name": "OMSWalletSessionError",
                 "operation": "wallet.listAccessPages",
                 "retryable": null,
                 "status": null,
@@ -617,6 +634,7 @@ describe('public API error contracts', () => {
             },
           ]
         `);
+    expect(fetchMock).not.toHaveBeenCalled();
   });
 
   it('snapshots OIDC local error contracts without upstream details', async () => {
@@ -999,7 +1017,7 @@ describe('public API error contracts', () => {
                 "status": null,
                 "txnId": null,
                 "upstreamError": {
-                  "code": -1,
+                  "code": "-1",
                   "message": "request failed",
                   "name": "WebrpcRequestFailed",
                   "service": "waas",
@@ -1018,7 +1036,7 @@ describe('public API error contracts', () => {
                 "status": null,
                 "txnId": null,
                 "upstreamError": {
-                  "code": -1,
+                  "code": "-1",
                   "message": "request failed",
                   "name": "WebrpcRequestFailed",
                   "service": "waas",
@@ -1037,7 +1055,7 @@ describe('public API error contracts', () => {
                 "status": null,
                 "txnId": null,
                 "upstreamError": {
-                  "code": -1,
+                  "code": "-1",
                   "message": "request failed",
                   "name": "WebrpcRequestFailed",
                   "service": "waas",
@@ -1084,7 +1102,7 @@ describe('public API error contracts', () => {
             "status": 404,
             "txnId": null,
             "upstreamError": {
-              "code": 7308,
+              "code": "7308",
               "message": "Transaction not found",
               "name": "TransactionNotFound",
               "service": "waas",
@@ -1095,23 +1113,21 @@ describe('public API error contracts', () => {
   });
 
   it('snapshots transaction local validation errors without upstream details', async () => {
-    vi.stubGlobal(
-      'fetch',
-      vi.fn(async (input: RequestInfo | URL) => {
-        const url = input.toString();
-        if (url.endsWith('/PrepareEthereumTransaction')) {
-          return jsonResponse({
-            txnId: 'txn-no-fee-options',
-            status: 'quoted',
-            feeOptions: [],
-            sponsored: false,
-            expiresAt: '2099-01-01T00:00:00Z'
-          });
-        }
+    const fetchMock = vi.fn(async (input: RequestInfo | URL) => {
+      const url = input.toString();
+      if (url.endsWith('/PrepareEthereumTransaction')) {
+        return jsonResponse({
+          txnId: 'txn-no-fee-options',
+          status: 'quoted',
+          feeOptions: [],
+          sponsored: false,
+          expiresAt: '2099-01-01T00:00:00Z'
+        });
+      }
 
-        throw new Error(`Unexpected request: ${url}`);
-      })
-    );
+      throw new Error(`Unexpected request: ${url}`);
+    });
+    vi.stubGlobal('fetch', fetchMock);
 
     const oms = createOmsClientWithSession();
 
@@ -1136,6 +1152,8 @@ describe('public API error contracts', () => {
             "upstreamError": null,
           }
         `);
+    // Execute must not run without a fee option.
+    expect(fetchMock).toHaveBeenCalledTimes(1);
   });
 
   it('snapshots transaction execute failures as unconfirmed writes', async () => {
@@ -1180,7 +1198,7 @@ describe('public API error contracts', () => {
             "status": null,
             "txnId": "txn-execute",
             "upstreamError": {
-              "code": -1,
+              "code": "-1",
               "message": "request failed",
               "name": "WebrpcRequestFailed",
               "service": "waas",
@@ -1188,6 +1206,67 @@ describe('public API error contracts', () => {
             },
           }
         `);
+  });
+
+  it('snapshots a simulation-reverted Execute as a request failure', async () => {
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async (input: RequestInfo | URL) => {
+        const url = input.toString();
+        if (url.endsWith('/PrepareEthereumTransaction')) {
+          return jsonResponse({
+            txnId: 'txn-reverts',
+            status: 'quoted',
+            feeOptions: [],
+            sponsored: true,
+            expiresAt: '2099-01-01T00:00:00Z'
+          });
+        }
+        if (url.endsWith('/Execute')) {
+          return jsonResponse(
+            {
+              code: 7314,
+              name: 'TransactionSimulationFailed',
+              message: 'Transaction simulation failed; the call would revert on-chain',
+              status: 400
+            },
+            400
+          );
+        }
+
+        throw new Error(`Unexpected request: ${url}`);
+      })
+    );
+
+    const oms = createOmsClientWithSession();
+
+    await expect(
+      publicError(() =>
+        oms.wallet.sendTransaction({
+          network: Networks.polygon,
+          to: '0x1111111111111111111111111111111111111111',
+          value: 0n
+        })
+      )
+    ).resolves.toMatchInlineSnapshot(`
+      {
+        "code": "OMS_REQUEST_FAILED",
+        "message": "Transaction simulation failed; the call would revert on-chain",
+        "name": "OMSWalletRequestError",
+        "operation": "wallet.execute",
+        "retryable": false,
+        "status": 400,
+        "txnId": null,
+        "upstreamError": {
+          "code": "7314",
+          "message": "Transaction simulation failed; the call would revert on-chain",
+          "name": "TransactionSimulationFailed",
+          "service": "waas",
+          "status": 400,
+        },
+      }
+    `);
+    expect(oms.wallet.session).toBeDefined();
   });
 
   it('snapshots transaction status polling failures with txn and upstream details', async () => {
@@ -1235,7 +1314,7 @@ describe('public API error contracts', () => {
             "status": null,
             "txnId": "txn-1",
             "upstreamError": {
-              "code": -1,
+              "code": "-1",
               "message": "request failed",
               "name": "WebrpcRequestFailed",
               "service": "waas",
@@ -1298,7 +1377,7 @@ describe('public API error contracts', () => {
             "status": 404,
             "txnId": "txn-404",
             "upstreamError": {
-              "code": 7308,
+              "code": "7308",
               "message": "Transaction not found",
               "name": "TransactionNotFound",
               "service": "waas",
@@ -1334,6 +1413,7 @@ describe('public API error contracts', () => {
     await expect(
       publicErrors([
         ['wallet.listAccess', () => oms.wallet.listAccess()],
+        ['wallet.listAccessPage', () => oms.wallet.listAccessPage()],
         ['wallet.listAccessPages', () => iterateAccessPages(oms.wallet.listAccessPages())],
         ['wallet.revokeAccess', () => oms.wallet.revokeAccess({ credentialId: 'credential-1' })]
       ])
@@ -1349,7 +1429,7 @@ describe('public API error contracts', () => {
                 "status": 401,
                 "txnId": null,
                 "upstreamError": {
-                  "code": 7207,
+                  "code": "7207",
                   "message": "Unauthorized",
                   "name": "Unauthorized",
                   "service": "waas",
@@ -1363,12 +1443,31 @@ describe('public API error contracts', () => {
                 "code": "OMS_REQUEST_FAILED",
                 "message": "Unauthorized",
                 "name": "OMSWalletRequestError",
+                "operation": "wallet.listAccessPage",
+                "retryable": false,
+                "status": 401,
+                "txnId": null,
+                "upstreamError": {
+                  "code": "7207",
+                  "message": "Unauthorized",
+                  "name": "Unauthorized",
+                  "service": "waas",
+                  "status": 401,
+                },
+              },
+              "label": "wallet.listAccessPage",
+            },
+            {
+              "error": {
+                "code": "OMS_REQUEST_FAILED",
+                "message": "Unauthorized",
+                "name": "OMSWalletRequestError",
                 "operation": "wallet.listAccessPages",
                 "retryable": false,
                 "status": 401,
                 "txnId": null,
                 "upstreamError": {
-                  "code": 7207,
+                  "code": "7207",
                   "message": "Unauthorized",
                   "name": "Unauthorized",
                   "service": "waas",
@@ -1387,7 +1486,7 @@ describe('public API error contracts', () => {
                 "status": 401,
                 "txnId": null,
                 "upstreamError": {
-                  "code": 7207,
+                  "code": "7207",
                   "message": "Unauthorized",
                   "name": "Unauthorized",
                   "service": "waas",
@@ -1408,7 +1507,8 @@ describe('public API error contracts', () => {
           {
             error: 'Unavailable',
             code: 'INDEXER_UNAVAILABLE',
-            message: 'Indexer is unavailable'
+            message: 'Indexer is unavailable',
+            cause: 'upstream node timed out'
           },
           503
         )
@@ -1426,23 +1526,24 @@ describe('public API error contracts', () => {
         })
       )
     ).resolves.toMatchInlineSnapshot(`
-          {
-            "code": "OMS_HTTP_ERROR",
-            "message": "Indexer is unavailable",
-            "name": "OMSWalletRequestError",
-            "operation": "indexer.getBalances",
-            "retryable": true,
-            "status": 503,
-            "txnId": null,
-            "upstreamError": {
-              "code": "INDEXER_UNAVAILABLE",
-              "message": "Indexer is unavailable",
-              "name": "Unavailable",
-              "service": "indexer",
-              "status": 503,
-            },
-          }
-        `);
+      {
+        "code": "OMS_HTTP_ERROR",
+        "message": "Indexer is unavailable",
+        "name": "OMSWalletRequestError",
+        "operation": "indexer.getBalances",
+        "retryable": true,
+        "status": 503,
+        "txnId": null,
+        "upstreamError": {
+          "cause": "upstream node timed out",
+          "code": "INDEXER_UNAVAILABLE",
+          "message": "Indexer is unavailable",
+          "name": "Unavailable",
+          "service": "indexer",
+          "status": 503,
+        },
+      }
+    `);
   });
 
   it('snapshots Solana indexer backend errors with upstream details', async () => {
@@ -1785,7 +1886,7 @@ describe('public API error contracts', () => {
       upstreamError: {
         service: 'waas',
         name: 'WebrpcBadResponse',
-        code: -5,
+        code: '-5',
         message: 'bad response',
         status: 502
       }
@@ -1804,7 +1905,7 @@ describe('public API error contracts', () => {
             "status": 502,
             "txnId": null,
             "upstreamError": {
-              "code": -5,
+              "code": "-5",
               "message": "bad response",
               "name": "WebrpcBadResponse",
               "service": "waas",
@@ -1888,6 +1989,7 @@ function serializeUpstreamError(error: unknown): SerializedUpstreamError | null 
     name?: unknown;
     code?: unknown;
     message?: unknown;
+    cause?: unknown;
     status?: unknown;
   };
   return {
@@ -1895,6 +1997,8 @@ function serializeUpstreamError(error: unknown): SerializedUpstreamError | null 
     name: stringOrNull(value.name),
     code: numberOrStringOrNull(value.code),
     message: stringOrNull(value.message),
+    // Only present when the service gave a reason.
+    ...(value.cause === undefined ? {} : { cause: stringOrNull(value.cause) }),
     status: numberOrNull(value.status)
   };
 }
@@ -1933,12 +2037,15 @@ class ThrowingSetStorage implements StorageManager {
 
 function createOmsClientWithSession(params: CreateOmsClientParams = {}): OMSWallet {
   const oms = createOmsClient(params);
-  (oms.wallet as any).persistSession('wallet-id', '0x9999999999999999999999999999999999999999', {
-    expiresAt: '2099-01-01T00:00:00Z',
-    auth: { type: 'email', email: 'user@example.com' },
-    signerCredentialId: '0x04' + '11'.repeat(64),
-    signerKeyType: 'ecdsa-p256-sha256'
-  });
+  (oms.wallet as any).persistSession(
+    testWalletAccount('wallet-id', '0x9999999999999999999999999999999999999999'),
+    {
+      expiresAt: '2099-01-01T00:00:00Z',
+      auth: { type: 'email', email: 'user@example.com' },
+      signerCredentialId: '0x04' + '11'.repeat(64),
+      signerKeyType: 'ecdsa-p256-sha256'
+    }
+  );
   return oms;
 }
 
@@ -1997,13 +2104,6 @@ function encodeTestOidcState(payload: {
   return btoa(binary).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
 }
 
-function jsonResponse(body: unknown, status = 200): Response {
-  return new Response(JSON.stringify(body), {
-    status,
-    headers: { 'Content-Type': 'application/json' }
-  });
-}
-
 function stringOrNull(value: unknown): string | null {
   return typeof value === 'string' ? value : null;
 }
@@ -2036,5 +2136,6 @@ interface SerializedUpstreamError {
   name: string | null;
   code: number | string | null;
   message: string | null;
+  cause?: string | null;
   status: number | null;
 }

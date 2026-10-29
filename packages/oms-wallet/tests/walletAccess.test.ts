@@ -1,30 +1,13 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
-import { WalletClient } from '../src/clients/walletClient';
-import type { CredentialSigner } from '../src/credentialSigner';
 import { Networks } from '../src/networks';
-import { MemoryStorageManager } from '../src/storageManager';
 import { WalletType } from '../src/types/waas';
-
-class MockSigner implements CredentialSigner {
-  readonly signingAlgorithm = 'ecdsa-p256-sha256';
-
-  async credentialId(): Promise<string> {
-    return '0x04' + '11'.repeat(64);
-  }
-
-  async nextNonce(): Promise<string> {
-    return '42';
-  }
-
-  async sign(): Promise<string> {
-    return '0x' + '22'.repeat(64);
-  }
-
-  async hasCredential(): Promise<boolean> {
-    return true;
-  }
-}
+import {
+  createWalletWithSession,
+  jsonResponse,
+  requestCount,
+  waitForRequest
+} from './fixtures/helpers.js';
 
 afterEach(() => {
   vi.restoreAllMocks();
@@ -65,6 +48,52 @@ describe('WalletClient access management', () => {
     expect(requests).toEqual([
       { walletId: 'wallet-id', page: { limit: 2 } },
       { walletId: 'wallet-id', page: { limit: 2, cursor: 'cursor-2' } }
+    ]);
+  });
+
+  it('reads one access page and resumes from its cursor', async () => {
+    const requests: unknown[] = [];
+    const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = input.toString();
+
+      if (url.endsWith('/ListAccess')) {
+        requests.push(JSON.parse(init?.body as string));
+        if (requests.length === 1) {
+          return jsonResponse({
+            credentials: [testCredential('11')],
+            page: { limit: 1, cursor: 'cursor-2' }
+          });
+        }
+        return jsonResponse({
+          credentials: [testCredential('22', false)],
+          page: { limit: 1, cursor: '' }
+        });
+      }
+
+      throw new Error(`Unexpected request: ${url}`);
+    });
+    vi.stubGlobal('fetch', fetchMock);
+
+    const wallet = createWalletWithSession();
+
+    const first = await wallet.listAccessPage({ pageSize: 1, type: 'direct' });
+    expect(first).toEqual({
+      grants: [testCredential('11')],
+      page: { limit: 1, cursor: 'cursor-2' }
+    });
+
+    const second = await wallet.listAccessPage({
+      pageSize: 1,
+      type: 'direct',
+      cursor: first.page?.cursor
+    });
+    expect(second).toEqual({
+      grants: [testCredential('22', false)],
+      page: { limit: 1 }
+    });
+    expect(requests).toEqual([
+      { walletId: 'wallet-id', page: { limit: 1 }, type: 'direct' },
+      { walletId: 'wallet-id', page: { limit: 1, cursor: 'cursor-2' }, type: 'direct' }
     ]);
   });
 
@@ -255,6 +284,38 @@ describe('WalletClient access management', () => {
     ]);
   });
 
+  it('surfaces the per-wallet session cap as a request error from authorizeRemoteAccess', async () => {
+    const message =
+      'Too many active sessions for this wallet; revoke one before authorizing another';
+    const fetchMock = vi.fn(async () =>
+      jsonResponse({ code: 7208, name: 'SessionCapExceeded', message, status: 409 }, 409)
+    );
+    vi.stubGlobal('fetch', fetchMock);
+    const wallet = createWalletWithSession();
+
+    const error = await wallet
+      .authorizeRemoteAccess({
+        credentialId: 'credential-id',
+        network: Networks.polygon,
+        grants: [
+          { kind: 'nativeTransfer', to: '0x1111111111111111111111111111111111111111', limit: 1n }
+        ],
+        expiresAt: '2099-01-01T00:00:00Z'
+      })
+      .catch((reason: unknown) => reason);
+
+    expect(error).toMatchObject({
+      name: 'OMSWalletRequestError',
+      code: 'OMS_REQUEST_FAILED',
+      operation: 'wallet.authorizeRemoteAccess',
+      status: 409,
+      retryable: false,
+      upstreamError: { service: 'waas', name: 'SessionCapExceeded', code: '7208', status: 409 }
+    });
+    expect(requestCount(fetchMock, '/AuthorizeRemoteAccess')).toBe(1);
+    expect(wallet.session).toBeDefined();
+  });
+
   it('creates, activates, and signs a message with a Solana wallet', async () => {
     const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
       const url = input.toString();
@@ -283,8 +344,7 @@ describe('WalletClient access management', () => {
 
     const wallet = createWalletWithSession();
 
-    await expect(wallet.createWallet({ type: WalletType.Solana })).resolves.toEqual({
-      walletAddress: '9xQeWvG816bUx9EPjHmaT23yvVMuZwHngkQF5JC9YjCy',
+    await expect(wallet.createWallet({ walletType: WalletType.Solana })).resolves.toEqual({
       wallet: {
         id: 'solana-wallet-id',
         type: 'solana',
@@ -360,6 +420,34 @@ describe('WalletClient access management', () => {
         used: 25n
       }
     ]);
+  });
+
+  it('rejects a remote session that belongs to another wallet', async () => {
+    const fetchMock = vi.fn(async (input: RequestInfo | URL) => {
+      const url = input.toString();
+      if (url.endsWith('/GetSession')) {
+        return jsonResponse({
+          session: {
+            sessionId: 'session-1',
+            walletId: 'other-wallet-id',
+            signerAddress: '0x1111111111111111111111111111111111111111',
+            grants: { entries: [] },
+            chainId: '80002',
+            expiresAt: '2099-01-01T00:00:00Z'
+          }
+        });
+      }
+      throw new Error(`Unexpected request: ${url}`);
+    });
+    vi.stubGlobal('fetch', fetchMock);
+
+    const wallet = createWalletWithSession();
+    await expect(wallet.getRemoteAccessSession({ sessionId: 'session-1' })).rejects.toMatchObject({
+      code: 'OMS_VALIDATION_ERROR',
+      operation: 'wallet.getRemoteAccessSession',
+      message: 'Session does not belong to the active wallet'
+    });
+    expect(requestCount(fetchMock, '/GetSession')).toBe(1);
   });
 
   it('rejects Solana message signing for an active Ethereum wallet', async () => {
@@ -459,7 +547,7 @@ describe('WalletClient access management', () => {
 
     await expect(iterator.next()).resolves.toEqual({
       done: false,
-      value: { grants: [testCredential('11')] }
+      value: { grants: [testCredential('11')], page: { cursor: 'cursor-2' } }
     });
 
     const secondPage = iterator.next();
@@ -494,6 +582,15 @@ describe('WalletClient access management', () => {
         networkFamily: 'bitcoin',
         keyOrigin: 'enclave',
         address: 'bc1invalid'
+      }
+    },
+    {
+      label: 'an Ethereum wallet without a hex address',
+      wallet: {
+        id: 'wallet-invalid',
+        networkFamily: 'evm',
+        keyOrigin: 'enclave',
+        address: 'TNPeeaaFB7K9cmo4uQpcU32zGK8G1NYqeL'
       }
     },
     {
@@ -572,30 +669,6 @@ describe('WalletClient access management', () => {
   });
 });
 
-function createWalletWithSession(): WalletClient {
-  const wallet = new WalletClient({
-    publishableKey: 'publishable-key',
-    projectId: 'project-id',
-    environment: testEnvironment(),
-    storage: new MemoryStorageManager(),
-    credentialSigner: new MockSigner()
-  });
-  (wallet as any).persistSession('wallet-id', '0x1111111111111111111111111111111111111111', {
-    expiresAt: '2099-01-01T00:00:00Z',
-    auth: { type: 'email', email: 'user@example.com' },
-    signerCredentialId: '0x04' + '11'.repeat(64),
-    signerKeyType: 'ecdsa-p256-sha256'
-  });
-  return wallet;
-}
-
-function jsonResponse(body: unknown): Response {
-  return new Response(JSON.stringify(body), {
-    status: 200,
-    headers: { 'Content-Type': 'application/json' }
-  });
-}
-
 function testCredential(seed = '11', isCaller = true) {
   return {
     type: 'direct',
@@ -603,28 +676,4 @@ function testCredential(seed = '11', isCaller = true) {
     expiresAt: '2099-01-01T00:00:00Z',
     isCaller
   };
-}
-
-function testEnvironment() {
-  return {
-    walletApiUrl: 'https://wallet.example',
-    indexerGatewayUrl: 'https://indexer.example',
-    solanaIndexerGatewayUrl: 'https://solana-indexer.example'
-  };
-}
-
-function requestCount(fetchMock: ReturnType<typeof vi.fn>, endpoint: string): number {
-  return fetchMock.mock.calls.filter(([input]) => input.toString().endsWith(endpoint)).length;
-}
-
-async function waitForRequest(
-  fetchMock: ReturnType<typeof vi.fn>,
-  endpoint: string,
-  count = 1
-): Promise<void> {
-  for (let attempt = 0; attempt < 20; attempt += 1) {
-    if (requestCount(fetchMock, endpoint) >= count) return;
-    await new Promise((resolve) => setTimeout(resolve, 0));
-  }
-  throw new Error(`Timed out waiting for ${endpoint}`);
 }

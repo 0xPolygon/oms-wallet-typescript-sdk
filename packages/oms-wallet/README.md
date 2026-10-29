@@ -1,6 +1,6 @@
 # OMS Wallet TypeScript SDK
 
-Build non-custodial EVM and Solana wallet experiences in TypeScript with OMS Wallet: email and OIDC
+Build non-custodial EVM, Solana, and Tron wallet experiences in TypeScript with OMS Wallet: email and OIDC
 auth, session restore, message signing, transaction submission, attested opt-in key import, smart
 sessions, and token balance queries.
 
@@ -45,7 +45,7 @@ The SDK derives the wallet API and indexer endpoints from the publishable key pr
 ## Quick Start
 
 ```typescript
-import { Networks, OMSWallet } from '@polygonlabs/oms-wallet'
+import { Networks, OMSWallet, WalletType } from '@polygonlabs/oms-wallet'
 
 const omsWallet = new OMSWallet({
   publishableKey: 'your-publishable-key',
@@ -55,10 +55,11 @@ const omsWallet = new OMSWallet({
 await omsWallet.wallet.startEmailAuth({ email: 'user@example.com' })
 
 // 2. User enters the code from their inbox.
-const { walletAddress } = await omsWallet.wallet.completeEmailAuth({ code: '123456' })
+const { wallet } = await omsWallet.wallet.completeEmailAuth({ code: '123456' })
+if (wallet.type !== WalletType.Ethereum) throw new Error('Expected an Ethereum wallet')
 
 // 3. The wallet is ready
-console.log('Wallet address:', walletAddress)
+console.log('Wallet address:', wallet.address)
 
 // 4. Prove the wallet can sign without moving funds.
 const signature = await omsWallet.wallet.signMessage({
@@ -69,7 +70,7 @@ console.log('Signature:', signature)
 
 // 5. Read balances from the chains your app needs.
 const balances = await omsWallet.indexer.getBalances({
-  walletAddress,
+  walletAddress: wallet.address,
   networks: [Networks.polygon, Networks.base, Networks.arbitrum],
   includeMetadata: true,
 })
@@ -82,8 +83,8 @@ console.log('Balances:', balances)
 
 | Property | Type | Description |
 |---|---|---|
-| `omsWallet.wallet` | `OMSWalletClient` | Authentication, signing, and transaction submission. |
-| `omsWallet.indexer` | `OMSWalletIndexerClient` | Read token balances and on-chain state. |
+| `omsWallet.wallet` | `WalletClient` | Authentication, signing, and transaction submission. |
+| `omsWallet.indexer` | `IndexerClient` | Read token balances and on-chain state. |
 
 ## Security Model
 
@@ -91,7 +92,7 @@ The SDK stores completed wallet-session metadata in the configured storage so ap
 
 In browsers, wallet API requests are signed with a non-extractable WebCrypto P-256 credential. Persisted session data contains wallet and auth metadata only; the browser credential remains managed by WebCrypto. Non-browser runtimes fall back to in-memory storage unless you provide a custom `StorageManager`.
 
-Completed auth requests ask for a one-week session lifetime by default. You can request a shorter or longer lifetime up to 30 days. Expired sessions become inactive before protected wallet operations; call `signOut()` to end the session and clear active wallet state.
+Completed auth requests ask for the maximum session lifetime, 180 days, by default; you can request a shorter one. The session's `expiresAt` is its current expiry: the wallet API extends it with use, up to the requested lifetime, and the SDK refreshes it. A session active in memory whose local expiry has passed is checked with the wallet API before it is treated as ended; a stored session whose local expiry passed less than about 12 hours ago is restored and checked with the wallet API, and one that passed longer ago is discarded on restore without asking it. Call `signOut()` to end the session and clear active wallet state.
 
 ## Authentication Flow
 
@@ -102,7 +103,7 @@ OMS supports email-based OTP, OIDC ID-token auth, and OIDC authorization-code re
 Email OTP is a two-step flow:
 
 1. **`startEmailAuth({ email, sessionLifetimeSeconds? })`** — validates the requested session lifetime, clears any active session, and sends a one-time code to the user's inbox.
-2. **`completeEmailAuth({ code })`** — verifies the code, then automatically loads an existing wallet or creates a new one if none exists. Returns `{ walletAddress, wallet, wallets, credential }`.
+2. **`completeEmailAuth({ code })`** — verifies the code, then automatically selects a wallet of the requested type (see [Automatic wallet selection](#automatic-wallet-selection)). Returns `{ wallet, wallets, claimableWallets, credential }`.
 
 Use manual wallet selection when the app needs to present wallet choices:
 
@@ -115,9 +116,50 @@ const selection = await omsWallet.wallet.completeEmailAuth({
 await selection.selectWallet({ walletId: selection.wallets[0].id })
 // or:
 await selection.createAndSelectWallet({ reference: 'main' })
+// or, to claim a preallocated wallet:
+await selection.claimAndSelectWallet({ walletId: selection.claimableWallets[0].id })
 ```
 
 The returned pending selection is bound to the verified auth flow and signer. Hold that object and complete selection through it instead of saving `{ wallets }` and later calling global wallet activation methods.
+
+### Automatic wallet selection
+
+Every completed sign-in (email OTP, OIDC ID token, OIDC redirect) with the default automatic wallet
+selection activates a wallet of the requested `walletType` (Ethereum by default) in this order:
+
+1. The first wallet of that type the user already owns.
+2. Otherwise, a claimable wallet of that type: the SDK claims it and activates it.
+3. Otherwise, a newly created wallet.
+
+If the claim fails, the sign-in fails; the SDK does not fall back to creating a wallet.
+
+### Claimable wallets
+
+A project can preallocate a receive-only wallet for a user's email address before that user signs
+in, so the address can be funded ahead of time. After the user signs in with that verified email
+(email OTP, or an OIDC provider that reports it as verified), the wallet is claimable: claiming
+links it to the user and lets their session sign with it. The wallet API reports claimable wallets
+only when sign-in completes; `listWallets()` does not include them until they are claimed.
+
+- `result.claimableWallets` on a completed sign-in lists the wallets still claimable, of every type.
+  A wallet claimed during that sign-in is not included.
+- `selection.claimableWallets` on a pending manual selection lists the claimable wallets of the
+  requested type; `selection.claimAndSelectWallet({ walletId })` claims one and activates it.
+- `omsWallet.wallet.claimWallet({ walletId })` claims a wallet from an active session and makes it
+  the active wallet, like `useWallet`.
+
+```typescript
+const result = await omsWallet.wallet.completeEmailAuth({ code: '123456' })
+
+const solanaClaim = result.claimableWallets.find((wallet) => wallet.type === WalletType.Solana)
+if (solanaClaim) {
+  await omsWallet.wallet.claimWallet({ walletId: solanaClaim.id })
+}
+```
+
+A rejected claim (the wallet is not allocated to the user's verified email, or was already claimed)
+fails with `OMSWalletRequestError` (`OMS_REQUEST_FAILED`, `upstreamError.name` `'AccountNotFound'`)
+and leaves the active wallet and pending selection unchanged.
 
 ### OIDC Redirect Auth
 
@@ -134,8 +176,8 @@ void omsWallet.wallet.signInWithOidcRedirect({ provider: OmsRelayOidcProviders.a
 
 // On the callback page:
 const result = await omsWallet.wallet.completeOidcRedirectAuth()
-if (result && 'walletAddress' in result) {
-  console.log('Wallet address:', result.walletAddress)
+if (result && 'wallet' in result) {
+  console.log('Wallet address:', result.wallet.address)
 }
 ```
 
@@ -151,8 +193,8 @@ window.location.assign(authorizationUrl)
 
 // On the callback route:
 const result = await omsWallet.wallet.completeOidcRedirectAuth()
-if (result && 'walletAddress' in result) {
-  console.log('Wallet address:', result.walletAddress)
+if (result && 'wallet' in result) {
+  console.log('Wallet address:', result.wallet.address)
 }
 ```
 
@@ -195,7 +237,7 @@ const result = await omsWallet.wallet.signInWithOidcIdToken({
   audience: 'YOUR_WEB_CLIENT_ID',
 })
 
-console.log('Wallet address:', result.walletAddress)
+console.log('Wallet address:', result.wallet.address)
 ```
 
 Use `walletSelection: 'manual'` with `signInWithOidcIdToken` when your app needs
@@ -203,41 +245,96 @@ to present its own wallet picker after the token is verified.
 
 ### Session State
 
-Email and OIDC auth both persist the active wallet session in the configured SDK storage. The versioned session record is scoped to the publishable key project and API environment. A client rejects and clears a stored session when either scope differs. Browser storage defaults to `localStorage` when available; non-browser runtimes fall back to in-memory storage unless you provide a custom `StorageManager`. Browser signing defaults to a non-extractable WebCrypto P-256 credential using `ecdsa-p256-sha256`. Completed auth requests ask the wallet API for a one-week session lifetime.
+Email and OIDC auth both persist the active wallet session in the configured SDK storage. The versioned session record is scoped to the publishable key project and API environment. A client rejects and clears a stored session when either scope differs. Browser storage defaults to `localStorage` when available; non-browser runtimes fall back to in-memory storage unless you provide a custom `StorageManager`. Browser signing defaults to a non-extractable WebCrypto P-256 credential using `ecdsa-p256-sha256`. Completed auth requests ask the wallet API for a 180-day session lifetime unless you pass a shorter one.
 
-Pass `sessionLifetimeSeconds` to `startEmailAuth`, `signInWithOidcIdToken`, `startOidcRedirectAuth`, `completeOidcRedirectAuth`, or `signInWithOidcRedirect` to request a different session lifetime. Values must be integer seconds from `1` through `2592000` (30 days). For OIDC redirects, values passed at start are stored with the pending redirect state and used on callback completion unless completion overrides them.
+Pass `sessionLifetimeSeconds` to `startEmailAuth`, `signInWithOidcIdToken`, `startOidcRedirectAuth`, `completeOidcRedirectAuth`, or `signInWithOidcRedirect` to request a different session lifetime. Values must be integer seconds from `1` through `15552000` (180 days), exported as `MAX_SESSION_LIFETIME_SECONDS`; the default, also 180 days, is exported as `DEFAULT_SESSION_LIFETIME_SECONDS`. The wallet API also ends a session after 10 days without use. On wallet API versions without sliding expiry, the requested lifetime is clamped to the server maximum (30 days) and there is no idle timeout, so the 180-day default gives a fixed 30-day session there. For OIDC redirects, values passed at start are stored with the pending redirect state and used on callback completion unless completion overrides them.
 
-Use `omsWallet.wallet.walletAddress` when you only need the active wallet address. Use `omsWallet.wallet.session` when you also need credential expiry or structured auth metadata.
+Use `omsWallet.wallet.activeWallet` for the active wallet. It has the same shape as the entries `listWallets()` returns and is `undefined` when signed out. Narrow on `type` to get the address type for that wallet family; Ethereum addresses are typed as viem `Address`. Use `omsWallet.wallet.session` for credential expiry and structured auth metadata. It is defined exactly when `activeWallet` is.
+
+`session.expiresAt` is the current expiry, not a fixed end time. The wallet API slides it forward while the session is used, up to the lifetime requested at sign-in, and the SDK refreshes it: after restoring a stored session, after the local expiry is reached, and in the background after wallet activity. An idle session ends about 10 days after its last use, and never after the requested lifetime. When the local expiry passes, the SDK ends the session at once if its lifetime has run out; otherwise it reads the current expiry from the wallet API and the wallet API decides. Reading the expiry counts as use, so in a hidden or prerendering browser page that read waits until the page is shown; with a page open in the foreground and an accurate device clock, an ended session is noticed at its expiry (browsers delay timers in background tabs). A stored session whose saved expiry has passed may still be active on the wallet API, since requests after the SDK's last read can extend it there, so unless its lifetime has run out it is restored and the read after the restore decides whether it continues. When a read cannot reach the wallet API, the SDK keeps the session and retries the read while the page is shown, at most 15 minutes apart, until it succeeds. `credential.expiresAt` in auth results is the expiry at sign-in. When the local expiry is reached while the wallet API is unreachable, the SDK keeps the session and checks again later; protected operations then fail with the request error rather than `OMS_SESSION_EXPIRED`.
 
 ```typescript
-const walletAddress = omsWallet.wallet.walletAddress
-const { expiresAt, auth } = omsWallet.wallet.session
-const accountEmail = auth?.email
-const authLabel = auth?.type === 'oidc'
-  ? auth.providerLabel ?? auth.provider ?? auth.issuer
-  : auth?.type === 'email'
+import { WalletType } from '@polygonlabs/oms-wallet'
+
+const activeWallet = omsWallet.wallet.activeWallet
+if (!activeWallet) {
+  // Show sign-in.
+} else if (activeWallet.type === WalletType.Ethereum) {
+  console.log('EVM address:', activeWallet.address) // viem Address
+}
+
+const session = omsWallet.wallet.session
+const accountEmail = session?.auth.email
+const authLabel = session?.auth.type === 'oidc'
+  ? session.auth.providerLabel ?? session.auth.provider ?? session.auth.issuer
+  : session?.auth.type === 'email'
     ? 'Email'
     : 'Unknown'
 ```
 
-The `session` value is a readonly snapshot. Changing the returned object does not update SDK state or persisted session metadata.
+`activeWallet` and `session` return frozen objects, and the same object until the value changes, so you can compare reads by reference.
 
 Use `omsWallet.wallet.getIdToken({ ttlSeconds, customClaims })` to request an ID token for the active wallet session.
 
 Pending email OTP and OIDC redirect state are not exposed through `session`; use the auth method results to drive pending UI.
 
-The SDK makes expired sessions inactive before protected wallet operations and throws `OMSWalletSessionError` with code `OMS_SESSION_EXPIRED`. It clears the active signer/session state, but keeps the expired session metadata in storage until the app explicitly starts a new auth flow or calls `signOut()`. Subscribe with `omsWallet.wallet.onSessionExpired` to route the user back to sign-in while preserving the expired session snapshot for email OTP reauth or Google account hints, including after a page refresh:
+### Keep your UI in sync
+
+`onSessionChange` calls your listener after every change of `activeWallet` or `session`: a
+sign-in, a wallet switch, an expiry update, a sign-out, or an expiry, including ones made in
+other tabs of your app. Subscribe first, then read `activeWallet` and `session`, so no change is
+missed. Listeners run shortly after the change, never during the call that made it, so the getters
+are always the current state.
 
 ```typescript
-const omsWallet = new OMSWallet({
-  publishableKey: 'your-publishable-key',
-})
+const unsubscribe = omsWallet.wallet.onSessionChange((event) => {
+  // event.activeWallet and event.session are the state right after the change.
+  renderWallet(event.activeWallet, event.session)
 
-const unsubscribe = omsWallet.wallet.onSessionExpired(({ session }) => {
-  // Use the expired session metadata to populate and display your reauthentication UI.
-  console.info('Session expired:', session)
+  if (event.reason === 'expired') {
+    // Prefill reauthentication with the expired session. `wallet` is undefined when it expired
+    // during a pending manual wallet selection.
+    showSignIn(event.expiredSession.session.auth)
+  }
 })
+renderWallet(omsWallet.wallet.activeWallet, omsWallet.wallet.session)
+
+// Later, when the listener is no longer needed (for example when a component unmounts):
+unsubscribe()
 ```
+
+`event.reason` is one of:
+
+| Reason | Meaning |
+| --- | --- |
+| `signedIn` | A sign-in made a wallet active, here or in another tab |
+| `walletChanged` | Another wallet of the same sign-in became active, here or in another tab |
+| `expiryUpdated` | `session.expiresAt` moved; safe to ignore unless you show it |
+| `signedOut` | There is no session any more and it did not expire: `signOut()`, a new sign-in started while signed in, or another tab taking over. Not necessarily the user's choice; don't redirect away from a sign-in in progress |
+| `expired` | The session expired, or the wallet API no longer accepts it |
+
+A listener added while signed out first receives the last `expired` change, if a session expired
+since the last sign-in or sign-out, for example while the page was closed. Each new listener
+receives it, so keep one app-level listener and keep the prompt as state.
+
+In React, use `useSyncExternalStore`; the getters return the same object until something changes:
+
+```typescript
+import { useCallback, useSyncExternalStore } from 'react'
+
+function useOMSWalletSession(wallet: WalletClient) {
+  const subscribe = useCallback((onChange: () => void) => wallet.onSessionChange(onChange), [wallet])
+  const activeWallet = useSyncExternalStore(subscribe, () => wallet.activeWallet)
+  const session = useSyncExternalStore(subscribe, () => wallet.session)
+  return { activeWallet, session }
+}
+```
+
+Tabs of one origin share the session: a sign-in, wallet switch, or sign-out in one tab is applied
+in the others, which receive the matching change. A session that ended on its own in another tab is
+noticed when the tab is shown or at its next wallet call.
+
+When the local expiry has passed and the wallet API confirms the session ended (or does not support extending it), the SDK makes the session inactive before protected wallet operations and throws `OMSWalletSessionError` with code `OMS_SESSION_EXPIRED`. The same happens when the wallet API reports that the session credential no longer exists or has expired, or, when the SDK checks the expiry, that the credential was revoked. It keeps the expired session metadata in storage until the app starts a new auth flow or calls `signOut()`, so the `expired` change is replayed after a page refresh.
 
 To end the session, call:
 
@@ -249,8 +346,8 @@ await omsWallet.wallet.signOut()
 
 ### Manage and Import Wallets
 
-`listWallets`, `useWallet`, and `createWallet` manage the wallets attached to the authenticated
-account. Every returned wallet includes `keyOrigin`, which is `WalletKeyOrigin.Enclave` for a key
+`listWallets`, `useWallet`, `claimWallet`, and `createWallet` manage the wallets attached to the
+authenticated account ([claimable wallets](#claimable-wallets) are not listed until claimed). Every returned wallet includes `keyOrigin`, which is `WalletKeyOrigin.Enclave` for a key
 created by WaaS and `WalletKeyOrigin.Imported` for an imported key.
 
 Wallet import verifies AWS Nitro enclave attestations against the measurements managed by each OMS
@@ -281,8 +378,8 @@ console.log(wallet.keyOrigin === WalletKeyOrigin.Imported)
 
 The high-level method validates the key locally, fetches an attested recipient key, verifies the
 Nitro certificate chain, PCR0, freshness, nonce, signature, and request/response binding, and HPKE
-encrypts the private key before sending it. EVM keys can be 32 raw bytes or hexadecimal text;
-Solana keys can be a 32-byte seed, 64-byte keypair, or unambiguous base58 text. Pass raw bytes when
+encrypts the private key before sending it. EVM and Tron keys (both secp256k1) can be 32 raw bytes
+or hexadecimal text; Solana keys can be a 32-byte seed, 64-byte keypair, or unambiguous base58 text. Pass raw bytes when
 a valid base58 encoding is itself exactly 32 or 64 characters, because those string lengths are
 rejected as ambiguous. Imported keys are never stored by the SDK. Import also works while a manual
 wallet selection is pending, provided its wallet type matches the pending selection.
@@ -317,7 +414,7 @@ const privyExport = await response.json() as {
 }
 
 await omsWallet.wallet.importEncryptedWallet({
-  type: WalletType.Ethereum,
+  walletType: WalletType.Ethereum,
   keyMaterial: {
     keyId: recipient.keyId,
     cipherSuite: recipient.cipherSuite,
@@ -336,16 +433,17 @@ For cross-origin browser use, the WaaS deployment must include `X-Attestation-Do
 
 ### Sign and Verify EVM Messages
 
-EVM message signing and verification require an Ethereum wallet. Signing requires a network;
-verification can omit it for EOA signatures but requires it for smart-wallet signatures. Narrow the
-active wallet account before passing its address to the verification method:
+EVM message signing requires an active Ethereum wallet and a network. Verification can omit the
+network for EOA signatures but requires it for smart-wallet signatures. Every `isValid…Signature`
+method verifies against `walletAddress`, which needs no session, or against the active wallet's
+address when `walletAddress` is omitted. Omitting it without an active session throws
+`OMSWalletSessionError`; omitting it while the active wallet belongs to another family throws
+`OMSWalletValidationError` before any request.
 
 ```typescript
 import { Networks, WalletType } from '@polygonlabs/oms-wallet'
 
-const activeWallet = (await omsWallet.wallet.listWallets()).find(
-  (wallet) => wallet.address === omsWallet.wallet.walletAddress,
-)
+const activeWallet = omsWallet.wallet.activeWallet
 if (activeWallet?.type !== WalletType.Ethereum) {
   throw new Error('An Ethereum wallet is required')
 }
@@ -380,9 +478,7 @@ const typedData = {
   message: { orderId: 1042n, amount: 1_000_000n },
 } as const
 
-const activeWallet = (await omsWallet.wallet.listWallets()).find(
-  (wallet) => wallet.address === omsWallet.wallet.walletAddress,
-)
+const activeWallet = omsWallet.wallet.activeWallet
 if (activeWallet?.type !== WalletType.Ethereum) {
   throw new Error('An Ethereum wallet is required')
 }
@@ -403,12 +499,12 @@ const isValid = await omsWallet.wallet.isValidTypedDataSignature({
 ### Query Balances
 
 ```typescript
-const { walletAddress } = omsWallet.wallet
-if (!walletAddress) throw new Error('No active wallet session')
+const activeWallet = omsWallet.wallet.activeWallet
+if (activeWallet?.type !== WalletType.Ethereum) throw new Error('No active Ethereum wallet')
 
 const result = await omsWallet.indexer.getBalances({
   networks: [Networks.polygon, Networks.base, Networks.arbitrum],
-  walletAddress,
+  walletAddress: activeWallet.address,
   includeMetadata: true,
 })
 
@@ -453,7 +549,7 @@ message verification:
 ```typescript
 import { WalletType } from '@polygonlabs/oms-wallet'
 
-const { wallet } = await omsWallet.wallet.createWallet({ type: WalletType.Solana })
+const { wallet } = await omsWallet.wallet.createWallet({ walletType: WalletType.Solana })
 
 const signature = await omsWallet.wallet.signSolanaMessage({
   message: 'some message to sign',
@@ -500,14 +596,89 @@ only the rent for a newly created token account is paid through the returned fee
 
 Pass `contractAddresses` to filter balances to specific token contracts. Omit `networks` to query mainnets by default, or pass `networkType: 'TESTNETS'` / `'ALL'`. With `includeMetadata: true`, ERC-20 decimals are available as `contractInfo.decimals`. The response is paginated; pass `page` when requesting later pages.
 
+### Tron Wallets
+
+Tron wallets are EOAs and always execute in native mode, so the Tron methods take no `mode`
+parameter. Create one with `createWallet({ walletType: WalletType.Tron })`, sign in with
+`walletType: WalletType.Tron`, or import a secp256k1 private key with `type: 'tron'`. Tron addresses
+are Base58Check strings (`T…`). Supported networks are `TronNetworks.mainnet` and
+`TronNetworks.nile`. TRC-10 tokens are not supported.
+
+```typescript
+import { TronNetworks, WalletType } from '@polygonlabs/oms-wallet'
+
+const { wallet } = await omsWallet.wallet.createWallet({ walletType: WalletType.Tron })
+
+const signature = await omsWallet.wallet.signTronMessage({ message: 'some message to sign' })
+const isValid = await omsWallet.wallet.isValidTronMessageSignature({
+  walletAddress: wallet.address,
+  message: 'some message to sign',
+  signature,
+})
+
+// Replace with the Base58Check (`T…`) address that should receive the funds.
+const recipient = '<recipient T… address>'
+
+// TRX transfer. Values are in sun (1 TRX = 1,000,000 sun).
+const trxTransfer = await omsWallet.wallet.sendTronTransaction({
+  network: TronNetworks.nile,
+  to: recipient,
+  value: 1_000_000n,
+})
+
+// TRC-20 transfer. The wallet service ABI-encodes the call; address arguments accept `T…`.
+const trc20Transfer = await omsWallet.wallet.callTronContract({
+  network: TronNetworks.nile,
+  contractAddress: 'TXYZopYRdj2D9XRtbG411XZZ3kM5VkAeBf',
+  method: 'transfer',
+  args: [
+    { type: 'address', value: recipient },
+    { type: 'uint256', value: '1000000' },
+  ],
+})
+```
+
+`signTronTypedData` and `isValidTronTypedDataSignature` sign and verify TIP-712 typed data, whose
+address values may be Base58Check.
+
+Omitting `data` from `sendTronTransaction` sends a plain TRX transfer. Passing `data`, even `'0x'`,
+makes the transaction a contract call: `'0x'` calls the recipient contract's payable fallback.
+
+Tron transactions report `status: 'pending'` with a `txnHash` until the block is solidified (about a
+minute), so status polling returns as soon as the hash is available (`statusResolution: 'resolved'`).
+
+Every Tron account gets a daily free bandwidth allowance (600 points, about two TRX transfers),
+so prepared Tron transactions are often `sponsored` even without a relayer. When the allowance is
+spent, WaaS quotes the TRX to burn as a single native fee option, which a fee selector receives like
+any other fee option.
+
+Use `getTronBalances` for TRX and TRC-20 balances. Omit `networks` to query both Tron Mainnet and
+Nile, or pass either network explicitly. Results have the same structure as `getSolanaBalances`
+(`status`, `balances`, and per-network `errors`) with precision-safe raw and formatted balance
+strings. Token entries differ: TRC-20 entries have `tokenStandard: 'trc20'` and `contractAddress`,
+where Solana SPL entries have `tokenProgram` and `mintAddress`. Pass `contractAddresses` or `excludedContractAddresses` to filter tokens.
+Individual network failures are reported in `errors` without discarding balances returned by the
+other requested network.
+
+```typescript
+const balances = await omsWallet.indexer.getTronBalances({
+  walletAddress: wallet.address,
+  networks: [TronNetworks.nile],
+})
+
+for (const balance of balances.balances) {
+  console.log(balance.network, balance.symbol, balance.formattedBalance)
+}
+```
+
 ### Query Transaction History
 
 ```typescript
-const { walletAddress } = omsWallet.wallet
-if (!walletAddress) throw new Error('No active wallet session')
+const activeWallet = omsWallet.wallet.activeWallet
+if (activeWallet?.type !== WalletType.Ethereum) throw new Error('No active Ethereum wallet')
 
 const history = await omsWallet.indexer.getTransactionHistory({
-  walletAddress,
+  walletAddress: activeWallet.address,
   networks: [Networks.polygon, Networks.base, Networks.arbitrum],
   includeMetadata: true,
 })
@@ -527,7 +698,9 @@ Install `viem` when using `parseUnits` for transaction values:
 pnpm add viem
 ```
 
-`sendTransaction` has three overloaded signatures to cover the most common patterns.
+`sendTransaction` has four overloaded signatures: native transfers, raw `data` calls, ABI-encoded
+contract calls, and one that accepts the `SendTransactionParams` union. The examples below cover the
+first three.
 
 #### First Testnet Transfer
 
@@ -590,13 +763,16 @@ import { parseUnits } from 'viem'
 const tx = await omsWallet.wallet.callContract({
   network: Networks.amoy,
   contractAddress: '0x3333333333333333333333333333333333333333',
-  method: 'transfer(address,uint256)',
+  method: 'transfer',
   args: [
     { type: 'address', value: '0x1111111111111111111111111111111111111111' },
     { type: 'uint256', value: parseUnits('0.001', 18).toString() },
   ],
 })
 ```
+
+Pass the function name only (`'transfer'`, not `'transfer(address,uint256)'`). The wallet service
+builds the signature from the `args` types, and the SDK rejects a full signature locally.
 
 `sendTransaction` and `callContract` prepare and execute the transaction, then poll the wallet API for
 the latest transaction status. The response includes `txnId`, `status`, and `txnHash`
@@ -641,11 +817,11 @@ await omsWallet.wallet.sendTransaction({
 
 If the wallet API returns fee options, pass a selector to choose one. The
 selector receives `FeeOptionWithBalance` values. For Ethereum fees, `balance`
-contains the matching `TokenBalance` when available. For both Ethereum and Solana fees,
+contains the matching `TokenBalance` when available. For Ethereum, Solana, and Tron fees,
 `available` is formatted with the token decimals, `availableRaw` keeps the raw integer
 value, and `decimals` is the token decimal count used for formatting. Use
 `FeeOptionSelector.firstAvailable` to choose the first option the wallet can
-pay on Ethereum or Solana, or return `option.selection` from a custom selector. A
+pay on Ethereum, Solana, or Tron, or return `option.selection` from a custom selector. A
 sponsored transaction invokes the selector with an empty array. Resolve with `undefined`
 after acknowledging the free fee, or throw to stop execution.
 `FeeOptionSelector.firstAvailable` returns `undefined` for that empty array and continues
@@ -675,6 +851,8 @@ const tx = await omsWallet.wallet.sendTransaction({
 
 | Publishable key prefix | API base URL |
 |---|---|
+| `pk_local_sdbx_` | `https://sandbox-api.local.polygon-dev.technology` |
+| `pk_local_live_` | `https://api.local.polygon-dev.technology` |
 | `pk_dev_sdbx_` | `https://sandbox-api.dev.polygon-dev.technology` |
 | `pk_dev_live_` | `https://api.dev.polygon-dev.technology` |
 | `pk_stg_sdbx_` | `https://sandbox-api.stg.polygon-dev.technology` |
@@ -721,11 +899,19 @@ const omsWallet = new OMSWallet({
 
 OIDC redirect auth uses separate transient storage for verifier/state data. In browsers it defaults to `sessionStorage`; pass `redirectAuthStorage` to override it. Final wallet session metadata continues to use the configured `storage`.
 
+### Instances
+
+Creating `OMSWallet` again for the same project and environment returns the same wallet whenever the instances already share their stored session: in a browser with the default storage and signer, or with the same `storage`, `credentialSigner` and `redirectAuthStorage` objects. Both instances then see the same active wallet, session, sign-out and expiry events, so React StrictMode, hot reloads and per-screen construction cannot leave copies that drift apart. A new publishable key for the same project and environment (a rotated key) keeps the session, and later requests send the new key.
+
+Instances whose session lives only in memory stay separate sessions: the defaults in Node, or instances given different storage objects, such as one per user on a server. Passing one `storage` object to a second instance with a different `credentialSigner` or `redirectAuthStorage` throws `OMSWalletValidationError`, because the two would overwrite each other's session. Outside a browser the default signer keeps its key in memory, so instances sharing a `storage` must also share a `credentialSigner`.
+
+Stored sessions are kept per project and wallet API origin, so several projects, or one project in several environments, can be used on one origin.
+
 ## Reference
 
 ### Networks
 
-The SDK exports `Networks`, `findNetworkById(id)`, and `findNetworkByName(name)` for the networks currently configured by OMS. Each network has `id`, `name`, `nativeTokenSymbol`, `explorerUrl`, and `displayName`. `name` is the registry/routing slug, while `displayName` is the user-facing label. `Network` is a closed SDK type: use a `Networks` value or a successful lookup result.
+The SDK exports `Networks`, `findNetworkById(chainId)`, and `findNetworkByName(name)` for the networks currently configured by OMS. Each network has `id`, `name`, `nativeTokenSymbol`, `explorerUrl`, and `displayName`. `name` is the registry/routing slug, while `displayName` is the user-facing label. `Network` is a closed SDK type: use a `Networks` value or a successful lookup result.
 
 The `network` parameter on all transaction and signing methods accepts a `Network` from the SDK registry:
 
@@ -757,11 +943,17 @@ console.log(findNetworkById(80002)) // Networks.amoy
 | `Networks.avalancheTestnet` | 43113 | `avalanche-testnet` | Avalanche Testnet | AVAX | `https://subnets-test.avax.network/c-chain` |
 | `Networks.katana` | 747474 | `katana` | Katana | ETH | `https://katanascan.com` |
 
+Solana and Tron networks are string identifiers rather than `Network` values: `SolanaNetworks.mainnet`
+(`'solana:mainnet'`), `SolanaNetworks.devnet` (`'solana:devnet'`), `TronNetworks.mainnet`
+(`'tron:mainnet'`), and `TronNetworks.nile` (`'tron:nile'`).
+
 ### Errors
 
-Public methods throw `OMSWalletError` subclasses with stable SDK fields such as `code`, `operation`, `status`, and `retryable`. When a failure comes from a remote OMS service response or transport failure, the error also includes `upstreamError` with normalized wallet API or indexer details for logging and service-specific troubleshooting. For `OMSWalletError` values, branch application logic on the SDK-level `code`.
+Public methods throw `OMSWalletError` subclasses with stable SDK fields such as `code`, `operation`, `status`, and `retryable`. When a failure comes from a remote OMS service response or transport failure, the error also includes `upstreamError` with normalized wallet API or indexer details for logging and service-specific troubleshooting. For `OMSWalletError` values, branch application logic on the SDK-level `code`. `upstreamError.code` is a string; numeric WebRPC codes are stringified (for example `'7313'`). When the service explains the error, `upstreamError.cause` holds its reason, for example `'wallet is not activated on chain: it must receive TRX or a token before it can send'` behind the generic message `'The request was invalid'`. `operation` values are exported as the `WalletOperation`, `IndexerOperation`, and `RemoteAccessOperation` constants, typed `OMSWalletOperation`.
 
-For transaction writes, `OMS_TRANSACTION_EXECUTION_UNCONFIRMED` means the SDK has a `txnId` from preparation, but the execute request failed before the SDK could confirm whether the transaction was submitted; do not blindly resend the same write. `OMS_TRANSACTION_STATUS_LOOKUP_FAILED` means the transaction was submitted but status polling failed, so retry status lookup with the returned `txnId`. `retryable` describes the failed SDK operation, not the whole user intent.
+For transaction writes, `OMS_TRANSACTION_EXECUTION_UNCONFIRMED` means the SDK has a `txnId` from preparation, but the execute request failed before the SDK could confirm whether the transaction was submitted; do not blindly resend the same write. If the wallet API rejects the session credential (WaaS `KeyNotFound` 7202 or `KeyExpired` 7203), the write fails with `OMS_SESSION_EXPIRED` instead; nothing was submitted. If the wallet API refuses the transaction because simulation shows it would revert (WaaS `TransactionSimulationFailed`, `upstreamError.code` `'7314'`), the write fails with `OMSWalletRequestError` (`OMS_REQUEST_FAILED`, status 400) instead: the transaction was closed as failed and never submitted. Execute requests the wallet API refuses before submitting anything also fail with `OMS_REQUEST_FAILED`: `upstreamError.code` `'7201'` (invalid request signature), `'7205'` (credential usage limit exceeded), `'7206'` (nonce still rejected after the resends below), or `'7207'` (`Unauthorized`), and so do Tron execute requests refused before broadcast with `'7200'` (`InvalidRequest`, for example an insufficient balance) or `'7310'` (`InvalidFeeOption`, for example a resource cost above the quote), and execute requests the SDK never sent because signing failed or the request deadline passed first. Signed wallet API requests fail after 30 seconds, counting their wait for other session requests, their signing and the whole response; the call returns by then even if the signer has not finished, and a signature that finishes later is never sent. `OMS_TRANSACTION_STATUS_LOOKUP_FAILED` means the transaction was submitted but status polling failed, so retry status lookup with the returned `txnId`. `retryable` describes the failed SDK operation, not the whole user intent.
+
+Requests signed with one credential are sent one at a time, in order, by every client in the process and across tabs where the browser supports Web Locks, so the wallet API does not reject them for a stale nonce. Requests signed elsewhere with the same credential (another process or device, or an older SDK version) can still interleave. When the wallet API rejects a signed request's nonce (WaaS `PreconditionFailed`, 7206), the SDK signs the request again with a fresh nonce and resends it, up to 2 times, before the error surfaces. The wallet API rejects the nonce before running the method, so this applies to transaction writes too.
 
 Wallet import reports an already-managed address as `OMS_WALLET_ADDRESS_ALREADY_IMPORTED` and a
 missing, malformed, stale, or untrusted enclave attestation as
@@ -798,6 +990,12 @@ for (const grant of grants) {
 for await (const page of omsWallet.wallet.listAccessPages({ pageSize: 25 })) {
   console.log('Page:', page.grants)
 }
+
+// Or read one page at a time, passing the previous page's cursor to continue.
+const firstPage = await omsWallet.wallet.listAccessPage({ pageSize: 25 })
+const nextPage = firstPage.page?.cursor
+  ? await omsWallet.wallet.listAccessPage({ pageSize: 25, cursor: firstPage.page.cursor })
+  : undefined
 
 await omsWallet.wallet.revokeAccess({ credentialId: grants[0].credentialId })
 ```
@@ -839,6 +1037,10 @@ await omsWallet.wallet.revokeAccess({
   sessionId: session.sessionId,
 })
 ```
+
+A wallet can have up to 100 active remote sessions by default. Beyond that, `authorizeRemoteAccess`
+fails with `OMSWalletRequestError` (`OMS_REQUEST_FAILED`, status 409, `upstreamError.code` `'7208'`,
+not retryable); revoke an existing session with `revokeAccess` and authorize again.
 
 A backend uses `RemoteAccessClient` with its own persistent credential signer. Registration returns
 the WaaS credential ID that the owner authorizes; it is distinct from the signer's public address.
@@ -913,7 +1115,7 @@ Runnable examples live in the
 
 | Example | What it shows | Live demo |
 |---|---|---|
-| [`react`](https://github.com/0xPolygon/oms-wallet-typescript-sdk/tree/master/examples/react) | Email, Google, and Apple sign-in, signing, transactions, balances, wallet management, Privy wallet import, and Solana | [Live demo](https://0xpolygon.github.io/oms-wallet-typescript-sdk/react-example/) |
+| [`react`](https://github.com/0xPolygon/oms-wallet-typescript-sdk/tree/master/examples/react) | Email, Google, and Apple sign-in, signing, transactions, balances, wallet management, Privy wallet import, Solana, and Tron | [Live demo](https://0xpolygon.github.io/oms-wallet-typescript-sdk/react-example/) |
 | [`wagmi`](https://github.com/0xPolygon/oms-wallet-typescript-sdk/tree/master/examples/wagmi) | The wagmi connector with the MetaMask connector and the Trails widget | [Live demo](https://0xpolygon.github.io/oms-wallet-typescript-sdk/wagmi-example/) |
 | [`trails-actions`](https://github.com/0xPolygon/oms-wallet-typescript-sdk/tree/master/examples/trails-actions) | Trails swap, Earn deposit, and Earn withdrawal flows | [Live demo](https://0xpolygon.github.io/oms-wallet-typescript-sdk/trails-actions-example/) |
 | [`custom-google-redirect`](https://github.com/0xPolygon/oms-wallet-typescript-sdk/tree/master/examples/custom-google-redirect) | Google as a custom OIDC provider with a localhost redirect URI | Local only |

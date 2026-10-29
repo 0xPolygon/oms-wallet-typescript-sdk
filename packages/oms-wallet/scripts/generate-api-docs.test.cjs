@@ -9,7 +9,7 @@ const projectRoot = path.resolve(__dirname, '..');
 const generator = path.join(__dirname, 'generate-api-docs.cjs');
 const fixturesRoot = path.join(__dirname, 'fixtures', 'api-docs');
 
-test('expands generic support types in configured members and exported declarations', () => {
+test('expands generic support types and documents branded provider values without brands', () => {
   const result = runFixture('support-expansion');
   assert.equal(result.status, 0, result.stderr);
 
@@ -49,13 +49,7 @@ test('expands generic support types in configured members and exported declarati
   ]) {
     assert.doesNotMatch(api, new RegExp(`\\b${inaccessibleName}\\b`));
   }
-});
 
-test('omits opaque unique-symbol brands while documenting usable provider values', () => {
-  const result = runFixture('support-expansion');
-  assert.equal(result.status, 0, result.stderr);
-
-  const api = fs.readFileSync(result.outputPath, 'utf8');
   assert.match(api, /Obtain values from Providers; object literals are invalid\./);
   assert.match(
     api,
@@ -70,6 +64,24 @@ test('rejects an indirect support-type reference into generated declarations', (
   assert.match(
     result.stderr,
     /Non-exported support declaration GeneratedPayload in PublicApi resolves to internal generated declaration declarations\/generated\/client\.d\.ts\./
+  );
+});
+
+test('rejects a public symbol that resolves to a generated declaration', () => {
+  const result = runFixture('generated-export');
+  assert.notEqual(result.status, 0);
+  assert.match(
+    result.stderr,
+    /Public symbol GeneratedPayload resolves to internal generated declaration declarations\/generated\/client\.d\.ts\./
+  );
+});
+
+test('rejects output that still names an expanded non-exported support declaration', () => {
+  const result = runFixture('support-leak');
+  assert.notEqual(result.status, 0);
+  assert.match(
+    result.stderr,
+    /Non-exported support declarations leaked into PublicApi: HiddenParams/
   );
 });
 

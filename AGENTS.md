@@ -88,8 +88,8 @@ Repo-local agent skills live under `.agents/skills/` (agent-neutral); `.claude/s
 - `pnpm lint`: Run eslint, markdownlint, prettier `--check`, and the typecheck in parallel. CI runs this.
 - `pnpm format`: Auto-fix markdown, eslint, and prettier issues.
 - `pnpm run typecheck` (or `pnpm --filter <pkg> typecheck`): Typecheck via `tsc -b` (source + SDK type-tests).
-- `pnpm test`: Run the staged-publishing helper tests plus the SDK and connector test suites.
-- `pnpm test:release`: Run the staged-publishing helper's fixed-group and manifest-validation tests.
+- `pnpm test`: Run the release-helper tests, then every workspace package's `test` script (SDK, connector, smart-session example, Privy import Worker).
+- `pnpm test:release`: Run the release-helper tests (`scripts/*.test.mjs`: staged publishing and snapshot preparation).
 - `pnpm --filter @polygonlabs/oms-wallet test:types`: Compile `type-tests/oidcProviderTypes.ts`; useful for public type/API changes.
 - `pnpm --filter @polygonlabs/oms-wallet generate:api`: Rebuild the SDK and regenerate `packages/oms-wallet/API.md` from the built declarations.
 - `pnpm --filter @polygonlabs/oms-wallet check:api`: Rebuild, then verify the public API baseline and that `API.md` is current (what `codegen-drift-check` runs).

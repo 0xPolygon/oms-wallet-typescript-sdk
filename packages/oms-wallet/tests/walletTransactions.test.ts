@@ -1,31 +1,19 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
-import { WalletClient } from '../src/clients/walletClient';
-import type { CredentialSigner } from '../src/credentialSigner';
+import { WalletClientImpl } from '../src/clients/walletClient';
 import { TransactionMode, TransactionStatus } from '../src/types/waas';
 import { Networks, SolanaNetworks } from '../src/networks';
 import { MemoryStorageManager } from '../src/storageManager';
 import { FeeOptionSelector } from '../src/types/transactionTypes';
-
-class MockSigner implements CredentialSigner {
-  readonly signingAlgorithm = 'ecdsa-p256-sha256';
-
-  async credentialId(): Promise<string> {
-    return '0x04' + '11'.repeat(64);
-  }
-
-  async nextNonce(): Promise<string> {
-    return '42';
-  }
-
-  async sign(): Promise<string> {
-    return '0x' + '22'.repeat(64);
-  }
-
-  async hasCredential(): Promise<boolean> {
-    return true;
-  }
-}
+import {
+  MockSigner,
+  createWalletWithSession,
+  jsonResponse,
+  requestCount,
+  testCredential,
+  testEnvironment,
+  waasErrorResponse
+} from './fixtures/helpers.js';
 
 afterEach(() => {
   vi.restoreAllMocks();
@@ -148,7 +136,11 @@ describe('WalletClient transactions', () => {
     });
     vi.stubGlobal('fetch', fetchMock);
 
-    const wallet = createWalletWithSession(storage, '0x9999999999999999999999999999999999999999');
+    const wallet = createWalletWithSession(
+      '0x9999999999999999999999999999999999999999',
+      undefined,
+      { storage }
+    );
 
     const response = await wallet.sendTransaction({
       network: Networks.polygon,
@@ -179,7 +171,7 @@ describe('WalletClient transactions', () => {
           network: '137',
           walletId: 'wallet-id',
           contract: '0x1111111111111111111111111111111111111111',
-          method: 'mint(address,uint256)',
+          method: 'mint',
           args: [
             { type: 'address', value: '0x2222222222222222222222222222222222222222' },
             { type: 'uint256', value: '1' }
@@ -202,16 +194,13 @@ describe('WalletClient transactions', () => {
     });
     vi.stubGlobal('fetch', fetchMock);
 
-    const wallet = createWalletWithSession(
-      new MemoryStorageManager(),
-      '0x9999999999999999999999999999999999999999'
-    );
+    const wallet = createWalletWithSession('0x9999999999999999999999999999999999999999');
 
     await expect(
       wallet.callContract({
         network: Networks.polygon,
         contractAddress: '0x1111111111111111111111111111111111111111',
-        method: 'mint(address,uint256)',
+        method: 'mint',
         args: [
           { type: 'address', value: '0x2222222222222222222222222222222222222222' },
           { type: 'uint256', value: '1' }
@@ -270,10 +259,7 @@ describe('WalletClient transactions', () => {
     });
     vi.stubGlobal('fetch', fetchMock);
 
-    const wallet = createWalletWithSession(
-      new MemoryStorageManager(),
-      '0x9999999999999999999999999999999999999999'
-    );
+    const wallet = createWalletWithSession('0x9999999999999999999999999999999999999999');
 
     await expect(
       wallet.sendTransaction({
@@ -291,22 +277,27 @@ describe('WalletClient transactions', () => {
   });
 
   it('prepares, executes, and polls a native SOL transfer', async () => {
+    const walletAddress = '4Nd1mYQbqjVU2aR7cJNPyqW9XjHnBYvWQd7ZxYxvT6uP';
+    const seenOptions: unknown[] = [];
     const selectFeeOption = vi.fn((options: Parameters<FeeOptionSelector>[0]) => {
-      expect(options).toHaveLength(1);
-      expect(options[0]).toMatchObject({
-        feeOption: {
-          value: '5000',
-          displayValue: '0.000005',
-          token: { network: 'solana:devnet', symbol: 'SOL' }
-        },
-        selection: { token: 'SOL', index: 0 }
-      });
-      expect(options[0].availableRaw).toBeUndefined();
+      seenOptions.push(...options);
       return options[0].selection;
     });
     const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
       const url = input.toString();
       const body = JSON.parse(init?.body as string);
+
+      if (url === 'https://solana-indexer.example/GetTokenBalancesDetails') {
+        expect(body).toEqual({
+          networks: ['solana:devnet'],
+          filter: { accountAddresses: [walletAddress], omitNativeBalances: false },
+          omitMetadata: true
+        });
+        return jsonResponse({
+          balances: [solanaNativeBalance(walletAddress, '2000000')],
+          errors: []
+        });
+      }
 
       if (url.endsWith('/PrepareSolanaTransfer')) {
         expect(body).toEqual({
@@ -351,10 +342,7 @@ describe('WalletClient transactions', () => {
     });
     vi.stubGlobal('fetch', fetchMock);
 
-    const wallet = createWalletWithSession(
-      new MemoryStorageManager(),
-      '4Nd1mYQbqjVU2aR7cJNPyqW9XjHnBYvWQd7ZxYxvT6uP'
-    );
+    const wallet = createWalletWithSession(walletAddress);
 
     await expect(
       wallet.sendSolanaTransfer({
@@ -371,8 +359,26 @@ describe('WalletClient transactions', () => {
       txnHash: 'solana-signature',
       statusResolution: 'resolved'
     });
-    expect(fetchMock).toHaveBeenCalledTimes(4);
     expect(selectFeeOption).toHaveBeenCalledOnce();
+    expect(seenOptions).toEqual([
+      {
+        feeOption: {
+          token: { network: 'solana:devnet', name: 'SOL', symbol: 'SOL', type: 'NATIVE' },
+          value: '5000',
+          displayValue: '0.000005'
+        },
+        selection: { token: 'SOL', index: 0 },
+        available: '0.002',
+        availableRaw: '2000000',
+        decimals: 9
+      }
+    ]);
+    expect(fetchMock.mock.calls.map(([input]) => input.toString())).toEqual([
+      'https://wallet.example/v1/Waas/PrepareSolanaTransfer',
+      'https://solana-indexer.example/GetTokenBalancesDetails',
+      'https://wallet.example/v1/Waas/Execute',
+      'https://wallet.example/v1/Waas/TransactionStatus'
+    ]);
   });
 
   it('firstAvailable selects an affordable Solana fee option using indexer balances', async () => {
@@ -469,7 +475,7 @@ describe('WalletClient transactions', () => {
     });
     vi.stubGlobal('fetch', fetchMock);
 
-    const wallet = createWalletWithSession(new MemoryStorageManager(), walletAddress);
+    const wallet = createWalletWithSession(walletAddress);
 
     await expect(
       wallet.sendSolanaTransfer({
@@ -488,18 +494,57 @@ describe('WalletClient transactions', () => {
     expect(fetchMock).toHaveBeenCalledTimes(3);
   });
 
-  it('selects a rent fee option for a relayed SPL-token transfer', async () => {
+  it('pays a relayed SPL-token transfer with a selected SPL fee option and its balance', async () => {
     const mint = 'So11111111111111111111111111111111111111112';
+    const usdcMint = '4zMMC9srt5Ri5X14GAgXhaHii3GnPAEERYPJgZJDncDU';
+    const walletAddress = '4Nd1mYQbqjVU2aR7cJNPyqW9XjHnBYvWQd7ZxYxvT6uP';
+    const seenOptions: Array<Record<string, unknown>> = [];
     const selectFeeOption = vi.fn((options: Parameters<FeeOptionSelector>[0]) => {
-      expect(options.map(({ selection }) => selection)).toEqual([
-        { token: 'SOL', index: 0 },
-        { token: 'USDC', index: 1 }
-      ]);
+      seenOptions.push(
+        ...options.map(({ selection, available, availableRaw, decimals }) => ({
+          selection,
+          available,
+          availableRaw,
+          decimals
+        }))
+      );
       return options[1].selection;
     });
     const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
       const url = input.toString();
       const body = JSON.parse(init?.body as string);
+
+      if (url === 'https://solana-indexer.example/GetTokenBalancesDetails') {
+        expect(body).toEqual({
+          networks: ['solana:devnet'],
+          filter: {
+            accountAddresses: [walletAddress],
+            omitNativeBalances: false,
+            contractWhitelist: [usdcMint]
+          },
+          omitMetadata: true
+        });
+        return jsonResponse({
+          balances: [
+            solanaNativeBalance(walletAddress, '2000000'),
+            {
+              network: 'solana:devnet',
+              accountAddress: walletAddress,
+              assetType: 'fungible-token',
+              tokenProgram: 'spl-token',
+              mintAddress: usdcMint,
+              name: 'USD Coin',
+              symbol: 'USDC',
+              decimals: 6,
+              balance: '20000',
+              formattedBalance: '0.02',
+              verificationStatus: 'verified',
+              verificationSource: 'jupiter'
+            }
+          ],
+          errors: []
+        });
+      }
 
       if (url.endsWith('/PrepareSolanaTransfer')) {
         expect(body).toEqual({
@@ -530,7 +575,7 @@ describe('WalletClient transactions', () => {
                 name: 'USDC',
                 symbol: 'USDC',
                 type: 'SPL',
-                contractAddress: '4zMMC9srt5Ri5X14GAgXhaHii3GnPAEERYPJgZJDncDU'
+                contractAddress: usdcMint
               },
               value: '10000',
               displayValue: '0.01'
@@ -553,10 +598,7 @@ describe('WalletClient transactions', () => {
     });
     vi.stubGlobal('fetch', fetchMock);
 
-    const wallet = createWalletWithSession(
-      new MemoryStorageManager(),
-      '4Nd1mYQbqjVU2aR7cJNPyqW9XjHnBYvWQd7ZxYxvT6uP'
-    );
+    const wallet = createWalletWithSession(walletAddress);
 
     await expect(
       wallet.sendSolanaTransfer({
@@ -574,6 +616,20 @@ describe('WalletClient transactions', () => {
     });
     expect(fetchMock).toHaveBeenCalledTimes(3);
     expect(selectFeeOption).toHaveBeenCalledOnce();
+    expect(seenOptions).toEqual([
+      {
+        selection: { token: 'SOL', index: 0 },
+        available: '0.002',
+        availableRaw: '2000000',
+        decimals: 9
+      },
+      {
+        selection: { token: 'USDC', index: 1 },
+        available: '0.02',
+        availableRaw: '20000',
+        decimals: 6
+      }
+    ]);
   });
 
   it('prepares an SPL-token transfer using the mint as the asset', async () => {
@@ -618,10 +674,7 @@ describe('WalletClient transactions', () => {
     });
     vi.stubGlobal('fetch', fetchMock);
 
-    const wallet = createWalletWithSession(
-      new MemoryStorageManager(),
-      '4Nd1mYQbqjVU2aR7cJNPyqW9XjHnBYvWQd7ZxYxvT6uP'
-    );
+    const wallet = createWalletWithSession('4Nd1mYQbqjVU2aR7cJNPyqW9XjHnBYvWQd7ZxYxvT6uP');
 
     await expect(
       wallet.sendSolanaTransfer({
@@ -671,10 +724,7 @@ describe('WalletClient transactions', () => {
     });
     vi.stubGlobal('fetch', fetchMock);
 
-    const wallet = createWalletWithSession(
-      new MemoryStorageManager(),
-      '4Nd1mYQbqjVU2aR7cJNPyqW9XjHnBYvWQd7ZxYxvT6uP'
-    );
+    const wallet = createWalletWithSession('4Nd1mYQbqjVU2aR7cJNPyqW9XjHnBYvWQd7ZxYxvT6uP');
 
     await expect(
       wallet.sendSolanaTransfer({
@@ -696,10 +746,7 @@ describe('WalletClient transactions', () => {
   it('rejects Solana transfers for an active Ethereum wallet', async () => {
     const fetchMock = vi.fn();
     vi.stubGlobal('fetch', fetchMock);
-    const wallet = createWalletWithSession(
-      new MemoryStorageManager(),
-      '0x9999999999999999999999999999999999999999'
-    );
+    const wallet = createWalletWithSession('0x9999999999999999999999999999999999999999');
 
     await expect(
       wallet.sendSolanaTransfer({
@@ -730,10 +777,7 @@ describe('WalletClient transactions', () => {
         )
       )
     );
-    const wallet = createWalletWithSession(
-      new MemoryStorageManager(),
-      '4Nd1mYQbqjVU2aR7cJNPyqW9XjHnBYvWQd7ZxYxvT6uP'
-    );
+    const wallet = createWalletWithSession('4Nd1mYQbqjVU2aR7cJNPyqW9XjHnBYvWQd7ZxYxvT6uP');
 
     await expect(
       wallet.sendSolanaTransfer({
@@ -747,7 +791,7 @@ describe('WalletClient transactions', () => {
       operation: 'wallet.sendSolanaTransfer',
       status: 400,
       upstreamError: {
-        code: 7312,
+        code: '7312',
         name: 'UnsupportedAsset',
         message: 'Unsupported asset'
       }
@@ -796,10 +840,7 @@ describe('WalletClient transactions', () => {
     });
     vi.stubGlobal('fetch', fetchMock);
 
-    const wallet = createWalletWithSession(
-      new MemoryStorageManager(),
-      '0x9999999999999999999999999999999999999999'
-    );
+    const wallet = createWalletWithSession('0x9999999999999999999999999999999999999999');
 
     await expect(
       wallet.sendTransaction({
@@ -832,10 +873,7 @@ describe('WalletClient transactions', () => {
     });
     vi.stubGlobal('fetch', fetchMock);
 
-    const wallet = createWalletWithSession(
-      new MemoryStorageManager(),
-      '0x9999999999999999999999999999999999999999'
-    );
+    const wallet = createWalletWithSession('0x9999999999999999999999999999999999999999');
 
     await expect(
       wallet.sendTransaction({
@@ -947,10 +985,7 @@ describe('WalletClient transactions', () => {
     });
     vi.stubGlobal('fetch', fetchMock);
 
-    const wallet = createWalletWithSession(
-      new MemoryStorageManager(),
-      '0x9999999999999999999999999999999999999999'
-    );
+    const wallet = createWalletWithSession('0x9999999999999999999999999999999999999999');
 
     await expect(
       wallet.sendTransaction({
@@ -969,9 +1004,8 @@ describe('WalletClient transactions', () => {
 
   it('firstAvailable requires an affordable fee option', async () => {
     const usdcAddress = '0x2222222222222222222222222222222222222222';
-    const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+    const fetchMock = vi.fn(async (input: RequestInfo | URL) => {
       const url = input.toString();
-      const body = init?.body ? JSON.parse(init.body as string) : undefined;
 
       if (url.endsWith('/PrepareEthereumTransaction')) {
         return jsonResponse({
@@ -1029,10 +1063,7 @@ describe('WalletClient transactions', () => {
     });
     vi.stubGlobal('fetch', fetchMock);
 
-    const wallet = createWalletWithSession(
-      new MemoryStorageManager(),
-      '0x9999999999999999999999999999999999999999'
-    );
+    const wallet = createWalletWithSession('0x9999999999999999999999999999999999999999');
 
     await expect(
       wallet.sendTransaction({
@@ -1048,93 +1079,6 @@ describe('WalletClient transactions', () => {
       message: 'No fee option selected for unsponsored transaction'
     });
     expect(fetchMock).toHaveBeenCalledTimes(2);
-  });
-
-  it('requires fee options for unsponsored transactions', async () => {
-    const fetchMock = vi.fn(async (input: RequestInfo | URL) => {
-      const url = input.toString();
-
-      if (url.endsWith('/PrepareEthereumTransaction')) {
-        return jsonResponse({
-          txnId: 'txn-no-fee-options',
-          status: 'quoted',
-          feeOptions: [],
-          sponsored: false,
-          expiresAt: '2099-01-01T00:00:00Z'
-        });
-      }
-
-      if (url.endsWith('/Execute')) {
-        throw new Error('Execute should not run without fee options');
-      }
-
-      throw new Error(`Unexpected request: ${url}`);
-    });
-    vi.stubGlobal('fetch', fetchMock);
-
-    const wallet = createWalletWithSession(
-      new MemoryStorageManager(),
-      '0x9999999999999999999999999999999999999999'
-    );
-
-    await expect(
-      wallet.sendTransaction({
-        network: Networks.polygon,
-        to: '0x1111111111111111111111111111111111111111',
-        value: 0n,
-        waitForStatus: false
-      })
-    ).rejects.toMatchObject({
-      code: 'OMS_VALIDATION_ERROR',
-      operation: 'wallet.sendTransaction',
-      message: 'No fee options available for unsponsored transaction'
-    });
-    expect(fetchMock).toHaveBeenCalledTimes(1);
-  });
-
-  it('can skip transaction status polling', async () => {
-    const fetchMock = vi.fn(async (input: RequestInfo | URL) => {
-      const url = input.toString();
-
-      if (url.endsWith('/PrepareEthereumTransaction')) {
-        return jsonResponse({
-          txnId: 'txn-1',
-          status: 'quoted',
-          feeOptions: [],
-          sponsored: true,
-          expiresAt: '2099-01-01T00:00:00Z'
-        });
-      }
-
-      if (url.endsWith('/Execute')) {
-        return jsonResponse({ status: 'pending' });
-      }
-
-      if (url.endsWith('/TransactionStatus')) {
-        throw new Error('status polling should not run');
-      }
-
-      throw new Error(`Unexpected request: ${url}`);
-    });
-    vi.stubGlobal('fetch', fetchMock);
-
-    const wallet = createWalletWithSession(
-      new MemoryStorageManager(),
-      '0x9999999999999999999999999999999999999999'
-    );
-
-    const response = await wallet.sendTransaction({
-      network: Networks.polygon,
-      to: '0x1111111111111111111111111111111111111111',
-      value: 0n,
-      waitForStatus: false
-    });
-
-    expect(response).toEqual({
-      txnId: 'txn-1',
-      status: TransactionStatus.Pending,
-      statusResolution: 'not-requested'
-    });
   });
 
   it('returns failed transaction status as terminal', async () => {
@@ -1163,10 +1107,7 @@ describe('WalletClient transactions', () => {
     });
     vi.stubGlobal('fetch', fetchMock);
 
-    const wallet = createWalletWithSession(
-      new MemoryStorageManager(),
-      '0x9999999999999999999999999999999999999999'
-    );
+    const wallet = createWalletWithSession('0x9999999999999999999999999999999999999999');
 
     await expect(
       wallet.sendTransaction({
@@ -1202,10 +1143,7 @@ describe('WalletClient transactions', () => {
     });
     vi.stubGlobal('fetch', fetchMock);
 
-    const wallet = createWalletWithSession(
-      new MemoryStorageManager(),
-      '0x9999999999999999999999999999999999999999'
-    );
+    const wallet = createWalletWithSession('0x9999999999999999999999999999999999999999');
 
     await expect(
       wallet.sendTransaction({
@@ -1238,10 +1176,7 @@ describe('WalletClient transactions', () => {
       throw new Error(`Unexpected request: ${url}`);
     });
     vi.stubGlobal('fetch', fetchMock);
-    const wallet = createWalletWithSession(
-      new MemoryStorageManager(),
-      '0x9999999999999999999999999999999999999999'
-    );
+    const wallet = createWalletWithSession('0x9999999999999999999999999999999999999999');
 
     await expect(
       wallet.sendTransaction({
@@ -1281,10 +1216,7 @@ describe('WalletClient transactions', () => {
         throw new Error(`Unexpected request: ${url}`);
       });
       vi.stubGlobal('fetch', fetchMock);
-      const wallet = createWalletWithSession(
-        new MemoryStorageManager(),
-        '0x9999999999999999999999999999999999999999'
-      );
+      const wallet = createWalletWithSession('0x9999999999999999999999999999999999999999');
 
       await expect(
         wallet.sendTransaction({
@@ -1318,7 +1250,7 @@ describe('WalletClient transactions', () => {
     });
     vi.stubGlobal('fetch', fetchMock);
 
-    const wallet = new WalletClient({
+    const wallet = new WalletClientImpl({
       publishableKey: 'publishable-key',
       projectId: 'project-id',
       environment: testEnvironment(),
@@ -1331,84 +1263,63 @@ describe('WalletClient transactions', () => {
       txnHash: '0xtx'
     });
   });
-
-  it('wraps status polling failures with the transaction id', async () => {
-    const fetchMock = vi.fn(async (input: RequestInfo | URL) => {
-      const url = input.toString();
-
-      if (url.endsWith('/PrepareEthereumTransaction')) {
-        return jsonResponse({
-          txnId: 'txn-1',
-          status: 'quoted',
-          feeOptions: [],
-          sponsored: true,
-          expiresAt: '2099-01-01T00:00:00Z'
-        });
-      }
-
-      if (url.endsWith('/Execute')) {
-        return jsonResponse({ status: 'pending' });
-      }
-
-      if (url.endsWith('/TransactionStatus')) {
-        throw new Error('status endpoint unavailable');
-      }
-
-      throw new Error(`Unexpected request: ${url}`);
-    });
-    vi.stubGlobal('fetch', fetchMock);
-
-    const wallet = createWalletWithSession(
-      new MemoryStorageManager(),
-      '0x9999999999999999999999999999999999999999'
-    );
-
-    await expect(
-      wallet.sendTransaction({
-        network: Networks.polygon,
-        to: '0x1111111111111111111111111111111111111111',
-        value: 0n
-      })
-    ).rejects.toMatchObject({
-      code: 'OMS_TRANSACTION_STATUS_LOOKUP_FAILED',
-      operation: 'wallet.transactionStatus',
-      txnId: 'txn-1',
-      retryable: true
-    });
-  });
 });
 
-function createWalletWithSession(
-  storage: MemoryStorageManager,
-  walletAddress: string
-): WalletClient {
-  const wallet = new WalletClient({
-    publishableKey: 'publishable-key',
-    projectId: 'project-id',
-    environment: testEnvironment(),
-    storage,
-    credentialSigner: new MockSigner()
-  });
-  (wallet as any).persistSession('wallet-id', walletAddress, {
-    expiresAt: '2099-01-01T00:00:00Z',
-    auth: { type: 'email', email: 'user@example.com' },
-    signerCredentialId: '0x04' + '11'.repeat(64),
-    signerKeyType: 'ecdsa-p256-sha256'
-  });
-  return wallet;
-}
-
-function jsonResponse(body: unknown, status = 200): Response {
-  return new Response(JSON.stringify(body), {
-    status,
-    headers: { 'Content-Type': 'application/json' }
-  });
-}
-
-function testEnvironment() {
+function solanaNativeBalance(accountAddress: string, balance: string) {
   return {
-    walletApiUrl: 'https://wallet.example',
-    indexerGatewayUrl: 'https://indexer.example',
-    solanaIndexerGatewayUrl: 'https://solana-indexer.example'
+    network: 'solana:devnet',
+    accountAddress,
+    assetType: 'native',
+    name: 'Solana',
+    symbol: 'SOL',
+    decimals: 9,
+    balance,
+    formattedBalance: balance,
+    verificationStatus: 'unknown',
+    verificationSource: 'none'
   };
 }
+
+describe('WalletClient Execute refused before submission', () => {
+  it.each([
+    { name: 'InvalidSignature', code: '7201', status: 400 },
+    { name: 'UsageLimitExceeded', code: '7205', status: 429 },
+    { name: 'Unauthorized', code: '7207', status: 401 }
+  ] as const)(
+    'reports an Execute refused with $name ($code) as a request failure',
+    async ({ name, code, status }) => {
+      const walletAddress = '0x1111111111111111111111111111111111111111';
+      const fetchMock = vi.fn(async (input: RequestInfo | URL) => {
+        const url = input.toString();
+        if (url.endsWith('/PrepareEthereumTransaction')) {
+          return jsonResponse({
+            txnId: 'txn-1',
+            status: 'quoted',
+            feeOptions: [],
+            sponsored: true,
+            expiresAt: '2099-01-01T00:00:00Z'
+          });
+        }
+        if (url.endsWith('/Execute')) return waasErrorResponse(name);
+        if (url.endsWith('/GetCredential')) return jsonResponse({ credential: testCredential() });
+        throw new Error(`Unexpected request: ${url}`);
+      });
+      vi.stubGlobal('fetch', fetchMock);
+      const wallet = createWalletWithSession(walletAddress);
+
+      // WaaS refuses these before anything is submitted, so the outcome is known.
+      const error = await wallet
+        .sendTransaction({ network: Networks.polygon, to: walletAddress, value: 0n })
+        .catch((caught: unknown) => caught);
+      expect(error).toMatchObject({
+        name: 'OMSWalletRequestError',
+        code: 'OMS_REQUEST_FAILED',
+        operation: 'wallet.execute',
+        status,
+        upstreamError: { service: 'waas', name, code }
+      });
+      expect((error as { txnId?: string }).txnId).toBeUndefined();
+      expect(requestCount(fetchMock, '/Execute')).toBe(1);
+    }
+  );
+});

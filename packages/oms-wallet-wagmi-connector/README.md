@@ -20,8 +20,8 @@ Peer dependencies:
 | Package | Range |
 |---|---|
 | `@polygonlabs/oms-wallet` | The same release version as this package (the two are versioned in lockstep) |
-| `@wagmi/core` | `>=3.5.0 <4` |
-| `viem` | `>=2.48.4 <3` |
+| `@wagmi/core` | `>=3.6.5 <4` |
+| `viem` | `>=2.55.0 <3` |
 
 This package is ESM-only and requires Node.js 22 or later.
 
@@ -56,11 +56,11 @@ export const wagmiConfig = createConfig({
 
 ## Authentication
 
-The connector does not render authentication UI. Authenticate with the OMS Wallet SDK first, then call wagmi `connect` with the OMS Wallet connector once `omsWallet.wallet.walletAddress` is set.
+The connector does not render authentication UI. Authenticate with the OMS Wallet SDK first, then call wagmi `connect` with the OMS Wallet connector once `omsWallet.wallet.activeWallet` is set.
 
-The connector is Ethereum-only even though the core SDK also supports Solana wallets. Select an
-Ethereum wallet before connecting. Connecting or requesting accounts with an active Solana wallet
-rejects with `OMSWalletProviderRpcError` code `4100`.
+The connector is Ethereum-only even though the core SDK also supports Solana and Tron wallets.
+Select an Ethereum wallet before connecting. Connecting or requesting accounts with an active Solana
+or Tron wallet rejects with `OMSWalletProviderRpcError` code `4100`.
 
 Email example:
 
@@ -68,8 +68,8 @@ Email example:
 await omsWallet.wallet.startEmailAuth({ email })
 await omsWallet.wallet.completeEmailAuth({ code })
 
-if (!omsWallet.wallet.walletAddress) {
-  throw new Error('OMS auth completed without an active wallet.')
+if (omsWallet.wallet.activeWallet?.type !== 'ethereum') {
+  throw new Error('OMS auth completed without an active Ethereum wallet.')
 }
 
 await connect(wagmiConfig, {
@@ -83,6 +83,8 @@ For redirect-based OIDC flows such as Google or Apple, complete the SDK redirect
 ## Disconnect
 
 Wagmi `disconnect()` only disconnects the wagmi connector. It does not sign out the OMS Wallet SDK session, and it prevents wagmi from automatically reconnecting the OMS Wallet connector on page refresh until the app calls wagmi `connect()` again.
+
+While connected, the connector follows the SDK session. It disconnects when the session ends (sign-out, expiry, or another tab taking over) or when a Solana or Tron wallet becomes active, and it changes the account when another Ethereum wallet becomes active. After it disconnects this way, a later sign-in does not reconnect it; call wagmi `connect()` again. Starting a new sign-in while connected ends the old session, so it disconnects wagmi too.
 
 To sign out completely, disconnect wagmi state and then sign out with the SDK:
 

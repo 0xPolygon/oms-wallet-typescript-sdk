@@ -2,6 +2,7 @@ export const WalletOperation = {
   pendingWalletSelectionSelectWallet: 'wallet.pendingWalletSelection.selectWallet',
   pendingWalletSelectionCreateAndSelectWallet:
     'wallet.pendingWalletSelection.createAndSelectWallet',
+  pendingWalletSelectionClaimAndSelectWallet: 'wallet.pendingWalletSelection.claimAndSelectWallet',
   startEmailAuth: 'wallet.startEmailAuth',
   completeEmailAuth: 'wallet.completeEmailAuth',
   signInWithOidcIdToken: 'wallet.signInWithOidcIdToken',
@@ -11,6 +12,7 @@ export const WalletOperation = {
   signOut: 'wallet.signOut',
   listWallets: 'wallet.listWallets',
   useWallet: 'wallet.useWallet',
+  claimWallet: 'wallet.claimWallet',
   createWallet: 'wallet.createWallet',
   importWallet: 'wallet.importWallet',
   getWalletImportRecipientKey: 'wallet.getWalletImportRecipientKey',
@@ -22,14 +24,21 @@ export const WalletOperation = {
   isValidMessageSignature: 'wallet.isValidMessageSignature',
   isValidSolanaMessageSignature: 'wallet.isValidSolanaMessageSignature',
   isValidTypedDataSignature: 'wallet.isValidTypedDataSignature',
+  signTronMessage: 'wallet.signTronMessage',
+  signTronTypedData: 'wallet.signTronTypedData',
+  isValidTronMessageSignature: 'wallet.isValidTronMessageSignature',
+  isValidTronTypedDataSignature: 'wallet.isValidTronTypedDataSignature',
   sendTransaction: 'wallet.sendTransaction',
   sendSolanaTransfer: 'wallet.sendSolanaTransfer',
+  sendTronTransaction: 'wallet.sendTronTransaction',
+  callTronContract: 'wallet.callTronContract',
   callContract: 'wallet.callContract',
   execute: 'wallet.execute',
   getTransactionStatus: 'wallet.getTransactionStatus',
   inspectRemoteCredential: 'wallet.inspectRemoteCredential',
   authorizeRemoteAccess: 'wallet.authorizeRemoteAccess',
   listAccess: 'wallet.listAccess',
+  listAccessPage: 'wallet.listAccessPage',
   listAccessPages: 'wallet.listAccessPages',
   getRemoteAccessSession: 'wallet.getRemoteAccessSession',
   getRemoteAccessSessionUsage: 'wallet.getRemoteAccessSessionUsage',
@@ -42,6 +51,7 @@ export type WalletOperation = (typeof WalletOperation)[keyof typeof WalletOperat
 export const IndexerOperation = {
   getBalances: 'indexer.getBalances',
   getSolanaBalances: 'indexer.getSolanaBalances',
+  getTronBalances: 'indexer.getTronBalances',
   getTransactionHistory: 'indexer.getTransactionHistory'
 } as const;
 
@@ -62,4 +72,5 @@ export const RemoteAccessOperation = {
 export type RemoteAccessOperation =
   (typeof RemoteAccessOperation)[keyof typeof RemoteAccessOperation];
 
+/** Operation identifiers reported in `OMSWalletError.operation`. */
 export type OMSWalletOperation = WalletOperation | IndexerOperation | RemoteAccessOperation;

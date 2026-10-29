@@ -1,7 +1,7 @@
 import React, { useEffect, useRef, useState } from 'react';
 import { createRoot } from 'react-dom/client';
-import { isAddress } from 'viem';
 import {
+  DEFAULT_SESSION_LIFETIME_SECONDS,
   Networks,
   WalletType,
   WalletImportCipherSuite,
@@ -10,7 +10,7 @@ import {
   type FeeOptionWithBalance,
   type AccessGrant,
   type Network,
-  type OMSWalletSessionExpiredEvent,
+  type OMSWalletExpiredSession,
   type WalletAccount,
   type PendingWalletSelection,
   type WalletActivationResult
@@ -36,6 +36,7 @@ import {
   sameAddress,
   type OidcRedirectProvider
 } from '../../shared/example-utils';
+import { useOMSWalletSession } from '../../shared/use-oms-wallet-session';
 import { useSessionPreferences } from '../../shared/use-session-preferences';
 import {
   DEMO_ENVIRONMENTS,
@@ -43,12 +44,13 @@ import {
   selectDemoEnvironment,
   type DemoEnvironmentId
 } from './config';
-import { TEST_SESSION_LIFETIME_SECONDS, omsWallet } from './omsWallet';
+import { omsWallet } from './omsWallet';
 import { WalletKitDollarExample } from './WalletKitDollarExample';
 import { SolanaExample } from './SolanaExample';
+import { TronExample } from './TronExample';
 
 type Step = 'email' | 'code' | 'wallet-selection' | 'wallet';
-type WalletTab = 'ethereum' | 'solana';
+type WalletTab = 'ethereum' | 'solana' | 'tron';
 type FeeSelectionController = {
   resolve: (selection: FeeOptionSelection) => void;
   reject: (error: Error) => void;
@@ -88,7 +90,6 @@ function App() {
   const [selectedNetworkId, setSelectedNetworkId] = useState<number>(Networks.amoy.id);
   const [transactionTo, setTransactionTo] = useState(DEFAULT_TX_TO);
   const [transactionValue, setTransactionValue] = useState('0');
-  const [walletAddress, setWalletAddress] = useState('');
   const [walletTab, setWalletTab] = useState<WalletTab>('ethereum');
   const [lastSignature, setLastSignature] = useState('');
   const [lastIdToken, setLastIdToken] = useState('');
@@ -118,18 +119,22 @@ function App() {
   const [walletStatus, setWalletStatus] = useState('');
   const [activeWalletStatus, setActiveWalletStatus] = useState('');
   const [accessStatus, setAccessStatus] = useState('');
-  const [sessionExpiredPrompt, setSessionExpiredPrompt] =
-    useState<OMSWalletSessionExpiredEvent | null>(null);
+  const [sessionExpiredPrompt, setSessionExpiredPrompt] = useState<OMSWalletExpiredSession | null>(
+    null
+  );
   const [isBusy, setIsBusy] = useState(false);
   const oidcCallbackStarted = useRef(false);
   const feeSelection = useRef<FeeSelectionController | null>(null);
 
   const selectedNetwork =
     supportedNetworks.find((network) => network.id === selectedNetworkId) ?? Networks.amoy;
-  const activeWalletType = isAddress(walletAddress) ? WalletType.Ethereum : WalletType.Solana;
+  // Subscribe, then read: the hook keeps both current, including changes made in other tabs.
+  const { activeWallet, session } = useOMSWalletSession(omsWallet.wallet);
+  const walletAddress = activeWallet?.address ?? '';
+  const activeWalletType = activeWallet?.type ?? WalletType.Ethereum;
   const hasEvmWallet = managedWallets.some((wallet) => wallet.type === WalletType.Ethereum);
   const hasSolanaWallet = managedWallets.some((wallet) => wallet.type === WalletType.Solana);
-  const session = omsWallet.wallet.session;
+  const hasTronWallet = managedWallets.some((wallet) => wallet.type === WalletType.Tron);
   const {
     useManualWalletSelection,
     setUseManualWalletSelection,
@@ -140,12 +145,32 @@ function App() {
   } = useSessionPreferences({
     manualWalletSelectionKey: MANUAL_WALLET_SELECTION_KEY,
     sessionLifetimeSecondsKey: SESSION_LIFETIME_SECONDS_KEY,
-    defaultSessionLifetimeSeconds: TEST_SESSION_LIFETIME_SECONDS
+    defaultSessionLifetimeSeconds: DEFAULT_SESSION_LIFETIME_SECONDS
   });
 
   useEffect(() => {
-    return omsWallet.wallet.onSessionExpired(showSessionExpired);
+    return omsWallet.wallet.onSessionChange((event) => {
+      if (event.reason === 'expired') showSessionExpired(event.expiredSession);
+    });
   }, []);
+
+  // The active wallet changes with sign-ins, wallet switches and sign-outs, here or in another tab.
+  // Results of the previous wallet no longer apply; a sign-in keeps its own status message.
+  const previousActiveWallet = useRef(activeWallet);
+  useEffect(() => {
+    if (previousActiveWallet.current) {
+      clearWalletOperationResults();
+      setAccessGrants([]);
+      setAccessStatus('');
+    }
+    previousActiveWallet.current = activeWallet;
+    if (activeWallet) {
+      setWalletTab(activeWallet.type);
+      setStep('wallet');
+    } else {
+      setStep((current) => (current === 'wallet' ? 'email' : current));
+    }
+  }, [activeWallet]);
 
   useEffect(() => {
     const controller = new AbortController();
@@ -164,10 +189,7 @@ function App() {
   }, []);
 
   useEffect(() => {
-    if (omsWallet.wallet.walletAddress) {
-      setWalletAddress(omsWallet.wallet.walletAddress);
-      setWalletTab(isAddress(omsWallet.wallet.walletAddress) ? 'ethereum' : 'solana');
-      setStep('wallet');
+    if (omsWallet.wallet.activeWallet) {
       setWalletStatus('Wallet session restored.');
       return;
     }
@@ -283,13 +305,7 @@ function App() {
         return;
       }
 
-      const restoredAddress = omsWallet.wallet.walletAddress ?? '';
-      setWalletAddress(restoredAddress);
-      if (restoredAddress) {
-        setWalletTab(isAddress(restoredAddress) ? 'ethereum' : 'solana');
-      }
-      setStep(restoredAddress ? 'wallet' : 'email');
-      setWalletStatus(restoredAddress ? 'Wallet ready.' : '');
+      setWalletStatus(omsWallet.wallet.activeWallet ? 'Wallet ready.' : '');
     });
   }
 
@@ -308,18 +324,14 @@ function App() {
     setPendingWalletSelection(null);
     setLastIdToken('');
     clearManagementState();
-    setWalletAddress(result.walletAddress);
-    setWalletTab(result.wallet.type);
-    setStep('wallet');
     setWalletStatus(status);
   }
 
-  function showSessionExpired(event: OMSWalletSessionExpiredEvent) {
+  function showSessionExpired(event: OMSWalletExpiredSession) {
     feeSelection.current?.reject(new Error('Session expired'));
     feeSelection.current = null;
     setFeeOptions([]);
     setPendingWalletSelection(null);
-    setWalletAddress('');
     setLastSignature('');
     setLastIdToken('');
     setLastTransactionHash('');
@@ -422,7 +434,6 @@ function App() {
     await run('Cancelling wallet selection...', setEmailAuthStatus, async () => {
       await omsWallet.wallet.signOut();
       setPendingWalletSelection(null);
-      setWalletAddress('');
       setCode('');
       setStep('email');
       setEmailAuthStatus('Enter an email to start.');
@@ -481,11 +492,6 @@ function App() {
   async function useManagedWallet(wallet: WalletAccount) {
     await run('Switching wallet...', setActiveWalletStatus, async () => {
       const result = await omsWallet.wallet.useWallet({ walletId: wallet.id });
-      setWalletAddress(result.walletAddress);
-      setWalletTab(result.wallet.type);
-      clearWalletOperationResults();
-      setAccessGrants([]);
-      setAccessStatus('');
       setManagedWallets((current) =>
         current.map((item) => (item.id === result.wallet.id ? result.wallet : item))
       );
@@ -499,14 +505,9 @@ function App() {
     await run(`Creating ${formatWalletType(type)} wallet...`, setActiveWalletStatus, async () => {
       const reference = newWalletReference.trim();
       const result = await omsWallet.wallet.createWallet({
-        type,
+        walletType: type,
         reference: reference || undefined
       });
-      setWalletAddress(result.walletAddress);
-      setWalletTab(result.wallet.type);
-      clearWalletOperationResults();
-      setAccessGrants([]);
-      setAccessStatus('');
       setManagedWallets((current) => {
         const withoutCreated = current.filter((wallet) => wallet.id !== result.wallet.id);
         return [...withoutCreated, result.wallet];
@@ -530,11 +531,6 @@ function App() {
           privateKey: importPrivateKey.trim(),
           reference: importWalletReference.trim() || undefined
         });
-        setWalletAddress(result.walletAddress);
-        setWalletTab(result.wallet.type);
-        clearWalletOperationResults();
-        setAccessGrants([]);
-        setAccessStatus('');
         setManagedWallets((current) => [
           ...current.filter((wallet) => wallet.id !== result.wallet.id),
           result.wallet
@@ -589,7 +585,7 @@ function App() {
         );
 
         const result = await omsWallet.wallet.importEncryptedWallet({
-          type: WalletType.Ethereum,
+          walletType: WalletType.Ethereum,
           reference: privyWalletReference.trim() || undefined,
           keyMaterial: {
             keyId: recipient.keyId,
@@ -598,7 +594,7 @@ function App() {
             ciphertext: encryptedWallet.ciphertext
           }
         });
-        if (!sameAddress(result.walletAddress, encryptedWallet.address)) {
+        if (!sameAddress(result.wallet.address, encryptedWallet.address)) {
           throw new Error('The imported OMS wallet address does not match the Privy wallet.');
         }
         progressTimeline.show({
@@ -607,11 +603,6 @@ function App() {
           import: 'complete'
         });
         await progressTimeline.finished();
-        setWalletAddress(result.walletAddress);
-        setWalletTab('ethereum');
-        clearWalletOperationResults();
-        setAccessGrants([]);
-        setAccessStatus('');
         setManagedWallets((current) => [
           ...current.filter((wallet) => wallet.id !== result.wallet.id),
           result.wallet
@@ -637,13 +628,7 @@ function App() {
       const existing = wallets.find((wallet) => wallet.type === type);
       const result = existing
         ? await omsWallet.wallet.useWallet({ walletId: existing.id })
-        : await omsWallet.wallet.createWallet({ type });
-
-      setWalletAddress(result.walletAddress);
-      setWalletTab(result.wallet.type);
-      clearWalletOperationResults();
-      setAccessGrants([]);
-      setAccessStatus('');
+        : await omsWallet.wallet.createWallet({ walletType: type });
       setManagedWallets(
         existing
           ? wallets
@@ -727,7 +712,6 @@ function App() {
       await omsWallet.wallet.signOut();
       setCode('');
       setPendingWalletSelection(null);
-      setWalletAddress('');
       setLastSignature('');
       setLastIdToken('');
       setLastTransactionHash('');
@@ -854,15 +838,15 @@ function App() {
             <div className="session-info">
               <div>
                 <span>Auth</span>
-                <strong>{formatSessionAuth(session.auth)}</strong>
+                <strong>{formatSessionAuth(session?.auth)}</strong>
               </div>
               <div>
                 <span>Account</span>
-                <strong>{session.auth?.email ?? 'Unknown'}</strong>
+                <strong>{session?.auth.email ?? 'Unknown'}</strong>
               </div>
               <div>
                 <span>Expires</span>
-                <strong>{formatSessionExpiry(session.expiresAt)}</strong>
+                <strong>{formatSessionExpiry(session?.expiresAt)}</strong>
               </div>
             </div>
 
@@ -887,38 +871,29 @@ function App() {
               >
                 Solana
               </button>
+              <button
+                type="button"
+                role="tab"
+                aria-selected={walletTab === 'tron'}
+                className={walletTab === 'tron' ? 'wallet-tab wallet-tab-active' : 'wallet-tab'}
+                onClick={() => selectWalletTab('tron')}
+                disabled={isBusy}
+              >
+                Tron
+              </button>
             </div>
 
             {walletTab === 'ethereum' && activeWalletType !== WalletType.Ethereum && (
-              <section className="tool wallet-type-prompt">
-                <h2>
-                  {!walletInventoryLoaded
-                    ? walletInventoryError
-                      ? 'Unable to load wallets'
-                      : 'Loading wallets'
-                    : hasEvmWallet
-                      ? 'Use an EVM wallet'
-                      : 'Create an EVM wallet'}
-                </h2>
-                <button
-                  type="button"
-                  onClick={() =>
-                    void (walletInventoryLoaded
-                      ? activateWalletType(WalletType.Ethereum)
-                      : loadManagedWallets())
-                  }
-                  disabled={isBusy || (!walletInventoryLoaded && !walletInventoryError)}
-                >
-                  {!walletInventoryLoaded
-                    ? walletInventoryError
-                      ? 'Retry loading wallets'
-                      : 'Loading wallets...'
-                    : hasEvmWallet
-                      ? 'Use EVM wallet'
-                      : 'Create EVM wallet'}
-                </button>
-                {activeWalletStatus && <output>{activeWalletStatus}</output>}
-              </section>
+              <WalletTypePrompt
+                label="EVM"
+                hasWallet={hasEvmWallet}
+                inventoryLoaded={walletInventoryLoaded}
+                inventoryError={walletInventoryError}
+                isBusy={isBusy}
+                status={activeWalletStatus}
+                onActivate={() => void activateWalletType(WalletType.Ethereum)}
+                onLoadWallets={() => void loadManagedWallets()}
+              />
             )}
 
             {walletTab === 'ethereum' && activeWalletType === WalletType.Ethereum && (
@@ -1014,39 +989,37 @@ function App() {
             )}
 
             {walletTab === 'solana' && activeWalletType !== WalletType.Solana && (
-              <section className="tool wallet-type-prompt">
-                <h2>
-                  {!walletInventoryLoaded
-                    ? walletInventoryError
-                      ? 'Unable to load wallets'
-                      : 'Loading wallets'
-                    : hasSolanaWallet
-                      ? 'Use a Solana wallet'
-                      : 'Create a Solana wallet'}
-                </h2>
-                <button
-                  type="button"
-                  onClick={() =>
-                    void (walletInventoryLoaded
-                      ? activateWalletType(WalletType.Solana)
-                      : loadManagedWallets())
-                  }
-                  disabled={isBusy || (!walletInventoryLoaded && !walletInventoryError)}
-                >
-                  {!walletInventoryLoaded
-                    ? walletInventoryError
-                      ? 'Retry loading wallets'
-                      : 'Loading wallets...'
-                    : hasSolanaWallet
-                      ? 'Use Solana wallet'
-                      : 'Create Solana wallet'}
-                </button>
-                {activeWalletStatus && <output>{activeWalletStatus}</output>}
-              </section>
+              <WalletTypePrompt
+                label="Solana"
+                hasWallet={hasSolanaWallet}
+                inventoryLoaded={walletInventoryLoaded}
+                inventoryError={walletInventoryError}
+                isBusy={isBusy}
+                status={activeWalletStatus}
+                onActivate={() => void activateWalletType(WalletType.Solana)}
+                onLoadWallets={() => void loadManagedWallets()}
+              />
             )}
 
             {walletTab === 'solana' && activeWalletType === WalletType.Solana && (
               <SolanaExample key={walletAddress} walletAddress={walletAddress} />
+            )}
+
+            {walletTab === 'tron' && activeWalletType !== WalletType.Tron && (
+              <WalletTypePrompt
+                label="Tron"
+                hasWallet={hasTronWallet}
+                inventoryLoaded={walletInventoryLoaded}
+                inventoryError={walletInventoryError}
+                isBusy={isBusy}
+                status={activeWalletStatus}
+                onActivate={() => void activateWalletType(WalletType.Tron)}
+                onLoadWallets={() => void loadManagedWallets()}
+              />
+            )}
+
+            {walletTab === 'tron' && activeWalletType === WalletType.Tron && (
+              <TronExample key={walletAddress} walletAddress={walletAddress} />
             )}
 
             <details className="tool collapsible-tool">
@@ -1119,6 +1092,7 @@ function App() {
                         >
                           <option value={WalletType.Ethereum}>Ethereum</option>
                           <option value={WalletType.Solana}>Solana</option>
+                          <option value={WalletType.Tron}>Tron</option>
                         </select>
                       </span>
                     </label>
@@ -1159,6 +1133,7 @@ function App() {
                         >
                           <option value={WalletType.Ethereum}>Ethereum</option>
                           <option value={WalletType.Solana}>Solana</option>
+                          <option value={WalletType.Tron}>Tron</option>
                         </select>
                       </span>
                     </label>
@@ -1364,6 +1339,46 @@ function App() {
         />
       )}
     </main>
+  );
+}
+
+function WalletTypePrompt(props: {
+  label: string;
+  hasWallet: boolean;
+  inventoryLoaded: boolean;
+  inventoryError: string;
+  isBusy: boolean;
+  status: string;
+  onActivate: () => void;
+  onLoadWallets: () => void;
+}) {
+  const article = /^[AEIOU]/.test(props.label) ? 'an' : 'a';
+  return (
+    <section className="tool wallet-type-prompt">
+      <h2>
+        {!props.inventoryLoaded
+          ? props.inventoryError
+            ? 'Unable to load wallets'
+            : 'Loading wallets'
+          : props.hasWallet
+            ? `Use ${article} ${props.label} wallet`
+            : `Create ${article} ${props.label} wallet`}
+      </h2>
+      <button
+        type="button"
+        onClick={props.inventoryLoaded ? props.onActivate : props.onLoadWallets}
+        disabled={props.isBusy || (!props.inventoryLoaded && !props.inventoryError)}
+      >
+        {!props.inventoryLoaded
+          ? props.inventoryError
+            ? 'Retry loading wallets'
+            : 'Loading wallets...'
+          : props.hasWallet
+            ? `Use ${props.label} wallet`
+            : `Create ${props.label} wallet`}
+      </button>
+      {props.status && <output>{props.status}</output>}
+    </section>
   );
 }
 

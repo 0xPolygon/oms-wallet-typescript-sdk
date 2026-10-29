@@ -1,3 +1,5 @@
+import { base64UrlDecodeBytes, base64UrlEncodeBytes } from './base64.js';
+
 export interface OidcStatePayload {
   nonce: string;
   scope: string;
@@ -23,27 +25,12 @@ export interface BuildOidcAuthorizationUrlParams {
   loginHint?: string;
 }
 
-export function base64UrlEncodeBytes(bytes: Uint8Array): string {
-  let binary = '';
-  for (const b of bytes) {
-    binary += String.fromCharCode(b);
-  }
-  return btoa(binary).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
-}
-
 export function base64UrlEncodeString(value: string): string {
   return base64UrlEncodeBytes(new TextEncoder().encode(value));
 }
 
 export function base64UrlDecodeString(value: string): string {
-  const padded =
-    value.replace(/-/g, '+').replace(/_/g, '/') + '='.repeat((4 - (value.length % 4)) % 4);
-  const binary = atob(padded);
-  const bytes = new Uint8Array(binary.length);
-  for (let i = 0; i < binary.length; i++) {
-    bytes[i] = binary.charCodeAt(i);
-  }
-  return new TextDecoder().decode(bytes);
+  return new TextDecoder().decode(base64UrlDecodeBytes(value));
 }
 
 export function generateOidcNonce(): string {

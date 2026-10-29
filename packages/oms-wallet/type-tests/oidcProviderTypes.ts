@@ -2,6 +2,7 @@ import {
   AuthMode,
   Networks,
   SolanaNetworks,
+  TronNetworks,
   RemoteAccessClient,
   WalletImportCipherSuite,
   WalletKeyOrigin,
@@ -21,50 +22,38 @@ import {
   type Network,
   type GetIdTokenParams,
   type OMSWalletSessionAuth,
-  type OMSWalletSessionExpiredListener,
-  type OMSWalletSessionState,
+  type OMSWalletSessionChangeListener,
+  type OMSWalletSession,
+  type CallTronContractParams,
+  type GetTronBalancesParams,
+  type SendTronTransactionParams,
+  type TronBalance,
+  type TronNetwork,
+  type WalletAccount,
+  type WalletActivationResult,
   type OMSWalletErrorCode,
   type OMSWalletUpstreamError,
-  type BalancesResult,
   type AbiArg,
   type GetBalancesParams,
   type GetSolanaBalancesParams,
   type GetTransactionHistoryParams,
-  type IndexerNetworkType,
   type OMSWalletParams,
-  type OMSWalletIndexerClient,
+  type IndexerClient,
+  type FeeToken,
   type OidcAuthMode,
   type CustomOidcProviderConfig,
   type OmsRelayOidcProvider,
   type SendDataTransactionParams,
   type SendNativeTransactionParams,
-  type SendSolanaTransferParams,
   type SendTransactionBase,
   type SendTransactionParams,
   type SendTransactionResponse,
   type SendContractTransactionParams,
-  type ContractTokenBalance,
-  type NativeTokenBalance,
-  type SolanaBalance,
-  type SolanaBalancesResult,
-  type SolanaFungibleTokenBalance,
-  type SolanaNativeBalance,
-  type SolanaNetworkError,
-  type SolanaVerificationSource,
-  type SolanaVerificationStatus,
-  type TokenBalance,
-  type TokenBalancesPage,
-  type TokenContractInfo,
-  type TokenMetadata,
-  type TransactionHistoryResult,
   type SignInWithOidcIdTokenParams,
-  type AuthorizeRemoteAccessParams,
   type CredentialSigner,
   type PreparedRemoteTransaction,
   type EncryptedWalletImportKeyMaterial,
-  type RemoteAccessGrant,
   type RemoteAccessSession,
-  type SmartSessionGrant,
   type SmartSessionGrantUsage
 } from '../src/index';
 
@@ -139,9 +128,11 @@ const customOidcProviderWithoutRedirectUri: CustomOidcProviderConfig = {
 void customOidcProviderWithoutRedirectUri;
 
 const defaultGoogleProvider = OmsRelayOidcProviders.google;
-// @ts-expect-error SDK default Google config is read-only.
+// @ts-expect-error OMS relay provider values are read-only (TS2540, even for the same literal).
+defaultGoogleProvider.provider = 'google';
+// @ts-expect-error OMS relay provider values do not expose a client ID.
 defaultGoogleProvider.clientId = 'google-client';
-// @ts-expect-error OMS relay provider values do not expose editable scopes.
+// @ts-expect-error OMS relay provider values do not expose scopes.
 defaultGoogleProvider.scopes.push('admin');
 const relayProvider: 'google' = defaultGoogleProvider.provider;
 void relayProvider;
@@ -182,6 +173,11 @@ if (false) {
     void manualAuth.wallets;
     void manualAuth.selectWallet({ walletId: manualAuth.wallets[0].id });
     void manualAuth.createAndSelectWallet({ reference: 'main' });
+    void manualAuth.claimAndSelectWallet({ walletId: manualAuth.claimableWallets[0].id });
+    // @ts-expect-error claimAndSelectWallet requires the claimable wallet ID.
+    void manualAuth.claimAndSelectWallet();
+    // @ts-expect-error manual auth claimable wallet lists are readonly snapshots.
+    manualAuth.claimableWallets.push(manualAuth.wallets[0]);
     // @ts-expect-error manual auth wallet lists are readonly snapshots.
     manualAuth.wallets.push(manualAuth.wallets[0]);
     // @ts-expect-error manual auth wallet metadata is readonly.
@@ -189,13 +185,23 @@ if (false) {
     // @ts-expect-error manual auth credential metadata is readonly.
     manualAuth.credential.expiresAt = '2099-01-01T00:00:00Z';
     // @ts-expect-error manual auth does not activate a wallet.
-    void manualAuth.walletAddress;
+    void manualAuth.wallet;
 
     const activatedAuth = await wallet.completeEmailAuth({ code: '123456' });
+    void activatedAuth.wallet.address;
+    // @ts-expect-error the wallet address is read from result.wallet.address.
     void activatedAuth.walletAddress;
     void activatedAuth.wallets;
     // @ts-expect-error completed auth wallet lists are readonly snapshots.
     activatedAuth.wallets.push(activatedAuth.wallet);
+    const unclaimedWallet: WalletAccount | undefined = activatedAuth.claimableWallets[0];
+    void unclaimedWallet;
+    // @ts-expect-error completed auth claimable wallet lists are readonly snapshots.
+    activatedAuth.claimableWallets.push(activatedAuth.wallet);
+    const claimed: Promise<WalletActivationResult> = wallet.claimWallet({ walletId: 'wallet-id' });
+    void claimed;
+    // @ts-expect-error claimWallet takes { walletId }, mirroring useWallet.
+    void wallet.claimWallet('wallet-id');
     // @ts-expect-error completed auth wallet metadata is readonly.
     activatedAuth.wallet.id = 'wallet-id';
     // @ts-expect-error completed auth credential metadata is readonly.
@@ -209,62 +215,69 @@ if (false) {
     });
     void manualOidcIdTokenAuth.walletType;
     // @ts-expect-error manual ID-token auth does not activate a wallet.
-    void manualOidcIdTokenAuth.walletAddress;
+    void manualOidcIdTokenAuth.wallet;
 
     const activatedOidcIdTokenAuth = await wallet.signInWithOidcIdToken({
       idToken: 'jwt',
       issuer: 'https://accounts.google.com',
       audience: 'google-client-id'
     });
-    void activatedOidcIdTokenAuth.walletAddress;
+    void activatedOidcIdTokenAuth.wallet.address;
 
-    const solanaWallet = await wallet.createWallet({ type: WalletType.Solana });
-    const origin: WalletKeyOrigin = solanaWallet.wallet.keyOrigin;
-    void origin;
-    if (solanaWallet.wallet.type === WalletType.Solana) {
-      const address: string = solanaWallet.wallet.address;
-      void address;
-      void wallet.isValidSolanaMessageSignature({
+    const tronWallet = await wallet.createWallet({ walletType: WalletType.Tron });
+    // @ts-expect-error createWallet takes walletType, not type.
+    void wallet.createWallet({ type: WalletType.Tron });
+    if (tronWallet.wallet.type === WalletType.Tron) {
+      const address: string = tronWallet.wallet.address;
+      void wallet.isValidTronMessageSignature({
         walletAddress: address,
         message: 'Sign in to Example',
-        signature: 'solana-signature'
+        signature: '0xsignature'
+      });
+      void wallet.isValidTronTypedDataSignature({
+        walletAddress: address,
+        typedData: {},
+        signature: '0xsignature'
       });
     }
-    void wallet.signSolanaMessage({ message: 'Sign in to Example' });
-    const solanaTransfer: SendSolanaTransferParams = {
-      network: SolanaNetworks.devnet,
-      asset: 'SOL',
-      to: '3gFktQX6vki5M2DzN8Y1ESPUJ4fJ8o6hVQWf8vYvPypD',
-      amount: 1_000_000n,
-      mode: TransactionMode.Relayer
-    };
-    void wallet.sendSolanaTransfer(solanaTransfer);
+    // Omitting walletAddress verifies against the active wallet.
+    void wallet.isValidTronMessageSignature({ message: 'hello', signature: '0xsignature' });
+    void wallet.isValidTronTypedDataSignature({ typedData: {}, signature: '0xsignature' });
+    void wallet.isValidMessageSignature({ message: 'hello', signature: '0xsignature' });
+    void wallet.isValidTypedDataSignature({ typedData: {}, signature: '0xsignature' });
+    void wallet.isValidSolanaMessageSignature({ message: 'hello', signature: 'signature' });
+    // @ts-expect-error Signature verification takes walletAddress, not walletId.
+    void wallet.isValidMessageSignature({ walletId: 'id', message: 'hello', signature: '0x' });
+    // @ts-expect-error Tron signature verification takes walletAddress, not walletId.
+    void wallet.isValidTronMessageSignature({ walletId: 'id', message: 'hello', signature: '0x' });
 
-    const authorization = await wallet.authorizeRemoteAccess({
-      credentialId: 'credential-id',
-      network: Networks.polygon,
-      grants: [
-        {
-          kind: 'nativeTransfer',
-          to: '0x1111111111111111111111111111111111111111',
-          limit: 1n
-        }
-      ],
-      expiresAt: '2099-01-01T00:00:00Z'
+    void wallet.signTronMessage({ message: 'Sign in to Example' });
+    void wallet.signTronTypedData({ typedData: {} });
+    const trxTransfer: SendTronTransactionParams = {
+      network: TronNetworks.nile,
+      to: 'TNPeeaaFB7K9cmo4uQpcU32zGK8G1NYqeL',
+      value: 1_000_000n
+    };
+    void wallet.sendTronTransaction(trxTransfer);
+    void wallet.sendTronTransaction({ ...trxTransfer, data: '0x' });
+    void wallet.sendTronTransaction({
+      ...trxTransfer,
+      // @ts-expect-error Tron transactions always run in native mode.
+      mode: TransactionMode.Relayer
     });
-    void authorization.walletId;
-    void authorization.sessionId;
-    void wallet.revokeAccess({
-      credentialId: 'credential-id',
-      sessionId: authorization.sessionId
-    });
-    const ownerSession = await wallet.getRemoteAccessSession({
-      sessionId: authorization.sessionId
-    });
-    void wallet.getRemoteAccessSessionUsage({
-      sessionId: ownerSession.sessionId,
-      network: Networks.polygon
-    });
+    // @ts-expect-error Tron transactions use Tron networks.
+    void wallet.sendTronTransaction({ ...trxTransfer, network: Networks.polygon });
+    const trc20Transfer: CallTronContractParams = {
+      network: TronNetworks.mainnet,
+      contractAddress: 'TR7NHqjeKQxGTCi8q8ZY4pL8otSzgjLj6t',
+      method: 'transfer',
+      args: [
+        { type: 'address', value: 'TNPeeaaFB7K9cmo4uQpcU32zGK8G1NYqeL' },
+        { type: 'uint256', value: '1000000' }
+      ]
+    };
+    void wallet.callTronContract(trc20Transfer);
+    void wallet.importWallet({ type: 'tron', privateKey: '11'.repeat(32) });
 
     const imported = await configuredOmsWallet.wallet.importWallet({
       type: WalletType.Ethereum,
@@ -283,6 +296,11 @@ if (false) {
       ciphertext: 'base64'
     };
     void configuredOmsWallet.wallet.importEncryptedWallet({
+      walletType: WalletType.Solana,
+      keyMaterial: encryptedKey
+    });
+    void configuredOmsWallet.wallet.importEncryptedWallet({
+      // @ts-expect-error importEncryptedWallet takes walletType, not type.
       type: WalletType.Solana,
       keyMaterial: encryptedKey
     });
@@ -290,25 +308,6 @@ if (false) {
     void configuredOmsWallet.wallet.importWallet({ type: WalletType.Ethereum });
   });
 }
-
-const smartSessionGrant: SmartSessionGrant = {
-  kind: 'erc20Transfer',
-  token: '0x2222222222222222222222222222222222222222',
-  limit: 1n
-};
-void smartSessionGrant;
-
-const authorizeRemoteAccess: AuthorizeRemoteAccessParams = {
-  credentialId: 'credential-id',
-  network: Networks.polygon,
-  grants: [smartSessionGrant],
-  expiresAt: '2099-01-01T00:00:00Z'
-};
-void authorizeRemoteAccess;
-
-declare const remoteAccess: RemoteAccessGrant;
-const remoteSessionId: string = remoteAccess.sessionId;
-void remoteSessionId;
 
 const defaultClient = new OMSWallet({
   publishableKey: 'pk_dev_sdbx_project_key'
@@ -325,29 +324,83 @@ new OMSWallet({ publicApiKey: 'pk_dev_sdbx_project_key' });
 new OMSWallet({ publishableKey: 'pk_dev_sdbx_project_key', authorizationScope: 'project-id' });
 new OMSWallet({
   publishableKey: 'pk_dev_sdbx_project_key',
-  // @ts-expect-error session expiry is subscribed through wallet.onSessionExpired, not constructor params.
-  onSessionExpired: () => {}
+  // @ts-expect-error session changes are subscribed through wallet.onSessionChange, not constructor params.
+  onSessionChange: () => {}
 });
-const session: OMSWalletSessionState = defaultClient.wallet.session;
+const session: OMSWalletSession | undefined = defaultClient.wallet.session;
+const activeWallet: WalletAccount | undefined = defaultClient.wallet.activeWallet;
+if (activeWallet?.type === WalletType.Ethereum) {
+  const ethereumAddress: `0x${string}` = activeWallet.address;
+  void ethereumAddress;
+}
+if (activeWallet?.type === WalletType.Tron) {
+  // @ts-expect-error Tron addresses are Base58Check strings, not viem addresses.
+  const tronAddress: `0x${string}` = activeWallet.address;
+  void tronAddress;
+}
+// @ts-expect-error the active wallet is readonly SDK state.
+defaultClient.wallet.activeWallet = undefined;
 // @ts-expect-error sessions are owned by the wallet sub-client.
 void defaultClient.session;
 const omsWalletParams: OMSWalletParams = { publishableKey: 'pk_dev_sdbx_project_key' };
 void omsWalletParams;
 const oidcAuthMode: OidcAuthMode = AuthMode.AuthCodePKCE;
 void oidcAuthMode;
-const unsubscribeSessionExpired: () => void = defaultClient.wallet.onSessionExpired(
-  ({ session }) => {
-    void session.auth?.email;
-    // @ts-expect-error expired session snapshots are readonly.
-    session.auth = undefined;
-  }
-);
-const sessionExpiredListener: OMSWalletSessionExpiredListener = ({ expiredAt }) => {
-  void expiredAt;
+// @ts-expect-error AuthMode only lists OIDC redirect auth modes.
+void AuthMode.OTP;
+const feeToken: FeeToken = {
+  network: 'amoy',
+  name: 'USD Coin',
+  symbol: 'USDC',
+  type: 'ERC20',
+  logoUrl: 'https://example.com/usdc.png',
+  tokenId: 'usdc'
 };
-void defaultClient.wallet.onSessionExpired(sessionExpiredListener);
-// @ts-expect-error walletAddress is readonly SDK state.
-defaultClient.wallet.walletAddress = '0x9999999999999999999999999999999999999999';
+void feeToken;
+const legacyFeeToken: FeeToken = {
+  network: 'amoy',
+  name: 'USD Coin',
+  symbol: 'USDC',
+  type: 'ERC20',
+  // @ts-expect-error FeeToken uses tokenId, not tokenID.
+  tokenID: 'usdc'
+};
+void legacyFeeToken;
+const unsubscribeSessionChange: () => void = defaultClient.wallet.onSessionChange((event) => {
+  switch (event.reason) {
+    case 'signedIn':
+    case 'walletChanged':
+    case 'expiryUpdated': {
+      const changedWallet: WalletAccount = event.activeWallet;
+      const changedSession: OMSWalletSession = event.session;
+      void changedWallet;
+      void changedSession;
+      // @ts-expect-error only an expired change carries the expired session.
+      void event.expiredSession;
+      break;
+    }
+    case 'signedOut': {
+      const noWallet: undefined = event.activeWallet;
+      void noWallet;
+      break;
+    }
+    case 'expired': {
+      void event.expiredSession.wallet?.address;
+      void event.expiredSession.expiredAt;
+      // @ts-expect-error expired session snapshots are readonly.
+      event.expiredSession.session = event.expiredSession.session;
+      break;
+    }
+  }
+});
+const sessionChangeListener: OMSWalletSessionChangeListener = async ({ reason }) => {
+  void reason;
+};
+void defaultClient.wallet.onSessionChange(sessionChangeListener);
+// @ts-expect-error onSessionExpired was replaced by onSessionChange.
+void defaultClient.wallet.onSessionExpired;
+// @ts-expect-error There is no walletAddress property; read the active account from activeWallet.
+void defaultClient.wallet.walletAddress;
 const idTokenParams: GetIdTokenParams = { ttlSeconds: 300, customClaims: { role: 'admin' } };
 const idToken: Promise<string> = defaultClient.wallet.getIdToken(idTokenParams);
 const oidcIdTokenParams: SignInWithOidcIdTokenParams = {
@@ -364,12 +417,12 @@ const oidcIdTokenResult: Promise<CompleteOidcIdTokenAuthResult> =
     audience: 'google-client-id'
   });
 void defaultClient.wallet.signInWithOidcIdToken(oidcIdTokenParams);
-const sessionAuth: OMSWalletSessionAuth | undefined = defaultClient.wallet.session.auth;
-// @ts-expect-error session snapshots are readonly.
-session.auth = undefined;
-if (session.auth) {
+const sessionAuth: OMSWalletSessionAuth | undefined = defaultClient.wallet.session?.auth;
+if (session) {
+  // @ts-expect-error session snapshots are readonly.
+  session.auth = { type: 'email', email: 'user@example.com' };
   // @ts-expect-error session auth metadata is readonly.
-  session.auth.email = 'mutated@example.com';
+  session.auth.type = 'oidc';
 }
 const polygonNetwork: Network = Networks.polygon;
 const polygonDisplayName: string = Networks.polygon.displayName;
@@ -384,108 +437,19 @@ const unsupportedNetwork: Network = {
   explorerUrl: 'https://example.com',
   displayName: 'Unsupported'
 };
-const tokenContractInfo: TokenContractInfo = {
-  chainId: 137,
-  address: '0xtoken',
-  source: 'token-directory',
-  name: 'USD Coin',
-  type: 'ERC20',
-  symbol: 'USDC',
-  decimals: 6,
-  deployed: true,
-  bytecodeHash: '0xhash',
-  extensions: {},
-  updatedAt: '2026-01-01T00:00:00Z',
-  status: 'AVAILABLE'
-};
-const tokenMetadata: TokenMetadata = {
-  tokenId: '0',
-  source: 'metadata',
-  name: 'USDC',
-  attributes: [],
-  status: 'AVAILABLE'
-};
-const contractTokenBalance: ContractTokenBalance = {
-  contractType: 'ERC20',
-  contractAddress: '0xtoken',
-  accountAddress: '0xwallet',
-  tokenId: '0',
-  balance: '141799',
-  chainId: Networks.polygon.id,
-  blockHash: '0xblock',
-  blockNumber: 1,
-  contractInfo: tokenContractInfo,
-  tokenMetadata,
-  balanceUSD: '0.141799',
-  priceUSD: '1'
-};
-const nativeTokenBalance: NativeTokenBalance = {
-  contractType: 'NATIVE',
-  accountAddress: '0xwallet',
-  balance: '1000000000000000000',
-  chainId: Networks.polygon.id,
-  name: 'POL',
-  symbol: 'POL'
-};
-const tokenBalance: TokenBalance = contractTokenBalance;
-const tokenBalancesPage: TokenBalancesPage = { page: 0, pageSize: 40, more: false };
-const tokenBalancesResult: BalancesResult = {
-  status: 200,
-  page: tokenBalancesPage,
-  nativeBalances: [nativeTokenBalance],
-  balances: [contractTokenBalance]
-};
-const solanaFungibleTokenBalance: SolanaFungibleTokenBalance = {
-  network: SolanaNetworks.mainnet,
-  accountAddress: 'solana-wallet',
-  assetType: 'fungible-token',
-  tokenProgram: 'spl-token',
-  mintAddress: 'usdc-mint',
-  name: 'USD Coin',
-  symbol: 'USDC',
-  decimals: 6,
-  balance: '1000000',
-  formattedBalance: '1',
-  verificationStatus: 'verified',
-  verificationSource: 'jupiter'
-};
-const solanaNativeBalance: SolanaNativeBalance = {
-  network: SolanaNetworks.devnet,
-  accountAddress: 'solana-wallet',
-  assetType: 'native',
-  name: 'Solana',
-  symbol: 'SOL',
-  decimals: 9,
-  balance: '1000000000',
-  formattedBalance: '1',
-  verificationStatus: 'unknown',
-  verificationSource: 'none'
-};
-const solanaBalance: SolanaBalance = solanaFungibleTokenBalance;
-const solanaNetworkError: SolanaNetworkError = {
-  network: SolanaNetworks.devnet,
-  reason: 'RPC unavailable'
-};
-const solanaBalancesResult: SolanaBalancesResult = {
-  status: 200,
-  balances: [solanaNativeBalance, solanaBalance],
-  errors: [solanaNetworkError]
-};
-const solanaVerificationStatus: SolanaVerificationStatus = 'unknown';
-const solanaVerificationSource: SolanaVerificationSource = 'none';
-const indexerNetworkType: IndexerNetworkType = 'MAINNETS';
-const transactionHistoryResult: TransactionHistoryResult = {
-  status: 200,
-  page: tokenBalancesPage,
-  transactions: []
-};
 const upstreamError: OMSWalletUpstreamError = {
   service: 'waas',
   name: 'CommitmentConsumed',
-  code: 7008,
+  code: '7008',
   message: 'The authentication commitment has already been used',
   status: 400
 };
+const numericUpstreamError: OMSWalletUpstreamError = {
+  service: 'waas',
+  // @ts-expect-error upstream codes are strings; numeric WebRPC codes are stringified.
+  code: 7008
+};
+void numericUpstreamError;
 const sdkError = undefined as unknown as OMSWalletError;
 const maybeUpstreamError: OMSWalletUpstreamError | undefined = sdkError.upstreamError;
 const transactionExecutionCode: OMSWalletErrorCode = 'OMS_TRANSACTION_EXECUTION_UNCONFIRMED';
@@ -500,21 +464,13 @@ new OMSWalletRequestError({ message: 'wrong', code: 'OMS_SESSION_MISSING' });
 // @ts-expect-error transaction errors cannot carry validation codes.
 new OMSWalletTransactionError({ message: 'wrong', code: 'OMS_VALIDATION_ERROR' });
 void session;
-void unsubscribeSessionExpired;
+void unsubscribeSessionChange;
 void sessionAuth;
 void polygonNetwork;
 void amoyNetwork;
 void baseNetwork;
 void allNetworks;
 void unsupportedNetwork;
-void tokenContractInfo;
-void tokenMetadata;
-void tokenBalancesResult;
-void solanaBalancesResult;
-void solanaVerificationStatus;
-void solanaVerificationSource;
-void indexerNetworkType;
-void transactionHistoryResult;
 void upstreamError;
 void maybeUpstreamError;
 void transactionExecutionCode;
@@ -566,7 +522,30 @@ void defaultClient.indexer.getSolanaBalances({
   // @ts-expect-error Solana indexer queries use the SDK-supported Solana networks.
   networks: ['solana:testnet']
 });
-const indexerClient: OMSWalletIndexerClient = defaultClient.indexer;
+const getTronBalancesParams: GetTronBalancesParams = {
+  walletAddress: 'TNPeeaaFB7K9cmo4uQpcU32zGK8G1NYqeL',
+  networks: [TronNetworks.nile],
+  includeMetadata: true,
+  contractAddresses: ['TXYZopYRdj2D9XRtbG411XZZ3kM5VkAeBf'],
+  excludedContractAddresses: ['TR7NHqjeKQxGTCi8q8ZY4pL8otSzgjLj6t']
+};
+void defaultClient.indexer.getTronBalances(getTronBalancesParams).then(({ balances }) => {
+  const balance: TronBalance | undefined = balances[0];
+  if (balance?.assetType === 'fungible-token') {
+    const tokenStandard: 'trc20' = balance.tokenStandard;
+    void tokenStandard;
+    const contractAddress: string = balance.contractAddress;
+    void contractAddress;
+  }
+});
+void defaultClient.indexer.getTronBalances({
+  walletAddress: 'TNPeeaaFB7K9cmo4uQpcU32zGK8G1NYqeL',
+  // @ts-expect-error Tron balance queries use the SDK-supported Tron networks.
+  networks: ['tron:shasta']
+});
+const tronNetwork: TronNetwork = TronNetworks.mainnet;
+void tronNetwork;
+const indexerClient: IndexerClient = defaultClient.indexer;
 void indexerClient;
 const transactionHistoryParams: GetTransactionHistoryParams = {
   walletAddress: '0x9999999999999999999999999999999999999999',
@@ -574,10 +553,6 @@ const transactionHistoryParams: GetTransactionHistoryParams = {
   includeMetadata: true
 };
 void defaultClient.indexer.getTransactionHistory(transactionHistoryParams);
-void defaultClient.wallet.startOidcRedirectAuth({
-  provider: OmsRelayOidcProviders.google,
-  omsRelayReturnUri: 'https://app.example/auth/callback'
-});
 // @ts-expect-error OMS relay provider authorization parameters are fixed by the SDK.
 void defaultClient.wallet.startOidcRedirectAuth({
   provider: OmsRelayOidcProviders.google,
@@ -599,10 +574,6 @@ void (async () => {
 });
 void defaultClient.wallet.startOidcRedirectAuth({
   provider: OmsRelayOidcProviders.google
-});
-void defaultClient.wallet.startOidcRedirectAuth({
-  provider: OmsRelayOidcProviders.apple,
-  omsRelayReturnUri: 'https://app.example/auth/callback'
 });
 void defaultClient.wallet.startOidcRedirectAuth({
   provider: OmsRelayOidcProviders.google,

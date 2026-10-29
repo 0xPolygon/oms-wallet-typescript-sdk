@@ -22,8 +22,11 @@ export type OMSWalletErrorCode =
 export interface OMSWalletUpstreamError {
   service: 'waas' | 'indexer';
   name?: string;
-  code?: number | string;
+  /** Upstream error code. Numeric WebRPC codes are stringified, for example `'7313'`. */
+  code?: string;
   message?: string;
+  /** The service's reason for this error, when it gives one, for example why a request was invalid. */
+  cause?: string;
   status?: number;
 }
 
@@ -276,6 +279,37 @@ export function toOMSWalletError(
   });
 }
 
+/**
+ * Whether WaaS rejected the calling credential as gone: `KeyNotFound` (7202) or `KeyExpired` (7203).
+ * Checks a raw generated error and an SDK error that carries it as `upstreamError`.
+ */
+export function isCredentialEndedError(error: unknown): boolean {
+  if (isOMSWalletError(error)) {
+    return (
+      error.upstreamError?.service === 'waas' &&
+      (error.upstreamError.code === '7202' || error.upstreamError.code === '7203')
+    );
+  }
+  const code = generatedCodeFromError(error);
+  return code === 7202 || code === 7203;
+}
+
+/**
+ * Whether a raw generated WaaS error is `Unauthorized` (7207). Matched by code only: the API gateway
+ * also returns errors named `Unauthorized` (code 1000).
+ */
+export function isUnauthorizedError(error: unknown): boolean {
+  return !isOMSWalletError(error) && generatedCodeFromError(error) === 7207;
+}
+
+/** Whether WaaS does not serve the called method (`WebrpcBadRoute`, code -2). */
+export function isBadRouteError(error: unknown): boolean {
+  const name = error instanceof Error ? error.name : undefined;
+  return (
+    name === 'WebrpcBadRoute' || (!isOMSWalletError(error) && generatedCodeFromError(error) === -2)
+  );
+}
+
 export function errorMessage(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
 }
@@ -326,8 +360,19 @@ function upstreamErrorFromError(
   return {
     service,
     name,
-    code,
+    code: code === undefined ? undefined : String(code),
     message: errorMessage(error),
+    cause: code !== undefined && code >= 0 ? upstreamCause(error) : undefined,
     status
   };
+}
+
+/**
+ * The reason a service error carries in `cause` alongside its generic message. Only errors the
+ * service sent (code 0 and up) qualify: the client's own transport errors (negative codes) put
+ * local details there, such as the raw body of a response it could not parse.
+ */
+function upstreamCause(error: unknown): string | undefined {
+  const cause = (error as { cause?: unknown } | undefined)?.cause;
+  return typeof cause === 'string' && cause.length > 0 ? cause : undefined;
 }

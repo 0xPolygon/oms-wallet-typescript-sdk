@@ -4,6 +4,11 @@ import type { Network } from '../networks.js';
 
 export interface WalletCredential {
   credentialId: string;
+  /**
+   * The credential's expiry as reported when the credential was returned. WaaS extends it with use,
+   * up to the lifetime requested at sign-in. Auth results carry the value from sign-in and are not
+   * refreshed; the active session's current expiry is `wallet.session.expiresAt`.
+   */
   expiresAt: string;
   isCaller: boolean;
 }
@@ -47,8 +52,18 @@ export interface ListAccessParams {
   type?: AccessGrant['type'];
 }
 
+export interface ListAccessPageParams extends ListAccessParams {
+  /** `page.cursor` from the previous `AccessGrantPage`. Omit for the first page. */
+  cursor?: string;
+}
+
 export interface AccessGrantPage {
   grants: AccessGrant[];
+  /** Paging metadata from WaaS. `cursor` is absent on the last page. */
+  page?: {
+    limit?: number;
+    cursor?: string;
+  };
 }
 
 export interface AuthorizeRemoteAccessParams {

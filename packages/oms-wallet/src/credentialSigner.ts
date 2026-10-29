@@ -3,7 +3,7 @@ import type { Hex } from 'viem';
 import { keccak256, toBytes } from 'viem';
 import { privateKeyToAccount } from 'viem/accounts';
 
-import { ByteUtils } from './utils/byteUtils.js';
+import { bytesToHex } from './utils/base64.js';
 
 export type CredentialSigningAlgorithm = 'ecdsa-p256-sha256' | 'ecdsa-p256k-eip191';
 
@@ -40,7 +40,11 @@ export class WebCryptoP256CredentialSigner implements CredentialSigner {
 
   async credentialId(): Promise<string> {
     await this.ensureInitialized();
-    return this.credential!;
+    // Another tab may have removed or replaced the shared key since this signer loaded it. A
+    // removed key resets this signer, and the next use loads or creates one.
+    await this.syncWithStoredCredential();
+    if (!this.credential) throw new Error('WebCrypto credential signer was cleared');
+    return this.credential;
   }
 
   async nextNonce(): Promise<string> {
@@ -60,7 +64,9 @@ export class WebCryptoP256CredentialSigner implements CredentialSigner {
         store.get(this.id)
       );
       if (!isUsableStoredCredential(stored)) {
+        // Removed elsewhere (another tab signed out): the next use loads or creates a key again.
         this.clearMemory();
+        this.initialized = undefined;
         throw new Error('WebCrypto credential signer was cleared');
       }
 
@@ -85,26 +91,13 @@ export class WebCryptoP256CredentialSigner implements CredentialSigner {
       this.keyPair!.privateKey,
       new TextEncoder().encode(preimage)
     );
-    return `0x${ByteUtils.bytesToHex(new Uint8Array(signature))}`;
+    return `0x${bytesToHex(new Uint8Array(signature))}`;
   }
 
   async hasCredential(): Promise<boolean> {
-    if (this.keyPair) return true;
-
-    const db = await openCredentialDb();
-    if (!db) return false;
-
-    try {
-      const stored = await idbRequestToPromise<StoredWebCryptoCredential | undefined>(
-        db
-          .transaction(credentialStoreName, 'readonly')
-          .objectStore(credentialStoreName)
-          .get(this.id)
-      );
-      return isUsableStoredCredential(stored);
-    } finally {
-      db.close();
-    }
+    // The stored key is shared with other tabs, so it decides; without IndexedDB only memory has one.
+    const stored = await this.load();
+    return stored === undefined ? !!this.keyPair : !!stored;
   }
 
   async clear(): Promise<void> {
@@ -134,9 +127,7 @@ export class WebCryptoP256CredentialSigner implements CredentialSigner {
 
     const stored = await this.load();
     if (stored) {
-      this.keyPair = stored.keyPair;
-      this.credential = stored.credentialId;
-      this.nonce = parseNonce(stored.nonce);
+      this.useStoredCredential(stored);
       return;
     }
 
@@ -146,14 +137,15 @@ export class WebCryptoP256CredentialSigner implements CredentialSigner {
     ])) as CryptoKeyPair;
 
     const publicKey = await crypto.subtle.exportKey('raw', this.keyPair.publicKey);
-    this.credential = `0x${ByteUtils.bytesToHex(new Uint8Array(publicKey))}`;
+    this.credential = `0x${bytesToHex(new Uint8Array(publicKey))}`;
     this.nonce = 0n;
     await this.persistNewCredentialOrLoadExisting();
   }
 
-  private async load(): Promise<StoredWebCryptoCredential | null> {
+  /** The stored key, `null` when there is none, or `undefined` without IndexedDB. */
+  private async load(): Promise<StoredWebCryptoCredential | null | undefined> {
     const db = await openCredentialDb();
-    if (!db) return null;
+    if (!db) return undefined;
 
     try {
       const stored = await idbRequestToPromise<StoredWebCryptoCredential | undefined>(
@@ -180,9 +172,7 @@ export class WebCryptoP256CredentialSigner implements CredentialSigner {
         store.get(this.id)
       );
       if (isUsableStoredCredential(stored)) {
-        this.keyPair = stored.keyPair;
-        this.credential = stored.credentialId;
-        this.nonce = parseNonce(stored.nonce);
+        this.useStoredCredential(stored);
       } else {
         await idbRequestToPromise(store.put(this.toRecord()));
       }
@@ -190,6 +180,24 @@ export class WebCryptoP256CredentialSigner implements CredentialSigner {
     } finally {
       db.close();
     }
+  }
+
+  /** Matches memory to the stored key: a removed key resets this signer, a replaced one is loaded. */
+  private async syncWithStoredCredential(): Promise<void> {
+    const stored = await this.load();
+    if (stored === undefined) return;
+    if (stored) {
+      this.useStoredCredential(stored);
+    } else {
+      this.clearMemory();
+      this.initialized = undefined;
+    }
+  }
+
+  private useStoredCredential(stored: StoredWebCryptoCredential): void {
+    this.keyPair = stored.keyPair;
+    this.credential = stored.credentialId;
+    this.nonce = parseNonce(stored.nonce);
   }
 
   private clearMemory(): void {
@@ -237,13 +245,45 @@ export class EthereumPrivateKeyCredentialSigner implements CredentialSigner {
 }
 
 function privateKeyBytesToHex(privateKey: Uint8Array): Hex {
-  return `0x${ByteUtils.bytesToHex(privateKey)}` as Hex;
+  return `0x${bytesToHex(privateKey)}` as Hex;
 }
 
 function assertWebCryptoSupport(): void {
   if (!globalThis.crypto?.subtle) {
     throw new Error('WebCrypto SubtleCrypto is required for the default OMS credential signer');
   }
+}
+
+/**
+ * Deletes the stored WebCrypto credential `id` only while it is `credentialId`, reading and deleting
+ * in one IndexedDB transaction, so a credential another tab stored meanwhile (a newer sign-in) is
+ * kept. A signer holding the deleted key notices on its next use. Returns false without IndexedDB,
+ * where the key lives only in the signer's memory.
+ */
+export async function deleteStoredWebCryptoCredential(
+  id: string,
+  credentialId: string
+): Promise<boolean> {
+  const db = await openCredentialDb();
+  if (!db) return false;
+
+  try {
+    const tx = db.transaction(credentialStoreName, 'readwrite');
+    const txDone = idbTransactionToPromise(tx);
+    const store = tx.objectStore(credentialStoreName);
+    const stored = await idbRequestToPromise<StoredWebCryptoCredential | undefined>(store.get(id));
+    if (stored && sameCredentialId(stored.credentialId, credentialId)) {
+      await idbRequestToPromise(store.delete(id));
+    }
+    await txDone;
+    return true;
+  } finally {
+    db.close();
+  }
+}
+
+function sameCredentialId(a: string, b: string): boolean {
+  return a.trim().toLowerCase() === b.trim().toLowerCase();
 }
 
 function isUsableStoredCredential(

@@ -1,4 +1,5 @@
-import { base64UrlDecodeString, base64UrlEncodeBytes } from './oidcRedirect.js';
+import { base64UrlEncodeBytes } from './base64.js';
+import { base64UrlDecodeString } from './oidcRedirect.js';
 
 interface OidcIdTokenPayload {
   exp?: unknown;

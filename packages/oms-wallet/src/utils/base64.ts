@@ -11,6 +11,16 @@ export function base64DecodeBytes(value: string): Uint8Array {
   return bytes;
 }
 
+export function base64UrlEncodeBytes(bytes: Uint8Array): string {
+  return base64EncodeBytes(bytes).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
+}
+
+export function base64UrlDecodeBytes(value: string): Uint8Array {
+  const padded =
+    value.replace(/-/g, '+').replace(/_/g, '/') + '='.repeat((4 - (value.length % 4)) % 4);
+  return base64DecodeBytes(padded);
+}
+
 export function bytesToHex(bytes: Uint8Array): string {
   return Array.from(bytes, (byte) => byte.toString(16).padStart(2, '0')).join('');
 }
