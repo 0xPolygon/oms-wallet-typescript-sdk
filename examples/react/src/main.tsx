@@ -10,7 +10,7 @@ import {
   type FeeOptionWithBalance,
   type AccessGrant,
   type Network,
-  type OMSWalletSessionExpiredEvent,
+  type OMSWalletExpiredSession,
   type WalletAccount,
   type PendingWalletSelection,
   type WalletActivationResult
@@ -36,6 +36,7 @@ import {
   sameAddress,
   type OidcRedirectProvider
 } from '../../shared/example-utils';
+import { useOMSWalletSession } from '../../shared/use-oms-wallet-session';
 import { useSessionPreferences } from '../../shared/use-session-preferences';
 import {
   DEMO_ENVIRONMENTS,
@@ -89,7 +90,6 @@ function App() {
   const [selectedNetworkId, setSelectedNetworkId] = useState<number>(Networks.amoy.id);
   const [transactionTo, setTransactionTo] = useState(DEFAULT_TX_TO);
   const [transactionValue, setTransactionValue] = useState('0');
-  const [walletAddress, setWalletAddress] = useState('');
   const [walletTab, setWalletTab] = useState<WalletTab>('ethereum');
   const [lastSignature, setLastSignature] = useState('');
   const [lastIdToken, setLastIdToken] = useState('');
@@ -119,19 +119,22 @@ function App() {
   const [walletStatus, setWalletStatus] = useState('');
   const [activeWalletStatus, setActiveWalletStatus] = useState('');
   const [accessStatus, setAccessStatus] = useState('');
-  const [sessionExpiredPrompt, setSessionExpiredPrompt] =
-    useState<OMSWalletSessionExpiredEvent | null>(null);
+  const [sessionExpiredPrompt, setSessionExpiredPrompt] = useState<OMSWalletExpiredSession | null>(
+    null
+  );
   const [isBusy, setIsBusy] = useState(false);
   const oidcCallbackStarted = useRef(false);
   const feeSelection = useRef<FeeSelectionController | null>(null);
 
   const selectedNetwork =
     supportedNetworks.find((network) => network.id === selectedNetworkId) ?? Networks.amoy;
-  const activeWalletType = omsWallet.wallet.activeWallet?.type ?? WalletType.Ethereum;
+  // Subscribe, then read: the hook keeps both current, including changes made in other tabs.
+  const { activeWallet, session } = useOMSWalletSession(omsWallet.wallet);
+  const walletAddress = activeWallet?.address ?? '';
+  const activeWalletType = activeWallet?.type ?? WalletType.Ethereum;
   const hasEvmWallet = managedWallets.some((wallet) => wallet.type === WalletType.Ethereum);
   const hasSolanaWallet = managedWallets.some((wallet) => wallet.type === WalletType.Solana);
   const hasTronWallet = managedWallets.some((wallet) => wallet.type === WalletType.Tron);
-  const session = omsWallet.wallet.session;
   const {
     useManualWalletSelection,
     setUseManualWalletSelection,
@@ -146,8 +149,28 @@ function App() {
   });
 
   useEffect(() => {
-    return omsWallet.wallet.onSessionExpired(showSessionExpired);
+    return omsWallet.wallet.onSessionChange((event) => {
+      if (event.reason === 'expired') showSessionExpired(event.expiredSession);
+    });
   }, []);
+
+  // The active wallet changes with sign-ins, wallet switches and sign-outs, here or in another tab.
+  // Results of the previous wallet no longer apply; a sign-in keeps its own status message.
+  const previousActiveWallet = useRef(activeWallet);
+  useEffect(() => {
+    if (previousActiveWallet.current) {
+      clearWalletOperationResults();
+      setAccessGrants([]);
+      setAccessStatus('');
+    }
+    previousActiveWallet.current = activeWallet;
+    if (activeWallet) {
+      setWalletTab(activeWallet.type);
+      setStep('wallet');
+    } else {
+      setStep((current) => (current === 'wallet' ? 'email' : current));
+    }
+  }, [activeWallet]);
 
   useEffect(() => {
     const controller = new AbortController();
@@ -166,11 +189,7 @@ function App() {
   }, []);
 
   useEffect(() => {
-    const restoredWallet = omsWallet.wallet.activeWallet;
-    if (restoredWallet) {
-      setWalletAddress(restoredWallet.address);
-      setWalletTab(restoredWallet.type);
-      setStep('wallet');
+    if (omsWallet.wallet.activeWallet) {
       setWalletStatus('Wallet session restored.');
       return;
     }
@@ -286,14 +305,7 @@ function App() {
         return;
       }
 
-      const restoredWallet = omsWallet.wallet.activeWallet;
-      const restoredAddress = restoredWallet?.address ?? '';
-      setWalletAddress(restoredAddress);
-      if (restoredWallet) {
-        setWalletTab(restoredWallet.type);
-      }
-      setStep(restoredAddress ? 'wallet' : 'email');
-      setWalletStatus(restoredAddress ? 'Wallet ready.' : '');
+      setWalletStatus(omsWallet.wallet.activeWallet ? 'Wallet ready.' : '');
     });
   }
 
@@ -312,18 +324,14 @@ function App() {
     setPendingWalletSelection(null);
     setLastIdToken('');
     clearManagementState();
-    setWalletAddress(result.wallet.address);
-    setWalletTab(result.wallet.type);
-    setStep('wallet');
     setWalletStatus(status);
   }
 
-  function showSessionExpired(event: OMSWalletSessionExpiredEvent) {
+  function showSessionExpired(event: OMSWalletExpiredSession) {
     feeSelection.current?.reject(new Error('Session expired'));
     feeSelection.current = null;
     setFeeOptions([]);
     setPendingWalletSelection(null);
-    setWalletAddress('');
     setLastSignature('');
     setLastIdToken('');
     setLastTransactionHash('');
@@ -426,7 +434,6 @@ function App() {
     await run('Cancelling wallet selection...', setEmailAuthStatus, async () => {
       await omsWallet.wallet.signOut();
       setPendingWalletSelection(null);
-      setWalletAddress('');
       setCode('');
       setStep('email');
       setEmailAuthStatus('Enter an email to start.');
@@ -485,11 +492,6 @@ function App() {
   async function useManagedWallet(wallet: WalletAccount) {
     await run('Switching wallet...', setActiveWalletStatus, async () => {
       const result = await omsWallet.wallet.useWallet({ walletId: wallet.id });
-      setWalletAddress(result.wallet.address);
-      setWalletTab(result.wallet.type);
-      clearWalletOperationResults();
-      setAccessGrants([]);
-      setAccessStatus('');
       setManagedWallets((current) =>
         current.map((item) => (item.id === result.wallet.id ? result.wallet : item))
       );
@@ -506,11 +508,6 @@ function App() {
         walletType: type,
         reference: reference || undefined
       });
-      setWalletAddress(result.wallet.address);
-      setWalletTab(result.wallet.type);
-      clearWalletOperationResults();
-      setAccessGrants([]);
-      setAccessStatus('');
       setManagedWallets((current) => {
         const withoutCreated = current.filter((wallet) => wallet.id !== result.wallet.id);
         return [...withoutCreated, result.wallet];
@@ -534,11 +531,6 @@ function App() {
           privateKey: importPrivateKey.trim(),
           reference: importWalletReference.trim() || undefined
         });
-        setWalletAddress(result.wallet.address);
-        setWalletTab(result.wallet.type);
-        clearWalletOperationResults();
-        setAccessGrants([]);
-        setAccessStatus('');
         setManagedWallets((current) => [
           ...current.filter((wallet) => wallet.id !== result.wallet.id),
           result.wallet
@@ -611,11 +603,6 @@ function App() {
           import: 'complete'
         });
         await progressTimeline.finished();
-        setWalletAddress(result.wallet.address);
-        setWalletTab('ethereum');
-        clearWalletOperationResults();
-        setAccessGrants([]);
-        setAccessStatus('');
         setManagedWallets((current) => [
           ...current.filter((wallet) => wallet.id !== result.wallet.id),
           result.wallet
@@ -642,12 +629,6 @@ function App() {
       const result = existing
         ? await omsWallet.wallet.useWallet({ walletId: existing.id })
         : await omsWallet.wallet.createWallet({ walletType: type });
-
-      setWalletAddress(result.wallet.address);
-      setWalletTab(result.wallet.type);
-      clearWalletOperationResults();
-      setAccessGrants([]);
-      setAccessStatus('');
       setManagedWallets(
         existing
           ? wallets
@@ -731,7 +712,6 @@ function App() {
       await omsWallet.wallet.signOut();
       setCode('');
       setPendingWalletSelection(null);
-      setWalletAddress('');
       setLastSignature('');
       setLastIdToken('');
       setLastTransactionHash('');

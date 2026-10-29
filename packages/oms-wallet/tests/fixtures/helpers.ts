@@ -1,4 +1,4 @@
-import type { vi } from 'vitest';
+import { vi } from 'vitest';
 
 import { WalletClientImpl } from '../../src/clients/walletClient';
 import type { CredentialSigner } from '../../src/credentialSigner';
@@ -6,6 +6,7 @@ import type { OMSWalletEnvironment } from '../../src/omsEnvironment';
 import { MemoryStorageManager } from '../../src/storageManager';
 import { testWalletAccount } from './walletAccount.js';
 import { sessionStorageKeys } from '../../src/utils/constants';
+import type { OMSWalletSessionChangeListener, WalletClient } from '../../src/wallet';
 
 /**
  * A credential signer with a fixed P-256 credential. It records every signed preimage, can switch
@@ -173,3 +174,17 @@ export async function waitForRequest(
 
 /** The storage keys of the test project's session on the test wallet API. */
 export const testStorageKeys = sessionStorageKeys('project-id', testEnvironment().walletApiUrl);
+
+/** Subscribes a mock listener to `wallet`'s session changes. */
+export function listenToSessionChanges(wallet: Pick<WalletClient, 'onSessionChange'>) {
+  const listener = vi.fn<OMSWalletSessionChangeListener>();
+  wallet.onSessionChange(listener);
+  return listener;
+}
+
+/** The reasons of the session changes `listener` received, in order. */
+export function sessionChangeReasons(
+  listener: ReturnType<typeof listenToSessionChanges>
+): string[] {
+  return listener.mock.calls.map(([event]) => event.reason);
+}

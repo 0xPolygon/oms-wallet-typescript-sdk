@@ -5,7 +5,7 @@ import {
   FeeOptionSelector,
   type FeeOptionSelection,
   type FeeOptionWithBalance,
-  type OMSWalletSessionExpiredEvent,
+  type OMSWalletExpiredSession,
   type OMSWalletSession,
   type WalletAccount,
   type PendingWalletSelection,
@@ -96,8 +96,9 @@ function App() {
     useState<PendingWalletSelection | null>(null);
   const [authStatus, setAuthStatus] = useState('Enter an email to start.');
   const [redirectStatus, setRedirectStatus] = useState('');
-  const [sessionExpiredPrompt, setSessionExpiredPrompt] =
-    useState<OMSWalletSessionExpiredEvent | null>(null);
+  const [sessionExpiredPrompt, setSessionExpiredPrompt] = useState<OMSWalletExpiredSession | null>(
+    null
+  );
   const [balances, setBalances] = useState<BalanceState>(SIGNED_OUT_BALANCES);
   const [earnPositions, setEarnPositions] = useState<EarnPosition[]>([]);
   const [earnPositionsStatus, setEarnPositionsStatus] = useState('Sign in to load earn positions.');
@@ -242,7 +243,9 @@ function App() {
   }, [refreshBalances, refreshEarnPositions, walletAddress]);
 
   useEffect(() => {
-    return omsWallet.wallet.onSessionExpired(showSessionExpired);
+    return omsWallet.wallet.onSessionChange((event) => {
+      if (event.reason === 'expired') showSessionExpired(event.expiredSession);
+    });
   }, []);
 
   useEffect(() => {
@@ -405,7 +408,7 @@ function App() {
     appendLog(`Wallet ready: ${result.wallet.address}`);
   }
 
-  function showSessionExpired(event: OMSWalletSessionExpiredEvent) {
+  function showSessionExpired(event: OMSWalletExpiredSession) {
     clearFeeSelection(new Error('Session expired'));
     setPendingWalletSelection(null);
     setSession(omsWallet.wallet.session);

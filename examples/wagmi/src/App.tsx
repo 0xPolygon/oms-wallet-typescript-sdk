@@ -192,7 +192,8 @@ export function App() {
   }, [chainId]);
 
   useEffect(() => {
-    return omsWallet.wallet.onSessionExpired(() => {
+    return omsWallet.wallet.onSessionChange((event) => {
+      if (event.reason !== 'expired') return;
       setAuthStatus('OMS Wallet session expired.');
       setWalletStatus('Disconnected.');
       setAuthStep('email');

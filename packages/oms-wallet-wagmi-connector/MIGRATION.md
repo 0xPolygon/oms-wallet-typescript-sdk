@@ -13,9 +13,18 @@ code `4100`, as an active Solana wallet already is.
 The connector now requires `@wagmi/core` `>=3.6.5` and `viem` `>=2.55.0` as peer dependencies.
 
 `OMSWalletLike.wallet` (`WalletLike`) replaces `walletAddress` with
-`activeWallet: { type, address } | undefined`, and `onSessionExpired` is now required. Custom
+`activeWallet: { type, address } | undefined`, and `onSessionChange` is now required. Custom
 `OMSWalletLike` implementations must provide both; the SDK's `OMSWallet` already does. The connector
 only accepts an `activeWallet` whose `type` is `'ethereum'`.
+
+While connected, the connector follows the SDK session:
+
+- When the session ends (sign-out, expiry, or another tab taking over) or a Solana or Tron wallet
+  becomes active, it disconnects. It does not reconnect after a later sign-in, including after a
+  reload; call `connect` again. Starting a new sign-in while connected ends the old session, so it
+  disconnects too.
+- When another Ethereum wallet becomes active, it changes the account (`accountsChanged`).
+- Disconnecting wagmi in one tab does not disconnect the others, which keep following the session.
 
 ## 0.3.0
 

@@ -37,6 +37,9 @@ const optimism = {
   rpcUrls: { default: { http: ['https://optimism.example'] } }
 } as const satisfies Chain;
 
+const firstAddress = '0x9999999999999999999999999999999999999999';
+const secondAddress = '0x8888888888888888888888888888888888888888';
+
 const networks = [
   {
     id: 137,
@@ -878,52 +881,83 @@ describe('omsWalletConnector', () => {
     await expect(refreshedConnector.isAuthorized()).resolves.toBe(true);
   });
 
-  it('leaves no session expiry listener for configs that never connect', async () => {
+  it('follows the session only while connected', async () => {
     // For example a config built again on every hot reload against one long-lived OMSWallet.
     const omsWallet = createOmsWallet();
     for (let built = 0; built < 5; built += 1) createWagmiConfig(omsWallet);
     await new Promise((resolve) => setTimeout(resolve, 0));
+    expect(omsWallet.sessionListenerCount()).toBe(0);
 
-    expect(omsWallet.sessionExpiredListenerCount()).toBe(0);
-  });
-
-  it('keeps session expiry disconnect handling after reconnect', async () => {
-    const walletAddress = '0x9999999999999999999999999999999999999999';
-    const omsWallet = createOmsWallet({ walletAddress });
     const config = createWagmiConfig(omsWallet);
     const connector = config.connectors[0];
+    // A connect that fails (no session yet) leaves no listener either.
+    await expect(connect(config, { connector })).rejects.toThrow();
+    expect(omsWallet.sessionListenerCount()).toBe(0);
 
+    omsWallet.wallet.activeWallet = activeWallet(firstAddress);
     await connect(config, { connector });
-    expect(omsWallet.sessionExpiredListenerCount()).toBe(1);
-
+    expect(omsWallet.sessionListenerCount()).toBe(1);
     await disconnect(config);
-    expect(omsWallet.sessionExpiredListenerCount()).toBe(0);
-
-    omsWallet.wallet.activeWallet = activeWallet(walletAddress);
-    await connect(config, { connector });
-    expect(omsWallet.sessionExpiredListenerCount()).toBe(1);
-
-    omsWallet.expireSession();
-    expect(config.state.status).toBe('disconnected');
+    expect(omsWallet.sessionListenerCount()).toBe(0);
   });
 
-  it('does not reconnect after a session expiry while the expired wallet is still present', async () => {
-    const omsWallet = createOmsWallet({
-      walletAddress: '0x9999999999999999999999999999999999999999'
-    });
+  it('disconnects when the session ends, and stays disconnected after a later sign-in', async () => {
+    const omsWallet = createOmsWallet({ walletAddress: firstAddress });
     const storage = createMemoryStorage();
     const config = createWagmiConfig(omsWallet, {}, storage);
     const connector = config.connectors[0];
     await connect(config, { connector });
 
-    omsWallet.expireSession();
-
+    omsWallet.changeSession(undefined);
     expect(config.state.status).toBe('disconnected');
+    expect(omsWallet.sessionListenerCount()).toBe(0);
+
+    // Signing in again does not reconnect wagmi, here or after a reload; the app calls connect.
+    omsWallet.changeSession(activeWallet(firstAddress));
     await expect(connector.isAuthorized()).resolves.toBe(false);
     const refreshedConfig = createWagmiConfig(omsWallet, {}, storage);
-    await expect(refreshedConfig.connectors[0].isAuthorized()).resolves.toBe(false);
     await expect(reconnect(refreshedConfig)).resolves.toEqual([]);
-    expect(refreshedConfig.state.status).toBe('disconnected');
+  });
+
+  it('changes the account when another Ethereum wallet becomes active, and nothing else', async () => {
+    const omsWallet = createOmsWallet({ walletAddress: firstAddress });
+    const config = createWagmiConfig(omsWallet);
+    const connector = config.connectors[0];
+    await connect(config, { connector });
+    const changes = vi.fn();
+    connector.emitter.on('change', changes);
+
+    // The same wallet again (for example an expiry update) changes nothing.
+    omsWallet.changeSession(activeWallet(firstAddress));
+    omsWallet.changeSession(activeWallet(secondAddress));
+
+    expect(changes.mock.calls.map(([data]) => data.accounts)).toEqual([[secondAddress]]);
+    expect(config.state.status).toBe('connected');
+  });
+
+  it('disconnects when a non-Ethereum wallet becomes active', async () => {
+    const omsWallet = createOmsWallet({ walletAddress: firstAddress });
+    const config = createWagmiConfig(omsWallet);
+    await connect(config, { connector: config.connectors[0] });
+
+    omsWallet.changeSession(activeWallet('3gFktQX6vki5M2DzN8Y1ESPUJ4fJ8o6hVQWf8vYvPypD', 'solana'));
+
+    expect(config.state.status).toBe('disconnected');
+  });
+
+  it("follows a sign-out in a tab still connected after another tab's wagmi disconnected", async () => {
+    // wagmi storage, and so its disconnected flag, is shared by the tabs.
+    const omsWallet = createOmsWallet({ walletAddress: firstAddress });
+    const storage = createMemoryStorage();
+    const tabA = createWagmiConfig(omsWallet, {}, storage);
+    const tabB = createWagmiConfig(omsWallet, {}, storage);
+    await connect(tabA, { connector: tabA.connectors[0] });
+    await connect(tabB, { connector: tabB.connectors[0] });
+    await disconnect(tabA);
+
+    omsWallet.changeSession(undefined);
+
+    expect(tabB.state.status).toBe('disconnected');
   });
 
   it('decodes personal_sign hex payloads before passing them to OMS', async () => {
@@ -1061,18 +1095,18 @@ interface TestOMSWallet extends OMSWalletLike {
     signMessage: ReturnType<typeof vi.fn>;
     signTypedData: ReturnType<typeof vi.fn>;
     sendTransaction: ReturnType<typeof vi.fn>;
-    onSessionExpired: ReturnType<typeof vi.fn>;
   };
-  expireSession(): void;
-  sessionExpiredListenerCount(): number;
+  /** Makes `nextWallet` the active wallet and reports the change to session listeners. */
+  changeSession(nextWallet: OMSWalletLike['wallet']['activeWallet']): void;
+  sessionListenerCount(): number;
 }
+
+type SessionListener = Parameters<OMSWalletLike['wallet']['onSessionChange']>[0];
 
 function createOmsWallet(
   params: { walletAddress?: string; walletType?: 'ethereum' | 'solana' | 'tron' } = {}
 ): TestOMSWallet {
-  const sessionExpiredListeners = new Set<
-    Parameters<NonNullable<OMSWalletLike['wallet']['onSessionExpired']>>[0]
-  >();
+  const sessionListeners = new Set<SessionListener>();
   const wallet = {
     activeWallet: activeWallet(params.walletAddress, params.walletType),
     signOut: vi.fn(async () => {
@@ -1085,25 +1119,24 @@ function createOmsWallet(
       status: 'executed',
       txnHash: '0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa' as Hex
     })),
-    onSessionExpired: vi.fn(
-      (listener: Parameters<NonNullable<OMSWalletLike['wallet']['onSessionExpired']>>[0]) => {
-        sessionExpiredListeners.add(listener);
-        return () => {
-          sessionExpiredListeners.delete(listener);
-        };
-      }
-    )
+    onSessionChange(listener: SessionListener) {
+      sessionListeners.add(listener);
+      return () => {
+        sessionListeners.delete(listener);
+      };
+    }
   };
 
   return {
     wallet,
-    expireSession() {
-      for (const listener of sessionExpiredListeners) {
-        void listener({ expiredAt: new Date().toISOString() });
+    changeSession(nextWallet) {
+      wallet.activeWallet = nextWallet;
+      for (const listener of Array.from(sessionListeners)) {
+        void listener({ activeWallet: nextWallet });
       }
     },
-    sessionExpiredListenerCount() {
-      return sessionExpiredListeners.size;
+    sessionListenerCount() {
+      return sessionListeners.size;
     }
   };
 }

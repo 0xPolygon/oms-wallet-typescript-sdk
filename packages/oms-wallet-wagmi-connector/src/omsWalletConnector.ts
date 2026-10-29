@@ -23,7 +23,10 @@ type OMSWalletConnectorStorageItemMap = Record<`${string}.manuallyDisconnected`,
 export function omsWalletConnector(parameters: OMSWalletConnectorParameters) {
   let chainId: number | undefined;
   let provider: OMSWalletProvider | undefined;
-  let unsubscribeSessionExpired: (() => void) | undefined;
+  /** Stops following the session; set exactly while this connector is connected. */
+  let stopFollowingSession: (() => void) | undefined;
+  /** The account last reported to wagmi while connected. */
+  let connectedAddress: Address | undefined;
   let manuallyDisconnected = false;
   let manuallyDisconnectedVersion = 0;
   const connectorId = parameters.id ?? 'omsWallet';
@@ -123,11 +126,34 @@ export function omsWalletConnector(parameters: OMSWalletConnectorParameters) {
       return [getAddress(activeWallet.address)];
     };
 
-    const subscribeSessionExpired = (omsWallet: OMSWalletLike): void => {
-      unsubscribeSessionExpired ??= omsWallet.wallet.onSessionExpired(() => {
-        void setManuallyDisconnected(true);
-        config.emitter.emit('disconnect');
-        provider?.emit('disconnect');
+    const unfollowSession = (): void => {
+      stopFollowingSession?.();
+      stopFollowingSession = undefined;
+      connectedAddress = undefined;
+    };
+
+    /**
+     * Follows the OMS Wallet session while connected. Only the wallet after the change matters: a
+     * session without an Ethereum wallet (signed out, expired, or switched to Solana or Tron)
+     * disconnects, and another Ethereum wallet changes the account.
+     */
+    const followSession = (omsWallet: OMSWalletLike): void => {
+      stopFollowingSession ??= omsWallet.wallet.onSessionChange(({ activeWallet }) => {
+        if (activeWallet?.type === 'ethereum' && isAddress(activeWallet.address)) {
+          const address = getAddress(activeWallet.address);
+          if (address === connectedAddress) return;
+          connectedAddress = address;
+          provider?.emit('accountsChanged', [address]);
+          connector.onAccountsChanged([address]);
+          return;
+        }
+        unfollowSession();
+        provider?.emit('accountsChanged', []);
+        provider?.emit(
+          'disconnect',
+          new OMSWalletProviderRpcError(4900, 'The OMS Wallet session ended.')
+        );
+        connector.onDisconnect();
       });
     };
 
@@ -139,23 +165,23 @@ export function omsWalletConnector(parameters: OMSWalletConnectorParameters) {
       }
       await ensureChainId();
       const omsWallet = await resolveOmsWallet();
-      subscribeSessionExpired(omsWallet);
-      if (!omsWallet.wallet.activeWallet) {
-        throw new OMSWalletProviderRpcError(
-          4100,
-          'No active OMS Wallet session. Authenticate with the OMS Wallet SDK before connecting through wagmi.'
-        );
+      // Following before reading the account means no session change is missed in between.
+      followSession(omsWallet);
+      try {
+        const nextAccounts = await accounts();
+        if (!nextAccounts.length) {
+          throw new OMSWalletProviderRpcError(
+            4100,
+            'No active OMS Wallet session. Authenticate with the OMS Wallet SDK before connecting through wagmi.'
+          );
+        }
+        connectedAddress = nextAccounts[0];
+        provider?.emit('accountsChanged', nextAccounts);
+        return nextAccounts;
+      } catch (error) {
+        unfollowSession();
+        throw error;
       }
-
-      const nextAccounts = await accounts();
-      if (!nextAccounts.length) {
-        throw new OMSWalletProviderRpcError(
-          4100,
-          'No active OMS Wallet session. Authenticate with the OMS Wallet SDK before connecting through wagmi.'
-        );
-      }
-      provider?.emit('accountsChanged', nextAccounts);
-      return nextAccounts;
     };
 
     const disconnectWallet = async (): Promise<void> => {
@@ -189,7 +215,7 @@ export function omsWalletConnector(parameters: OMSWalletConnectorParameters) {
           // errors until `connect` where consumers can catch them normally.
         }
         void isManuallyDisconnected();
-        // Session expiry is observed from `connect` on, so a config that never connects, or is
+        // The session is followed from `connect` on, so a config that never connects, or is
         // dropped without disconnecting, leaves no listener on the shared wallet.
       },
       async connect<withCapabilities extends boolean = false>({
@@ -216,8 +242,7 @@ export function omsWalletConnector(parameters: OMSWalletConnectorParameters) {
         };
       },
       async disconnect() {
-        unsubscribeSessionExpired?.();
-        unsubscribeSessionExpired = undefined;
+        unfollowSession();
         await disconnectWallet();
       },
       async getAccounts() {
@@ -276,8 +301,8 @@ export function omsWalletConnector(parameters: OMSWalletConnectorParameters) {
         config.emitter.emit('change', { chainId: parsedChainId });
       },
       onDisconnect() {
-        manuallyDisconnected = true;
-        void setManuallyDisconnected(true);
+        // Storage failing must not keep wagmi connected; the in-memory flag is already set.
+        void setManuallyDisconnected(true).catch(() => {});
         config.emitter.emit('disconnect');
       }
     };

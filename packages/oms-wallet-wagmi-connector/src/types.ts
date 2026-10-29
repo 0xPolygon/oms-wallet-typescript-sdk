@@ -54,7 +54,12 @@ export interface WalletLike {
   sendTransaction(
     params: OMSWalletSendDataTransactionParams
   ): Promise<OMSWalletSendTransactionResponse>;
-  onSessionExpired(listener: (event: unknown) => void | Promise<void>): () => void;
+  /** The OMS Wallet SDK's `onSessionChange`; the connector reads only the wallet after the change. */
+  onSessionChange(
+    listener: (event: {
+      readonly activeWallet: { readonly type: string; readonly address: string } | undefined;
+    }) => void | Promise<void>
+  ): () => void;
 }
 
 export interface OMSWalletLike {

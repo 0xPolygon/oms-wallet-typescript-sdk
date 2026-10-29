@@ -9,7 +9,12 @@ import { Networks } from '../src/networks';
 import { MemoryStorageManager } from '../src/storageManager';
 import { sessionStorageKeys } from '../src/utils/constants';
 import { testWalletAccount } from './fixtures/walletAccount.js';
-import { jsonResponse, testEnvironment, waasErrorResponse } from './fixtures/helpers.js';
+import {
+  jsonResponse,
+  sessionChangeReasons,
+  testEnvironment,
+  waasErrorResponse
+} from './fixtures/helpers.js';
 
 // Tabs of one origin share the default signer's IndexedDB key. A session that ends on its own in
 // one tab (expiry, or a key it no longer holds) must not delete a key another tab's newer sign-in
@@ -190,9 +195,9 @@ describe('a session that ends on its own', () => {
         expiryCeilingMs: Date.parse('2099-01-01T00:00:00Z')
       }
     });
-    const onSessionExpired = vi.fn();
-    wallet.onSessionExpired(onSessionExpired);
-    return { wallet, credentialId: credentialId as string, onSessionExpired };
+    const onSessionChange = vi.fn();
+    wallet.onSessionChange(onSessionChange);
+    return { wallet, credentialId: credentialId as string, onSessionChange };
   }
 
   /** Another tab signs in again: a new shared key, and its own pending redirect state. */
@@ -237,7 +242,7 @@ describe('a session that ends on its own', () => {
 
     await expect(signing).resolves.toMatchObject({ code: 'OMS_SESSION_EXPIRED' });
     expect(tabA.wallet.session).toBeUndefined();
-    expect(tabA.onSessionExpired).toHaveBeenCalledOnce();
+    expect(sessionChangeReasons(tabA.onSessionChange)).toEqual(['expired']);
     expect(records.get(credentialRecordId)?.credentialId).toBe(newId);
     expect(redirectAuthStorage.get(scope.redirectAuth)).toBe('{"pending":"other tab"}');
   });
@@ -260,6 +265,8 @@ describe('a session that ends on its own', () => {
 
     expect(records.get(credentialRecordId)?.credentialId).toBe(newId);
     expect(redirectAuthStorage.get(scope.redirectAuth)).toBe('{"pending":"other tab"}');
+    // Another sign-in took over before this session expired.
+    expect(sessionChangeReasons(tabA.onSessionChange)).toEqual(['signedOut']);
   });
 
   it("keeps the key of another tab's newer sign-in when an expired stored session is replayed", async () => {
@@ -278,9 +285,9 @@ describe('a session that ends on its own', () => {
       storage,
       redirectAuthStorage
     });
-    const onSessionExpired = vi.fn();
-    reloaded.onSessionExpired(onSessionExpired);
-    await vi.waitFor(() => expect(onSessionExpired).toHaveBeenCalledOnce());
+    const onSessionChange = vi.fn();
+    reloaded.onSessionChange(onSessionChange);
+    await vi.waitFor(() => expect(sessionChangeReasons(onSessionChange)).toEqual(['expired']));
 
     expect(records.get(credentialRecordId)?.credentialId).toBe(newId);
     expect(tabA.credentialId).not.toBe(newId);
@@ -300,7 +307,7 @@ describe('a session that ends on its own', () => {
     held.answer(waasErrorResponse('KeyExpired'));
 
     await expect(signing).resolves.toMatchObject({ code: 'OMS_SESSION_EXPIRED' });
-    expect(tabA.onSessionExpired).toHaveBeenCalledOnce();
+    expect(sessionChangeReasons(tabA.onSessionChange)).toEqual(['expired']);
     expect(records.has(credentialRecordId)).toBe(false);
     // The record stays as the sign-in hint the expiry event replays.
     expect(storage.get(scope.session)).toBeTruthy();

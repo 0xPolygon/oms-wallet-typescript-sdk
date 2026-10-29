@@ -44,9 +44,39 @@ const email = omsWallet.wallet.session.auth?.email
 const email = omsWallet.wallet.session?.auth.email
 ```
 
-`OMSWalletSessionExpiredEvent` gained `wallet: WalletAccount | undefined`, and its `session` no
-longer carries `walletAddress`. `wallet` is `undefined` when the credential expired while a manual
-wallet selection was still pending.
+`activeWallet` and `session` now return frozen objects, the same object until the value changes.
+Code that changed a returned object must copy it first.
+
+### `onSessionChange` replaces `onSessionExpired`
+
+`onSessionExpired` was removed. `onSessionChange` reports every change of `activeWallet` or
+`session`, with a `reason`: `signedIn`, `walletChanged`, `expiryUpdated`, `signedOut`, or `expired`.
+An `expired` change carries the expired session as `expiredSession`, an `OMSWalletExpiredSession`,
+which replaces `OMSWalletSessionExpiredEvent`. It gained `wallet: WalletAccount | undefined`
+(`undefined` when the credential expired during a pending manual wallet selection), and its
+`session` no longer carries `walletAddress`. `OMSWalletSessionExpiredListener` became
+`OMSWalletSessionChangeListener`.
+
+```typescript
+// Before
+omsWallet.wallet.onSessionExpired(({ wallet, session, expiredAt }) => showSignIn(session.auth))
+
+// After
+omsWallet.wallet.onSessionChange((event) => {
+  if (event.reason === 'expired') showSignIn(event.expiredSession.session.auth)
+})
+```
+
+Listeners now run shortly after the change instead of during the call that made it. The expiry
+replay is unchanged: a listener added while signed out first receives the last `expired` change.
+Changes made in other tabs of the same origin are applied and reported too, including a wallet
+switch, so all tabs show the same active wallet. See "Keep your UI in sync" in the README.
+
+A session whose signing key another tab or process removed or replaced now reports its end on
+every path: `expired` when its stored record is still its own or its expiry passed, `signedOut`
+when another sign-in replaced it. Previously only background checks reported it, always as an
+expiry. An operation that finds a session ended this way fails with `OMS_SESSION_EXPIRED` when it
+reports `expired`.
 
 ### One-time sign-in after upgrading
 
@@ -59,7 +89,7 @@ sessions are kept per project and environment" below). 0.4.0 does not restore se
 `session.expiresAt` is now the current expiry rather than a fixed end time. The wallet API extends
 it with use, up to the lifetime requested at sign-in, and the SDK refreshes it after restoring a
 session, when the local expiry is reached, and after wallet activity. Do not treat `expiresAt` as
-final; listen to `onSessionExpired` instead. `credential.expiresAt` in auth results is the expiry at
+final; listen to `onSessionChange` instead, which reports each update as `expiryUpdated`. `credential.expiresAt` in auth results is the expiry at
 sign-in and is not updated.
 
 - A session active in memory whose local expiry has passed is checked with the wallet API before it
@@ -69,7 +99,7 @@ sign-in and is not updated.
   load without asking the wallet API.
 - An idle session ends about 10 days after its last use. Reading the expiry also counts as use, so
   after the local expiry the SDK waits until the session would have ended on the wallet API before
-  reading it. While the app makes no wallet calls, `onSessionExpired` can fire up to about 6 hours
+  reading it. While the app makes no wallet calls, the `expired` change can arrive up to about 6 hours
   after the session ended, because the wallet API extends the expiry only in steps of at least 6 hours (within 5 minutes when the lifetime
   is shorter than the idle window), assuming an accurate device clock and a page in the foreground.
   A stored session whose saved expiry passed less than about 12 hours ago is restored and the
@@ -158,7 +188,7 @@ active wallet belongs to another family, for example `isValidSolanaMessageSignat
 Ethereum wallet, it throws `OMSWalletValidationError` instead of a backend error. Passing
 `walletAddress` still works while signed out. As with other wallet operations, a locally expired
 session found this way is first refreshed with the wallet API; if it has ended, it is cleared and
-your `onSessionExpired` listeners are called.
+your `onSessionChange` listeners receive `expired`.
 
 An empty or whitespace-only `walletAddress` now throws `OMSWalletValidationError`
 (`walletAddress must not be empty`) before any request. Previously `""` silently fell back to the
@@ -297,10 +327,10 @@ version) can still interleave, so the SDK keeps resending a rejected nonce.
 
 `@polygonlabs/oms-wallet-wagmi-connector` now reads `wallet.activeWallet` instead of
 `wallet.walletAddress`. Upgrade both packages together; they are released with the same version.
-Custom `OMSWalletLike` implementations need `activeWallet` and `onSessionExpired`; see the
-connector's `MIGRATION.md`.
-It now observes session expiry from `connect` on, so a wagmi config that never connects leaves no
-listener on the wallet.
+Custom `OMSWalletLike` implementations need `activeWallet` and `onSessionChange`; see the
+connector's `MIGRATION.md`. The connector now follows the session while connected: it disconnects
+when the session ends or a non-Ethereum wallet becomes active, and changes the account when another
+Ethereum wallet becomes active.
 
 ## 0.3.0
 

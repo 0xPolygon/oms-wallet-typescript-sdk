@@ -94,8 +94,9 @@ import type {
   OMSWalletOidcSessionAuth,
   OMSWalletOidcSessionAuthFlow,
   OMSWalletSessionAuth,
-  OMSWalletSessionExpiredEvent,
-  OMSWalletSessionExpiredListener,
+  OMSWalletExpiredSession,
+  OMSWalletSessionChangeEvent,
+  OMSWalletSessionChangeListener,
   OMSWalletSession,
   PendingWalletSelection,
   SignInWithOidcIdTokenParams,
@@ -258,11 +259,18 @@ interface SessionSnapshot {
   auth: OMSWalletSessionAuth;
 }
 
-interface StoredSessionSnapshot {
-  serializedRecord: string;
-  session: SessionSnapshot;
-  signerCredentialId: string;
+interface PublishedSessionState {
+  activeWallet: WalletAccount | undefined;
+  session: OMSWalletSession | undefined;
 }
+
+/**
+ * What changed the session, for its change event. `activation` (a wallet became active) is published as
+ * `walletChanged` when a wallet was active before, and as `signedIn` otherwise.
+ */
+type SessionChange =
+  | { reason: 'activation' | 'signedIn' | 'walletChanged' | 'expiryUpdated' | 'signedOut' }
+  | { reason: 'expired'; expiredSession: OMSWalletExpiredSession };
 
 interface StoredSessionRecord {
   version: 2;
@@ -298,14 +306,6 @@ interface LoadedSessionRecord {
  * `signerMismatch`: the signer no longer holds the session's key, so the session was cleared
  * without a request.
  */
-/**
- * Who starts an expiry read. `timer`: the expiry timer's check, sent past the bound on the server
- * expiry, so it is not recorded as activity. `operation`: an operation on a locally expired session,
- * which reports the outcome itself. `background`: a restore, the 6-hour refresh, or a check after an
- * `Unauthorized` request; when it finds the signer key replaced, it notifies `onSessionExpired`.
- */
-type CredentialReadOrigin = 'timer' | 'operation' | 'background';
-
 type CredentialRefreshResult =
   | { outcome: 'refreshed' | 'unsupported' | 'stale' | 'signerMismatch' }
   | { outcome: 'ended' | 'unavailable'; error: unknown };
@@ -448,7 +448,7 @@ export class WalletClientImpl implements WalletClient {
   private readonly projectId: string;
   /** The key sent with each request; a rotated key of the same project replaces it. */
   private publishableKey: string;
-  private readonly sessionExpiredListeners = new Set<OMSWalletSessionExpiredListener>();
+  private readonly sessionChangeListeners = new Set<OMSWalletSessionChangeListener>();
   private readonly fastTransactionStatusPollIntervalMs = 400;
   private readonly fastTransactionStatusPollCount = 5;
   private readonly transactionStatusPollIntervalMs = 2_000;
@@ -465,7 +465,25 @@ export class WalletClientImpl implements WalletClient {
   private nextPendingWalletSelectionId = 1;
   private sessionExpiryTimer: ReturnType<typeof setTimeout> | undefined;
   private cancelRestoredSessionRead: (() => void) | undefined;
-  private latestSessionExpiredEvent: OMSWalletSessionExpiredEvent | undefined;
+  /** What `activeWallet` and `session` return until the session changes. */
+  private activeWalletView: WalletAccount | undefined;
+  private sessionView: OMSWalletSession | undefined;
+  /** The `activeWallet` and `session` of the last published change; a change is published only when they differ. */
+  private publishedSessionState: PublishedSessionState = {
+    activeWallet: undefined,
+    session: undefined
+  };
+  /** Changes not yet delivered, each with the listeners registered when it happened. */
+  private pendingSessionChanges: Array<{
+    event: OMSWalletSessionChangeEvent;
+    listeners: OMSWalletSessionChangeListener[];
+  }> = [];
+  private sessionChangeDrainScheduled = false;
+  /** The last `expired` change, replayed to listeners added before the next sign-in or sign-out. */
+  private latestExpiredChange: OMSWalletSessionChangeEvent | undefined;
+  /** Whether a reconcile with the stored session is running, and whether another pass is due. */
+  private reconcilingStoredSession = false;
+  private reconcileStoredSessionAgain = false;
   private sessionRevision = 0;
   /** Revision of the last session that ended by expiry, locally or reported by WaaS. */
   private expiredSessionRevision: number | undefined;
@@ -479,7 +497,6 @@ export class WalletClientImpl implements WalletClient {
   private credentialReadInFlight: Promise<void> | undefined;
   /** Session revision of the last session-signed request that WaaS rejected with 7202 or 7203. */
   private rejectedSessionCredentialRevision: number | undefined;
-  private dispatchingSessionExpiredEvent = false;
   private credentialRefresh:
     { revision: number; promise: Promise<CredentialRefreshResult> } | undefined;
   /**
@@ -536,46 +553,25 @@ export class WalletClientImpl implements WalletClient {
     this.projectId = params.projectId;
 
     const storedSession = this.loadStoredSessionRecord();
-
+    let restoredRecord: StoredSessionRecord | undefined;
     if (storedSession) {
       const { record } = storedSession;
-      const restoredSession: SessionSnapshot = {
-        wallet: record.wallet,
-        expiresAt: record.expiresAt,
-        auth: record.auth
-      };
-
       if (
-        this.isSessionExpired(restoredSession) &&
-        !mayBeActiveOnServer(restoredSession.expiresAt, storedSessionExpiryBounds(record))
+        Date.parse(record.expiresAt) <= Date.now() &&
+        !mayBeActiveOnServer(record.expiresAt, storedSessionExpiryBounds(record))
       ) {
-        this.activeWalletAccount = undefined;
-        this.sessionExpiresAt = undefined;
-        this.sessionAuth = undefined;
-        this.scheduleStoredSessionExpiryNotification({
-          serializedRecord: storedSession.serialized,
-          session: restoredSession,
-          signerCredentialId: record.signerCredentialId
+        // Its record stays as the sign-in hint; listeners get its expiry when they subscribe.
+        const session = { wallet: record.wallet, expiresAt: record.expiresAt, auth: record.auth };
+        this.latestExpiredChange = Object.freeze({
+          reason: 'expired',
+          activeWallet: undefined,
+          session: undefined,
+          expiredSession: expiredSessionOf(session, session.expiresAt)
         });
+        this.clearSessionSignerKey(record.signerCredentialId)?.catch(() => {});
       } else {
-        this.activeWalletAccount = record.wallet;
-        this.sessionExpiresAt = restoredSession.expiresAt;
-        this.sessionAuth = restoredSession.auth;
-        this.sessionSignerCredentialId = record.signerCredentialId;
-        this.sessionSignerKeyType = record.signerKeyType;
-        this.sessionExpiryBounds = storedSessionExpiryBounds(record);
-        // The process that stored the session may have used it after its last read, but not later
-        // than now. The expiry is not read in this client yet, so `lastCredentialRefreshAt` stays unset.
-        this.lastSessionActivityAt = Date.now();
-        this.scheduleSessionExpiry(restoredSession);
+        restoredRecord = record;
       }
-    } else {
-      this.activeWalletAccount = undefined;
-      this.sessionExpiresAt = undefined;
-      this.sessionAuth = undefined;
-      this.sessionSignerCredentialId = undefined;
-      this.sessionSignerKeyType = undefined;
-      this.sessionExpiryBounds = undefined;
     }
 
     this.publishableKey = params.publishableKey;
@@ -609,8 +605,9 @@ export class WalletClientImpl implements WalletClient {
       environment: params.environment
     });
 
-    if (this.activeWalletAccount) {
-      // A restored session may have been extended or ended on the server since it was saved. The
+    if (restoredRecord) {
+      this.installStoredSession(restoredRecord);
+      // The saved session may have been extended or ended on the server since it was saved. The
       // read extends an active session, so a hidden or prerendered page waits until it is shown.
       // Ending the session cancels the wait so its listeners don't keep this client alive.
       const revision = this.sessionRevision;
@@ -618,6 +615,158 @@ export class WalletClientImpl implements WalletClient {
         this.cancelRestoredSessionRead = undefined;
         this.readRestoredSession(revision);
       });
+    }
+    // Nobody can be subscribed yet: the restored session is the state later changes compare with.
+    this.publishedSessionState = { activeWallet: this.activeWallet, session: this.session };
+    this.listenForStoredSessionChanges();
+  }
+
+  /**
+   * Makes a stored session this client's session: the one restored on load, or a sign-in another
+   * tab stored.
+   */
+  private installStoredSession(record: StoredSessionRecord): void {
+    const session: SessionSnapshot = {
+      wallet: cloneWalletAccount(record.wallet),
+      expiresAt: record.expiresAt,
+      auth: cloneSessionAuth(record.auth)
+    };
+    this.activeWalletAccount = session.wallet;
+    this.sessionExpiresAt = session.expiresAt;
+    this.sessionAuth = session.auth;
+    this.sessionSignerCredentialId = record.signerCredentialId;
+    this.sessionSignerKeyType = record.signerKeyType;
+    this.sessionExpiryBounds = storedSessionExpiryBounds(record);
+    // The process that stored the session may have used it after its last read, but not later than
+    // now. The expiry is not read in this client yet, so `lastCredentialRefreshAt` stays unset.
+    this.lastSessionActivityAt = Date.now();
+    this.scheduleSessionExpiry(session);
+  }
+
+  /**
+   * Follows the session other tabs store. Their sign-ins, sign-outs, wallet switches and expiry
+   * reads write the shared record, which fires `storage` here. A session that ended on its own in
+   * another tab only loses its key, so the page also checks when it becomes visible. Outside a
+   * browser nothing is shared.
+   */
+  private listenForStoredSessionChanges(): void {
+    const target = globalThis as {
+      addEventListener?: (type: string, listener: (event: { key?: string | null }) => void) => void;
+      document?: ForegroundDocument;
+    };
+    if (typeof target.addEventListener !== 'function') return;
+    target.addEventListener('storage', (event) => {
+      if (event.key === null || event.key === this.storageKeys.session) {
+        this.reconcileWithStoredSession();
+      }
+    });
+    const doc = target.document;
+    doc?.addEventListener?.('visibilitychange', () => {
+      if (doc.visibilityState === 'visible') this.reconcileWithStoredSession();
+    });
+  }
+
+  /** Runs `reconcileOnceWithStoredSession`, once more if triggered while it runs. */
+  private reconcileWithStoredSession(): void {
+    if (this.reconcilingStoredSession) {
+      this.reconcileStoredSessionAgain = true;
+      return;
+    }
+    this.reconcilingStoredSession = true;
+    void (async () => {
+      do {
+        this.reconcileStoredSessionAgain = false;
+        try {
+          await this.reconcileOnceWithStoredSession();
+        } catch {
+          // Best effort: the next trigger or wallet call checks again.
+        }
+      } while (this.reconcileStoredSessionAgain);
+      this.reconcilingStoredSession = false;
+    })();
+  }
+
+  /**
+   * Makes this client's session match the stored one, which another tab may have changed. It reads
+   * storage and the signer only: it never writes storage or deletes a key, except as ending a
+   * session whose key is gone does.
+   */
+  private async reconcileOnceWithStoredSession(): Promise<void> {
+    const serialized = this.storage.get(this.storageKeys.session);
+    const stored = serialized ? this.parseStoredSessionRecord(serialized) : undefined;
+    // An invalid record is left to the next load, which discards it.
+    if (serialized && !stored) return;
+
+    if (!stored) {
+      // Another tab signed out or started a sign-in; both delete the record and the key.
+      if (this.activeWalletAccount)
+        await this.clearSession({ keepSharedState: true, automatic: true });
+      return;
+    }
+
+    const revision = this.sessionRevision;
+    if (
+      this.activeWalletAccount &&
+      normalizeCredentialId(stored.signerCredentialId) ===
+        normalizeCredentialId(this.sessionSignerCredentialId ?? '')
+    ) {
+      // The same sign-in: follow its wallet and a later expiry, unless its key is gone.
+      const holdsKey = await this.sessionSignerMatches().catch(() => true);
+      if (this.sessionRevision !== revision || !this.activeWalletAccount) return;
+      if (!holdsKey) {
+        await this.clearSessionWithMismatchedSigner();
+        return;
+      }
+      const walletChanged = !isSameFlatRecord(this.activeWalletAccount, stored.wallet);
+      if (walletChanged) this.activeWalletAccount = cloneWalletAccount(stored.wallet);
+      const current = this.activeSessionSnapshot();
+      if (current && Date.parse(stored.expiresAt) > Date.parse(current.expiresAt)) {
+        this.sessionExpiresAt = stored.expiresAt;
+        this.scheduleSessionExpiry({ ...current, expiresAt: stored.expiresAt });
+      }
+      this.publishSessionChange({ reason: walletChanged ? 'walletChanged' : 'expiryUpdated' });
+      return;
+    }
+
+    // Another tab's sign-in. Only a live session whose key this signer holds is followed.
+    if (
+      this.isSessionExpired({
+        wallet: stored.wallet,
+        expiresAt: stored.expiresAt,
+        auth: stored.auth
+      })
+    ) {
+      return;
+    }
+    const holdsKey = await this.signerHoldsKeyOf(stored);
+    if (
+      this.sessionRevision !== revision ||
+      this.storage.get(this.storageKeys.session) !== serialized
+    ) {
+      this.reconcileStoredSessionAgain = true;
+      return;
+    }
+    if (!holdsKey) return;
+    // This client's session or pending sign-in used a key that sign-in replaced.
+    this.resetSessionStateInMemory();
+    this.installStoredSession(stored);
+    this.publishSessionChange({ reason: 'signedIn' });
+  }
+
+  /** Whether the signer holds the key `record` was signed in with. */
+  private async signerHoldsKeyOf(record: StoredSessionRecord): Promise<boolean> {
+    try {
+      if (this.credentialSigner.hasCredential && !(await this.credentialSigner.hasCredential())) {
+        return false;
+      }
+      const credentialId: unknown = await this.credentialSigner.credentialId();
+      return (
+        typeof credentialId === 'string' &&
+        normalizeCredentialId(credentialId) === normalizeCredentialId(record.signerCredentialId) &&
+        this.credentialSigner.signingAlgorithm === record.signerKeyType
+      );
+    } catch {
+      return false;
     }
   }
 
@@ -628,7 +777,7 @@ export class WalletClientImpl implements WalletClient {
    * reads no sooner for it, since the saved expiry may be older than the server's.
    */
   private readRestoredSession(revision: number): void {
-    void this.refreshSessionCredential('background').then((result) => {
+    void this.refreshSessionCredential().then((result) => {
       const current = this.activeSessionSnapshot();
       if (this.sessionRevision !== revision || !current) return;
       if (result.outcome === 'unavailable' && this.lastCredentialRefreshAt === undefined) {
@@ -670,34 +819,111 @@ export class WalletClientImpl implements WalletClient {
    * sign-out or session expiry. Narrow on `type` to get the family-specific address type.
    */
   get activeWallet(): WalletAccount | undefined {
-    return this.activeWalletAccount ? cloneWalletAccount(this.activeWalletAccount) : undefined;
+    const wallet = this.activeWalletAccount;
+    if (!wallet) return (this.activeWalletView = undefined);
+    // The same frozen object until the wallet changes, so a caller can compare reads by reference.
+    if (!this.activeWalletView || !isSameFlatRecord(this.activeWalletView, wallet)) {
+      this.activeWalletView = Object.freeze(cloneWalletAccount(wallet));
+    }
+    return this.activeWalletView;
   }
 
-  /** Durable metadata for the active wallet session. Defined exactly when `activeWallet` is. */
+  /**
+   * Durable metadata for the active wallet session. Defined exactly when `activeWallet` is. The same
+   * frozen object until it changes.
+   */
   get session(): OMSWalletSession | undefined {
-    if (!this.activeWalletAccount || !this.sessionExpiresAt || !this.sessionAuth) {
-      return undefined;
+    const expiresAt = this.sessionExpiresAt;
+    const auth = this.sessionAuth;
+    if (!this.activeWalletAccount || !expiresAt || !auth) return (this.sessionView = undefined);
+    const view = this.sessionView;
+    if (!view || view.expiresAt !== expiresAt || !isSameFlatRecord(view.auth, auth)) {
+      this.sessionView = Object.freeze({ expiresAt, auth: Object.freeze({ ...auth }) });
     }
+    return this.sessionView;
+  }
 
-    return {
-      expiresAt: this.sessionExpiresAt,
-      auth: { ...this.sessionAuth }
+  onSessionChange(listener: OMSWalletSessionChangeListener): () => void {
+    this.sessionChangeListeners.add(listener);
+    // An expiry since the last sign-in or sign-out (for example while the page was closed) is
+    // replayed to this listener only. Events queued before it registered are not delivered to it.
+    if (this.latestExpiredChange && !this.activeWalletAccount) {
+      this.queueSessionChange(this.latestExpiredChange, [listener]);
+    }
+    return () => {
+      this.sessionChangeListeners.delete(listener);
     };
   }
 
-  onSessionExpired(listener: OMSWalletSessionExpiredListener): () => void {
-    this.sessionExpiredListeners.add(listener);
+  /**
+   * Publishes a change of `activeWallet` or `session` to the listeners registered now. Every change
+   * except `expired` is published only when they differ from the last published ones. Call it after
+   * the state changed; listeners run later, never during the caller.
+   */
+  private publishSessionChange(change: SessionChange): void {
+    const activeWallet = this.activeWallet;
+    const session = this.session;
+    const previous = this.publishedSessionState;
+    // An expiry is published even when nothing changes (a pending wallet selection expiring), but
+    // never over an active session.
+    const isExpiry = change.reason === 'expired' && !activeWallet;
+    if (!isExpiry && previous.activeWallet === activeWallet && previous.session === session) return;
+    this.publishedSessionState = { activeWallet, session };
 
-    if (this.latestSessionExpiredEvent && !this.dispatchingSessionExpiredEvent) {
-      this.callSessionExpiredListener(
-        listener,
-        cloneSessionExpiredEvent(this.latestSessionExpiredEvent)
-      );
+    let event: OMSWalletSessionChangeEvent;
+    if (change.reason === 'expired' && isExpiry) {
+      event = {
+        reason: 'expired',
+        activeWallet: undefined,
+        session: undefined,
+        expiredSession: change.expiredSession
+      };
+      this.latestExpiredChange = event;
+    } else if (activeWallet && session) {
+      // The reason follows the state: a wallet active now was activated, or its expiry moved.
+      const reason =
+        change.reason === 'signedIn' ||
+        change.reason === 'expiryUpdated' ||
+        change.reason === 'walletChanged'
+          ? change.reason
+          : previous.activeWallet
+            ? 'walletChanged'
+            : 'signedIn';
+      event = { reason, activeWallet, session };
+      this.latestExpiredChange = undefined;
+    } else {
+      event = { reason: 'signedOut', activeWallet: undefined, session: undefined };
     }
+    this.queueSessionChange(Object.freeze(event), Array.from(this.sessionChangeListeners));
+  }
 
-    return () => {
-      this.sessionExpiredListeners.delete(listener);
-    };
+  private queueSessionChange(
+    event: OMSWalletSessionChangeEvent,
+    listeners: OMSWalletSessionChangeListener[]
+  ): void {
+    if (listeners.length === 0) return;
+    this.pendingSessionChanges.push({ event, listeners });
+    if (this.sessionChangeDrainScheduled) return;
+    this.sessionChangeDrainScheduled = true;
+    queueMicrotask(() => this.deliverSessionChanges());
+  }
+
+  /** Delivers queued changes in order; a change published by a listener is delivered after. */
+  private deliverSessionChanges(): void {
+    let next = this.pendingSessionChanges.shift();
+    while (next) {
+      for (const listener of next.listeners) {
+        if (!this.sessionChangeListeners.has(listener)) continue;
+        try {
+          const result = listener(next.event);
+          if (isPromiseLike(result)) void result.catch(() => {});
+        } catch {
+          // Listener errors must not affect the SDK or other listeners.
+        }
+      }
+      next = this.pendingSessionChanges.shift();
+    }
+    this.sessionChangeDrainScheduled = false;
   }
 
   /**
@@ -1280,19 +1506,21 @@ export class WalletClientImpl implements WalletClient {
        * and pending redirect state, which may belong to a sign-in started elsewhere, is kept.
        */
       automatic?: boolean;
+      /** The change listeners hear of; `signedOut` by default. */
+      end?: SessionChange;
       operation?: WalletOperation;
     } = {}
   ): Promise<void> {
     const sessionCredentialId =
       this.sessionSignerCredentialId ?? this.activePendingWalletSelection?.signerCredentialId;
-    this.sessionRevision += 1;
     const keepSharedState = options.keepSharedState ?? false;
     const clearStorage = !keepSharedState && (options.clearStorage ?? true);
+    // A sign-out or new sign-in makes an earlier expiry old news, whether or not a change is published.
+    if (!options.automatic) this.latestExpiredChange = undefined;
     let storageFailure: unknown;
     if (keepSharedState) {
       // Nothing shared to clean up.
     } else if (clearStorage) {
-      this.latestSessionExpiredEvent = undefined;
       try {
         this.storage.delete(this.storageKeys.session);
       } catch (error) {
@@ -1317,6 +1545,32 @@ export class WalletClientImpl implements WalletClient {
         storageFailure = error;
       }
     }
+    this.resetSessionStateInMemory();
+    const revision = this.sessionRevision;
+    try {
+      if (!keepSharedState) {
+        if (options.automatic) await this.clearSessionSignerKey(sessionCredentialId);
+        else await this.credentialSigner.clear?.();
+      }
+    } finally {
+      // Listeners hear of the end once its cleanup is done, so a sign-in they start keeps its new
+      // key; a newer change made meanwhile publishes its own.
+      if (this.sessionRevision === revision) {
+        this.publishSessionChange(options.end ?? { reason: 'signedOut' });
+      }
+    }
+    if (storageFailure !== undefined) {
+      throw new OMSWalletStorageError({
+        operation: options.operation,
+        message: 'Wallet session cleanup failed',
+        cause: storageFailure
+      });
+    }
+  }
+
+  /** Ends this client's session and pending sign-in in memory, leaving storage and the signer alone. */
+  private resetSessionStateInMemory(): void {
+    this.sessionRevision += 1;
     this.activeWalletAccount = undefined;
     this.sessionExpiresAt = undefined;
     this.sessionAuth = undefined;
@@ -1333,17 +1587,6 @@ export class WalletClientImpl implements WalletClient {
     this.clearSessionExpiryTimer();
     this.cancelRestoredSessionRead?.();
     this.cancelRestoredSessionRead = undefined;
-    if (!keepSharedState) {
-      if (options.automatic) await this.clearSessionSignerKey(sessionCredentialId);
-      else await this.credentialSigner.clear?.();
-    }
-    if (storageFailure !== undefined) {
-      throw new OMSWalletStorageError({
-        operation: options.operation,
-        message: 'Wallet session cleanup failed',
-        cause: storageFailure
-      });
-    }
   }
 
   /**
@@ -2081,11 +2324,15 @@ export class WalletClientImpl implements WalletClient {
     return type === 'direct' ? CredentialType.Direct : CredentialType.Remote;
   }
 
-  /** Saves wallet metadata. The non-extractable credential key is owned by the signer. */
+  /**
+   * Saves wallet metadata and makes it this client's session, publishing `change`. The
+   * non-extractable credential key is owned by the signer.
+   */
   private persistSession(
     wallet: WalletAccount,
     metadata: WalletSessionMetadata,
-    operation?: WalletOperation
+    operation?: WalletOperation,
+    change: SessionChange = { reason: 'activation' }
   ): void {
     const record: StoredSessionRecord = {
       version: 2,
@@ -2115,7 +2362,6 @@ export class WalletClientImpl implements WalletClient {
       });
     }
 
-    this.latestSessionExpiredEvent = undefined;
     this.activeWalletAccount = cloneWalletAccount(wallet);
     this.sessionExpiresAt = metadata.expiresAt;
     this.sessionAuth = cloneSessionAuth(metadata.auth);
@@ -2124,12 +2370,26 @@ export class WalletClientImpl implements WalletClient {
     this.sessionExpiryBounds = metadata.expiryBounds && { ...metadata.expiryBounds };
     if (!isActiveSessionExpiry) this.lastCredentialRefreshAt = metadata.signInSentAt ?? Date.now();
     this.scheduleSessionExpiry(this.sessionFromMetadata(this.activeWalletAccount, metadata));
+    this.publishSessionChange(change);
   }
 
   private loadStoredSessionRecord(): LoadedSessionRecord | undefined {
     const serialized = this.storage.get(this.storageKeys.session);
     if (!serialized) return undefined;
+    const record = this.parseStoredSessionRecord(serialized);
+    if (!record) {
+      this.storage.delete(this.storageKeys.session);
+      return undefined;
+    }
+    return { serialized, record };
+  }
 
+  /**
+   * Parses a stored session record of this client's scope. Undefined for an invalid record, a
+   * version 1 record (SDK 0.3.x, which carries no wallet type: the user signs in again), another
+   * scope's, or one without the expiry bounds (pre-release 0.4.0 builds).
+   */
+  private parseStoredSessionRecord(serialized: string): StoredSessionRecord | undefined {
     try {
       const parsed = JSON.parse(serialized) as Record<string, unknown>;
       const scope = parsed.scope as Record<string, unknown> | undefined;
@@ -2137,7 +2397,6 @@ export class WalletClientImpl implements WalletClient {
       const signerCredentialId = parsed.signerCredentialId;
       const signerKeyType = parsed.signerKeyType;
       const wallet = parseStoredWalletAccount(parsed.wallet);
-      // Version 1 records (SDK 0.3.x) carry no wallet type; they are discarded and the user signs in again.
       if (
         parsed.version !== 2 ||
         !wallet ||
@@ -2150,7 +2409,6 @@ export class WalletClientImpl implements WalletClient {
         typeof scope.indexerGatewayUrl !== 'string' ||
         !auth
       ) {
-        this.storage.delete(this.storageKeys.session);
         return undefined;
       }
 
@@ -2160,32 +2418,23 @@ export class WalletClientImpl implements WalletClient {
         scope.walletApiUrl !== expectedScope.walletApiUrl ||
         scope.indexerGatewayUrl !== expectedScope.indexerGatewayUrl
       ) {
-        this.storage.delete(this.storageKeys.session);
         return undefined;
       }
 
-      // Records without the expiry bounds (pre-release 0.4.0 builds) are discarded too.
       const expiryBounds = storedSessionExpiryBounds(parsed);
-      if (!expiryBounds) {
-        this.storage.delete(this.storageKeys.session);
-        return undefined;
-      }
+      if (!expiryBounds) return undefined;
       return {
-        serialized,
-        record: {
-          version: 2,
-          scope: expectedScope,
-          wallet,
-          expiresAt: parsed.expiresAt,
-          auth,
-          signerCredentialId,
-          signerKeyType,
-          idleWindowMs: expiryBounds.idleWindowMs,
-          expiryCeiling: new Date(expiryBounds.expiryCeilingMs).toISOString()
-        }
+        version: 2,
+        scope: expectedScope,
+        wallet,
+        expiresAt: parsed.expiresAt,
+        auth,
+        signerCredentialId,
+        signerKeyType,
+        idleWindowMs: expiryBounds.idleWindowMs,
+        expiryCeiling: new Date(expiryBounds.expiryCeilingMs).toISOString()
       };
     } catch {
-      this.storage.delete(this.storageKeys.session);
       return undefined;
     }
   }
@@ -3145,11 +3394,16 @@ export class WalletClientImpl implements WalletClient {
     const revision = this.sessionRevision;
     if (!(await this.sessionSignerMatches())) {
       // An expiry refresh may have found the mismatch and cleared the session meanwhile.
-      if (this.sessionRevision === revision) await this.clearSessionWithMismatchedSigner(operation);
-      throw new OMSWalletSessionError({
-        operation,
-        message: 'No active wallet session'
-      });
+      const expired =
+        this.sessionRevision === revision &&
+        (await this.clearSessionWithMismatchedSigner(operation));
+      throw expired
+        ? new OMSWalletSessionError({
+            code: 'OMS_SESSION_EXPIRED',
+            operation,
+            message: 'Wallet session expired'
+          })
+        : new OMSWalletSessionError({ operation, message: 'No active wallet session' });
     }
   }
 
@@ -3175,20 +3429,43 @@ export class WalletClientImpl implements WalletClient {
   }
 
   /**
-   * Clears a session whose signer no longer holds its key. When the stored session now belongs to the
-   * signer's key, a sign-in elsewhere (another tab) replaced this session, so only this client's
-   * state is dropped and the newer session keeps its stored record and key.
+   * Clears a session whose signer no longer holds its key, and resolves to whether it ended as
+   * expired. A stored record still this session's while the signer holds no key means the session
+   * ended on its own (expiry, or WaaS rejecting it), here or in another tab: it ends as expired and
+   * keeps the record. When the stored session now belongs to the signer's key, a sign-in elsewhere
+   * replaced this session, so only this client's state is dropped and the newer session keeps its
+   * stored record and key. A replaced session is signed out, unless its expiry had passed.
    */
-  private async clearSessionWithMismatchedSigner(operation?: WalletOperation): Promise<void> {
+  private async clearSessionWithMismatchedSigner(operation?: WalletOperation): Promise<boolean> {
     const revision = this.sessionRevision;
-    const keepSharedState = await this.isSessionReplacedElsewhere();
+    const session = this.activeSessionSnapshot();
+    const endedOnItsOwn = await this.hasSessionEndedOnItsOwn();
+    const keepSharedState = !endedOnItsOwn && (await this.isSessionReplacedElsewhere());
     // Another caller may have cleared the session while the stored record was checked.
-    if (this.sessionRevision !== revision) return;
-    await this.clearSession({ operation, keepSharedState, automatic: true });
+    if (this.sessionRevision !== revision || !session) return false;
+    // The session ended when that was found, unless its expiry passed first.
+    const expiredAt = this.isSessionExpired(session) ? session.expiresAt : new Date().toISOString();
+    if (endedOnItsOwn) {
+      await this.expireSession(session, expiredAt);
+      return true;
+    }
+    const expired = this.isSessionExpired(session);
+    await this.clearSession({
+      operation,
+      keepSharedState,
+      automatic: true,
+      ...(expired
+        ? { end: { reason: 'expired', expiredSession: expiredSessionOf(session, expiredAt) } }
+        : {})
+    });
+    return expired;
   }
 
-  /** Whether the stored record is still this session's while the signer holds no key at all. */
-  private async isSessionKeyClearedByExpiry(): Promise<boolean> {
+  /**
+   * Whether the stored record is still this session's while the signer holds no key at all: the
+   * session ended on its own (expiry, or WaaS rejecting it), in this client or another tab.
+   */
+  private async hasSessionEndedOnItsOwn(): Promise<boolean> {
     try {
       const stored = this.loadStoredSessionRecord()?.record;
       return (
@@ -3342,14 +3619,24 @@ export class WalletClientImpl implements WalletClient {
     };
   }
 
-  private async expireSession(session: SessionSnapshot): Promise<void> {
+  /**
+   * Ends `session` as expired: its stored record stays as the sign-in hint the expiry replays.
+   * `expiredAt` defaults to its expiry; pass when the session was found ended earlier than that.
+   */
+  private async expireSession(
+    session: SessionSnapshot,
+    expiredAt = session.expiresAt
+  ): Promise<void> {
     this.expiredSessionRevision = this.sessionRevision;
     try {
-      await this.clearSession({ clearStorage: false, automatic: true });
+      await this.clearSession({
+        clearStorage: false,
+        automatic: true,
+        end: { reason: 'expired', expiredSession: expiredSessionOf(session, expiredAt) }
+      });
     } catch {
-      // Expiry notification should not depend on credential cleanup succeeding.
+      // The expiry is published even when credential cleanup fails.
     }
-    this.notifySessionExpired(sessionExpiredEvent(session));
   }
 
   private scheduleSessionExpiry(session: SessionSnapshot): void {
@@ -3406,7 +3693,7 @@ export class WalletClientImpl implements WalletClient {
     // reaches WaaS, the credential has ended there and nothing moves. Counting it would put the
     // next check (a retry when WaaS is unreachable) an idle window later.
     const revision = this.sessionRevision;
-    const result = await this.refreshSessionCredential('timer');
+    const result = await this.refreshSessionCredential(true);
     const current = this.activeSessionSnapshot();
     if (this.sessionRevision !== revision || !current) return;
     if (result.outcome === 'refreshed' && !this.isSessionExpired(current)) return;
@@ -3531,7 +3818,7 @@ export class WalletClientImpl implements WalletClient {
    */
   private async refreshLocallyExpiredSession(operation: WalletOperation): Promise<void> {
     const revision = this.sessionRevision;
-    const result = await this.refreshSessionCredential('operation');
+    const result = await this.refreshSessionCredential();
     const current = this.activeSessionSnapshot();
     const isSameSession = this.sessionRevision === revision && !!current;
     if (result.outcome === 'refreshed' && isSameSession && !this.isSessionExpired(current)) return;
@@ -3559,17 +3846,16 @@ export class WalletClientImpl implements WalletClient {
   /**
    * Reads the active session credential's current expiry from WaaS. Concurrent callers share one
    * request, and a result is applied only while the same session is current. Never rejects.
-   * `origin` is the caller that starts the read: see `CredentialReadOrigin`.
+   * `isExpiryCheck` marks the expiry timer's check, sent past the bound on the server expiry, so it
+   * is not recorded as activity.
    */
-  private refreshSessionCredential(
-    origin: CredentialReadOrigin = 'background'
-  ): Promise<CredentialRefreshResult> {
+  private refreshSessionCredential(isExpiryCheck = false): Promise<CredentialRefreshResult> {
     if (!this.activeWalletAccount) return Promise.resolve({ outcome: 'stale' });
     if (this.isCredentialRefreshUnsupported()) return Promise.resolve({ outcome: 'unsupported' });
     const revision = this.sessionRevision;
     if (this.credentialRefresh?.revision === revision) return this.credentialRefresh.promise;
 
-    const promise = this.requestCredentialRefresh(revision, origin);
+    const promise = this.requestCredentialRefresh(revision, isExpiryCheck);
     const refresh = { revision, promise };
     this.credentialRefresh = refresh;
     void promise.finally(() => {
@@ -3580,7 +3866,7 @@ export class WalletClientImpl implements WalletClient {
 
   private async requestCredentialRefresh(
     revision: number,
-    origin: CredentialReadOrigin
+    isExpiryCheck: boolean
   ): Promise<CredentialRefreshResult> {
     const signerCredentialId = this.sessionSignerCredentialId;
     const isCurrent = () =>
@@ -3596,38 +3882,23 @@ export class WalletClientImpl implements WalletClient {
     }
     if (!isCurrent()) return { outcome: 'stale' };
     if (!signerMatches) {
-      const session = this.activeSessionSnapshot();
-      if (session && this.isSessionExpired(session) && (await this.isSessionKeyClearedByExpiry())) {
-        // An earlier load ended this session, clearing its key but keeping its record as the sign-in
-        // hint: end it as that expiry did, so the record stays and later loads replay it too.
-        if (!isCurrent()) return { outcome: 'stale' };
-        await this.expireSession(session);
-        return {
-          outcome: 'ended',
-          error: new Error('Session key was cleared when the session expired')
-        };
-      }
-      // The session cannot sign its requests any more: clear it without asking WaaS.
+      // The session cannot sign its requests any more: end it without asking WaaS.
+      let expired = false;
       try {
-        await this.clearSessionWithMismatchedSigner();
+        expired = await this.clearSessionWithMismatchedSigner();
       } catch {
         // The session is cleared in memory even when storage or credential cleanup fails.
       }
-      if (origin !== 'operation' && session && !this.activeWalletAccount) {
-        // No operation reports this, so tell listeners the session ended, as a local expiry does.
-        this.notifySessionExpired({
-          ...sessionExpiredEvent(session),
-          expiredAt: this.isSessionExpired(session) ? session.expiresAt : new Date().toISOString()
-        });
-      }
-      return { outcome: 'signerMismatch' };
+      return expired
+        ? { outcome: 'ended', error: new Error('Session key is gone') }
+        : { outcome: 'signerMismatch' };
     }
 
     let expiresAt: unknown;
     let readAt = Date.now();
     try {
       // The read fetch takes this synchronously when `getCredential` calls it.
-      this.nextCredentialReadRecordsActivity = origin !== 'timer';
+      this.nextCredentialReadRecordsActivity = !isExpiryCheck;
       const response = await this.credentialClient.getCredential();
       // The read fetch records its completion also as session activity, so a successful read with no
       // later request leaves the activity no later than the read.
@@ -3675,13 +3946,15 @@ export class WalletClientImpl implements WalletClient {
       this.scheduleSessionExpiry(this.sessionFromMetadata(wallet, refreshed));
     }
     this.lastCredentialRefreshAt = readAt;
+    this.publishSessionChange({ reason: 'expiryUpdated' });
   }
 
   /**
    * Stores a refreshed expiry. Clients (tabs) signing with the same key share the stored record,
-   * and another one may have activated another wallet in it since this client last wrote it, so
-   * only its expiry changes; this client keeps its own wallet. A record of another credential
-   * belongs to a newer session elsewhere and is left alone. Throws when storage fails.
+   * and another one may have activated another wallet in it since this client last wrote it (this
+   * client follows that through `reconcileWithStoredSession`), so only its expiry changes. A record
+   * of another credential belongs to a newer session elsewhere and is left alone. Throws when
+   * storage fails.
    */
   private persistRefreshedSessionExpiry(
     wallet: WalletAccount,
@@ -3689,7 +3962,7 @@ export class WalletClientImpl implements WalletClient {
   ): void {
     const stored = this.loadStoredSessionRecord()?.record;
     if (!stored) {
-      this.persistSession(wallet, refreshed);
+      this.persistSession(wallet, refreshed, undefined, { reason: 'expiryUpdated' });
       return;
     }
     if (
@@ -3699,7 +3972,6 @@ export class WalletClientImpl implements WalletClient {
       const record: StoredSessionRecord = { ...stored, expiresAt: refreshed.expiresAt };
       this.storage.set(this.storageKeys.session, JSON.stringify(record));
     }
-    this.latestSessionExpiredEvent = undefined;
     this.sessionExpiresAt = refreshed.expiresAt;
     this.scheduleSessionExpiry(this.sessionFromMetadata(wallet, refreshed));
   }
@@ -3811,7 +4083,7 @@ export class WalletClientImpl implements WalletClient {
         // Unauthorized: a wallet access error, or a revoked credential. `GetCredential` involves no
         // wallet, so it tells them apart: it fails with 7207 and ends the session only when the
         // credential was revoked. One read in flight at a time is shared.
-        void this.refreshSessionCredential('background');
+        void this.refreshSessionCredential();
       }
       return response;
     };
@@ -3831,7 +4103,7 @@ export class WalletClientImpl implements WalletClient {
     ) {
       return;
     }
-    void this.refreshSessionCredential('background');
+    void this.refreshSessionCredential();
   }
 
   private isCurrentSessionSnapshot(session: SessionSnapshot): boolean {
@@ -3846,57 +4118,6 @@ export class WalletClientImpl implements WalletClient {
       !!this.activePendingWalletSelection &&
       this.activePendingWalletSelection.metadata.expiresAt === session.expiresAt
     );
-  }
-
-  private scheduleStoredSessionExpiryNotification(snapshot: StoredSessionSnapshot): void {
-    const session = snapshot.session;
-    void Promise.resolve()
-      .then(async () => {
-        if (!this.matchesStoredSessionSnapshot(snapshot)) return;
-
-        try {
-          await this.clearSessionSignerKey(snapshot.signerCredentialId);
-        } catch {
-          // Expiry replay should still happen if credential cleanup fails.
-        }
-
-        if (!this.matchesStoredSessionSnapshot(snapshot)) return;
-
-        this.notifySessionExpired(sessionExpiredEvent(session));
-      })
-      .catch(() => {});
-  }
-
-  private matchesStoredSessionSnapshot(snapshot: StoredSessionSnapshot): boolean {
-    return this.storage.get(this.storageKeys.session) === snapshot.serializedRecord;
-  }
-
-  private notifySessionExpired(event: OMSWalletSessionExpiredEvent): void {
-    const eventSnapshot = cloneSessionExpiredEvent(event);
-    this.latestSessionExpiredEvent = eventSnapshot;
-
-    this.dispatchingSessionExpiredEvent = true;
-    try {
-      for (const listener of Array.from(this.sessionExpiredListeners)) {
-        this.callSessionExpiredListener(listener, cloneSessionExpiredEvent(eventSnapshot));
-      }
-    } finally {
-      this.dispatchingSessionExpiredEvent = false;
-    }
-  }
-
-  private callSessionExpiredListener(
-    listener: OMSWalletSessionExpiredListener,
-    event: OMSWalletSessionExpiredEvent
-  ): void {
-    try {
-      const result = listener(event);
-      if (isPromiseLike(result)) {
-        void result.catch(() => {});
-      }
-    } catch {
-      // User callbacks must not change the SDK operation error.
-    }
   }
 
   private loginHintForProvider(
@@ -4069,12 +4290,25 @@ function cloneWalletAccount<T extends WalletAccount>(wallet: T): T {
   return { ...wallet };
 }
 
-function sessionExpiredEvent(session: SessionSnapshot): OMSWalletSessionExpiredEvent {
-  return {
-    wallet: session.wallet ? cloneWalletAccount(session.wallet) : undefined,
-    session: { expiresAt: session.expiresAt, auth: { ...session.auth } },
-    expiredAt: session.expiresAt
-  };
+function expiredSessionOf(session: SessionSnapshot, expiredAt: string): OMSWalletExpiredSession {
+  return Object.freeze({
+    wallet: session.wallet ? Object.freeze(cloneWalletAccount(session.wallet)) : undefined,
+    session: Object.freeze({
+      expiresAt: session.expiresAt,
+      auth: Object.freeze({ ...session.auth })
+    }),
+    expiredAt
+  });
+}
+
+/** Whether two records with only primitive fields hold the same values. */
+function isSameFlatRecord(a: object, b: object): boolean {
+  const aEntries = Object.entries(a).filter(([, value]) => value !== undefined);
+  const bRecord = b as Record<string, unknown>;
+  return (
+    aEntries.length === Object.values(b).filter((value) => value !== undefined).length &&
+    aEntries.every(([key, value]) => bRecord[key] === value)
+  );
 }
 
 /** The parts of a browser `Document` that `whenInForeground` uses. */
@@ -4207,16 +4441,6 @@ function isWalletKeyOrigin(value: unknown): value is WalletKeyOrigin {
   return (
     typeof value === 'string' && Object.values(WalletKeyOrigin).includes(value as WalletKeyOrigin)
   );
-}
-
-function cloneSessionExpiredEvent(
-  event: OMSWalletSessionExpiredEvent
-): OMSWalletSessionExpiredEvent {
-  return {
-    wallet: event.wallet ? cloneWalletAccount(event.wallet) : undefined,
-    session: { expiresAt: event.session.expiresAt, auth: { ...event.session.auth } },
-    expiredAt: event.expiredAt
-  };
 }
 
 function normalizeSessionAuth(value: unknown): OMSWalletSessionAuth | undefined {

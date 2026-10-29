@@ -84,6 +84,8 @@ For redirect-based OIDC flows such as Google or Apple, complete the SDK redirect
 
 Wagmi `disconnect()` only disconnects the wagmi connector. It does not sign out the OMS Wallet SDK session, and it prevents wagmi from automatically reconnecting the OMS Wallet connector on page refresh until the app calls wagmi `connect()` again.
 
+While connected, the connector follows the SDK session. It disconnects when the session ends (sign-out, expiry, or another tab taking over) or when a Solana or Tron wallet becomes active, and it changes the account when another Ethereum wallet becomes active. After it disconnects this way, a later sign-in does not reconnect it; call wagmi `connect()` again. Starting a new sign-in while connected ends the old session, so it disconnects wagmi too.
+
 To sign out completely, disconnect wagmi state and then sign out with the SDK:
 
 ```ts

@@ -22,7 +22,7 @@ import {
   type Network,
   type GetIdTokenParams,
   type OMSWalletSessionAuth,
-  type OMSWalletSessionExpiredListener,
+  type OMSWalletSessionChangeListener,
   type OMSWalletSession,
   type CallTronContractParams,
   type GetTronBalancesParams,
@@ -324,8 +324,8 @@ new OMSWallet({ publicApiKey: 'pk_dev_sdbx_project_key' });
 new OMSWallet({ publishableKey: 'pk_dev_sdbx_project_key', authorizationScope: 'project-id' });
 new OMSWallet({
   publishableKey: 'pk_dev_sdbx_project_key',
-  // @ts-expect-error session expiry is subscribed through wallet.onSessionExpired, not constructor params.
-  onSessionExpired: () => {}
+  // @ts-expect-error session changes are subscribed through wallet.onSessionChange, not constructor params.
+  onSessionChange: () => {}
 });
 const session: OMSWalletSession | undefined = defaultClient.wallet.session;
 const activeWallet: WalletAccount | undefined = defaultClient.wallet.activeWallet;
@@ -366,18 +366,39 @@ const legacyFeeToken: FeeToken = {
   tokenID: 'usdc'
 };
 void legacyFeeToken;
-const unsubscribeSessionExpired: () => void = defaultClient.wallet.onSessionExpired(
-  ({ wallet, session }) => {
-    void wallet?.address;
-    void session.auth.email;
-    // @ts-expect-error expired session snapshots are readonly.
-    session.auth = { type: 'email', email: 'user@example.com' };
+const unsubscribeSessionChange: () => void = defaultClient.wallet.onSessionChange((event) => {
+  switch (event.reason) {
+    case 'signedIn':
+    case 'walletChanged':
+    case 'expiryUpdated': {
+      const changedWallet: WalletAccount = event.activeWallet;
+      const changedSession: OMSWalletSession = event.session;
+      void changedWallet;
+      void changedSession;
+      // @ts-expect-error only an expired change carries the expired session.
+      void event.expiredSession;
+      break;
+    }
+    case 'signedOut': {
+      const noWallet: undefined = event.activeWallet;
+      void noWallet;
+      break;
+    }
+    case 'expired': {
+      void event.expiredSession.wallet?.address;
+      void event.expiredSession.expiredAt;
+      // @ts-expect-error expired session snapshots are readonly.
+      event.expiredSession.session = event.expiredSession.session;
+      break;
+    }
   }
-);
-const sessionExpiredListener: OMSWalletSessionExpiredListener = ({ expiredAt }) => {
-  void expiredAt;
+});
+const sessionChangeListener: OMSWalletSessionChangeListener = async ({ reason }) => {
+  void reason;
 };
-void defaultClient.wallet.onSessionExpired(sessionExpiredListener);
+void defaultClient.wallet.onSessionChange(sessionChangeListener);
+// @ts-expect-error onSessionExpired was replaced by onSessionChange.
+void defaultClient.wallet.onSessionExpired;
 // @ts-expect-error There is no walletAddress property; read the active account from activeWallet.
 void defaultClient.wallet.walletAddress;
 const idTokenParams: GetIdTokenParams = { ttlSeconds: 300, customClaims: { role: 'admin' } };
@@ -443,7 +464,7 @@ new OMSWalletRequestError({ message: 'wrong', code: 'OMS_SESSION_MISSING' });
 // @ts-expect-error transaction errors cannot carry validation codes.
 new OMSWalletTransactionError({ message: 'wrong', code: 'OMS_VALIDATION_ERROR' });
 void session;
-void unsubscribeSessionExpired;
+void unsubscribeSessionChange;
 void sessionAuth;
 void polygonNetwork;
 void amoyNetwork;

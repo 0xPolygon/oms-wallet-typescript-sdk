@@ -6,7 +6,7 @@ This note documents the wallet session expiry flow for maintainers. Public API b
 
 - `expiresAt` is the credential's current expiry, not a fixed end. WaaS slides it forward with use (up to the lifetime requested at sign-in), and the SDK refreshes it with `GetCredential`.
 - A valid stored session is restored into memory, gets an expiry timer, and refreshes its expiry in the background. Reading the expiry extends an active session, so in a browser page that is hidden or prerendering the restore read waits until the page is visible and no longer prerendering; without a `document` (Node, workers) it runs right away.
-- A stored session whose saved expiry has passed may still be active on WaaS: requests after the last read can have moved the server expiry, which is therefore normally less than 12 hours (the 6-hour dampening plus the 6 hours until the next read) past the saved one, never past the ceiling. Within that window (plus the 5-minute grace) it is restored as active, and the restore read decides: WaaS extends it or reports it ended. Past the window or the ceiling, it is discarded without asking WaaS: it is not restored as active, but its metadata stays in storage so `onSessionExpired` can replay after a page refresh. The window assumes each read succeeded and was saved; a missed one can leave the server expiry later, which only ends the session early. A session that a read ended keeps its record without its signing key; a later load inside the window finds the key missing and ends it the same way, so the expiry replays there too.
+- A stored session whose saved expiry has passed may still be active on WaaS: requests after the last read can have moved the server expiry, which is therefore normally less than 12 hours (the 6-hour dampening plus the 6 hours until the next read) past the saved one, never past the ceiling. Within that window (plus the 5-minute grace) it is restored as active, and the restore read decides: WaaS extends it or reports it ended. Past the window or the ceiling, it is discarded without asking WaaS: it is not restored as active, but its metadata stays in storage so its `expired` change is replayed to listeners after a page refresh. The window assumes each read succeeded and was saved; a missed one can leave the server expiry later, which only ends the session early. A session that a read ended keeps its record without its signing key; a later load inside the window finds the key missing and ends it the same way, so the expiry replays there too.
 - A session active in memory can expire from the timer or from a protected wallet operation checking the session before use. Both check the expiry with WaaS first and only expire the session when WaaS reports the credential gone or revoked, the server has no `GetCredential`, or the refresh returns an expiry that has already passed.
 - WaaS ends a session about 10 days after its last use. Every session-signed request moves the server expiry toward an idle window after it, capped at the lifetime requested at sign-in, and so does `GetCredential` itself, so the timer does not read the expiry while the session may still be active. See [Expiry check timing](#expiry-check-timing). A protected operation on a locally expired session reads the expiry immediately.
 - A request signed with the active session's credential that fails with `KeyNotFound` (7202) or `KeyExpired` (7203) ends the session like a local expiry and fails with `OMS_SESSION_EXPIRED`, shaped like a local expiry (the WaaS error is only its `cause`, no `upstreamError`). This includes `Execute`, which the credential middleware rejects before it runs; a status lookup after submission keeps `OMS_TRANSACTION_STATUS_LOOKUP_FAILED` and its `txnId`. Only session-signed requests count (the session client's fetch records the rejection): public requests such as `inspectRemoteCredential` or signature verification can return 7202 for another credential and leave the session alone. `Unauthorized` (7207) from a session request is a request error and keeps the session; from `GetCredential`, which involves no wallet, it means the credential was revoked and ends the session. WaaS errors are matched by code: the API gateway also returns errors named `Unauthorized` (code 1000). Sign-in requests made without an active session are not affected.
@@ -37,18 +37,18 @@ Without SDK activity, the SDK notices an idle session's end up to about 6 hours 
 
 ## Expiry Refresh
 
-One internal primitive reads the expiry with `GetCredential`. Concurrent callers share one in-flight request, and a result is applied only if the same session (session revision and signer credential) is still current. Before reading, it checks that the signer still holds the session's key (the same check protected operations make); if the key was removed or replaced, for example by a sign-in in another tab, the session is cleared without a request. When the stored session now belongs to the signer's key, that newer session (such as another tab's) keeps its stored record, key, and pending OIDC redirect state; only this client's session state is dropped. Protected operations handle a replaced key the same way.
+One internal primitive reads the expiry with `GetCredential`. Concurrent callers share one in-flight request, and a result is applied only if the same session (session revision and signer credential) is still current. Before reading, it checks that the signer still holds the session's key (the same check protected operations make); if the key was removed or replaced, for example by a sign-in in another tab, the session is ended without a request. When the stored record is still this session's and the signer holds no key, the session ended on its own (expiry, or WaaS rejecting it) here or in another tab: it ends as expired and keeps its record. When the stored session now belongs to the signer's key, that newer session (such as another tab's) keeps its stored record, key, and pending OIDC redirect state; only this client's session state is dropped, as `signedOut` (or `expired` when its local expiry had passed). Protected operations handle a missing or replaced key the same way.
 
 WaaS requires each signed request's nonce to be higher than the credential's last one, so an expiry read never overlaps another session-signed request: it waits until none is in flight, and session requests started during a read wait for it to finish before they are signed. A signed request that WaaS still rejects for its nonce (`PreconditionFailed`, 7206, HTTP 412) is signed again with a fresh nonce and resent, at most twice; WaaS rejects it before running any method, so this is safe for writes such as `Execute`.
 
 | Outcome | Meaning | Effect |
 |---|---|---|
 | `refreshed` | WaaS returned a parseable `credential.expiresAt` | Session expiry set (later or earlier), timer rescheduled. When the stored record is this credential's, only its expiry is updated, so a wallet another tab activated stays stored; a record of another credential is left alone |
-| `ended` | `KeyNotFound` (7202), `KeyExpired` (7203), or `Unauthorized` (7207, credential revoked) | Session ended as on local expiry; `onSessionExpired` fires once |
+| `ended` | `KeyNotFound` (7202), `KeyExpired` (7203), or `Unauthorized` (7207, credential revoked) | Session ended as on local expiry; listeners receive `expired` once |
 | `unsupported` | `WebrpcBadRoute` (servers without `GetCredential`, or a misrouted request) | Local expiry kept; not asked again for 15 minutes, then the next read asks once more |
 | `unavailable` | Network or any other error | Session unchanged |
 | `stale` | Session replaced or signed out while in flight | Result ignored |
-| `signerMismatch` | The signer no longer holds the session's key (or reports none); no request was sent | Session cleared as by a protected operation; an operation fails with `No active wallet session`. A background read (timer, restore, 6-hour, after `Unauthorized`) fires `onSessionExpired` instead, as nothing else reports it |
+| `signerMismatch` | The signer no longer holds the session's key (or reports none) and another sign-in replaced it; no request was sent | Session cleared as by a protected operation; listeners receive `signedOut`, and an operation fails with `No active wallet session`. A missing key whose record is still this session's is `ended` instead |
 
 | Trigger | Where | On `unavailable` |
 |---|---|---|
@@ -57,6 +57,16 @@ WaaS requires each signed request's nonce to be higher than the credential's las
 | Operation finds the session locally expired | `requireActiveSession` | Throw the request error; the session is kept |
 | Successful session request, last read at least 6 hours old | The session client's fetch wrapper | Nothing |
 | Session request fails with `Unauthorized` (7207): an access error or a revoked credential | The session client's fetch wrapper, unless a read is in flight | Nothing; a 7207 from the read itself ends the session |
+
+## Session changes and tabs
+
+Every change of `activeWallet` or `session` is published once through `publishSessionChange`, which compares the getters' values with the last published ones (an `expired` change is published even when they did not change, as for a pending wallet selection). Listeners run in a microtask, never during the call that made the change, each with the listeners registered when it happened. `clearSession` publishes once its cleanup has finished, and only if no newer change happened meanwhile. The last `expired` change is replayed to listeners added while signed out; `signOut()` and sign-in starts clear it.
+
+Tabs of one origin share the stored record and the default signer's key. A `storage` event for the session key, or the page becoming visible, runs `reconcileWithStoredSession`, which reads storage and the signer and never writes them:
+
+- No stored record: another tab signed out or started a sign-in; this client's session ends as `signedOut`.
+- The same sign-in: a key that is gone ends the session as above; otherwise the stored wallet and a later stored expiry are adopted (`walletChanged` or `expiryUpdated`).
+- Another sign-in: adopted as `signedIn` when its expiry has not passed and the signer holds its key, with no restore read. Anything changing meanwhile runs the reconcile again.
 
 ## Flow
 
@@ -77,15 +87,8 @@ flowchart TD
 
   E -- "Yes" --> H["Keep expired metadata in storage"]
   H --> I["Do not restore active in-memory session"]
-  I --> J["Schedule deferred expiry replay"]
-
-  J --> K{"Storage still matches expired snapshot?"}
-  K -- "No" --> L["Cancel stale replay"]
-  K -- "Yes" --> M["Clear signer credential"]
-
-  M --> N{"Storage still matches expired snapshot?"}
-  N -- "No" --> L
-  N -- "Yes" --> O["Notify onSessionExpired"]
+  I --> J["Keep the expired change for replay to listeners; clear the signer key if still its own"]
+  J --> L["A sign-out or sign-in clears the replay"]
 
   F --> FR["Refresh expiry in background once the page is shown"]
   G --> P["Timer fires"]

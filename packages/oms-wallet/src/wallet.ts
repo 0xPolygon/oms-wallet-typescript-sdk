@@ -227,18 +227,55 @@ export const DEFAULT_SESSION_LIFETIME_SECONDS = 15_552_000;
 /** Largest accepted `sessionLifetimeSeconds` (180 days). */
 export const MAX_SESSION_LIFETIME_SECONDS = 15_552_000;
 
-export interface OMSWalletSessionExpiredEvent {
+/** A session that expired, as reported by an `expired` session change. */
+export interface OMSWalletExpiredSession {
   /**
    * The wallet that was active when the session expired. `undefined` when the credential expired
    * while a manual wallet selection was still pending.
    */
   readonly wallet: WalletAccount | undefined;
   readonly session: OMSWalletSession;
+  /**
+   * When the session ended: its expiry, or the time the SDK found it ended when that was earlier
+   * (for example after another tab's session ended it).
+   */
   readonly expiredAt: string;
 }
 
-export type OMSWalletSessionExpiredListener = (
-  event: OMSWalletSessionExpiredEvent
+/**
+ * Why `activeWallet` or `session` changed.
+ *
+ * - `signedIn`: a sign-in made a wallet active, in this client or in another tab.
+ * - `walletChanged`: another wallet of the same sign-in became active, here or in another tab.
+ * - `expiryUpdated`: `session.expiresAt` moved. Safe to ignore unless you show the expiry.
+ * - `signedOut`: there is no session any more and it did not expire: `signOut()`, a sign-in
+ *   started while signed in, or another tab taking over. Not necessarily the user's choice.
+ * - `expired`: the session expired, or the wallet API no longer accepts it.
+ */
+export type OMSWalletSessionChangeReason =
+  'signedIn' | 'walletChanged' | 'expiryUpdated' | 'signedOut' | 'expired';
+
+/** The state right after a session change: what `activeWallet` and `session` returned then. */
+export type OMSWalletSessionChangeEvent =
+  | {
+      readonly reason: 'signedIn' | 'walletChanged' | 'expiryUpdated';
+      readonly activeWallet: WalletAccount;
+      readonly session: OMSWalletSession;
+    }
+  | {
+      readonly reason: 'signedOut';
+      readonly activeWallet: undefined;
+      readonly session: undefined;
+    }
+  | {
+      readonly reason: 'expired';
+      readonly activeWallet: undefined;
+      readonly session: undefined;
+      readonly expiredSession: OMSWalletExpiredSession;
+    };
+
+export type OMSWalletSessionChangeListener = (
+  event: OMSWalletSessionChangeEvent
 ) => void | Promise<void>;
 
 export interface SignMessageParams {
@@ -321,13 +358,23 @@ export type SignInWithOidcRedirectParams = OidcRedirectAuthParamsBase & {
 export interface WalletClient {
   /**
    * The active wallet, or `undefined` when signed out or while a manual wallet selection is pending.
-   * Same shape as `listWallets()` entries.
+   * Same shape as `listWallets()` entries. The same frozen object is returned until it changes.
    */
   readonly activeWallet: WalletAccount | undefined;
-  /** Expiry and auth metadata for the active session; defined exactly when `activeWallet` is. */
+  /**
+   * Expiry and auth metadata for the active session; defined exactly when `activeWallet` is. The
+   * same frozen object is returned until it changes.
+   */
   readonly session: OMSWalletSession | undefined;
 
-  onSessionExpired(listener: OMSWalletSessionExpiredListener): () => void;
+  /**
+   * Calls `listener` after every change of `activeWallet` or `session`, in order and shortly after
+   * the change (never during the call that made it). Subscribe first, then read `activeWallet` and
+   * `session`, so no change is missed. A listener added while signed out first receives the last
+   * `expired` change, if a session expired since the last sign-in or sign-out (for example while
+   * the page was closed). Returns a function that unsubscribes.
+   */
+  onSessionChange(listener: OMSWalletSessionChangeListener): () => void;
   startEmailAuth(params: StartEmailAuthParams): Promise<void>;
   completeEmailAuth(
     params: ManualWalletSelectionParams<CompleteEmailAuthParams>

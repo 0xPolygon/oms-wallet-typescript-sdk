@@ -272,28 +272,69 @@ const authLabel = session?.auth.type === 'oidc'
     : 'Unknown'
 ```
 
-`activeWallet` and `session` return readonly snapshots. Changing a returned object does not update SDK state or persisted session metadata.
+`activeWallet` and `session` return frozen objects, and the same object until the value changes, so you can compare reads by reference.
 
 Use `omsWallet.wallet.getIdToken({ ttlSeconds, customClaims })` to request an ID token for the active wallet session.
 
 Pending email OTP and OIDC redirect state are not exposed through `session`; use the auth method results to drive pending UI.
 
-When the local expiry has passed and the wallet API confirms the session ended (or does not support extending it), the SDK makes the session inactive before protected wallet operations and throws `OMSWalletSessionError` with code `OMS_SESSION_EXPIRED`. The same happens when the wallet API reports that the session credential no longer exists or has expired, or, when the SDK checks the expiry, that the credential was revoked. It clears the active signer/session state, but keeps the expired session metadata in storage until the app explicitly starts a new auth flow or calls `signOut()`. Subscribe with `omsWallet.wallet.onSessionExpired` to route the user back to sign-in while preserving the expired session snapshot for email OTP reauth or Google account hints, including after a page refresh:
+### Keep your UI in sync
+
+`onSessionChange` calls your listener after every change of `activeWallet` or `session`: a
+sign-in, a wallet switch, an expiry update, a sign-out, or an expiry, including ones made in
+other tabs of your app. Subscribe first, then read `activeWallet` and `session`, so no change is
+missed. Listeners run shortly after the change, never during the call that made it, so the getters
+are always the current state.
 
 ```typescript
-const omsWallet = new OMSWallet({
-  publishableKey: 'your-publishable-key',
-})
+const unsubscribe = omsWallet.wallet.onSessionChange((event) => {
+  // event.activeWallet and event.session are the state right after the change.
+  renderWallet(event.activeWallet, event.session)
 
-const unsubscribe = omsWallet.wallet.onSessionExpired(({ wallet, session }) => {
-  // Use the expired session metadata to populate and display your reauthentication UI.
-  // `wallet` is undefined when the credential expired during a pending manual wallet selection.
-  console.info('Session expired:', wallet?.address, session.auth)
+  if (event.reason === 'expired') {
+    // Prefill reauthentication with the expired session. `wallet` is undefined when it expired
+    // during a pending manual wallet selection.
+    showSignIn(event.expiredSession.session.auth)
+  }
 })
+renderWallet(omsWallet.wallet.activeWallet, omsWallet.wallet.session)
 
 // Later, when the listener is no longer needed (for example when a component unmounts):
 unsubscribe()
 ```
+
+`event.reason` is one of:
+
+| Reason | Meaning |
+| --- | --- |
+| `signedIn` | A sign-in made a wallet active, here or in another tab |
+| `walletChanged` | Another wallet of the same sign-in became active, here or in another tab |
+| `expiryUpdated` | `session.expiresAt` moved; safe to ignore unless you show it |
+| `signedOut` | There is no session any more and it did not expire: `signOut()`, a new sign-in started while signed in, or another tab taking over. Not necessarily the user's choice; don't redirect away from a sign-in in progress |
+| `expired` | The session expired, or the wallet API no longer accepts it |
+
+A listener added while signed out first receives the last `expired` change, if a session expired
+since the last sign-in or sign-out, for example while the page was closed. Each new listener
+receives it, so keep one app-level listener and keep the prompt as state.
+
+In React, use `useSyncExternalStore`; the getters return the same object until something changes:
+
+```typescript
+import { useCallback, useSyncExternalStore } from 'react'
+
+function useOMSWalletSession(wallet: WalletClient) {
+  const subscribe = useCallback((onChange: () => void) => wallet.onSessionChange(onChange), [wallet])
+  const activeWallet = useSyncExternalStore(subscribe, () => wallet.activeWallet)
+  const session = useSyncExternalStore(subscribe, () => wallet.session)
+  return { activeWallet, session }
+}
+```
+
+Tabs of one origin share the session: a sign-in, wallet switch, or sign-out in one tab is applied
+in the others, which receive the matching change. A session that ended on its own in another tab is
+noticed when the tab is shown or at its next wallet call.
+
+When the local expiry has passed and the wallet API confirms the session ended (or does not support extending it), the SDK makes the session inactive before protected wallet operations and throws `OMSWalletSessionError` with code `OMS_SESSION_EXPIRED`. The same happens when the wallet API reports that the session credential no longer exists or has expired, or, when the SDK checks the expiry, that the credential was revoked. It keeps the expired session metadata in storage until the app starts a new auth flow or calls `signOut()`, so the `expired` change is replayed after a page refresh.
 
 To end the session, call:
 

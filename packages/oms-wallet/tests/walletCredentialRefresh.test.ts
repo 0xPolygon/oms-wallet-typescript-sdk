@@ -8,7 +8,9 @@ import {
   MockSigner,
   createWalletWithSession,
   jsonResponse,
+  listenToSessionChanges,
   requestCount,
+  sessionChangeReasons,
   testCredential,
   testEnvironment,
   testStoredExpiryBounds,
@@ -65,8 +67,7 @@ describe('WalletClient sliding credential expiry', () => {
       expiresAt: '2026-01-01T00:02:00Z',
       storage
     });
-    const onSessionExpired = vi.fn();
-    wallet.onSessionExpired(onSessionExpired);
+    const onSessionChange = listenToSessionChanges(wallet);
 
     // Without activity, the timer asks WaaS a grace period after the local expiry (00:07).
     await vi.advanceTimersByTimeAsync(120_000 + EXPIRY_CHECK_GRACE_MS - 1);
@@ -76,7 +77,7 @@ describe('WalletClient sliding credential expiry', () => {
     expect(requestCount(fetchMock, '/GetCredential')).toBe(1);
     expect(wallet.session?.expiresAt).toBe('2026-01-01T00:10:00Z');
     expect(storedExpiresAt(storage)).toBe('2026-01-01T00:10:00Z');
-    expect(onSessionExpired).not.toHaveBeenCalled();
+    expect(sessionChangeReasons(onSessionChange)).toEqual(['expiryUpdated']);
 
     // The rescheduled timer checks again a grace period after the new expiry (00:15).
     getCredential = () => waasErrorResponse('KeyExpired');
@@ -86,7 +87,7 @@ describe('WalletClient sliding credential expiry', () => {
 
     expect(requestCount(fetchMock, '/GetCredential')).toBe(2);
     expect(wallet.session).toBeUndefined();
-    expect(onSessionExpired).toHaveBeenCalledOnce();
+    expect(sessionChangeReasons(onSessionChange)).toEqual(['expiryUpdated', 'expired']);
   });
 
   it('keeps a refreshed expiry in memory and reschedules when storage fails', async () => {
@@ -102,8 +103,7 @@ describe('WalletClient sliding credential expiry', () => {
     vi.spyOn(storage, 'set').mockImplementation(() => {
       throw new Error('quota exceeded');
     });
-    const onSessionExpired = vi.fn();
-    wallet.onSessionExpired(onSessionExpired);
+    const onSessionChange = listenToSessionChanges(wallet);
     const unhandledRejection = vi.fn();
     process.on('unhandledRejection', unhandledRejection);
 
@@ -113,7 +113,7 @@ describe('WalletClient sliding credential expiry', () => {
       expect(requestCount(fetchMock, '/GetCredential')).toBe(1);
       expect(wallet.session?.expiresAt).toBe('2026-01-01T00:10:00Z');
       expect(storedExpiresAt(storage)).toBe('2026-01-01T00:02:00Z');
-      expect(onSessionExpired).not.toHaveBeenCalled();
+      expect(sessionChangeReasons(onSessionChange)).toEqual(['expiryUpdated']);
 
       // The timer was rescheduled to the in-memory expiry (checked at 00:15).
       getCredential = () => waasErrorResponse('KeyExpired');
@@ -121,7 +121,7 @@ describe('WalletClient sliding credential expiry', () => {
       expect(requestCount(fetchMock, '/GetCredential')).toBe(1);
       await vi.advanceTimersByTimeAsync(1);
       expect(requestCount(fetchMock, '/GetCredential')).toBe(2);
-      expect(onSessionExpired).toHaveBeenCalledOnce();
+      expect(sessionChangeReasons(onSessionChange)).toEqual(['expiryUpdated', 'expired']);
 
       await vi.advanceTimersByTimeAsync(0);
       expect(unhandledRejection).not.toHaveBeenCalled();
@@ -136,8 +136,7 @@ describe('WalletClient sliding credential expiry', () => {
       const fetchMock = stubWaas({ '/SignMessage': () => waasErrorResponse(name) });
       const storage = new MemoryStorageManager();
       const wallet = createWalletWithSession(walletAddress, undefined, { storage });
-      const onSessionExpired = vi.fn();
-      wallet.onSessionExpired(onSessionExpired);
+      const onSessionChange = listenToSessionChanges(wallet);
 
       const results = await Promise.allSettled([signMessage(wallet), signMessage(wallet)]);
 
@@ -156,14 +155,19 @@ describe('WalletClient sliding credential expiry', () => {
       }
       expect(wallet.session).toBeUndefined();
       expect(storedExpiresAt(storage)).toBe('2099-01-01T00:00:00Z');
-      expect(onSessionExpired).toHaveBeenCalledOnce();
-      expect(onSessionExpired).toHaveBeenCalledWith({
-        wallet: testWalletAccount('wallet-id', walletAddress),
-        session: {
-          expiresAt: '2099-01-01T00:00:00Z',
-          auth: { type: 'email', email: 'user@example.com' }
-        },
-        expiredAt: '2099-01-01T00:00:00Z'
+      expect(sessionChangeReasons(onSessionChange)).toEqual(['expired']);
+      expect(onSessionChange).toHaveBeenLastCalledWith({
+        reason: 'expired',
+        activeWallet: undefined,
+        session: undefined,
+        expiredSession: {
+          wallet: testWalletAccount('wallet-id', walletAddress),
+          session: {
+            expiresAt: '2099-01-01T00:00:00Z',
+            auth: { type: 'email', email: 'user@example.com' }
+          },
+          expiredAt: '2099-01-01T00:00:00Z'
+        }
       });
     }
   );
@@ -185,8 +189,7 @@ describe('WalletClient sliding credential expiry', () => {
     const send = (wallet: WalletClientImpl) =>
       wallet.sendTransaction({ network: Networks.polygon, to: walletAddress, value: 0n });
     const wallet = createWalletWithSession(walletAddress);
-    const onSessionExpired = vi.fn();
-    wallet.onSessionExpired(onSessionExpired);
+    const onSessionChange = listenToSessionChanges(wallet);
 
     // The credential middleware rejects Execute before it runs, so nothing was submitted.
     const executeError = await send(wallet).catch((error: unknown) => error);
@@ -198,7 +201,7 @@ describe('WalletClient sliding credential expiry', () => {
       cause: { name: 'KeyExpired', code: 7203 }
     });
     expect(wallet.session).toBeUndefined();
-    expect(onSessionExpired).toHaveBeenCalledOnce();
+    expect(sessionChangeReasons(onSessionChange)).toEqual(['expired']);
 
     // After a submitted transaction, a rejected status lookup keeps the txnId.
     execute = () => jsonResponse({ status: 'pending' });
@@ -235,8 +238,7 @@ describe('WalletClient sliding credential expiry', () => {
     async ({ label, endpoint, call }) => {
       const fetchMock = stubWaas({ [endpoint]: () => waasErrorResponse('KeyNotFound') });
       const wallet = createWalletWithSession(walletAddress);
-      const onSessionExpired = vi.fn();
-      wallet.onSessionExpired(onSessionExpired);
+      const onSessionChange = listenToSessionChanges(wallet);
 
       await expect(call(wallet)).rejects.toMatchObject({
         name: 'OMSWalletRequestError',
@@ -247,7 +249,7 @@ describe('WalletClient sliding credential expiry', () => {
 
       expect(requestCount(fetchMock, endpoint)).toBe(1);
       expect(wallet.session).toBeDefined();
-      expect(onSessionExpired).not.toHaveBeenCalled();
+      expect(sessionChangeReasons(onSessionChange)).toEqual([]);
     }
   );
 
@@ -258,13 +260,12 @@ describe('WalletClient sliding credential expiry', () => {
     const wallet = createWalletWithSession(walletAddress, undefined, {
       expiresAt: '2026-01-01T00:02:00Z'
     });
-    const onSessionExpired = vi.fn();
-    wallet.onSessionExpired(onSessionExpired);
+    const onSessionChange = listenToSessionChanges(wallet);
 
     await vi.advanceTimersByTimeAsync(120_000 + EXPIRY_CHECK_GRACE_MS);
 
     expect(wallet.session).toBeUndefined();
-    expect(onSessionExpired).toHaveBeenCalledOnce();
+    expect(sessionChangeReasons(onSessionChange)).toEqual(['expired']);
 
     (wallet as any).persistSession(testWalletAccount('wallet-id', walletAddress), {
       expiresAt: '2000-01-01T00:00:00Z',
@@ -313,14 +314,13 @@ describe('WalletClient sliding credential expiry', () => {
     const wallet = createWalletWithSession(walletAddress, undefined, {
       expiresAt: '2026-01-01T00:02:00Z'
     });
-    const onSessionExpired = vi.fn();
-    wallet.onSessionExpired(onSessionExpired);
+    const onSessionChange = listenToSessionChanges(wallet);
 
     await vi.advanceTimersByTimeAsync(120_000 + EXPIRY_CHECK_GRACE_MS);
 
     expect(requestCount(fetchMock, '/GetCredential')).toBe(1);
     expect(wallet.session?.expiresAt).toBe('2026-01-01T00:02:00Z');
-    expect(onSessionExpired).not.toHaveBeenCalled();
+    expect(sessionChangeReasons(onSessionChange)).toEqual([]);
 
     // An operation on the locally expired session surfaces the network error and keeps it.
     await expect(signMessage(wallet)).rejects.toMatchObject({
@@ -339,7 +339,7 @@ describe('WalletClient sliding credential expiry', () => {
 
     expect(requestCount(fetchMock, '/GetCredential')).toBe(3);
     expect(wallet.session?.expiresAt).toBe('2026-02-01T00:00:00Z');
-    expect(onSessionExpired).not.toHaveBeenCalled();
+    expect(sessionChangeReasons(onSessionChange)).toEqual(['expiryUpdated']);
   });
 
   it('refreshes a locally expired session once before concurrent operations and continues them', async () => {
@@ -496,17 +496,18 @@ describe('WalletClient credential revocation', () => {
       expiresAt: '2026-01-01T00:02:00Z',
       signer
     });
-    const onSessionExpired = vi.fn();
-    wallet.onSessionExpired(onSessionExpired);
+    const onSessionChange = listenToSessionChanges(wallet);
 
     await vi.advanceTimersByTimeAsync(120_000 + EXPIRY_CHECK_GRACE_MS);
 
     expect(requestCount(fetchMock, '/GetCredential')).toBe(1);
     expect(wallet.session).toBeUndefined();
     expect(signer.clear).toHaveBeenCalledOnce();
-    expect(onSessionExpired).toHaveBeenCalledOnce();
-    expect(onSessionExpired).toHaveBeenCalledWith(
-      expect.objectContaining({ expiredAt: '2026-01-01T00:02:00Z' })
+    expect(sessionChangeReasons(onSessionChange)).toEqual(['expired']);
+    expect(onSessionChange).toHaveBeenLastCalledWith(
+      expect.objectContaining({
+        expiredSession: expect.objectContaining({ expiredAt: '2026-01-01T00:02:00Z' })
+      })
     );
   });
 
@@ -515,8 +516,7 @@ describe('WalletClient credential revocation', () => {
     const wallet = createWalletWithSession(walletAddress, undefined, {
       expiresAt: '2000-01-01T00:00:00Z'
     });
-    const onSessionExpired = vi.fn();
-    wallet.onSessionExpired(onSessionExpired);
+    const onSessionChange = listenToSessionChanges(wallet);
 
     const error = await signMessage(wallet).catch((reason: unknown) => reason);
 
@@ -530,7 +530,7 @@ describe('WalletClient credential revocation', () => {
     expect(requestCount(fetchMock, '/GetCredential')).toBe(1);
     expect(requestCount(fetchMock, '/SignMessage')).toBe(0);
     expect(wallet.session).toBeUndefined();
-    expect(onSessionExpired).toHaveBeenCalledOnce();
+    expect(sessionChangeReasons(onSessionChange)).toEqual(['expired']);
   });
 
   it('keeps the session when the expiry refresh gets a gateway Unauthorized error', async () => {
@@ -546,8 +546,7 @@ describe('WalletClient credential revocation', () => {
     const wallet = createWalletWithSession(walletAddress, undefined, {
       expiresAt: '2000-01-01T00:00:00Z'
     });
-    const onSessionExpired = vi.fn();
-    wallet.onSessionExpired(onSessionExpired);
+    const onSessionChange = listenToSessionChanges(wallet);
 
     await expect(signMessage(wallet)).rejects.toMatchObject({
       name: 'OMSWalletRequestError',
@@ -557,7 +556,7 @@ describe('WalletClient credential revocation', () => {
 
     expect(requestCount(fetchMock, '/GetCredential')).toBe(1);
     expect(wallet.session).toBeDefined();
-    expect(onSessionExpired).not.toHaveBeenCalled();
+    expect(sessionChangeReasons(onSessionChange)).toEqual([]);
   });
 
   it('keeps the session when a wallet call fails with Unauthorized and the credential is valid', async () => {
@@ -566,8 +565,7 @@ describe('WalletClient credential revocation', () => {
       '/GetCredential': () => credentialResponse('2099-06-01T00:00:00Z')
     });
     const wallet = createWalletWithSession(walletAddress);
-    const onSessionExpired = vi.fn();
-    wallet.onSessionExpired(onSessionExpired);
+    const onSessionChange = listenToSessionChanges(wallet);
 
     await expect(signMessage(wallet)).rejects.toMatchObject({
       name: 'OMSWalletRequestError',
@@ -581,7 +579,7 @@ describe('WalletClient credential revocation', () => {
     await vi.waitFor(() => expect(requestCount(fetchMock, '/GetCredential')).toBe(1));
     expect(requestCount(fetchMock, '/SignMessage')).toBe(1);
     expect(wallet.session).toBeDefined();
-    expect(onSessionExpired).not.toHaveBeenCalled();
+    expect(sessionChangeReasons(onSessionChange)).toEqual([]);
   });
 
   it('ends the session when a wallet call fails with Unauthorized and the credential was revoked', async () => {
@@ -590,15 +588,14 @@ describe('WalletClient credential revocation', () => {
       '/GetCredential': () => waasErrorResponse('Unauthorized')
     });
     const wallet = createWalletWithSession(walletAddress);
-    const onSessionExpired = vi.fn();
-    wallet.onSessionExpired(onSessionExpired);
+    const onSessionChange = listenToSessionChanges(wallet);
 
     await expect(signMessage(wallet)).rejects.toMatchObject({
       code: 'OMS_REQUEST_FAILED',
       upstreamError: { service: 'waas', name: 'Unauthorized', code: '7207' }
     });
 
-    await vi.waitFor(() => expect(onSessionExpired).toHaveBeenCalledOnce());
+    await vi.waitFor(() => expect(sessionChangeReasons(onSessionChange)).toEqual(['expired']));
     expect(requestCount(fetchMock, '/GetCredential')).toBe(1);
     expect(wallet.session).toBeUndefined();
   });
@@ -701,8 +698,7 @@ describe('WalletClient idle session expiry check', () => {
     const wallet = createWalletWithSession(walletAddress, undefined, {
       expiresAt: '2026-01-01T00:02:00Z'
     });
-    const onSessionExpired = vi.fn();
-    wallet.onSessionExpired(onSessionExpired);
+    const onSessionChange = listenToSessionChanges(wallet);
 
     // Used one minute after sign-in: WaaS now expires the session about one minute later too.
     await vi.advanceTimersByTimeAsync(60_000);
@@ -712,12 +708,12 @@ describe('WalletClient idle session expiry check', () => {
     await vi.advanceTimersByTimeAsync(60_000 + 60_000 + EXPIRY_CHECK_GRACE_MS - 1);
     expect(requestCount(fetchMock, '/GetCredential')).toBe(0);
     expect(wallet.session).toBeDefined();
-    expect(onSessionExpired).not.toHaveBeenCalled();
+    expect(sessionChangeReasons(onSessionChange)).toEqual([]);
 
     await vi.advanceTimersByTimeAsync(1);
     expect(requestCount(fetchMock, '/GetCredential')).toBe(1);
     expect(wallet.session).toBeUndefined();
-    expect(onSessionExpired).toHaveBeenCalledOnce();
+    expect(sessionChangeReasons(onSessionChange)).toEqual(['expired']);
   });
 
   it('asks WaaS about an unused session only a grace period after the local expiry', async () => {
@@ -727,8 +723,7 @@ describe('WalletClient idle session expiry check', () => {
     const wallet = createWalletWithSession(walletAddress, undefined, {
       expiresAt: '2026-01-01T00:02:00Z'
     });
-    const onSessionExpired = vi.fn();
-    wallet.onSessionExpired(onSessionExpired);
+    const onSessionChange = listenToSessionChanges(wallet);
 
     await vi.advanceTimersByTimeAsync(120_000 + EXPIRY_CHECK_GRACE_MS - 1);
     expect(requestCount(fetchMock, '/GetCredential')).toBe(0);
@@ -737,7 +732,7 @@ describe('WalletClient idle session expiry check', () => {
     await vi.advanceTimersByTimeAsync(1);
     expect(requestCount(fetchMock, '/GetCredential')).toBe(1);
     expect(wallet.session).toBeUndefined();
-    expect(onSessionExpired).toHaveBeenCalledOnce();
+    expect(sessionChangeReasons(onSessionChange)).toEqual(['expired']);
   });
 
   it('re-arms the expiry timer of a 180-day session at the timer limit without a request', async () => {
@@ -781,8 +776,7 @@ describe('WalletClient session signer check', () => {
       storage,
       signer
     });
-    const onSessionExpired = vi.fn();
-    wallet.onSessionExpired(onSessionExpired);
+    const onSessionChange = listenToSessionChanges(wallet);
     const storageSet = vi.spyOn(storage, 'set');
 
     // Another tab signed in and replaced the shared signer key.
@@ -795,18 +789,23 @@ describe('WalletClient session signer check', () => {
     expect(storage.get(testStorageKeys.session)).toBeNull();
     expect(wallet.session).toBeUndefined();
     // No operation reports the end, so listeners (such as the wagmi connector) learn it here.
-    expect(onSessionExpired).toHaveBeenCalledOnce();
-    expect(onSessionExpired).toHaveBeenCalledWith({
-      wallet: testWalletAccount('wallet-id', walletAddress),
-      session: {
-        expiresAt: '2026-01-01T00:02:00Z',
-        auth: { type: 'email', email: 'user@example.com' }
-      },
-      expiredAt: '2026-01-01T00:02:00Z'
+    expect(sessionChangeReasons(onSessionChange)).toEqual(['expired']);
+    expect(onSessionChange).toHaveBeenLastCalledWith({
+      reason: 'expired',
+      activeWallet: undefined,
+      session: undefined,
+      expiredSession: {
+        wallet: testWalletAccount('wallet-id', walletAddress),
+        session: {
+          expiresAt: '2026-01-01T00:02:00Z',
+          auth: { type: 'email', email: 'user@example.com' }
+        },
+        expiredAt: '2026-01-01T00:02:00Z'
+      }
     });
   });
 
-  it('notifies when the restore read finds the signer key replaced', async () => {
+  it('signs out when the restore read finds the signer key replaced by another sign-in', async () => {
     vi.useFakeTimers();
     vi.setSystemTime(new Date('2026-01-01T00:00:00Z'));
     const fetchMock = stubWaas({
@@ -825,18 +824,15 @@ describe('WalletClient session signer check', () => {
       storage,
       credentialSigner: signer
     });
-    const onSessionExpired = vi.fn();
-    wallet.onSessionExpired(onSessionExpired);
+    const onSessionChange = listenToSessionChanges(wallet);
     await vi.advanceTimersByTimeAsync(0);
 
     expect(fetchMock).not.toHaveBeenCalled();
     expect(wallet.session).toBeUndefined();
-    // The session had not reached its expiry: it ended now.
-    expect(onSessionExpired).toHaveBeenCalledOnce();
-    expect(onSessionExpired.mock.calls[0][0]).toMatchObject({
-      wallet: { id: 'wallet-id' },
-      expiredAt: '2026-01-01T00:00:00.000Z'
-    });
+    // Another sign-in made a new key before storing its session, and this one had not expired.
+    expect(onSessionChange.mock.calls).toEqual([
+      [{ reason: 'signedOut', activeWallet: undefined, session: undefined }]
+    ]);
   });
 
   it('treats a signer that reports no credential as a replaced key', async () => {
@@ -850,15 +846,14 @@ describe('WalletClient session signer check', () => {
       expiresAt: '2026-01-01T00:02:00Z',
       signer
     });
-    const onSessionExpired = vi.fn();
-    wallet.onSessionExpired(onSessionExpired);
+    const onSessionChange = listenToSessionChanges(wallet);
 
     vi.spyOn(signer, 'credentialId').mockResolvedValue(undefined as unknown as string);
     await vi.advanceTimersByTimeAsync(120_000 + EXPIRY_CHECK_GRACE_MS);
 
     expect(fetchMock).not.toHaveBeenCalled();
     expect(wallet.session).toBeUndefined();
-    expect(onSessionExpired).toHaveBeenCalledOnce();
+    expect(sessionChangeReasons(onSessionChange)).toEqual(['expired']);
   });
 
   it('keeps the stored session and key of a newer sign-in in another tab when the expiry check finds the key replaced', async () => {
@@ -904,22 +899,20 @@ describe('WalletClient session signer check', () => {
       signer
     });
 
-    const onSessionExpired = vi.fn();
-    wallet.onSessionExpired(onSessionExpired);
+    const onSessionChange = listenToSessionChanges(wallet);
 
     signer.setCredential(otherCredentialId);
 
+    // Its expiry had passed, so the operation and listeners report it expired.
     await expect(signMessage(wallet)).rejects.toMatchObject({
       name: 'OMSWalletSessionError',
-      code: 'OMS_SESSION_MISSING',
-      operation: 'wallet.signMessage',
-      message: 'No active wallet session'
+      code: 'OMS_SESSION_EXPIRED',
+      operation: 'wallet.signMessage'
     });
     expect(fetchMock).not.toHaveBeenCalled();
     expect(storage.get(testStorageKeys.session)).toBeNull();
     expect(wallet.session).toBeUndefined();
-    // The operation reports it; listeners are not notified.
-    expect(onSessionExpired).not.toHaveBeenCalled();
+    expect(sessionChangeReasons(onSessionChange)).toEqual(['expired']);
   });
 });
 
@@ -1005,8 +998,7 @@ describe('WalletClient expiry check bounds from sign-in', () => {
     });
     const wallet = newClient(new MemoryStorageManager());
     await signIn(wallet, 180 * 24 * 60 * 60);
-    const onSessionExpired = vi.fn();
-    wallet.onSessionExpired(onSessionExpired);
+    const onSessionChange = listenToSessionChanges(wallet);
 
     // A read an hour later (as a restore makes) returns the sign-in expiry: WaaS skipped the move.
     await advanceTo(T0 + HOUR);
@@ -1030,7 +1022,7 @@ describe('WalletClient expiry check bounds from sign-in', () => {
     await advanceTo(checkAt);
     expect(requestCount(fetchMock, '/GetCredential')).toBe(2);
     expect(wallet.session).toBeUndefined();
-    expect(onSessionExpired).toHaveBeenCalledOnce();
+    expect(sessionChangeReasons(onSessionChange)).toEqual(['expired']);
   });
 
   it('asks at the local expiry of a session shorter than the idle window despite activity', async () => {
@@ -1043,8 +1035,7 @@ describe('WalletClient expiry check bounds from sign-in', () => {
     });
     const wallet = newClient(new MemoryStorageManager());
     await signIn(wallet, 60 * 60);
-    const onSessionExpired = vi.fn();
-    wallet.onSessionExpired(onSessionExpired);
+    const onSessionChange = listenToSessionChanges(wallet);
 
     // Activity cannot move the expiry past the one-hour lifetime.
     await advanceTo(T0 + 30 * MINUTE);
@@ -1056,7 +1047,7 @@ describe('WalletClient expiry check bounds from sign-in', () => {
     await advanceTo(T0 + HOUR + EXPIRY_CHECK_GRACE_MS);
     expect(requestCount(fetchMock, '/GetCredential')).toBe(1);
     expect(wallet.session).toBeUndefined();
-    expect(onSessionExpired).toHaveBeenCalledOnce();
+    expect(sessionChangeReasons(onSessionChange)).toEqual(['expired']);
   });
 
   it('caps the wait at the lifetime ceiling', async () => {
@@ -1614,9 +1605,8 @@ describe('WalletClient restore read in the foreground', () => {
         storage,
         credentialSigner: signer
       });
-      const onSessionExpired = vi.fn();
-      wallet.onSessionExpired(onSessionExpired);
-      return { wallet, onSessionExpired };
+      const onSessionChange = listenToSessionChanges(wallet);
+      return { wallet, onSessionChange };
     }
 
     function restoreAt(now: number, getCredential: () => Response | Promise<Response>) {
@@ -1628,7 +1618,7 @@ describe('WalletClient restore read in the foreground', () => {
 
     it('keeps it when the read finds it extended on the server', async () => {
       // Requests after the last read extended the server expiry the saved one does not show.
-      const { fetchMock, wallet, onSessionExpired } = restoreAt(
+      const { fetchMock, wallet, onSessionChange } = restoreAt(
         Date.parse(savedExpiry) + 4 * HOUR,
         () => credentialResponse('2026-01-21T04:00:00Z')
       );
@@ -1637,11 +1627,11 @@ describe('WalletClient restore read in the foreground', () => {
 
       expect(requestCount(fetchMock, '/GetCredential')).toBe(1);
       expect(wallet.session?.expiresAt).toBe('2026-01-21T04:00:00Z');
-      expect(onSessionExpired).not.toHaveBeenCalled();
+      expect(sessionChangeReasons(onSessionChange)).toEqual(['expiryUpdated']);
     });
 
     it('ends it when the read finds it ended on the server', async () => {
-      const { fetchMock, wallet, onSessionExpired } = restoreAt(
+      const { fetchMock, wallet, onSessionChange } = restoreAt(
         Date.parse(savedExpiry) + 4 * HOUR,
         () => waasErrorResponse('KeyExpired')
       );
@@ -1649,7 +1639,7 @@ describe('WalletClient restore read in the foreground', () => {
 
       expect(requestCount(fetchMock, '/GetCredential')).toBe(1);
       expect(wallet.session).toBeUndefined();
-      expect(onSessionExpired).toHaveBeenCalledOnce();
+      expect(sessionChangeReasons(onSessionChange)).toEqual(['expired']);
     });
 
     it('retries a read that could not reach the wallet API while the page is shown', async () => {
@@ -1662,7 +1652,7 @@ describe('WalletClient restore read in the foreground', () => {
             ? Promise.reject(new TypeError('fetch failed'))
             : waasErrorResponse('KeyExpired')
       });
-      const { wallet, onSessionExpired } = load(storage, Date.parse(savedExpiry) + 4 * HOUR);
+      const { wallet, onSessionChange } = load(storage, Date.parse(savedExpiry) + 4 * HOUR);
       await vi.advanceTimersByTimeAsync(0);
       expect(requestCount(fetchMock, '/GetCredential')).toBe(1);
       expect(wallet.session).toBeDefined();
@@ -1676,7 +1666,7 @@ describe('WalletClient restore read in the foreground', () => {
 
       expect(requestCount(fetchMock, '/GetCredential')).toBe(3);
       expect(wallet.session).toBeUndefined();
-      expect(onSessionExpired).toHaveBeenCalledOnce();
+      expect(sessionChangeReasons(onSessionChange)).toEqual(['expired']);
     });
 
     it('stops retrying the read once a wallet call reads the expiry', async () => {
@@ -1742,7 +1732,7 @@ describe('WalletClient restore read in the foreground', () => {
             setTimeout(() => resolve(waasErrorResponse('WebrpcBadRoute')), 1000)
           )
       });
-      const { wallet, onSessionExpired } = load(storage, Date.parse(savedExpiry) + 4 * HOUR);
+      const { wallet, onSessionChange } = load(storage, Date.parse(savedExpiry) + 4 * HOUR);
       await vi.advanceTimersByTimeAsync(0);
       expect(wallet.session).toBeDefined();
       await vi.advanceTimersByTimeAsync(1000);
@@ -1753,7 +1743,7 @@ describe('WalletClient restore read in the foreground', () => {
       }
 
       expect(wallet.session).toBeUndefined();
-      expect(onSessionExpired).toHaveBeenCalledOnce();
+      expect(sessionChangeReasons(onSessionChange)).toEqual(['expired']);
     });
 
     it('ends it without a read past the ceiling', async () => {
@@ -1773,11 +1763,11 @@ describe('WalletClient restore read in the foreground', () => {
     });
 
     it('keeps replaying the expiry on later loads after a read ended it', async () => {
-      const { storage, onSessionExpired } = restoreAt(Date.parse(savedExpiry) + 4 * HOUR, () =>
+      const { storage, onSessionChange } = restoreAt(Date.parse(savedExpiry) + 4 * HOUR, () =>
         waasErrorResponse('KeyExpired')
       );
       await settle();
-      expect(onSessionExpired).toHaveBeenCalledOnce();
+      expect(sessionChangeReasons(onSessionChange)).toEqual(['expired']);
 
       // The expiry cleared the signing key and kept the record as the sign-in hint.
       for (const hours of [5, 6]) {
@@ -1788,14 +1778,14 @@ describe('WalletClient restore read in the foreground', () => {
         );
         await settle();
         expect(next.wallet.session).toBeUndefined();
-        expect(next.onSessionExpired).toHaveBeenCalledOnce();
+        expect(sessionChangeReasons(next.onSessionChange)).toEqual(['expired']);
         expect(storage.get(testStorageKeys.session)).toBeTruthy();
       }
     });
 
     it('ends it without a read once the server expiry must have passed', async () => {
       // 6 hours of dampening, 6 hours of requests before the next read, and the 5-minute grace.
-      const { fetchMock, wallet, onSessionExpired } = restoreAt(
+      const { fetchMock, wallet, onSessionChange } = restoreAt(
         Date.parse(savedExpiry) + 12 * HOUR + EXPIRY_CHECK_GRACE_MS,
         () => credentialResponse('2026-01-21T04:00:00Z')
       );
@@ -1803,7 +1793,7 @@ describe('WalletClient restore read in the foreground', () => {
       await settle();
 
       expect(fetchMock).not.toHaveBeenCalled();
-      expect(onSessionExpired).toHaveBeenCalledOnce();
+      expect(sessionChangeReasons(onSessionChange)).toEqual(['expired']);
     });
   });
 });
