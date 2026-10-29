@@ -684,6 +684,11 @@ export class WalletClientImpl implements WalletClient {
       // The same sign-in: follow its wallet and a later expiry, unless its key is gone.
       const holdsKey = await this.sessionSignerMatches().catch(() => true);
       if (this.sessionRevision !== revision || !this.activeWalletAccount) return;
+      // A wallet switch or expiry read here meanwhile rewrote the record, without a new revision.
+      if (this.storage.get(this.storageKeys.session) !== serialized) {
+        this.reconcileStoredSessionAgain = true;
+        return;
+      }
       if (!holdsKey) {
         await this.clearSessionWithMismatchedSigner();
         return;

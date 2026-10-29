@@ -403,6 +403,29 @@ describe('session changes from other tabs', () => {
     expect(tabB.activeWallet).toBeUndefined();
   });
 
+  it('keeps a wallet switch made while a reconcile waited for its signer check', async () => {
+    const browser = stubBrowserEvents();
+    stubWaas({ '/GetCredential': () => jsonResponse({ credential: testCredential() }) });
+    const storage = new MemoryStorageManager();
+    const signer = new MockSigner();
+    const tab = newClient(storage, signer);
+    await signIn(tab);
+    let releaseSignerCheck!: (holdsKey: boolean) => void;
+    vi.spyOn(signer, 'hasCredential').mockImplementationOnce(
+      () => new Promise((resolve) => (releaseSignerCheck = resolve))
+    );
+
+    // The reconcile reads the record (wallet 1), then waits for the signer.
+    browser.pageShown();
+    await vi.waitFor(() => expect(releaseSignerCheck).toBeDefined());
+    await tab.useWallet({ walletId: 'wallet-2' });
+    releaseSignerCheck(true);
+    await new Promise((resolve) => setTimeout(resolve, 0));
+
+    expect(tab.activeWallet?.address).toBe(secondAddress);
+    expect(JSON.parse(storage.get(testStorageKeys.session)!).wallet.address).toBe(secondAddress);
+  });
+
   it('follows a burst of storage events once, writing nothing', async () => {
     const { browser, storage, tabA, tabB, onTabBChange } = twoTabs();
     await signIn(tabA);
