@@ -254,6 +254,38 @@ function assertWebCryptoSupport(): void {
   }
 }
 
+/**
+ * Deletes the stored WebCrypto credential `id` only while it is `credentialId`, reading and deleting
+ * in one IndexedDB transaction, so a credential another tab stored meanwhile (a newer sign-in) is
+ * kept. A signer holding the deleted key notices on its next use. Returns false without IndexedDB,
+ * where the key lives only in the signer's memory.
+ */
+export async function deleteStoredWebCryptoCredential(
+  id: string,
+  credentialId: string
+): Promise<boolean> {
+  const db = await openCredentialDb();
+  if (!db) return false;
+
+  try {
+    const tx = db.transaction(credentialStoreName, 'readwrite');
+    const txDone = idbTransactionToPromise(tx);
+    const store = tx.objectStore(credentialStoreName);
+    const stored = await idbRequestToPromise<StoredWebCryptoCredential | undefined>(store.get(id));
+    if (stored && sameCredentialId(stored.credentialId, credentialId)) {
+      await idbRequestToPromise(store.delete(id));
+    }
+    await txDone;
+    return true;
+  } finally {
+    db.close();
+  }
+}
+
+function sameCredentialId(a: string, b: string): boolean {
+  return a.trim().toLowerCase() === b.trim().toLowerCase();
+}
+
 function isUsableStoredCredential(
   stored: StoredWebCryptoCredential | undefined
 ): stored is StoredWebCryptoCredential {

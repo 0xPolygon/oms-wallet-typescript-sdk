@@ -380,6 +380,13 @@ export declare class EthereumPrivateKeyCredentialSigner implements CredentialSig
     nextNonce(): Promise<string>;
     sign(preimage: string): Promise<string>;
 }
+/**
+ * Deletes the stored WebCrypto credential `id` only while it is `credentialId`, reading and deleting
+ * in one IndexedDB transaction, so a credential another tab stored meanwhile (a newer sign-in) is
+ * kept. A signer holding the deleted key notices on its next use. Returns false without IndexedDB,
+ * where the key lives only in the signer's memory.
+ */
+export declare function deleteStoredWebCryptoCredential(id: string, credentialId: string): Promise<boolean>;
 
 ## errors.d.ts
 import type { OMSWalletOperation } from './operations.js';

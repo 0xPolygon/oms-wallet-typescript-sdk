@@ -116,7 +116,10 @@ import type {
 import type { TokenBalance } from './indexerClient.js';
 
 import { createAttestedFetch } from '../attestation.js';
-import { WebCryptoP256CredentialSigner } from '../credentialSigner.js';
+import {
+  WebCryptoP256CredentialSigner,
+  deleteStoredWebCryptoCredential
+} from '../credentialSigner.js';
 import {
   isBadRouteError,
   isCredentialEndedError,
@@ -258,6 +261,7 @@ interface SessionSnapshot {
 interface StoredSessionSnapshot {
   serializedRecord: string;
   session: SessionSnapshot;
+  signerCredentialId: string;
 }
 
 interface StoredSessionRecord {
@@ -435,6 +439,8 @@ export class WalletClientImpl implements WalletClient {
   private readonly publicClient: WaasPublicClient;
   private readonly storage: StorageManager;
   private readonly storageKeys: SessionStorageKeys;
+  /** Whether the signer is the default WebCrypto one, whose key other tabs share. */
+  private readonly usesDefaultSigner: boolean;
   private readonly redirectAuthStorage?: StorageManager;
   private readonly credentialSigner: CredentialSigner;
   private readonly indexerClient: IndexerClientImpl;
@@ -526,6 +532,7 @@ export class WalletClientImpl implements WalletClient {
     this.credentialSigner =
       params.credentialSigner ??
       new WebCryptoP256CredentialSigner(this.storageKeys.webCryptoCredential);
+    this.usesDefaultSigner = params.credentialSigner === undefined;
     this.projectId = params.projectId;
 
     const storedSession = this.loadStoredSessionRecord();
@@ -547,7 +554,8 @@ export class WalletClientImpl implements WalletClient {
         this.sessionAuth = undefined;
         this.scheduleStoredSessionExpiryNotification({
           serializedRecord: storedSession.serialized,
-          session: restoredSession
+          session: restoredSession,
+          signerCredentialId: record.signerCredentialId
         });
       } else {
         this.activeWalletAccount = record.wallet;
@@ -1266,9 +1274,17 @@ export class WalletClientImpl implements WalletClient {
     options: {
       clearStorage?: boolean;
       keepSharedState?: boolean;
+      /**
+       * The session ended on its own (expiry, or a signer that no longer holds its key), not by a
+       * sign-out or new sign-in here: only a signing key that is still this session's is deleted,
+       * and pending redirect state, which may belong to a sign-in started elsewhere, is kept.
+       */
+      automatic?: boolean;
       operation?: WalletOperation;
     } = {}
   ): Promise<void> {
+    const sessionCredentialId =
+      this.sessionSignerCredentialId ?? this.activePendingWalletSelection?.signerCredentialId;
     this.sessionRevision += 1;
     const keepSharedState = options.keepSharedState ?? false;
     const clearStorage = !keepSharedState && (options.clearStorage ?? true);
@@ -1287,12 +1303,14 @@ export class WalletClientImpl implements WalletClient {
       } catch {
         // Best effort: a leftover record names this credential, so later sessions ignore it.
       }
-      try {
-        this.clearPendingOidcRedirectAuth();
-      } catch (error) {
-        storageFailure ??= error;
+      if (!options.automatic) {
+        try {
+          this.clearPendingOidcRedirectAuth();
+        } catch (error) {
+          storageFailure ??= error;
+        }
       }
-    } else {
+    } else if (!options.automatic) {
       try {
         this.clearPendingOidcRedirectAuth();
       } catch (error) {
@@ -1315,7 +1333,10 @@ export class WalletClientImpl implements WalletClient {
     this.clearSessionExpiryTimer();
     this.cancelRestoredSessionRead?.();
     this.cancelRestoredSessionRead = undefined;
-    if (!keepSharedState) await this.credentialSigner.clear?.();
+    if (!keepSharedState) {
+      if (options.automatic) await this.clearSessionSignerKey(sessionCredentialId);
+      else await this.credentialSigner.clear?.();
+    }
     if (storageFailure !== undefined) {
       throw new OMSWalletStorageError({
         operation: options.operation,
@@ -1323,6 +1344,22 @@ export class WalletClientImpl implements WalletClient {
         cause: storageFailure
       });
     }
+  }
+
+  /**
+   * Deletes the signing key of a session that ended on its own. The default signer's key is shared
+   * with other tabs, and one may already hold a newer sign-in's key, so only a key that is still
+   * `credentialId` is deleted, in one IndexedDB transaction; without IndexedDB the key is only in
+   * this signer's memory. A custom signer is cleared as before.
+   */
+  private clearSessionSignerKey(credentialId: string | undefined): Promise<void> | undefined {
+    if (!this.usesDefaultSigner) return this.credentialSigner.clear?.();
+    if (credentialId === undefined) return undefined;
+    return deleteStoredWebCryptoCredential(this.storageKeys.webCryptoCredential, credentialId).then(
+      async (deleted) => {
+        if (!deleted) await this.credentialSigner.clear?.();
+      }
+    );
   }
 
   private clearPendingOidcRedirectAuth(): void {
@@ -3147,7 +3184,7 @@ export class WalletClientImpl implements WalletClient {
     const keepSharedState = await this.isSessionReplacedElsewhere();
     // Another caller may have cleared the session while the stored record was checked.
     if (this.sessionRevision !== revision) return;
-    await this.clearSession({ operation, keepSharedState });
+    await this.clearSession({ operation, keepSharedState, automatic: true });
   }
 
   /** Whether the stored record is still this session's while the signer holds no key at all. */
@@ -3308,7 +3345,7 @@ export class WalletClientImpl implements WalletClient {
   private async expireSession(session: SessionSnapshot): Promise<void> {
     this.expiredSessionRevision = this.sessionRevision;
     try {
-      await this.clearSession({ clearStorage: false });
+      await this.clearSession({ clearStorage: false, automatic: true });
     } catch {
       // Expiry notification should not depend on credential cleanup succeeding.
     }
@@ -3818,7 +3855,7 @@ export class WalletClientImpl implements WalletClient {
         if (!this.matchesStoredSessionSnapshot(snapshot)) return;
 
         try {
-          await this.credentialSigner.clear?.();
+          await this.clearSessionSignerKey(snapshot.signerCredentialId);
         } catch {
           // Expiry replay should still happen if credential cleanup fails.
         }
