@@ -240,8 +240,8 @@ if (error.upstreamError?.code === 7313) {}
 if (error.upstreamError?.code === '7313') {}
 ```
 
-TypeScript flags direct `===` comparisons with a number, but not `switch` cases, `Number(...)`
-conversions, or serialized logs, which now see a string.
+TypeScript flags comparisons and `switch` cases against numbers, but untyped JavaScript, values
+typed `any`, and serialized logs now see a string.
 
 ### `callContract` rejects full function signatures
 
