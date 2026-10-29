@@ -1,5 +1,12 @@
 # custom-google-redirect-example
 
+## 0.0.3
+
+### Patch Changes
+
+- Updated dependencies [[`1801a73`](https://github.com/0xPolygon/oms-wallet-typescript-sdk/commit/1801a73df79b2035588be7e4c92749a3e627b5d5), [`1801a73`](https://github.com/0xPolygon/oms-wallet-typescript-sdk/commit/1801a73df79b2035588be7e4c92749a3e627b5d5), [`1801a73`](https://github.com/0xPolygon/oms-wallet-typescript-sdk/commit/1801a73df79b2035588be7e4c92749a3e627b5d5), [`1801a73`](https://github.com/0xPolygon/oms-wallet-typescript-sdk/commit/1801a73df79b2035588be7e4c92749a3e627b5d5), [`1801a73`](https://github.com/0xPolygon/oms-wallet-typescript-sdk/commit/1801a73df79b2035588be7e4c92749a3e627b5d5), [`1801a73`](https://github.com/0xPolygon/oms-wallet-typescript-sdk/commit/1801a73df79b2035588be7e4c92749a3e627b5d5), [`1801a73`](https://github.com/0xPolygon/oms-wallet-typescript-sdk/commit/1801a73df79b2035588be7e4c92749a3e627b5d5), [`1801a73`](https://github.com/0xPolygon/oms-wallet-typescript-sdk/commit/1801a73df79b2035588be7e4c92749a3e627b5d5), [`1801a73`](https://github.com/0xPolygon/oms-wallet-typescript-sdk/commit/1801a73df79b2035588be7e4c92749a3e627b5d5), [`1801a73`](https://github.com/0xPolygon/oms-wallet-typescript-sdk/commit/1801a73df79b2035588be7e4c92749a3e627b5d5), [`1801a73`](https://github.com/0xPolygon/oms-wallet-typescript-sdk/commit/1801a73df79b2035588be7e4c92749a3e627b5d5), [`1801a73`](https://github.com/0xPolygon/oms-wallet-typescript-sdk/commit/1801a73df79b2035588be7e4c92749a3e627b5d5), [`1801a73`](https://github.com/0xPolygon/oms-wallet-typescript-sdk/commit/1801a73df79b2035588be7e4c92749a3e627b5d5), [`1801a73`](https://github.com/0xPolygon/oms-wallet-typescript-sdk/commit/1801a73df79b2035588be7e4c92749a3e627b5d5), [`1801a73`](https://github.com/0xPolygon/oms-wallet-typescript-sdk/commit/1801a73df79b2035588be7e4c92749a3e627b5d5), [`1801a73`](https://github.com/0xPolygon/oms-wallet-typescript-sdk/commit/1801a73df79b2035588be7e4c92749a3e627b5d5)]:
+  - @polygonlabs/oms-wallet@0.4.0
+
 ## 0.0.2
 
 ### Patch Changes
