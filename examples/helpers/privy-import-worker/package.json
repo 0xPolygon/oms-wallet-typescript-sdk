@@ -12,7 +12,7 @@
     "deploy": "pnpm build && wrangler deploy"
   },
   "dependencies": {
-    "@privy-io/node": "^0.34.0"
+    "@privy-io/node": "^0.36.0"
   },
   "devDependencies": {
     "@types/node": "^22.19.19",
