@@ -5,6 +5,8 @@ updates:
     schedule:
       interval: weekly
     open-pull-requests-limit: 5
+    cooldown:
+      default-days: 14
     groups:
       react-runtime:
         applies-to: version-updates
@@ -13,8 +15,13 @@ updates:
           - 'react-dom'
           - '@types/react'
           - '@types/react-dom'
+      # Major updates arrive as their own pull requests, so one breaking update
+      # does not block the rest of the group.
       dev-dependencies:
         dependency-type: development
+        update-types:
+          - minor
+          - patch
         exclude-patterns:
           - '@types/react'
           - '@types/react-dom'
@@ -23,3 +30,5 @@ updates:
     schedule:
       interval: weekly
     open-pull-requests-limit: 5
+    cooldown:
+      default-days: 14
