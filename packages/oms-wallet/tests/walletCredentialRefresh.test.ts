@@ -1503,6 +1503,60 @@ describe('WalletClient request deadline', () => {
     }
   );
 
+  function waasExecuteError(name: string, code: number, status: number) {
+    return new Response(JSON.stringify({ error: name, code, msg: name, status }), {
+      status,
+      headers: { 'Content-Type': 'application/json' }
+    });
+  }
+
+  it('resends an unconfirmed Execute with the same txnId until WaaS accepts it', async () => {
+    vi.useFakeTimers();
+    let executes = 0;
+    const fetchMock = stubWaasWithSignal({
+      '/PrepareEthereumTransaction': () => sponsoredPrepareResponse(),
+      '/Execute': () => {
+        executes += 1;
+        return executes < 3
+          ? waasExecuteError('TransactionBroadcastFailed', 7311, 502)
+          : jsonResponse({ status: 'pending' });
+      },
+      '/TransactionStatus': () => jsonResponse({ status: 'executed', txnHash: '0xhash' })
+    });
+    const wallet = createWalletWithSession(walletAddress);
+
+    const result = sendTransaction(wallet);
+    await vi.advanceTimersByTimeAsync(3_000);
+
+    expect(await result).toMatchObject({ txnId: 'txn-1', status: 'executed' });
+    const executeBodies = fetchMock.mock.calls
+      .filter(([input]) => input.toString().endsWith('/Execute'))
+      .map(([, init]) => JSON.parse(String(init?.body)).txnId);
+    expect(executeBodies).toEqual(['txn-1', 'txn-1', 'txn-1']);
+  });
+
+  it('polls a resent Execute that WaaS reports as already claimed', async () => {
+    vi.useFakeTimers();
+    let executes = 0;
+    const fetchMock = stubWaasWithSignal({
+      '/PrepareEthereumTransaction': () => sponsoredPrepareResponse(),
+      '/Execute': () => {
+        executes += 1;
+        return executes === 1
+          ? waasExecuteError('TransactionBroadcastFailed', 7311, 502)
+          : waasExecuteError('TransactionExpired', 7309, 400);
+      },
+      '/TransactionStatus': () => jsonResponse({ status: 'executed', txnHash: '0xhash' })
+    });
+    const wallet = createWalletWithSession(walletAddress);
+
+    const result = sendTransaction(wallet);
+    await vi.advanceTimersByTimeAsync(1_000);
+
+    expect(await result).toMatchObject({ txnId: 'txn-1', status: 'executed' });
+    expect(requestCount(fetchMock, '/Execute')).toBe(2);
+  });
+
   it('keeps an Execute that timed out after it was sent unconfirmed', async () => {
     vi.useFakeTimers();
     stubWaasWithSignal({
@@ -1512,11 +1566,13 @@ describe('WalletClient request deadline', () => {
     const wallet = createWalletWithSession(walletAddress);
 
     const result = sendTransaction(wallet);
-    await vi.advanceTimersByTimeAsync(30_000);
+    // The first send and three resends each time out after 30s, with 7s of backoff between them.
+    await vi.advanceTimersByTimeAsync(4 * 30_000 + 7_000);
 
     expect(await result).toMatchObject({
       code: 'OMS_TRANSACTION_EXECUTION_UNCONFIRMED',
-      txnId: 'txn-1'
+      txnId: 'txn-1',
+      retryable: false
     });
   });
 });
