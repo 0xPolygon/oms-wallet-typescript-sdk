@@ -19,6 +19,7 @@ import { testWalletAccount } from './fixtures/walletAccount.js';
 import { MockSigner, jsonResponse } from './fixtures/helpers.js';
 
 afterEach(() => {
+  vi.useRealTimers();
   vi.restoreAllMocks();
   vi.unstubAllGlobals();
 });
@@ -1157,38 +1158,41 @@ describe('public API error contracts', () => {
   });
 
   it('snapshots transaction execute failures as unconfirmed writes', async () => {
-    vi.stubGlobal(
-      'fetch',
-      vi.fn(async (input: RequestInfo | URL) => {
-        const url = input.toString();
-        if (url.endsWith('/PrepareEthereumTransaction')) {
-          return jsonResponse({
-            txnId: 'txn-execute',
-            status: 'quoted',
-            feeOptions: [],
-            sponsored: true,
-            expiresAt: '2099-01-01T00:00:00Z'
-          });
-        }
-        if (url.endsWith('/Execute')) {
-          throw new TypeError('fetch failed');
-        }
+    vi.useFakeTimers();
+    const fetchMock = vi.fn(async (input: RequestInfo | URL) => {
+      const url = input.toString();
+      if (url.endsWith('/PrepareEthereumTransaction')) {
+        return jsonResponse({
+          txnId: 'txn-execute',
+          status: 'quoted',
+          feeOptions: [],
+          sponsored: true,
+          expiresAt: '2099-01-01T00:00:00Z'
+        });
+      }
+      if (url.endsWith('/Execute')) {
+        throw new TypeError('fetch failed');
+      }
 
-        throw new Error(`Unexpected request: ${url}`);
-      })
-    );
+      throw new Error(`Unexpected request: ${url}`);
+    });
+    vi.stubGlobal('fetch', fetchMock);
 
     const oms = createOmsClientWithSession();
 
-    await expect(
-      publicError(() =>
-        oms.wallet.sendTransaction({
-          network: Networks.polygon,
-          to: '0x1111111111111111111111111111111111111111',
-          value: 0n
-        })
-      )
-    ).resolves.toMatchInlineSnapshot(`
+    const pending = publicError(() =>
+      oms.wallet.sendTransaction({
+        network: Networks.polygon,
+        to: '0x1111111111111111111111111111111111111111',
+        value: 0n
+      })
+    );
+    await vi.advanceTimersByTimeAsync(7_000);
+
+    expect(
+      fetchMock.mock.calls.filter(([input]) => input.toString().endsWith('/Execute'))
+    ).toHaveLength(4);
+    await expect(pending).resolves.toMatchInlineSnapshot(`
           {
             "code": "OMS_TRANSACTION_EXECUTION_UNCONFIRMED",
             "message": "Transaction execution failed before status could be confirmed",

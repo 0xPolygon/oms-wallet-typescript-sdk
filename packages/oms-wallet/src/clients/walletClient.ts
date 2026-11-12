@@ -2979,48 +2979,67 @@ export class WalletClientImpl implements WalletClient {
       request.feeOption = toGeneratedFeeOptionSelection(feeOption);
     }
 
-    let executed: ExecuteResponse;
+    let executed: ExecuteResponse | undefined;
     const revision = this.sessionRevision;
-    // Records whether the Execute request reached `fetch`; it aborts with nothing else.
-    const executeSignal = new AbortController().signal;
-    try {
-      executed = await this.client.execute(request, undefined, executeSignal);
-    } catch (error) {
-      const sdkError = toOMSWalletError(error, WalletOperation.execute);
-      if (!wasRequestSent(executeSignal)) {
-        // The request never left this client: it timed out at a request gate or while it was
-        // signed, or signing failed. Nothing was submitted, so report the request failure as is.
-        throw sdkError;
+    // Execute is idempotent per txnId: an unconfirmed outcome is sent again with
+    // the same txnId, which WaaS never executes twice.
+    const resendBackoffMs = [1000, 2000, 4000];
+    let lastUnconfirmed: ReturnType<typeof toOMSWalletError> | undefined;
+    for (let attempt = 0; attempt <= resendBackoffMs.length && !executed; attempt += 1) {
+      if (attempt > 0) {
+        await this.delay(resendBackoffMs[attempt - 1]);
       }
-      if (isCredentialEndedError(sdkError) && this.rejectedSessionCredentialRevision === revision) {
-        // WaaS rejected the session credential before running Execute, so nothing was submitted;
-        // the operation maps this to `OMS_SESSION_EXPIRED` and ends the session.
-        throw error;
+      // Records whether the Execute request reached `fetch`; it aborts with nothing else.
+      const executeSignal = new AbortController().signal;
+      try {
+        executed = await this.client.execute(request, undefined, executeSignal);
+      } catch (error) {
+        const sdkError = toOMSWalletError(error, WalletOperation.execute);
+        if (!wasRequestSent(executeSignal) && attempt === 0) {
+          // The first request never left this client, so nothing was submitted.
+          throw sdkError;
+        }
+        if (
+          isCredentialEndedError(sdkError) &&
+          this.rejectedSessionCredentialRevision === revision
+        ) {
+          // WaaS rejected the session credential before running Execute.
+          throw error;
+        }
+        if (sdkError.upstreamError?.service === 'waas' && sdkError.upstreamError.code === '7314') {
+          // The relayer refused a reverting transaction and WaaS closed it as failed.
+          throw sdkError;
+        }
+        if (
+          sdkError.upstreamError?.service === 'waas' &&
+          EXECUTE_REFUSED_BEFORE_SUBMISSION_CODES.has(sdkError.upstreamError.code ?? '')
+        ) {
+          // WaaS refused the Execute before submitting anything.
+          throw sdkError;
+        }
+        if (
+          typeof params.network === 'string' &&
+          isTronNetwork(params.network) &&
+          sdkError.upstreamError?.service === 'waas' &&
+          TRON_EXECUTE_REFUSED_BEFORE_SUBMISSION_CODES.has(sdkError.upstreamError.code ?? '')
+        ) {
+          // A Tron Execute refused while WaaS priced it again, before anything was broadcast.
+          throw sdkError;
+        }
+        lastUnconfirmed = sdkError;
+        if (sdkError.upstreamError?.service === 'waas' && sdkError.upstreamError.code === '7309') {
+          if (attempt === 0) {
+            // TransactionExpired on the first send: the quote expired, so resending cannot help.
+            break;
+          }
+          // A WaaS without idempotent Execute reports the earlier attempt's claim: poll it.
+          executed = { status: 'pending' } as unknown as ExecuteResponse;
+          break;
+        }
       }
-      if (sdkError.upstreamError?.service === 'waas' && sdkError.upstreamError.code === '7314') {
-        // TransactionSimulationFailed: the relayer refused to dispatch a reverting transaction and
-        // WaaS closed it as failed, so the outcome is known; report the request failure as is.
-        throw sdkError;
-      }
-      if (
-        sdkError.upstreamError?.service === 'waas' &&
-        EXECUTE_REFUSED_BEFORE_SUBMISSION_CODES.has(sdkError.upstreamError.code ?? '')
-      ) {
-        // WaaS refused the Execute before submitting anything: its credential middleware
-        // (InvalidSignature 7201, UsageLimitExceeded 7205, PreconditionFailed 7206 after the
-        // stale-nonce resends, Unauthorized 7207 for a revoked credential), or the handler's checks
-        // before submission (Unauthorized 7207). Report the request failure as is.
-        throw sdkError;
-      }
-      if (
-        typeof params.network === 'string' &&
-        isTronNetwork(params.network) &&
-        sdkError.upstreamError?.service === 'waas' &&
-        TRON_EXECUTE_REFUSED_BEFORE_SUBMISSION_CODES.has(sdkError.upstreamError.code ?? '')
-      ) {
-        // A Tron Execute refused while WaaS priced it again, before anything was broadcast.
-        throw sdkError;
-      }
+    }
+    if (!executed) {
+      const sdkError = lastUnconfirmed!;
       throw new OMSWalletTransactionError({
         code: 'OMS_TRANSACTION_EXECUTION_UNCONFIRMED',
         operation: WalletOperation.execute,
