@@ -1557,6 +1557,32 @@ describe('WalletClient request deadline', () => {
     expect(requestCount(fetchMock, '/Execute')).toBe(2);
   });
 
+  it('keeps a resent Execute that WaaS refuses as reverting unconfirmed', async () => {
+    vi.useFakeTimers();
+    let executes = 0;
+    const fetchMock = stubWaasWithSignal({
+      '/PrepareEthereumTransaction': () => sponsoredPrepareResponse(),
+      '/Execute': () => {
+        executes += 1;
+        return executes === 1
+          ? waasExecuteError('TransactionBroadcastFailed', 7311, 502)
+          : waasExecuteError('TransactionSimulationFailed', 7314, 400);
+      }
+    });
+    const wallet = createWalletWithSession(walletAddress);
+
+    const result = sendTransaction(wallet);
+    await vi.advanceTimersByTimeAsync(1_000);
+
+    expect(await result).toMatchObject({
+      code: 'OMS_TRANSACTION_EXECUTION_UNCONFIRMED',
+      txnId: 'txn-1',
+      retryable: false,
+      upstreamError: { service: 'waas', code: '7314' }
+    });
+    expect(requestCount(fetchMock, '/Execute')).toBe(2);
+  });
+
   it('keeps an Execute that timed out after it was sent unconfirmed', async () => {
     vi.useFakeTimers();
     stubWaasWithSignal({
