@@ -1568,6 +1568,8 @@ describe('WalletClient request deadline', () => {
         upstreamError: { service: 'waas', code: String(code) }
       });
       expect(requestCount(fetchMock, '/Execute')).toBe(2);
+      // Only a rejected session credential ends the session.
+      expect(wallet.session === undefined).toBe(code === 7202);
     }
   );
 
