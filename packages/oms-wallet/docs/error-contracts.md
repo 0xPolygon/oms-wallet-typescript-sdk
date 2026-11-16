@@ -17,12 +17,13 @@ supports, whether `upstreamError` should be present, and which test owns the con
   lookup failure does not mean a transaction write should be blindly resent.
 - `OMS_TRANSACTION_EXECUTION_UNCONFIRMED` means transaction preparation succeeded, but the execute
   request failed before the SDK could confirm whether the transaction was submitted. The SDK has
-  already sent Execute again with the same `txnId` (after 1, 2 and 4 seconds); WaaS never executes
-  one `txnId` twice. Do not call the send method again: that prepares a new transaction with a new
+  already sent Execute again with the same `txnId` up to three times (after 1, 2 and 4 seconds);
+  WaaS never executes one `txnId` twice. Resends stop early when the session that sent the first
+  request ends, or when WaaS refuses a resend; such a refusal, or 7309, keeps the write
+  unconfirmed with that `upstreamError`, because the earlier send may still land. Do not call the send method again: that prepares a new transaction with a new
   `txnId`, which can execute as well. Check `getTransactionStatus` with the returned `txnId` instead.
-  An Execute that WaaS refused before submitting anything is not unconfirmed: it fails with
-  `OMS_REQUEST_FAILED`. That covers a simulation-reverted first Execute (7314; a 7314 answered to a
-  resend stays unconfirmed, since an earlier send may still land), the credential
+  A first Execute that WaaS refused before submitting anything is not unconfirmed: it fails with
+  `OMS_REQUEST_FAILED`. That covers a simulation-reverted Execute (7314), the credential
   middleware's refusals (7201, 7205, 7206, 7207; 7202 and 7203 end the session instead), a Tron
   Execute refused while WaaS prices it again (7200, 7310), and an Execute this client never sent
   (signing failed, or the request deadline passed before it was sent).

@@ -2988,6 +2988,8 @@ export class WalletClientImpl implements WalletClient {
     for (let attempt = 0; attempt <= resendBackoffMs.length && !executed; attempt += 1) {
       if (attempt > 0) {
         await this.delay(resendBackoffMs[attempt - 1]);
+        // A resend must not run under a session that ended or replaced the one that sent first.
+        if (this.sessionRevision !== revision) break;
       }
       // Records whether the Execute request reached `fetch`; it aborts with nothing else.
       const executeSignal = new AbortController().signal;
@@ -2995,52 +2997,38 @@ export class WalletClientImpl implements WalletClient {
         executed = await this.client.execute(request, undefined, executeSignal);
       } catch (error) {
         const sdkError = toOMSWalletError(error, WalletOperation.execute);
-        if (!wasRequestSent(executeSignal) && attempt === 0) {
-          // The first request never left this client, so nothing was submitted.
-          throw sdkError;
-        }
-        if (
-          isCredentialEndedError(sdkError) &&
-          this.rejectedSessionCredentialRevision === revision
-        ) {
-          // WaaS rejected the session credential before running Execute.
-          throw error;
-        }
-        if (sdkError.upstreamError?.service === 'waas' && sdkError.upstreamError.code === '7314') {
-          if (attempt === 0) {
-            // The relayer refused a reverting transaction and WaaS closed it as failed.
+        const waasCode =
+          sdkError.upstreamError?.service === 'waas' ? (sdkError.upstreamError.code ?? '') : '';
+        // 7314: the relayer refused a reverting transaction. The others: WaaS refused the Execute
+        // before submitting anything, or, for Tron, while it priced it again.
+        const refused =
+          waasCode === '7314' ||
+          EXECUTE_REFUSED_BEFORE_SUBMISSION_CODES.has(waasCode) ||
+          (typeof params.network === 'string' &&
+            isTronNetwork(params.network) &&
+            TRON_EXECUTE_REFUSED_BEFORE_SUBMISSION_CODES.has(waasCode));
+        if (attempt === 0) {
+          if (!wasRequestSent(executeSignal)) {
+            // The first request never left this client, so nothing was submitted.
             throw sdkError;
           }
-          // An earlier send of this txnId may still land, so its outcome is unconfirmed.
-          lastUnconfirmed = sdkError;
-          break;
-        }
-        if (
-          sdkError.upstreamError?.service === 'waas' &&
-          EXECUTE_REFUSED_BEFORE_SUBMISSION_CODES.has(sdkError.upstreamError.code ?? '')
-        ) {
-          // WaaS refused the Execute before submitting anything.
-          throw sdkError;
-        }
-        if (
-          typeof params.network === 'string' &&
-          isTronNetwork(params.network) &&
-          sdkError.upstreamError?.service === 'waas' &&
-          TRON_EXECUTE_REFUSED_BEFORE_SUBMISSION_CODES.has(sdkError.upstreamError.code ?? '')
-        ) {
-          // A Tron Execute refused while WaaS priced it again, before anything was broadcast.
-          throw sdkError;
+          if (
+            isCredentialEndedError(sdkError) &&
+            this.rejectedSessionCredentialRevision === revision
+          ) {
+            // WaaS rejected the session credential before running Execute.
+            throw error;
+          }
+          if (refused) {
+            // Nothing was submitted; on 7314 WaaS closed the transaction as failed.
+            throw sdkError;
+          }
         }
         lastUnconfirmed = sdkError;
-        if (sdkError.upstreamError?.service === 'waas' && sdkError.upstreamError.code === '7309') {
-          if (attempt === 0) {
-            // TransactionExpired on the first send: the quote expired, so resending cannot help.
-            break;
-          }
-          // A WaaS without idempotent Execute reports the earlier attempt's claim: poll it.
-          executed = { status: 'pending' } as unknown as ExecuteResponse;
-          break;
-        }
+        // After an earlier send a refusal settles only this request: that send may still land.
+        // 7309 on the first send is an expired quote; on a resend, a WaaS without idempotent
+        // Execute may be reporting the earlier send's claim.
+        if (refused || isCredentialEndedError(sdkError) || waasCode === '7309') break;
       }
     }
     if (!executed) {
