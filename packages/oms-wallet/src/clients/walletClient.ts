@@ -3007,8 +3007,13 @@ export class WalletClientImpl implements WalletClient {
           throw error;
         }
         if (sdkError.upstreamError?.service === 'waas' && sdkError.upstreamError.code === '7314') {
-          // The relayer refused a reverting transaction and WaaS closed it as failed.
-          throw sdkError;
+          if (attempt === 0) {
+            // The relayer refused a reverting transaction and WaaS closed it as failed.
+            throw sdkError;
+          }
+          // An earlier send of this txnId may still land, so its outcome is unconfirmed.
+          lastUnconfirmed = sdkError;
+          break;
         }
         if (
           sdkError.upstreamError?.service === 'waas' &&
