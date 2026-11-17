@@ -19,8 +19,9 @@ packages exactly as an external app would.
 |---|---|---|
 | [`packages/oms-wallet`](packages/oms-wallet) | [`@polygonlabs/oms-wallet`](https://www.npmjs.com/package/@polygonlabs/oms-wallet) | The core SDK — email/OIDC authentication, EVM, Solana, and Tron wallets, attested key import, signed remote access, transaction submission and status polling, access management, and EVM/Solana/Tron balance queries. Ships dual CJS + ESM for browser and Node consumers. |
 | [`packages/oms-wallet-wagmi-connector`](packages/oms-wallet-wagmi-connector) | [`@polygonlabs/oms-wallet-wagmi-connector`](https://www.npmjs.com/package/@polygonlabs/oms-wallet-wagmi-connector) | Adapts an active Ethereum wallet from `@polygonlabs/oms-wallet` as a [wagmi](https://wagmi.sh) connector, so existing wagmi apps can use OMS Wallet as a connection option. |
+| [`packages/oms-wallet-privacy`](packages/oms-wallet-privacy) | [`@polygonlabs/oms-wallet-privacy`](https://www.npmjs.com/package/@polygonlabs/oms-wallet-privacy) | Adds `oms.privacy` through `OMSWallet.extend`: shield tokens into a private balance, unshield them, and send privately from an OMS Ethereum wallet. ESM only. |
 
-Both packages release **in lockstep** (a changesets `fixed` group), so they always share a version.
+All packages release **in lockstep** (a changesets `fixed` group), so they always share a version.
 
 ## Getting started (contributors)
 
@@ -48,6 +49,7 @@ source, so no prior `pnpm build` is needed.
 |---|---|---|---|
 | [`examples/react`](examples/react) ([live demo](https://0xpolygon.github.io/oms-wallet-typescript-sdk/react-example/)) | Email, Google, and Apple sign-in, signing, transactions, balances, wallet management, Privy wallet import, Solana, and Tron | `pnpm dev:example` | `pnpm build:example` |
 | [`examples/wagmi`](examples/wagmi) ([live demo](https://0xpolygon.github.io/oms-wallet-typescript-sdk/wagmi-example/)) | The wagmi connector with the MetaMask connector and the Trails widget | `pnpm dev:wagmi-example` | `pnpm build:wagmi-example` |
+| [`examples/privacy`](examples/privacy) | Shield, private send, unshield and recover with `@polygonlabs/oms-wallet-privacy` (mainnets, real funds) | `pnpm dev:privacy-example` | `pnpm build:privacy-example` |
 | [`examples/trails-actions`](examples/trails-actions) ([live demo](https://0xpolygon.github.io/oms-wallet-typescript-sdk/trails-actions-example/)) | Trails swap, Earn deposit, and Earn withdrawal flows | `pnpm dev:trails-actions-example` | `pnpm build:trails-actions-example` |
 | [`examples/custom-google-redirect`](examples/custom-google-redirect) | Google as a custom OIDC provider with `providerRedirectUri: "http://localhost:5173"` (local only) | `pnpm dev:custom-google-redirect-example` | `pnpm build:custom-google-redirect-example` |
 | [`examples/custom-auth0-id-token`](examples/custom-auth0-id-token) | An Auth0-issued ID token passed to `signInWithOidcIdToken` (local only; add `http://localhost:5173` to the Auth0 application's Allowed Callback URLs, Allowed Logout URLs, and Allowed Web Origins) | `pnpm dev:custom-auth0-id-token-example` | `pnpm build:custom-auth0-id-token-example` |
@@ -106,10 +108,10 @@ The flow, end to end:
 
 1. Every PR that changes a package includes a **changeset** (`pnpm exec changeset`, or
    `pnpm exec changeset add --empty` for no-release changes) committed alongside the code.
-2. Merging changesets to `master` opens a **`changesets: Release / Deploy`** PR that bumps both
+2. Merging changesets to `master` opens a **`changesets: Release / Deploy`** PR that bumps all
    packages and updates their changelogs.
-3. Merging that PR triggers CI to pack both packages and **stage** them on npm via OIDC trusted
-   publishing (`npm stage publish`). Once both stage, CI tags the release and creates a GitHub
+3. Merging that PR triggers CI to pack all packages and **stage** them on npm via OIDC trusted
+   publishing (`npm stage publish`). Once all stage, CI tags the release and creates a GitHub
    Release. Nothing is installable yet.
 4. An npm maintainer approves both staged packages with 2FA, SDK first. Only then do they become
    publicly installable. No one runs a publish command locally.

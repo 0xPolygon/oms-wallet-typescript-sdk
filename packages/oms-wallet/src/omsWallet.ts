@@ -1,7 +1,7 @@
 import type { IndexerClient } from './clients/indexerClient.js';
 import type { CredentialSigner } from './credentialSigner.js';
 import type { StorageManager } from './storageManager.js';
-import type { WalletClient } from './wallet.js';
+import type { SignMessageParams, WalletClient } from './wallet.js';
 
 import { IndexerClientImpl } from './clients/indexerClient.js';
 import { WalletClientImpl } from './clients/walletClient.js';
@@ -17,6 +17,31 @@ export interface OMSWalletParams {
   redirectAuthStorage?: StorageManager;
   credentialSigner?: CredentialSigner;
 }
+
+/** What `OMSWallet.extend` gives an extension besides the wallet itself. */
+export interface OMSWalletExtensionContext {
+  /**
+   * Signs a message that starts with `OMS Wallet reserved message:` with the active Ethereum
+   * wallet. `WalletClient.signMessage` refuses such messages, so an extension can derive keys from
+   * this signature that no other code holding the session can obtain.
+   */
+  signReservedMessage(params: SignMessageParams): Promise<string>;
+}
+
+/** Adds members to an `OMSWallet`. Returned by extension packages; passed to `OMSWallet.extend`. */
+export type OMSWalletExtension<E extends object> = (
+  oms: OMSWallet,
+  context: OMSWalletExtensionContext
+) => E;
+
+/** Members an extension cannot add or replace. */
+export type OMSWalletReservedMember = 'wallet' | 'indexer' | 'extend';
+
+const reservedMembers: ReadonlySet<string> = new Set<OMSWalletReservedMember>([
+  'wallet',
+  'indexer',
+  'extend'
+]);
 
 export class OMSWallet {
   public readonly wallet: WalletClient;
@@ -91,6 +116,57 @@ export class OMSWallet {
     }
     this.wallet = wallet;
     this.indexer = indexer;
+  }
+
+  /**
+   * Returns a new `OMSWallet` with the members `extension` adds, for example
+   * `new OMSWallet({ publishableKey }).extend(privacy())`. This instance is not changed, the
+   * result is still an `OMSWallet` with the same `wallet` and `indexer`, and calls can be chained.
+   * An extension cannot add `wallet`, `indexer` or `extend`, or a member an earlier extension added.
+   */
+  extend<const E extends object & Partial<Record<OMSWalletReservedMember, never>>>(
+    extension: OMSWalletExtension<E>
+  ): this & E {
+    // Read through `wallet`, not a private field: an extended instance inherits it from this one.
+    // Shared clients can come from another copy of this SDK on the page, so this is not `instanceof`.
+    const walletClient = this.wallet as Partial<Pick<WalletClientImpl, 'signReservedMessage'>>;
+    if (typeof walletClient.signReservedMessage !== 'function') {
+      throw new OMSWalletValidationError({ message: 'This OMSWallet cannot be extended' });
+    }
+    const signReserved = walletClient.signReservedMessage.bind(walletClient);
+    const context: OMSWalletExtensionContext = {
+      signReservedMessage: (params) => signReserved(params)
+    };
+    const added: unknown = extension(this, context);
+    if (typeof added !== 'object' || added === null) {
+      throw new OMSWalletValidationError({
+        message: 'An OMSWallet extension must return an object'
+      });
+    }
+    for (const key of Reflect.ownKeys(added)) {
+      if (typeof key === 'string' && reservedMembers.has(key)) {
+        throw new OMSWalletValidationError({
+          message: `An OMSWallet extension cannot add "${key}"`
+        });
+      }
+      if (key in this) {
+        throw new OMSWalletValidationError({
+          message: `An OMSWallet extension cannot replace "${String(key)}"`
+        });
+      }
+    }
+    // The extended object inherits from this one, so `instanceof OMSWallet`, `wallet` and `indexer`
+    // stay; the extension's members are its own, read-only properties.
+    const extended = Object.create(this) as this;
+    for (const key of Reflect.ownKeys(added)) {
+      Object.defineProperty(extended, key, {
+        value: (added as Record<PropertyKey, unknown>)[key],
+        enumerable: true,
+        writable: false,
+        configurable: false
+      });
+    }
+    return extended as this & E;
   }
 }
 

@@ -146,6 +146,7 @@ import {
 import { TronNetworks } from '../networks.js';
 import { isOmsRelayOidcProvider, resolveOidcProviderConfig } from '../oidc.js';
 import { WalletOperation } from '../operations.js';
+import { RESERVED_MESSAGE_PREFIX, isReservedMessage } from '../reservedMessages.js';
 import {
   createDeadlineFetch,
   createSerialFetch,
@@ -1592,11 +1593,35 @@ export class WalletClientImpl implements WalletClient {
   }
 
   async signMessage(params: SignMessageParams): Promise<string> {
+    if (isReservedMessage(params.message)) {
+      throw new OMSWalletValidationError({
+        operation: WalletOperation.signMessage,
+        message: `Messages that start with "${RESERVED_MESSAGE_PREFIX}" are reserved for OMS Wallet extensions`
+      });
+    }
+    return this.signEthereumMessage(params);
+  }
+
+  /**
+   * Signs a message reserved for OMS Wallet extensions. Not part of `WalletClient`: extensions reach
+   * it through the context `OMSWallet.extend` passes them.
+   */
+  async signReservedMessage(params: SignMessageParams): Promise<string> {
+    if (!isReservedMessage(params.message)) {
+      throw new OMSWalletValidationError({
+        operation: WalletOperation.signMessage,
+        message: `Reserved messages must start with "${RESERVED_MESSAGE_PREFIX}"`
+      });
+    }
+    return this.signEthereumMessage(params);
+  }
+
+  private async signEthereumMessage(params: SignMessageParams): Promise<string> {
     return this.runOperation(WalletOperation.signMessage, async () => {
       await this.requireActiveEthereumSession(WalletOperation.signMessage);
       const request: SignMessageRequest = {
         network: params.network.id.toString(),
-        walletId: this.walletId,
+        walletId: this.expectedWalletId(params.expectedWallet, WalletOperation.signMessage),
         message: params.message
       };
       const response = await this.client.signMessage(request);
@@ -1622,7 +1647,7 @@ export class WalletClientImpl implements WalletClient {
       await this.requireActiveEthereumSession(WalletOperation.signTypedData);
       const request: SignTypedDataRequest = {
         network: params.network.id.toString(),
-        walletId: this.walletId,
+        walletId: this.expectedWalletId(params.expectedWallet, WalletOperation.signTypedData),
         typedData: normalizeJsonBigInts(params.typedData)
       };
       const response = await this.client.signTypedData(request);
@@ -1766,7 +1791,7 @@ export class WalletClientImpl implements WalletClient {
 
       const request: PrepareEthereumTransactionRequest = {
         network: params.network.id.toString(),
-        walletId: this.walletId,
+        walletId: this.expectedWalletId(params.expectedWallet, WalletOperation.sendTransaction),
         to: params.to,
         value: (params.value ?? 0n).toString(),
         data,
@@ -1779,7 +1804,8 @@ export class WalletClientImpl implements WalletClient {
         network: params.network,
         selectFeeOption: params.selectFeeOption,
         waitForStatus: params.waitForStatus,
-        statusPolling: params.statusPolling
+        statusPolling: params.statusPolling,
+        onPrepared: params.onPrepared
       });
     });
   }
@@ -2525,6 +2551,24 @@ export class WalletClientImpl implements WalletClient {
     await this.requireSameActiveWalletSession(context.walletId, operation);
   }
 
+  /**
+   * The active wallet's ID, after checking it is `expectedWallet` when one is given. Requests carry
+   * this ID, so WaaS acts on that wallet even if another one becomes active while they run.
+   */
+  private expectedWalletId(expectedWallet: string | undefined, operation: WalletOperation): string {
+    const active = this.activeWalletAccount;
+    if (
+      expectedWallet !== undefined &&
+      (active === undefined || active.address.toLowerCase() !== expectedWallet.toLowerCase())
+    ) {
+      throw new OMSWalletSessionError({
+        operation,
+        message: 'The active wallet is not the expected wallet'
+      });
+    }
+    return this.walletId;
+  }
+
   private async requireSameActiveWalletSession(
     walletId: string,
     operation: WalletOperation
@@ -2964,10 +3008,13 @@ export class WalletClientImpl implements WalletClient {
     selectFeeOption?: FeeOptionSelector;
     waitForStatus?: boolean;
     statusPolling?: TransactionStatusPollingOptions;
+    onPrepared?: (txnId: string) => void | Promise<void>;
   }): Promise<SendTransactionResponse> {
     if (params.waitForStatus !== false) {
       this.validateTransactionStatusPollingOptions(params.statusPolling);
     }
+    // Nothing is submitted yet: a callback that throws stops the transaction here.
+    await params.onPrepared?.(params.prepared.txnId);
     const feeOption = await this.selectFeeOption({
       feeOptions: params.prepared.feeOptions,
       sponsored: params.prepared.sponsored,

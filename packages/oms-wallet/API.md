@@ -11,6 +11,7 @@ export declare class OMSWallet {
     readonly wallet: WalletClient;
     readonly indexer: IndexerClient;
     constructor(params: OMSWalletParams);
+    extend<const E extends object & Partial<Record<OMSWalletReservedMember, never>>>(extension: OMSWalletExtension<E>): this & E;
 }
 ```
 
@@ -23,6 +24,32 @@ export interface OMSWalletParams {
     redirectAuthStorage?: StorageManager;
     credentialSigner?: CredentialSigner;
 }
+```
+
+### `OMSWalletExtension`
+
+Adds members to an `OMSWallet`. Returned by extension packages; passed to `OMSWallet.extend`.
+
+```typescript
+export type OMSWalletExtension<E extends object> = (oms: OMSWallet, context: OMSWalletExtensionContext) => E;
+```
+
+### `OMSWalletExtensionContext`
+
+What `OMSWallet.extend` gives an extension besides the wallet itself.
+
+```typescript
+export interface OMSWalletExtensionContext {
+    signReservedMessage(params: SignMessageParams): Promise<string>;
+}
+```
+
+### `OMSWalletReservedMember`
+
+Members an extension cannot add or replace.
+
+```typescript
+export type OMSWalletReservedMember = "wallet" | "indexer" | "extend";
 ```
 
 ## Authentication and sessions
@@ -1180,6 +1207,7 @@ getTransactionStatus(params: {
 export interface SignMessageParams {
     network: Network;
     message: string;
+    expectedWallet?: Address;
 }
 ```
 
@@ -1197,6 +1225,7 @@ export interface SignSolanaMessageParams {
 export interface SignTypedDataParams {
     network: Network;
     typedData: unknown;
+    expectedWallet?: Address;
 }
 ```
 
@@ -1288,6 +1317,8 @@ export type SendTransactionBase = {
     selectFeeOption?: FeeOptionSelector;
     waitForStatus?: boolean;
     statusPolling?: TransactionStatusPollingOptions;
+    expectedWallet?: Address;
+    onPrepared?: (txnId: string) => void | Promise<void>;
 };
 ```
 

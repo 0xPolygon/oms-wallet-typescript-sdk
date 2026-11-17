@@ -1,0 +1,68 @@
+{
+  "name": "@polygonlabs/oms-wallet-privacy",
+  "version": "0.4.0",
+  "description": "Private balances for OMS Wallet: shield, unshield and private send.",
+  "license": "Apache-2.0",
+  "type": "module",
+  "main": "dist/index.js",
+  "types": "dist/index.d.ts",
+  "files": [
+    "dist",
+    "README.md",
+    "CHANGELOG.md"
+  ],
+  "exports": {
+    ".": {
+      "@polygonlabs/source": "./src/index.ts",
+      "types": "./dist/index.d.ts",
+      "default": "./dist/index.js"
+    }
+  },
+  "sideEffects": false,
+  "engines": {
+    "node": ">=22"
+  },
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/0xPolygon/oms-wallet-typescript-sdk.git",
+    "directory": "packages/oms-wallet-privacy"
+  },
+  "bugs": {
+    "url": "https://github.com/0xPolygon/oms-wallet-typescript-sdk/issues"
+  },
+  "homepage": "https://github.com/0xPolygon/oms-wallet-typescript-sdk#readme",
+  "publishConfig": {
+    "access": "public",
+    "exports": {
+      ".": {
+        "types": "./dist/index.d.ts",
+        "default": "./dist/index.js"
+      }
+    }
+  },
+  "scripts": {
+    "clean": "rm -rf dist out-tsc *.tsbuildinfo",
+    "typecheck": "tsc -b",
+    "build": "pnpm clean && tsc -b tsconfig.lib.json && pnpm check:public-api",
+    "check:public-api": "node scripts/check-public-api.mjs",
+    "prepack": "pnpm build",
+    "prepublishOnly": "pnpm build && pnpm test",
+    "test": "vitest run",
+    "test:watch": "vitest"
+  },
+  "dependencies": {
+    "@hinkal/common": "0.3.14",
+    "buffer": "6.0.3",
+    "ethers": "6.17.0"
+  },
+  "peerDependencies": {
+    "@polygonlabs/oms-wallet": "workspace:^",
+    "viem": ">=2.55.0 <3"
+  },
+  "devDependencies": {
+    "@polygonlabs/oms-wallet": "workspace:*",
+    "typescript": "^5.9.3",
+    "viem": "^2.55.0",
+    "vitest": "^4.1.5"
+  }
+}

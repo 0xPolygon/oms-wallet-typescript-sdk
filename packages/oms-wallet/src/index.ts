@@ -1,5 +1,10 @@
 export { OMSWallet } from './omsWallet.js';
-export type { OMSWalletParams } from './omsWallet.js';
+export type {
+  OMSWalletExtension,
+  OMSWalletExtensionContext,
+  OMSWalletParams,
+  OMSWalletReservedMember
+} from './omsWallet.js';
 export { DEFAULT_SESSION_LIFETIME_SECONDS, MAX_SESSION_LIFETIME_SECONDS } from './wallet.js';
 export { RemoteAccessClient } from './clients/remoteAccessClient.js';
 export type { RemoteAccessClientParams } from './clients/remoteAccessClient.js';

@@ -12,6 +12,30 @@ export default defineConfig([
   ...recommended({ globals: 'browser' }),
   ...typescript(),
   {
+    // The privacy provider stays behind `PrivacyBackend`: only its adapter may import it.
+    files: ['packages/oms-wallet-privacy/src/**/*.ts'],
+    ignores: ['packages/oms-wallet-privacy/src/internal/hinkal/**'],
+    rules: {
+      'no-restricted-imports': [
+        'error',
+        {
+          patterns: [
+            {
+              group: [
+                '@hinkal/*',
+                'ethers',
+                'ethers/*',
+                '**/internal/hinkal/*',
+                '!**/internal/hinkal/backend.js'
+              ],
+              message: 'Only src/internal/hinkal may use the privacy provider or ethers.'
+            }
+          ]
+        }
+      ]
+    }
+  },
+  {
     ignores: [
       '.claude/**',
       '**/dist/**',

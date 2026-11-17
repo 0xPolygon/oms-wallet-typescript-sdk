@@ -7,9 +7,10 @@
 > "Day-to-day") and let CI prepare the release; an npm maintainer performs the final 2FA approval.
 
 Releases are driven by [changesets](https://github.com/changesets/changesets). The SDK
-(`@polygonlabs/oms-wallet`) and the wagmi connector (`@polygonlabs/oms-wallet-wagmi-connector`)
-release **in lockstep**: they are declared as a `fixed` group in `.changeset/config.json`, so any
-release bumps both to the same new version regardless of which one changed.
+(`@polygonlabs/oms-wallet`), the wagmi connector (`@polygonlabs/oms-wallet-wagmi-connector`) and the
+privacy extension (`@polygonlabs/oms-wallet-privacy`) release **in lockstep**: they are declared as a
+`fixed` group in `.changeset/config.json`, so any release bumps all of them to the same new version
+regardless of which one changed.
 
 The connector source manifest keeps `@polygonlabs/oms-wallet` as `workspace:^` in
 `peerDependencies` and `workspace:*` in `devDependencies`. Do not replace those with literal
@@ -25,8 +26,8 @@ root:
 pnpm exec changeset
 ```
 
-Pick the bump type and write a user-facing changelog entry. Because both packages are a `fixed`
-group, selecting either one bumps both. For changes with no consumer impact (internal refactors,
+Pick the bump type and write a user-facing changelog entry. Because the packages are a `fixed`
+group, selecting any one bumps all of them. For changes with no consumer impact (internal refactors,
 chores), record an empty changeset instead:
 
 ```bash
@@ -48,11 +49,11 @@ touches a package without one.
    release version. The workflow inspects every packed manifest and fails if any `workspace:` range
    remains.
 4. The workflow sends the pnpm-created tarballs to `npm stage publish` via **OIDC trusted
-   publishing** (no `NPM_TOKEN`). After both packages stage successfully, Changesets pushes a
+   publishing** (no `NPM_TOKEN`). After all packages stage successfully, Changesets pushes a
    package tag and creates a GitHub Release from each package's `CHANGELOG.md` entry.
-5. An npm maintainer inspects and approves both staged packages with 2FA. Approve
-   `@polygonlabs/oms-wallet` first, then `@polygonlabs/oms-wallet-wagmi-connector`; only approved
-   packages become publicly installable.
+5. An npm maintainer inspects and approves the staged packages with 2FA. Approve
+   `@polygonlabs/oms-wallet` first, then `@polygonlabs/oms-wallet-wagmi-connector` and
+   `@polygonlabs/oms-wallet-privacy`; only approved packages become publicly installable.
 
 Version-bump commits are signed by GitHub's GPG key (`commitMode: github-api`) to satisfy branch
 protection. The package tags and GitHub Releases record that CI staged the exact release artifacts;

@@ -461,6 +461,11 @@ const isValid = await omsWallet.wallet.isValidMessageSignature({
 })
 ```
 
+Messages that start with `OMS Wallet reserved message:` are refused with `OMSWalletValidationError`,
+as text or hex. They are reserved for extensions, which derive keys from such signatures (see
+[Extensions](#extensions)), so no other code holding the session, such as a dApp connected through
+wagmi, can obtain them.
+
 ### Sign and Verify Typed Data
 
 ```typescript
@@ -815,6 +820,27 @@ await omsWallet.wallet.sendTransaction({
 })
 ```
 
+To make sure a transaction or signature comes from a particular wallet, pass `expectedWallet`. The
+call fails with `OMSWalletSessionError` before any request unless that wallet is active, and the
+transaction is then prepared and executed for it even if another wallet becomes active meanwhile.
+`signMessage` and `signTypedData` accept it too.
+
+To store the transaction ID before anything is submitted, pass `onPrepared`. It runs after the
+wallet API prepares the transaction and before it is executed; throwing from it stops the
+transaction.
+
+```typescript
+import { parseUnits } from 'viem'
+
+const tx = await omsWallet.wallet.sendTransaction({
+  network: Networks.amoy,
+  to: '0x1111111111111111111111111111111111111111',
+  value: parseUnits('0.001', 18),
+  expectedWallet: '0x9999999999999999999999999999999999999999',
+  onPrepared: (txnId) => saveTxnId(txnId),
+})
+```
+
 If the wallet API returns fee options, pass a selector to choose one. The
 selector receives `FeeOptionWithBalance` values. For Ethereum fees, `balance`
 contains the matching `TokenBalance` when available. For Ethereum, Solana, and Tron fees,
@@ -1126,6 +1152,29 @@ Runnable examples live in the
 
 See the [repository README](https://github.com/0xPolygon/oms-wallet-typescript-sdk#readme) for how
 to run them.
+
+## Extensions
+
+`extend` returns a new `OMSWallet` with the members an extension adds, without changing the original;
+`wallet` and `indexer` stay the same objects. Extensions cannot add `wallet`, `indexer` or `extend`,
+or replace a member an earlier extension added.
+
+```typescript
+import { OMSWallet } from '@polygonlabs/oms-wallet'
+import { privacy } from '@polygonlabs/oms-wallet-privacy'
+
+const oms = new OMSWallet({ publishableKey }).extend(privacy())
+await oms.privacy.getBalances()
+```
+
+An extension is a function `(oms, context) => members`. `context.signReservedMessage` signs messages
+that start with `OMS Wallet reserved message:`, which `signMessage` refuses.
+
+## Private balances
+
+[`@polygonlabs/oms-wallet-privacy`](https://www.npmjs.com/package/@polygonlabs/oms-wallet-privacy)
+adds `oms.privacy`: shield tokens into a private balance, unshield them, and send privately. See its
+README.
 
 ## Wagmi connector
 

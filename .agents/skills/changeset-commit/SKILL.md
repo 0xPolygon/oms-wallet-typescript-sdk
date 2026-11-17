@@ -20,11 +20,12 @@ procedure.
 
 ## This repo is a monorepo with a fixed version group
 
-Two packages are published — **`@polygonlabs/oms-wallet`** (the SDK) and
-**`@polygonlabs/oms-wallet-wagmi-connector`**. They are a `fixed` group in
-`.changeset/config.json`, so **any release bumps both to the same version**,
-regardless of which one changed. When you author a changeset you only need to
-list **one** package (either one) — the fixed group carries the other along.
+Three packages are published — **`@polygonlabs/oms-wallet`** (the SDK),
+**`@polygonlabs/oms-wallet-wagmi-connector`** and **`@polygonlabs/oms-wallet-privacy`**.
+They are a `fixed` group in `.changeset/config.json`, so **any release bumps all of
+them to the same version**, regardless of which one changed. When you author a
+changeset you only need to list **one** package — the fixed group carries the
+others along.
 
 ## What needs a changeset
 

@@ -53,12 +53,18 @@ Repo-local agent skills live under `.agents/skills/` (agent-neutral); `.claude/s
 - `packages/oms-wallet/src/utils/` and `packages/oms-wallet/src/types/`: Shared SDK helpers and exported type definitions.
 - `packages/oms-wallet-wagmi-connector/`: ESM-only `@polygonlabs/oms-wallet-wagmi-connector` package for using an
   active OMS Wallet SDK instance as a wagmi connector.
+- `packages/oms-wallet-privacy/`: ESM-only `@polygonlabs/oms-wallet-privacy` package. An `OMSWallet.extend`
+  extension that adds `oms.privacy` (shield, unshield, private send, recover) over a third-party privacy
+  provider. Only `src/internal/hinkal/` may import the provider or ethers (ESLint `no-restricted-imports`);
+  everything else uses the internal `PrivacyBackend` interface, and `scripts/check-public-api.mjs` (run by its
+  build) fails if the public declarations name the provider or import anything but the SDK and viem.
 - `packages/oms-wallet/tests/`: Vitest coverage for wallet, OIDC, transactions, signing, access, indexer, and errors.
 - `packages/oms-wallet/type-tests/`: Compile-time API tests.
 - `examples/react/`: Vite React demo that consumes the SDK through the workspace.
 - `examples/custom-google-redirect/`: Local-only Vite React demo for Google as a custom OIDC provider with a localhost redirect URI.
 - `examples/custom-auth0-id-token/`: Local-only Vite React demo that passes an Auth0-issued ID token to OMS Wallet.
 - `examples/wagmi/`: Vite React wagmi demo using the OMS Wallet connector and MetaMask connector.
+- `examples/privacy/`: Vite React demo of `@polygonlabs/oms-wallet-privacy` (shield, private send, unshield, recover). Mainnets only; actions move real funds.
 - `examples/trails-actions/`: Vite React demo for Trails swap, Earn deposit, and Earn withdrawal flows.
 - `examples/node/`: Interactive Node OTP/signing example.
 - `examples/node-contract-deploy-example/`: Interactive Node ERC-20 deployment example.
@@ -76,15 +82,15 @@ Repo-local agent skills live under `.agents/skills/` (agent-neutral); `.claude/s
 - `packages/oms-wallet/scripts/public-api-baseline.txt`: Committed public declaration baseline compared by `check-public-api.cjs`.
 - `scripts/prepare-npm-snapshot.mjs`: CI-only helper that validates the snapshot dist-tag and prepares the fixed package group for snapshot (prerelease) versioning; tested by `scripts/prepare-npm-snapshot.test.mjs`.
 - `scripts/stage-npm-packages.mjs`: CI-only staged-publishing helper that validates the fixed package set, packs with pnpm, checks packed manifests, and stages tarballs with npm OIDC.
-- `.changeset/`: changesets config. The `fixed` group keeps `@polygonlabs/oms-wallet` and `@polygonlabs/oms-wallet-wagmi-connector` on the same version; releases are automated by the changesets release workflow.
+- `.changeset/`: changesets config. The `fixed` group keeps `@polygonlabs/oms-wallet`, `@polygonlabs/oms-wallet-wagmi-connector` and `@polygonlabs/oms-wallet-privacy` on the same version; releases are automated by the changesets release workflow.
 
 ## Commands
 
 - `pnpm install --frozen-lockfile`: Install dependencies in CI-compatible mode.
-- `pnpm exec changeset`: Add a changeset describing a change. Any PR that changes files inside a workspace package needs one (use `pnpm exec changeset add --empty` for changes with no consumer impact). The `fixed` group versions both publishable packages together.
+- `pnpm exec changeset`: Add a changeset describing a change. Any PR that changes files inside a workspace package needs one (use `pnpm exec changeset add --empty` for changes with no consumer impact). The `fixed` group versions all publishable packages together.
 - `pnpm --filter @polygonlabs/oms-wallet check:public-api`: Compare built declarations with the committed baseline and reject generated WaaS type leaks.
-- `pnpm build`: Build both packages (dual CJS+ESM) and every example — the consumer-compatibility gate (examples resolve the workspace from source). Delegates via `pnpm -r --if-present run build`.
-- `pnpm check:exports`: Run `publint` against both publishable packages to validate their `exports`/`main`/`module`/`types` resolve and are correctly formatted for npm consumers.
+- `pnpm build`: Build the packages (the SDK as dual CJS+ESM) and every example — the consumer-compatibility gate (examples resolve the workspace from source). Delegates via `pnpm -r --if-present run build`.
+- `pnpm check:exports`: Run `publint` against the publishable packages to validate their `exports`/`main`/`module`/`types` resolve and are correctly formatted for npm consumers.
 - `pnpm lint`: Run eslint, markdownlint, prettier `--check`, and the typecheck in parallel. CI runs this.
 - `pnpm format`: Auto-fix markdown, eslint, and prettier issues.
 - `pnpm run typecheck` (or `pnpm --filter <pkg> typecheck`): Typecheck via `tsc -b` (source + SDK type-tests).
@@ -96,10 +102,13 @@ Repo-local agent skills live under `.agents/skills/` (agent-neutral); `.claude/s
 - `pnpm --filter @polygonlabs/oms-wallet test:api-generator`: Run the `API.md` generator's unit tests.
 - `pnpm --filter @polygonlabs/oms-wallet-wagmi-connector build`: Build the wagmi connector package.
 - `pnpm --filter @polygonlabs/oms-wallet-wagmi-connector test`: Run the wagmi connector package tests.
+- `pnpm --filter @polygonlabs/oms-wallet-privacy build`: Build the privacy package and check its public declarations for provider leaks.
+- `pnpm --filter @polygonlabs/oms-wallet-privacy test`: Run the privacy package tests (fake backend; no network).
 - `pnpm build:example`: Build the React example for Vite/GitHub Pages output (it resolves the SDK from source, so no prior `pnpm build` is needed).
 - `pnpm build:custom-google-redirect-example`: Build the local-only custom Google redirect React example.
 - `pnpm build:custom-auth0-id-token-example`: Build the local-only Auth0 ID-token React example.
 - `pnpm build:trails-actions-example`: Build the Trails Actions React example.
+- `pnpm build:privacy-example`: Build the privacy React example.
 - `pnpm build:wagmi-example`: Build the wagmi React example.
 - `pnpm build:node-example`: Typecheck the Node example.
 - `pnpm build:node-contract-deploy-example`: Typecheck the Node contract deploy example.
@@ -109,6 +118,7 @@ Repo-local agent skills live under `.agents/skills/` (agent-neutral); `.claude/s
 - `pnpm dev:custom-google-redirect-example`: Start the local custom Google redirect React demo dev server on port `5173`.
 - `pnpm dev:custom-auth0-id-token-example`: Start the local Auth0 ID-token React demo dev server on port `5173`.
 - `pnpm dev:trails-actions-example`: Start the Trails Actions React demo dev server.
+- `pnpm dev:privacy-example`: Start the privacy React demo dev server on port `5173`.
 - `pnpm dev:wagmi-example`: Start the wagmi React demo dev server.
 - `pnpm dev:node-example`: Run the interactive Node OTP example.
 - `pnpm dev:node-contract-deploy-example`: Run the interactive Node contract deploy example.
@@ -128,15 +138,16 @@ example code.
 3. Run `pnpm run typecheck` (`tsc -b`) before handing off source or public type changes.
 4. Run `pnpm --filter @polygonlabs/oms-wallet test:types` directly when changing public generics, overloads, exported types, OIDC provider typing, or `packages/oms-wallet/src/index.ts`.
 5. Run `pnpm --filter @polygonlabs/oms-wallet-wagmi-connector test` and `pnpm --filter @polygonlabs/oms-wallet-wagmi-connector build` when changing the wagmi connector package.
-6. Run `pnpm build:node-example` when SDK exports, module resolution, or Node example usage changes.
-7. Run `pnpm build` before release/build-output work or package entrypoint changes, and `pnpm check:exports` (publint) after it when entrypoints, `exports`, or the `files` set change. Example builds do not require a prior `pnpm build` — examples resolve the SDK from source via the `@polygonlabs/source` condition.
-8. Run `pnpm --filter @polygonlabs/oms-wallet check:public-api` after `pnpm build` when changing SDK exports or public declarations.
-9. Run `pnpm build:example` when changing the React example, Vite config, public browser API shape, or Pages deployment assumptions.
-10. Run `pnpm build:custom-google-redirect-example` when changing the custom Google redirect example, OIDC redirect provider configuration, or browser callback assumptions.
-11. Run `pnpm build:custom-auth0-id-token-example` when changing the Auth0 ID-token example, OIDC ID-token parameters, or Auth0 browser callback assumptions.
-12. Run `pnpm build:trails-actions-example` when changing the Trails Actions example, shared browser example utilities, or Pages deployment assumptions.
-13. Run `pnpm build:wagmi-example` when changing the wagmi example, connector browser usage, or Pages deployment assumptions.
-14. Run `pnpm build:node-contract-deploy-example` when SDK exports, transaction APIs, module resolution, or the Node contract deploy example changes.
+6. Run `pnpm --filter @polygonlabs/oms-wallet-privacy test`, `pnpm --filter @polygonlabs/oms-wallet-privacy build` and `pnpm build:privacy-example` when changing the privacy package or the core extension, reserved-message, `expectedWallet` or `onPrepared` behaviour it relies on.
+7. Run `pnpm build:node-example` when SDK exports, module resolution, or Node example usage changes.
+8. Run `pnpm build` before release/build-output work or package entrypoint changes, and `pnpm check:exports` (publint) after it when entrypoints, `exports`, or the `files` set change. Example builds do not require a prior `pnpm build` — examples resolve the SDK from source via the `@polygonlabs/source` condition.
+9. Run `pnpm --filter @polygonlabs/oms-wallet check:public-api` after `pnpm build` when changing SDK exports or public declarations.
+10. Run `pnpm build:example` when changing the React example, Vite config, public browser API shape, or Pages deployment assumptions.
+11. Run `pnpm build:custom-google-redirect-example` when changing the custom Google redirect example, OIDC redirect provider configuration, or browser callback assumptions.
+12. Run `pnpm build:custom-auth0-id-token-example` when changing the Auth0 ID-token example, OIDC ID-token parameters, or Auth0 browser callback assumptions.
+13. Run `pnpm build:trails-actions-example` when changing the Trails Actions example, shared browser example utilities, or Pages deployment assumptions.
+14. Run `pnpm build:wagmi-example` when changing the wagmi example, connector browser usage, or Pages deployment assumptions.
+15. Run `pnpm build:node-contract-deploy-example` when SDK exports, transaction APIs, module resolution, or the Node contract deploy example changes.
 
 ## Coding and Architecture Rules
 
@@ -147,7 +158,7 @@ example code.
 - Preserve typed SDK error classes and `toOMSWalletError` behavior when wrapping network, generated-client, validation, session, and transaction-status failures.
 - Keep supported network metadata and chain ID lookup going through `packages/oms-wallet/src/networks.ts`, `Networks`, `findNetworkById`, and `findNetworkByName` instead of ad hoc conversion.
 - `pnpm lint` (eslint, markdownlint, prettier, and `tsc -b`) is the enforced style gate and runs in CI; `pnpm format` applies fixes. Run them before handoff, but avoid broad formatting churn in files you do not otherwise touch and match the local file style.
-- **Build-free workspace consumption.** Both `@polygonlabs/oms-wallet` and `@polygonlabs/oms-wallet-wagmi-connector` expose their TypeScript source through the `@polygonlabs/source` export condition (alongside the compiled `dist/` targets), and each package's `publishConfig.exports` omits that condition so published npm packages expose only `dist/`. Workspace consumers resolve dependencies from source, not a built `dist/`:
+- **Build-free workspace consumption.** `@polygonlabs/oms-wallet`, `@polygonlabs/oms-wallet-wagmi-connector` and `@polygonlabs/oms-wallet-privacy` expose their TypeScript source through the `@polygonlabs/source` export condition (alongside the compiled `dist/` targets), and each package's `publishConfig.exports` omits that condition so published npm packages expose only `dist/`. Workspace consumers resolve dependencies from source, not a built `dist/`:
   - **tsc** — the consumer's `tsconfig.lib.json` (connector) or `tsconfig.json` (examples) sets `customConditions: ["@polygonlabs/source"]`. This is why the connector no longer rebuilds the SDK first, and the examples no longer rebuild the connector — **do not reintroduce a `pnpm --dir ../oms-wallet build` / `pnpm --filter …connector build &&` prefix.**
   - **Vitest** — `ssr.resolve.conditions: ["@polygonlabs/source"]`.
   - **Vite (browser examples)** — `resolve.conditions: ["@polygonlabs/source", ...defaultClientConditions]`, importing `defaultClientConditions` from `vite`. rolldown-vite replaces rather than appends `resolve.conditions`, so the defaults must be preserved alongside the source condition; spreading Vite's exported defaults keeps the mode-sensitive `development`/`production` condition (a hardcoded list drops it, so dev builds get production bundles of deps like Lit).
@@ -156,7 +167,7 @@ example code.
 
 ## Example App Styling
 
-- The browser examples (`examples/react`, `examples/custom-google-redirect`, `examples/custom-auth0-id-token`, `examples/wagmi`, `examples/trails-actions`) share one set of design tokens in `examples/shared/oms-tokens.css`, mirrored from `oms-sdk-design-system`'s `omsTokens`. Each example's `styles.css` imports `examples/shared/oms-example-base.css` (via `@import url('../../shared/oms-example-base.css')`), which in turn imports `oms-tokens.css`.
+- The browser examples (`examples/react`, `examples/custom-google-redirect`, `examples/custom-auth0-id-token`, `examples/wagmi`, `examples/trails-actions`, `examples/privacy`) share one set of design tokens in `examples/shared/oms-tokens.css`, mirrored from `oms-sdk-design-system`'s `omsTokens`. Each example's `styles.css` imports `examples/shared/oms-example-base.css` (via `@import url('../../shared/oms-example-base.css')`), which in turn imports `oms-tokens.css`.
 - Reference the `--oms-*` CSS variables (colors, radius, typography, focus rings) for any example styling. Do not hardcode new hex/radius values in the per-app `styles.css` files; if a token is missing, add it to `examples/shared/oms-tokens.css` so all examples stay in sync. (The `.burn-button` fire gradient in the React example is an intentional decorative-effect exception, not a token.)
 - When tokens change in `oms-sdk-design-system`, update `examples/shared/oms-tokens.css` to match rather than editing each example.
 
@@ -184,7 +195,7 @@ execution commands.
 - The generated WaaS header records the upstream schema path and generation command. This repo does not currently include that schema; if regenerating the client, document the schema source and exact command used.
 - The wagmi connector's SDK peer dependency is intentionally `workspace:^` in source and its SDK dev dependency is intentionally `workspace:*`. Release with pnpm so the published peer gets the compatible release range; do not hand-edit that peer to a literal version.
 - `pnpm-lock.yaml` is the dependency lockfile. Update it through pnpm, not by hand.
-- `dist/`, `examples/react/dist/`, `examples/custom-google-redirect/dist/`, `examples/custom-auth0-id-token/dist/`, `examples/wagmi/dist/`, `examples/trails-actions/dist/`, and `*.tsbuildinfo` files are build outputs and should not be edited as source.
+- `dist/`, `examples/react/dist/`, `examples/custom-google-redirect/dist/`, `examples/custom-auth0-id-token/dist/`, `examples/wagmi/dist/`, `examples/trails-actions/dist/`, `examples/privacy/dist/`, and `*.tsbuildinfo` files are build outputs and should not be edited as source.
 
 ## Security and Configuration
 

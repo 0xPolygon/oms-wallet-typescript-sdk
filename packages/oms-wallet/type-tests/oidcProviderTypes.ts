@@ -705,3 +705,26 @@ function createClient(params: { publishableKey: string }) {
 void createClient({
   publishableKey: 'pk_dev_sdbx_project_key'
 });
+
+const extendedOms = new OMSWallet({ publishableKey: 'pk_dev_sdbx_project_key' })
+  .extend((_oms, context) => ({
+    first: 1 as const,
+    sign: () => context.signReservedMessage({ network: Networks.polygon, message: 'm' })
+  }))
+  .extend(() => ({ second: 'two' as const }));
+const extendedFirst: 1 = extendedOms.first;
+const extendedSecond: 'two' = extendedOms.second;
+const extendedSign: Promise<string> = extendedOms.sign();
+const extendedStillOms: OMSWallet = extendedOms;
+void [extendedFirst, extendedSecond, extendedSign, extendedStillOms];
+// @ts-expect-error extensions cannot add `wallet`.
+new OMSWallet({ publishableKey: 'pk_dev_sdbx_project_key' }).extend(() => ({ wallet: 1 }));
+// @ts-expect-error extensions cannot add `extend`.
+new OMSWallet({ publishableKey: 'pk_dev_sdbx_project_key' }).extend(() => ({ extend: 1 }));
+void new OMSWallet({ publishableKey: 'pk_dev_sdbx_project_key' }).wallet.sendTransaction({
+  network: Networks.polygon,
+  to: '0x1111111111111111111111111111111111111111',
+  value: 1n,
+  expectedWallet: '0x1111111111111111111111111111111111111111',
+  onPrepared: (txnId: string) => void txnId
+});

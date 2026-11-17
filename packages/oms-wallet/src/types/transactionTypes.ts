@@ -79,6 +79,17 @@ export type SendTransactionBase = {
   selectFeeOption?: FeeOptionSelector;
   waitForStatus?: boolean;
   statusPolling?: TransactionStatusPollingOptions;
+  /**
+   * Fails with `OMSWalletSessionError` unless this is the active wallet when the call starts. The
+   * transaction is prepared and executed for that wallet even if another one becomes active
+   * meanwhile.
+   */
+  expectedWallet?: Address;
+  /**
+   * Called with the transaction ID once WaaS has prepared it and before it is executed, so the ID
+   * can be stored before anything is submitted. Throwing or rejecting stops the transaction.
+   */
+  onPrepared?: (txnId: string) => void | Promise<void>;
 };
 
 export type SendNativeTransactionParams = SendTransactionBase & {

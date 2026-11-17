@@ -1,0 +1,25 @@
+{
+  "name": "privacy-example",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "vite",
+    "build": "tsc -b && vite build",
+    "preview": "vite preview"
+  },
+  "dependencies": {
+    "@polygonlabs/oms-wallet": "workspace:*",
+    "@polygonlabs/oms-wallet-privacy": "workspace:*",
+    "react": "19.3.1",
+    "react-dom": "19.3.1",
+    "viem": "^2.55.0"
+  },
+  "devDependencies": {
+    "@types/react": "19.3.0",
+    "@types/react-dom": "19.3.0",
+    "@vitejs/plugin-react": "^6.0.1",
+    "typescript": "^5.9.3",
+    "vite": "^8.0.10"
+  }
+}
