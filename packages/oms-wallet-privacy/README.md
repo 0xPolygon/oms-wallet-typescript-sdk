@@ -88,6 +88,10 @@ nothing was sent. Otherwise, store the IDs and reconcile: check each with
 A failed or timed-out call never re-sends a deposit on its own. `cause` is set only to an
 `OMSWalletError` from the wallet; errors from the privacy service are not forwarded.
 
+## API reference
+
+See [API.md](./API.md) for every public function and type.
+
 ## How it works and what it trusts
 
 - **Keys.** The private balance's keys are derived from the wallet's signature over a fixed message

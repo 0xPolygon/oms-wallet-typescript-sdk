@@ -9,6 +9,7 @@
   "files": [
     "dist",
     "README.md",
+    "API.md",
     "CHANGELOG.md"
   ],
   "exports": {
@@ -45,6 +46,11 @@
     "typecheck": "tsc -b",
     "build": "pnpm clean && tsc -b tsconfig.lib.json && pnpm check:public-api",
     "check:public-api": "node scripts/check-public-api.mjs",
+    "generate:api": "pnpm build && pnpm generate:api:built",
+    "generate:api:built": "API_DOCS_PROJECT_ROOT=. API_DOCS_DECLARATION_ENTRY=dist/index.d.ts API_DOCS_CONFIG=scripts/api-docs.config.json node ../oms-wallet/scripts/generate-api-docs.cjs",
+    "check:api": "pnpm build && pnpm check:api:built",
+    "check:api:built": "pnpm generate:api:built --check",
+    "codegen-drift-check": "pnpm run build && pnpm run check:api:built",
     "prepack": "pnpm build",
     "prepublishOnly": "pnpm build && pnpm test",
     "test": "vitest run",

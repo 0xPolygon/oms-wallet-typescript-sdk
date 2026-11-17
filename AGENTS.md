@@ -104,6 +104,7 @@ Repo-local agent skills live under `.agents/skills/` (agent-neutral); `.claude/s
 - `pnpm --filter @polygonlabs/oms-wallet-wagmi-connector test`: Run the wagmi connector package tests.
 - `pnpm --filter @polygonlabs/oms-wallet-privacy build`: Build the privacy package and check its public declarations for provider leaks.
 - `pnpm --filter @polygonlabs/oms-wallet-privacy test`: Run the privacy package tests (fake backend; no network).
+- `pnpm --filter @polygonlabs/oms-wallet-privacy generate:api`: Rebuild the privacy package and regenerate its `API.md` with the SDK's generator; grouping comes from its `scripts/api-docs.config.json`. `check:api` verifies it is current (run by its `codegen-drift-check`).
 - `pnpm build:example`: Build the React example for Vite/GitHub Pages output (it resolves the SDK from source, so no prior `pnpm build` is needed).
 - `pnpm build:custom-google-redirect-example`: Build the local-only custom Google redirect React example.
 - `pnpm build:custom-auth0-id-token-example`: Build the local-only Auth0 ID-token React example.
@@ -230,6 +231,7 @@ execution commands.
 
 | When this changes… | Also update… |
 |---|---|
+| Public API exported through `packages/oms-wallet-privacy/src/index.ts` | `packages/oms-wallet-privacy/API.md` (generated: `pnpm --filter @polygonlabs/oms-wallet-privacy generate:api`), its `scripts/api-docs.config.json` when the surface changes, `packages/oms-wallet-privacy/README.md` |
 | Public API exported through `packages/oms-wallet/src/index.ts` or exported public types | `packages/oms-wallet/API.md` (generated: run `pnpm --filter @polygonlabs/oms-wallet generate:api`, do not hand-edit), `packages/oms-wallet/scripts/public-api-baseline.txt` and `api-docs.config.json` when the surface or grouping changes, `packages/oms-wallet/README.md`, `packages/oms-wallet/type-tests/oidcProviderTypes.ts` |
 | Test commands (`package.json` scripts) | `TESTING.md`, `.github/workflows/ci-trigger.yml`, `AGENTS.md` Commands section |
 | Node or pnpm version | `.nvmrc`, `package.json#packageManager`, `.github/workflows/*.yml` |
