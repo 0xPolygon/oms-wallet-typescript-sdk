@@ -22,6 +22,7 @@ import type {
 
 import { OMSWalletPrivacyError } from './errors.js';
 import { PolicyViolation } from './guard.js';
+import { requireActive } from './session.js';
 
 type DepositGuard = ReturnType<typeof createDepositGuard>;
 
@@ -101,12 +102,20 @@ export class DepositRun {
 
     let response: SendTransactionResponse;
     try {
+      requireActive(this.oms, wallet, this.params.operation);
+    } catch {
+      throw this.error({
+        code: 'OMS_PRIVACY_WALLET_CHANGED',
+        stage: step,
+        message: 'The active wallet changed.'
+      });
+    }
+    try {
       response = await this.oms.wallet.sendTransaction({
         network,
         to: call.to,
         data: call.data,
         value: call.value,
-        expectedWallet: wallet,
         selectFeeOption,
         waitForStatus: true,
         onPrepared: (id) => {

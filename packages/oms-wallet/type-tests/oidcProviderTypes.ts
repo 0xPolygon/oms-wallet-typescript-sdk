@@ -725,6 +725,5 @@ void new OMSWallet({ publishableKey: 'pk_dev_sdbx_project_key' }).wallet.sendTra
   network: Networks.polygon,
   to: '0x1111111111111111111111111111111111111111',
   value: 1n,
-  expectedWallet: '0x1111111111111111111111111111111111111111',
   onPrepared: (txnId: string) => void txnId
 });

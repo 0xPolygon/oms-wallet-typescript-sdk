@@ -138,7 +138,7 @@ example code.
 3. Run `pnpm run typecheck` (`tsc -b`) before handing off source or public type changes.
 4. Run `pnpm --filter @polygonlabs/oms-wallet test:types` directly when changing public generics, overloads, exported types, OIDC provider typing, or `packages/oms-wallet/src/index.ts`.
 5. Run `pnpm --filter @polygonlabs/oms-wallet-wagmi-connector test` and `pnpm --filter @polygonlabs/oms-wallet-wagmi-connector build` when changing the wagmi connector package.
-6. Run `pnpm --filter @polygonlabs/oms-wallet-privacy test`, `pnpm --filter @polygonlabs/oms-wallet-privacy build` and `pnpm build:privacy-example` when changing the privacy package or the core extension, reserved-message, `expectedWallet` or `onPrepared` behaviour it relies on.
+6. Run `pnpm --filter @polygonlabs/oms-wallet-privacy test`, `pnpm --filter @polygonlabs/oms-wallet-privacy build` and `pnpm build:privacy-example` when changing the privacy package or the core extension, reserved-message, call-time wallet binding or `onPrepared` behaviour it relies on.
 7. Run `pnpm build:node-example` when SDK exports, module resolution, or Node example usage changes.
 8. Run `pnpm build` before release/build-output work or package entrypoint changes, and `pnpm check:exports` (publint) after it when entrypoints, `exports`, or the `files` set change. Example builds do not require a prior `pnpm build` — examples resolve the SDK from source via the `@polygonlabs/source` condition.
 9. Run `pnpm --filter @polygonlabs/oms-wallet check:public-api` after `pnpm build` when changing SDK exports or public declarations.

@@ -1207,7 +1207,6 @@ getTransactionStatus(params: {
 export interface SignMessageParams {
     network: Network;
     message: string;
-    expectedWallet?: Address;
 }
 ```
 
@@ -1225,7 +1224,6 @@ export interface SignSolanaMessageParams {
 export interface SignTypedDataParams {
     network: Network;
     typedData: unknown;
-    expectedWallet?: Address;
 }
 ```
 
@@ -1317,7 +1315,6 @@ export type SendTransactionBase = {
     selectFeeOption?: FeeOptionSelector;
     waitForStatus?: boolean;
     statusPolling?: TransactionStatusPollingOptions;
-    expectedWallet?: Address;
     onPrepared?: (txnId: string) => void | Promise<void>;
 };
 ```

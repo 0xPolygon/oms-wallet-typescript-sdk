@@ -43,8 +43,7 @@ describe('setup', () => {
     expect(signReservedMessage).toHaveBeenCalledTimes(1);
     expect(signReservedMessage).toHaveBeenCalledWith({
       network: Networks.polygon,
-      message: KEY_MESSAGE,
-      expectedWallet: WALLET
+      message: KEY_MESSAGE
     });
     expect(createBackend).toHaveBeenCalledTimes(1);
   });
@@ -89,8 +88,7 @@ describe('setup', () => {
       expect(params).toMatchObject({
         network: Networks.polygon,
         to: WALLET,
-        data: '0x',
-        expectedWallet: WALLET
+        data: '0x'
       });
       await params.onPrepared?.('txn-deploy');
       return {
@@ -102,12 +100,31 @@ describe('setup', () => {
     });
     signReservedMessage.mockImplementationOnce(async (params) => {
       order.push('sign');
-      return `signature:${params.expectedWallet}`;
+      void params;
+      return `signature:${wallet.activeWallet?.address}`;
     });
 
     await privacy.getBalances();
 
     expect(order).toEqual(['deploy', 'sign']);
+  });
+
+  it('signs no keys when the wallet changes during setup', async () => {
+    const { privacy, wallet, signReservedMessage } = setup({ deployed: [false, true] });
+    wallet.sendTransaction.mockImplementationOnce(async () => {
+      wallet.activeWallet = { ...wallet.activeWallet!, address: OTHER_WALLET };
+      return {
+        txnId: 'txn-deploy',
+        status: 'executed',
+        txnHash: '0x01',
+        statusResolution: 'resolved'
+      };
+    });
+
+    const error = await rejection(privacy.getBalances());
+
+    expect(error.code).toBe('OMS_PRIVACY_WALLET_CHANGED');
+    expect(signReservedMessage).not.toHaveBeenCalled();
   });
 
   it('does not deploy an already deployed wallet', async () => {
@@ -294,8 +311,8 @@ describe('shield', () => {
       amount: 100n
     });
     expect(calls[2]).toMatchObject({ to: CONTRACTS.pool, value: 0n });
-    for (const call of calls)
-      expect(call).toMatchObject({ network: NETWORK, expectedWallet: WALLET });
+    for (const call of calls) expect(call).toMatchObject({ network: NETWORK });
+    expect(wallet.sent.map(({ from }) => from)).toEqual([WALLET, WALLET, WALLET]);
 
     expect(result.transactions.map((transaction) => transaction.step)).toEqual([
       'reset-approval',

@@ -27,6 +27,8 @@ export const CONTRACTS = privacyContracts(NETWORK)!;
 
 export interface SentTransaction {
   params: SendTransactionParams;
+  /** The wallet active when the call was made, which the real wallet acts for. */
+  from: Address | undefined;
   txnId: string;
 }
 
@@ -68,12 +70,10 @@ export class FakeWallet {
 
   sendTransaction = vi.fn(
     async (params: SendTransactionParams): Promise<SendTransactionResponse> => {
+      const from = this.activeWallet?.address as Address | undefined;
       const index = this.sent.length;
       const txnId = `txn-${index + 1}`;
-      if (params.expectedWallet && this.activeWallet?.address !== params.expectedWallet) {
-        throw new Error('The active wallet is not the expected wallet');
-      }
-      this.sent.push({ params, txnId });
+      this.sent.push({ params, from, txnId });
       await params.onPrepared?.(txnId);
       await params.selectFeeOption?.(this.feeOptions);
       const outcome = this.outcome(index);
@@ -235,11 +235,10 @@ export function setup(
     expect(params.keySignature).toBe(`signature:${params.address}`);
     return backend;
   });
-  const signReservedMessage = vi.fn(
-    async (params: { message: string; expectedWallet?: Address }) => {
-      return `signature:${params.expectedWallet}`;
-    }
-  );
+  // Signs for the wallet active when called, like the real wallet.
+  const signReservedMessage = vi.fn(async (_params: { network: unknown; message: string }) => {
+    return `signature:${wallet.activeWallet?.address}`;
+  });
   const context: OMSWalletExtensionContext = { signReservedMessage };
   const oms = { wallet } as unknown as OMSWallet;
   const storage = options.storage ?? new MemoryStorageManager();

@@ -89,8 +89,8 @@ export class PrivacySessions {
 
   /**
    * Runs `action` with the active wallet's backend, after any operation already running for it.
-   * `action` receives the address it is bound to; it must pass it as `expectedWallet` to every
-   * wallet call.
+   * `action` receives the address it is bound to. Wallet calls act for the wallet active when they
+   * are made, so `action` checks that address synchronously right before each one.
    */
   async run<T>(
     operation: string,
@@ -154,10 +154,10 @@ export class PrivacySessions {
 
   private async setup(address: Address): Promise<PrivacyBackend> {
     await this.ensureDeployed(address);
+    requireActive(this.oms, address, 'privacy.setup');
     const keySignature = await this.context.signReservedMessage({
       network: KEY_NETWORK,
-      message: KEY_MESSAGE,
-      expectedWallet: address
+      message: KEY_MESSAGE
     });
     const backend = await this.createBackend({
       address,
@@ -205,12 +205,12 @@ export class PrivacySessions {
         cause
       });
     let response: SendTransactionResponse;
+    requireActive(this.oms, address, 'privacy.setup');
     try {
       response = await this.oms.wallet.sendTransaction({
         network: KEY_NETWORK,
         to: address,
         data: '0x',
-        expectedWallet: address,
         waitForStatus: true,
         onPrepared: (txnId) => {
           txnIds.push(txnId);
@@ -294,4 +294,21 @@ export function walletChanged(
     txnIds,
     message: 'The active wallet changed.'
   });
+}
+
+/**
+ * Throws `OMS_PRIVACY_WALLET_CHANGED` unless `address` is the active wallet. Call it in the same
+ * synchronous step as the wallet call it guards: the wallet binds each call to the wallet active
+ * when the call is made.
+ */
+export function requireActive(
+  oms: OMSWallet,
+  address: Address,
+  operation: string,
+  txnIds?: ReadonlyArray<string>
+): void {
+  const active = oms.wallet.activeWallet;
+  if (active?.type !== 'ethereum' || active.address.toLowerCase() !== address.toLowerCase()) {
+    throw walletChanged(operation, txnIds);
+  }
 }

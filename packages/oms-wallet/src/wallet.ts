@@ -285,8 +285,6 @@ export interface SignMessageParams {
    * Wallet extensions can have them signed.
    */
   message: string;
-  /** Fails with `OMSWalletSessionError` unless this is the active wallet when the call starts. */
-  expectedWallet?: Address;
 }
 
 export interface SignSolanaMessageParams {
@@ -296,8 +294,6 @@ export interface SignSolanaMessageParams {
 export interface SignTypedDataParams {
   network: Network;
   typedData: unknown;
-  /** Fails with `OMSWalletSessionError` unless this is the active wallet when the call starts. */
-  expectedWallet?: Address;
 }
 
 export interface SignTronMessageParams {

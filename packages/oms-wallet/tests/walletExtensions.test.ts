@@ -88,47 +88,36 @@ describe('reserved messages', () => {
   });
 });
 
-describe('expectedWallet', () => {
-  it('signs when the active wallet is the expected one', async () => {
+describe('wallet binding', () => {
+  it('fails, without a request, when another wallet becomes active while the call waits', async () => {
+    const fetchMock = signingFetch();
+    const calls = [
+      (wallet: ReturnType<typeof createWalletWithSession>) =>
+        wallet.signMessage({ network: Networks.polygon, message: 'hello' }),
+      (wallet: ReturnType<typeof createWalletWithSession>) =>
+        wallet.signTypedData({ network: Networks.polygon, typedData: {} }),
+      (wallet: ReturnType<typeof createWalletWithSession>) =>
+        wallet.sendTransaction({ network: Networks.polygon, to: otherAddress, value: 1n })
+    ];
+
+    for (const call of calls) {
+      const wallet = createWalletWithSession(walletAddress);
+      const pending = call(wallet);
+      // Switch before the call's session check finishes.
+      (wallet as any).activeWalletAccount = testWalletAccount('other-id', otherAddress);
+      await expect(pending).rejects.toThrow(OMSWalletSessionError);
+      await expect(pending).rejects.toThrow('Active wallet session changed');
+    }
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
+  it('signs for the wallet active when the call was made', async () => {
     signingFetch();
     const wallet = createWalletWithSession(walletAddress);
 
-    await expect(
-      wallet.signMessage({
-        network: Networks.polygon,
-        message: 'hello',
-        expectedWallet: walletAddress.toUpperCase().replace('0X', '0x') as `0x${string}`
-      })
-    ).resolves.toBe('signed:wallet-id:hello');
-  });
-
-  it('fails before any request when another wallet is active', async () => {
-    const fetchMock = signingFetch();
-    const wallet = createWalletWithSession(walletAddress);
-
-    await expect(
-      wallet.signMessage({
-        network: Networks.polygon,
-        message: 'hello',
-        expectedWallet: otherAddress
-      })
-    ).rejects.toThrow(OMSWalletSessionError);
-    await expect(
-      wallet.signTypedData({
-        network: Networks.polygon,
-        typedData: {},
-        expectedWallet: otherAddress
-      })
-    ).rejects.toThrow(OMSWalletSessionError);
-    await expect(
-      wallet.sendTransaction({
-        network: Networks.polygon,
-        to: otherAddress,
-        value: 1n,
-        expectedWallet: otherAddress
-      })
-    ).rejects.toThrow(OMSWalletSessionError);
-    expect(fetchMock).not.toHaveBeenCalled();
+    await expect(wallet.signMessage({ network: Networks.polygon, message: 'hello' })).resolves.toBe(
+      'signed:wallet-id:hello'
+    );
   });
 });
 

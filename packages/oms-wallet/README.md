@@ -820,10 +820,10 @@ await omsWallet.wallet.sendTransaction({
 })
 ```
 
-To make sure a transaction or signature comes from a particular wallet, pass `expectedWallet`. The
-call fails with `OMSWalletSessionError` before any request unless that wallet is active, and the
-transaction is then prepared and executed for it even if another wallet becomes active meanwhile.
-`signMessage` and `signTypedData` accept it too.
+`sendTransaction`, `signMessage` and `signTypedData` act for the wallet that is active when they
+are called. If another wallet becomes active before the request is sent, the call fails with
+`OMSWalletSessionError` instead of acting for the new wallet; once sent, the request stays bound
+to the original wallet.
 
 To store the transaction ID before anything is submitted, pass `onPrepared`. It runs after the
 wallet API prepares the transaction and before it is executed; throwing from it stops the
@@ -836,7 +836,6 @@ const tx = await omsWallet.wallet.sendTransaction({
   network: Networks.amoy,
   to: '0x1111111111111111111111111111111111111111',
   value: parseUnits('0.001', 18),
-  expectedWallet: '0x9999999999999999999999999999999999999999',
   onPrepared: (txnId) => saveTxnId(txnId),
 })
 ```

@@ -16,6 +16,6 @@ Add private balances through the new `@polygonlabs/oms-wallet-privacy` package, 
 ### `@polygonlabs/oms-wallet`
 
 - **`OMSWallet.extend(extension)`** returns an `OMSWallet` with the members an extension adds, without changing the original. New types: `OMSWalletExtension`, `OMSWalletExtensionContext`, `OMSWalletReservedMember`.
-- **`expectedWallet`** on `sendTransaction`, `signMessage` and `signTypedData` fails the call with `OMSWalletSessionError` unless that wallet is active, and binds the request to it.
+- `sendTransaction`, `signMessage` and `signTypedData` now act for the wallet that was active when they were called: if another wallet becomes active before the request is sent, they fail with `OMSWalletSessionError` instead of acting for the new wallet.
 - **`onPrepared(txnId)`** on `sendTransaction` runs after the transaction is prepared and before it is executed; throwing stops it.
 - `signMessage` now refuses messages that start with `OMS Wallet reserved message:` (as text or hex) with `OMS_VALIDATION_ERROR`. Extensions sign them through `context.signReservedMessage`.

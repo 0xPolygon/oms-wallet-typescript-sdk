@@ -1618,10 +1618,12 @@ export class WalletClientImpl implements WalletClient {
 
   private async signEthereumMessage(params: SignMessageParams): Promise<string> {
     return this.runOperation(WalletOperation.signMessage, async () => {
+      // Read before any await: the call acts for the wallet active when it was made.
+      const walletId = this.walletId;
       await this.requireActiveEthereumSession(WalletOperation.signMessage);
       const request: SignMessageRequest = {
         network: params.network.id.toString(),
-        walletId: this.expectedWalletId(params.expectedWallet, WalletOperation.signMessage),
+        walletId: this.requireCallWallet(walletId, WalletOperation.signMessage),
         message: params.message
       };
       const response = await this.client.signMessage(request);
@@ -1644,10 +1646,12 @@ export class WalletClientImpl implements WalletClient {
 
   async signTypedData(params: SignTypedDataParams): Promise<string> {
     return this.runOperation(WalletOperation.signTypedData, async () => {
+      // Read before any await: the call acts for the wallet active when it was made.
+      const walletId = this.walletId;
       await this.requireActiveEthereumSession(WalletOperation.signTypedData);
       const request: SignTypedDataRequest = {
         network: params.network.id.toString(),
-        walletId: this.expectedWalletId(params.expectedWallet, WalletOperation.signTypedData),
+        walletId: this.requireCallWallet(walletId, WalletOperation.signTypedData),
         typedData: normalizeJsonBigInts(params.typedData)
       };
       const response = await this.client.signTypedData(request);
@@ -1785,13 +1789,15 @@ export class WalletClientImpl implements WalletClient {
   >(params: SendContractTransactionParams<abi, functionName>): Promise<SendTransactionResponse>;
   async sendTransaction(params: SendTransactionParams): Promise<SendTransactionResponse> {
     return this.runOperation(WalletOperation.sendTransaction, async () => {
+      // Read before any await: the call acts for the wallet active when it was made.
+      const walletId = this.walletId;
       await this.requireActiveEthereumSession(WalletOperation.sendTransaction);
       const data =
         'abi' in params ? encodeFunctionData(params as EncodeFunctionDataParameters) : params.data;
 
       const request: PrepareEthereumTransactionRequest = {
         network: params.network.id.toString(),
-        walletId: this.expectedWalletId(params.expectedWallet, WalletOperation.sendTransaction),
+        walletId: this.requireCallWallet(walletId, WalletOperation.sendTransaction),
         to: params.to,
         value: (params.value ?? 0n).toString(),
         data,
@@ -2552,21 +2558,15 @@ export class WalletClientImpl implements WalletClient {
   }
 
   /**
-   * The active wallet's ID, after checking it is `expectedWallet` when one is given. Requests carry
-   * this ID, so WaaS acts on that wallet even if another one becomes active while they run.
+   * `walletId`, the wallet that was active when the call was made, if it is still active. A call
+   * never acts for a wallet that became active while it waited; requests carry this ID, so WaaS
+   * acts on that wallet even if another one becomes active later.
    */
-  private expectedWalletId(expectedWallet: string | undefined, operation: WalletOperation): string {
-    const active = this.activeWalletAccount;
-    if (
-      expectedWallet !== undefined &&
-      (active === undefined || active.address.toLowerCase() !== expectedWallet.toLowerCase())
-    ) {
-      throw new OMSWalletSessionError({
-        operation,
-        message: 'The active wallet is not the expected wallet'
-      });
+  private requireCallWallet(walletId: string, operation: WalletOperation): string {
+    if (this.walletId !== walletId) {
+      throw new OMSWalletSessionError({ operation, message: 'Active wallet session changed' });
     }
-    return this.walletId;
+    return walletId;
   }
 
   private async requireSameActiveWalletSession(
