@@ -22,8 +22,9 @@ export interface OMSWalletParams {
 export interface OMSWalletExtensionContext {
   /**
    * Signs a message that starts with `OMS Wallet reserved message:` with the active Ethereum
-   * wallet. `WalletClient.signMessage` refuses such messages, so an extension can derive keys from
-   * this signature that no other code holding the session can obtain.
+   * wallet. `WalletClient.signMessage` refuses such messages, so code that can only call
+   * `signMessage`, such as a dApp connected through wagmi, cannot obtain this signature. Any code
+   * that can call `OMSWallet.extend` can.
    */
   signReservedMessage(params: SignMessageParams): Promise<string>;
 }

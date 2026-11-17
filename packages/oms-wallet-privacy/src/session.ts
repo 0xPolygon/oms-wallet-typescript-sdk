@@ -20,7 +20,7 @@ import { privacyNetworks } from './networks.js';
 
 /**
  * Signed once per setup to derive the private-balance keys. The prefix makes OMS Wallet refuse it
- * in `signMessage`, so only this package can obtain the signature. Never change this text or the
+ * in `signMessage`, so code that can only call `signMessage` (a connected dApp) cannot obtain it. Never change this text or the
  * network it is signed on: a different signature means different keys and no access to funds.
  *
  * The wallet's signature for it changes once the wallet is deployed on that network, so keys are

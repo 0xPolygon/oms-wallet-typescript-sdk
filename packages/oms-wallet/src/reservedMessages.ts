@@ -2,9 +2,9 @@ import { hexToBytes, isHex } from 'viem';
 
 /**
  * Messages that start with this prefix can only be signed through the context `OMSWallet.extend`
- * gives an extension, never through `WalletClient.signMessage`. An extension can then derive keys
- * from such a signature without any other code holding the session (a connected dApp, for
- * example) being able to obtain the same signature.
+ * gives an extension, never through `WalletClient.signMessage`. So code that can only call
+ * `signMessage`, such as a dApp connected through wagmi, cannot obtain such a signature, and an
+ * extension can derive keys from it.
  */
 export const RESERVED_MESSAGE_PREFIX = 'OMS Wallet reserved message:';
 

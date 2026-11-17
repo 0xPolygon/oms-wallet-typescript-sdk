@@ -58,16 +58,17 @@ privacy fee.
 `shield` and `privateSend` send up to three wallet transactions: an allowance reset to 0, an approval
 of exactly `total`, and the deposit. Steps that are not needed are skipped; native-token deposits need
 no approval. Each step is reported through `onProgress`: `prepared` with its `txnId` before anything
-is submitted, and `confirmed` once it executed. Results list every transaction with its
-`networkFee`.
+is submitted, and `confirmed` once it executed. Results list every transaction, with
+its `networkFee` when one was paid (sponsored transactions have none).
 
 By default the network fee of each transaction is paid in the token being moved, and the call fails
-with `OMS_PRIVACY_NETWORK_FEE` before sending if the wallet cannot pay it on top of `total`. Pass
+with `OMS_PRIVACY_NETWORK_FEE` before the transaction executes if the wallet cannot pay it on top
+of `total`. Pass
 `selectFeeOption` to choose another fee token, and `maxNetworkFee` to cap the fee in the moved
 token.
 
-`unshield` and `recover` send no wallet transaction: the privacy service submits the withdrawal, and
-its fee is part of the quote.
+`unshield` and `recover` send no wallet transaction (apart from the one-time deployment below): the
+privacy service submits the withdrawal, and its fee is part of the quote.
 
 ### Private send delivery
 
@@ -96,11 +97,13 @@ See [API.md](./API.md) for every public function and type.
 
 - **Keys.** The private balance's keys are derived from the wallet's signature over a fixed message
   that starts with `OMS Wallet reserved message:`, signed on Polygon. OMS Wallet refuses that
-  message in `signMessage`, so only this package can obtain the signature. The keys depend on the
+  message in `signMessage`, so code that can only call `signMessage`, such as a dApp connected
+  through wagmi, cannot obtain the signature; code that can call `OMSWallet.extend` can. The keys depend on the
   wallet producing the same signature every time, and a wallet's signature changes once it is
   deployed. So the first privacy call for a wallet that is not yet deployed on Polygon deploys it
   first, with an empty transaction to itself (a Polygon network fee unless sponsored), and only then
-  derives the keys. The package also stores a fingerprint of the derived keys (in `localStorage` in
+  derives the keys. Deployment is read from public Polygon RPC endpoints; if none answers, the call
+  fails with `OMS_PRIVACY_SERVICE_ERROR`. The package also stores a fingerprint of the derived keys (in `localStorage` in
   browsers, in memory elsewhere, or in the `storage` passed to `privacy()`) and stops with
   `OMS_PRIVACY_KEY_MISMATCH` if they ever change, instead of showing an empty balance.
 - **Privacy service.** Proofs are generated remotely: the service receives the private balance's

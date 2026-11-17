@@ -463,8 +463,8 @@ const isValid = await omsWallet.wallet.isValidMessageSignature({
 
 Messages that start with `OMS Wallet reserved message:` are refused with `OMSWalletValidationError`,
 as text or hex. They are reserved for extensions, which derive keys from such signatures (see
-[Extensions](#extensions)), so no other code holding the session, such as a dApp connected through
-wagmi, can obtain them.
+[Extensions](#extensions)), so code that can only call `signMessage`, such as a dApp connected
+through wagmi, cannot obtain them.
 
 ### Sign and Verify Typed Data
 
@@ -821,9 +821,9 @@ await omsWallet.wallet.sendTransaction({
 ```
 
 `sendTransaction`, `signMessage` and `signTypedData` act for the wallet that is active when they
-are called. If another wallet becomes active before the request is sent, the call fails with
-`OMSWalletSessionError` instead of acting for the new wallet; once sent, the request stays bound
-to the original wallet.
+are called. If another wallet becomes active while the call is still checking the session, before
+any request is made, the call fails with `OMSWalletSessionError` instead of acting for the new
+wallet. Requests already made stay bound to the original wallet.
 
 To store the transaction ID before anything is submitted, pass `onPrepared`. It runs after the
 wallet API prepares the transaction and before it is executed; throwing from it stops the
@@ -1167,7 +1167,9 @@ await oms.privacy.getBalances()
 ```
 
 An extension is a function `(oms, context) => members`. `context.signReservedMessage` signs messages
-that start with `OMS Wallet reserved message:`, which `signMessage` refuses.
+that start with `OMS Wallet reserved message:`, which `signMessage` refuses. It is available to any
+code that calls `extend`, so it keeps those signatures from code that only has `signMessage`, such
+as a connected dApp, not from the app itself.
 
 ## Private balances
 
