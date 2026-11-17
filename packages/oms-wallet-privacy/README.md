@@ -60,7 +60,8 @@ of exactly `total`, and the deposit. Steps that are not needed are skipped; nati
 no approval. Each step is reported through `onProgress`: `prepared` with its `txnId` before anything
 is submitted, and `confirmed` once it executed. `onProgress` is awaited for `prepared` events, so an
 async callback can store the `txnId` durably first; if it throws or rejects, that transaction is not
-executed. Results list every transaction, with
+executed (transactions confirmed earlier in the same operation stay done; reconcile every ID in
+`txnIds`). Results list every transaction, with
 its `networkFee` when one was paid (sponsored transactions have none).
 
 By default the network fee of each transaction is paid in the token being moved, and the call fails
@@ -109,10 +110,14 @@ See [API.md](./API.md) for every public function and type.
   that depends on the wallet's own key, the wallet address and the message: the wallet key's ECDSA
   signature inside it. The package decodes that part, requires exactly one such key signature that
   alone meets the wallet's threshold, and has WaaS confirm the full signature before using it; it
-  never sends a wallet transaction to set up keys. The keys therefore only change if the wallet's
-  key itself changes. The package also stores a fingerprint of the derived keys (in `localStorage`
-  in browsers, in memory elsewhere, or in the `storage` passed to `privacy()`) and stops with
-  `OMS_PRIVACY_KEY_MISMATCH` if they ever change, instead of showing an empty balance.
+  never sends a wallet transaction to set up keys. The keys stay the same as long as WaaS keeps
+  the wallet's key and its message-signing scheme unchanged; that is verified for deployment and
+  configuration changes, and is an assumption WaaS must uphold for key rotation, recovery and
+  signer changes. The package stores a fingerprint of the derived keys (in `localStorage` in
+  browsers, in memory elsewhere, or in the `storage` passed to `privacy()`) and stops with
+  `OMS_PRIVACY_KEY_MISMATCH` if they change, instead of showing an empty balance. This only
+  detects a change where a fingerprint was stored before (the same browser or storage); on a new
+  device a changed key would show an empty private balance, and it recovers nothing.
 - **Privacy service.** Proofs are generated remotely: the service receives the private balance's
   viewing key, so it can see private balances and history. It cannot move funds: withdrawals are
   authorized by a spending key that stays on the device, and the recipient, amount and fee are part
