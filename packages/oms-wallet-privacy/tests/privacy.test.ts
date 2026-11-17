@@ -14,6 +14,7 @@ import {
   USDC,
   WALLET,
   approve,
+  signAs,
   decodeApproval,
   feeOption,
   setup
@@ -80,73 +81,42 @@ describe('setup', () => {
     ]);
   });
 
-  it('deploys an undeployed wallet on the key network before deriving keys', async () => {
-    const { privacy, wallet, signReservedMessage } = setup({ deployed: [false, false, true] });
-    const order: string[] = [];
-    wallet.sendTransaction.mockImplementationOnce(async (params) => {
-      order.push('deploy');
-      expect(params).toMatchObject({
-        network: Networks.polygon,
-        to: WALLET,
-        data: '0x'
-      });
-      await params.onPrepared?.('txn-deploy');
-      return {
-        txnId: 'txn-deploy',
-        status: 'executed',
-        txnHash: '0x01',
-        statusResolution: 'resolved'
-      };
-    });
-    signReservedMessage.mockImplementationOnce(async (params) => {
-      order.push('sign');
-      void params;
-      return `signature:${wallet.activeWallet?.address}`;
-    });
-
-    await privacy.getBalances();
-
-    expect(order).toEqual(['deploy', 'sign']);
-  });
-
-  it('signs no keys when the wallet changes during setup', async () => {
-    const { privacy, wallet, signReservedMessage } = setup({ deployed: [false, true] });
-    wallet.sendTransaction.mockImplementationOnce(async () => {
-      wallet.activeWallet = { ...wallet.activeWallet!, address: OTHER_WALLET };
-      return {
-        txnId: 'txn-deploy',
-        status: 'executed',
-        txnHash: '0x01',
-        statusResolution: 'resolved'
-      };
-    });
+  it('derives keys only from a wallet signature WaaS confirms', async () => {
+    const { privacy, wallet, createBackend } = setup();
+    wallet.signatureValid = false;
 
     const error = await rejection(privacy.getBalances());
+
+    expect(error.code).toBe('OMS_PRIVACY_KEY_MISMATCH');
+    expect(createBackend).not.toHaveBeenCalled();
+  });
+
+  it("derives no keys from another wallet's signature", async () => {
+    const { privacy, signReservedMessage, createBackend } = setup();
+    signReservedMessage.mockImplementationOnce(async (params) =>
+      signAs(OTHER_WALLET, params.message)
+    );
+
+    const error = await rejection(privacy.getBalances());
+
+    expect(error.code).toBe('OMS_PRIVACY_KEY_MISMATCH');
+    expect(createBackend).not.toHaveBeenCalled();
+  });
+
+  it('signs only for the wallet active when setup starts, and fails if it changes', async () => {
+    const { privacy, wallet, createBackend } = setup({
+      backends: [new FakeBackend(), new FakeBackend(OTHER_WALLET)]
+    });
+    const pending = privacy.getBalances();
+    wallet.activeWallet = { ...wallet.activeWallet!, address: OTHER_WALLET };
+
+    const error = await rejection(pending);
 
     expect(error.code).toBe('OMS_PRIVACY_WALLET_CHANGED');
-    expect(signReservedMessage).not.toHaveBeenCalled();
-  });
-
-  it('does not deploy an already deployed wallet', async () => {
-    const { privacy, wallet } = setup();
-
-    await privacy.getBalances();
-
-    expect(wallet.sendTransaction).not.toHaveBeenCalled();
-  });
-
-  it('derives no keys when the deployment fails', async () => {
-    const { privacy, wallet, signReservedMessage } = setup({ deployed: [false] });
-    wallet.outcome = () => ({ status: 'failed', txnHash: undefined });
-
-    const error = await rejection(privacy.getBalances());
-
-    expect(error).toMatchObject({
-      code: 'OMS_PRIVACY_TRANSACTION_FAILED',
-      stage: 'setup',
-      txnIds: ['txn-1']
-    });
-    expect(signReservedMessage).not.toHaveBeenCalled();
+    // Setup finishes in the background, for the wallet it started with.
+    await vi.waitFor(() =>
+      expect(createBackend.mock.calls.map(([params]) => params.address)).toEqual([WALLET])
+    );
   });
 
   it('requires an active Ethereum wallet', async () => {
@@ -683,5 +653,104 @@ describe('unshield, recover, balances', () => {
       { network: NETWORK, token: USDC, amount: 10n, recoverable: 5n },
       { network: Networks.base, token: zeroAddress, amount: 3n, recoverable: 0n }
     ]);
+  });
+});
+
+describe('review fixes', () => {
+  it.each(['unshield', 'recover'] as const)(
+    'stops %s when the wallet changes right before submission',
+    async (kind) => {
+      const { privacy, wallet, backend } = setup();
+      backend.balanceList = [{ chainId: NETWORK.id, token: USDC, amount: 1_000n }];
+      backend.recoverableList = [{ chainId: NETWORK.id, token: USDC, amount: 50n }];
+      const quote =
+        kind === 'unshield'
+          ? await privacy.quoteUnshield({ network: NETWORK, token: USDC, amount: 100n })
+          : undefined;
+      backend.beforeSubmitDelay = async () => {
+        wallet.activeWallet = undefined;
+      };
+
+      const error = await rejection(
+        kind === 'unshield'
+          ? privacy.unshield(quote!)
+          : privacy.recover({ network: NETWORK, token: USDC })
+      );
+
+      expect(error.code).toBe('OMS_PRIVACY_WALLET_CHANGED');
+      expect(backend.recoveredTo).toBeUndefined();
+    }
+  );
+
+  it('keeps the delivery ID when a status read fails after scheduling', async () => {
+    const { privacy, backend } = setup();
+    backend.deliveryStatus = async () => {
+      throw new Error('status service down');
+    };
+
+    const error = await rejection(
+      privacy.privateSend(
+        await privacy.quotePrivateSend({
+          network: NETWORK,
+          token: USDC,
+          amount: 100n,
+          to: RECIPIENT
+        }),
+        { waitForDelivery: true, deliveryPolling: { intervalMs: 1 } }
+      )
+    );
+
+    expect(error).toMatchObject({
+      code: 'OMS_PRIVACY_SERVICE_ERROR',
+      stage: 'delivery',
+      deliveryId: 'delivery-1',
+      txnIds: ['txn-1', 'txn-2']
+    });
+    expect(error.message).toContain('Do not send it again');
+  });
+
+  it('waits for an async onProgress before executing a prepared transaction', async () => {
+    const { privacy, wallet, backend } = setup();
+    backend.allowance = 100n;
+    const order: string[] = [];
+    wallet.outcome = () => {
+      order.push('execute');
+      return {};
+    };
+
+    await privacy.shield(
+      await privacy.quoteShield({ network: NETWORK, token: USDC, amount: 100n }),
+      {
+        onProgress: async (event) => {
+          if (event.state !== 'prepared') return;
+          await new Promise((resolve) => setTimeout(resolve, 5));
+          order.push(`saved ${event.txnId}`);
+        }
+      }
+    );
+
+    expect(order).toEqual(['saved txn-1', 'execute']);
+  });
+
+  it('does not execute when onProgress rejects for a prepared transaction', async () => {
+    const { privacy, wallet, backend } = setup();
+    backend.allowance = 100n;
+    const executed: number[] = [];
+    wallet.outcome = (index) => {
+      executed.push(index);
+      return {};
+    };
+
+    const error = await rejection(
+      privacy.shield(await privacy.quoteShield({ network: NETWORK, token: USDC, amount: 100n }), {
+        onProgress: async (event) => {
+          if (event.state === 'prepared') throw new Error('IndexedDB is full');
+        }
+      })
+    );
+
+    expect(error).toMatchObject({ code: 'OMS_PRIVACY_TRANSACTION_FAILED', txnIds: ['txn-1'] });
+    expect(error.message).toContain('not executed');
+    expect(executed).toEqual([]);
   });
 });

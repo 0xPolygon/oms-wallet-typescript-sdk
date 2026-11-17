@@ -114,8 +114,12 @@ export interface DepositOptions {
    * transaction executes.
    */
   maxNetworkFee?: bigint;
-  /** Called as each step progresses. Errors it throws are ignored. */
-  onProgress?: (event: PrivacyProgressEvent) => void;
+  /**
+   * Called as each step progresses. For `prepared` events it is awaited before the transaction
+   * executes, so an async callback can store `txnId` first; if it throws or rejects, that
+   * transaction is not executed. Errors from other events are ignored.
+   */
+  onProgress?: (event: PrivacyProgressEvent) => void | Promise<void>;
 }
 
 export interface PrivacyTransaction {

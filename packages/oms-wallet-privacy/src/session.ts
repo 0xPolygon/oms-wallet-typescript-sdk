@@ -1,11 +1,10 @@
-import type { Address } from 'viem';
+import type { Address, Hex } from 'viem';
 
 import { getAddress } from 'viem';
 
 import type {
   OMSWallet,
   OMSWalletExtensionContext,
-  SendTransactionResponse,
   StorageManager,
   WalletClient
 } from '@polygonlabs/oms-wallet';
@@ -13,18 +12,19 @@ import type {
 import { Networks, isOMSWalletError } from '@polygonlabs/oms-wallet';
 
 import type { CreateBackend, PrivacyBackend } from './backend.js';
-import type { KeyChain } from './keyChain.js';
 
 import { OMSWalletPrivacyError } from './errors.js';
+import { innerKeySignature } from './keySignature.js';
 import { privacyNetworks } from './networks.js';
 
 /**
  * Signed once per setup to derive the private-balance keys. The prefix makes OMS Wallet refuse it
- * in `signMessage`, so code that can only call `signMessage` (a connected dApp) cannot obtain it. Never change this text or the
- * network it is signed on: a different signature means different keys and no access to funds.
+ * in `signMessage`, so code that can only call `signMessage` (a connected dApp) cannot obtain it.
+ * Never change this text or the network it is signed on: a different signature means different
+ * keys and no access to funds.
  *
- * The wallet's signature for it changes once the wallet is deployed on that network, so keys are
- * only derived from a deployed wallet's signature: setup deploys the wallet there first if needed.
+ * Keys come from the wallet key's own signature inside the result, not the full signature, which
+ * changes with deployment and configuration updates (see keySignature.ts).
  */
 export const KEY_MESSAGE =
   'OMS Wallet reserved message: private balance keys v1\n\n' +
@@ -34,13 +34,10 @@ const KEY_NETWORK = Networks.polygon;
 /** Torn down after this long without an operation. */
 export const IDLE_TIMEOUT_MS = 60_000;
 
-/** How long setup waits for a just-deployed wallet to be visible over RPC. */
-const DEPLOY_VISIBLE_ATTEMPTS = 15;
-const DEPLOY_VISIBLE_INTERVAL_MS = 1_000;
-
-// v1 fingerprints could come from an undeployed wallet's signature, so they are not compared.
+// v1 and v2 fingerprints came from full wallet signatures, which can change; v3 keys come from
+// the wallet key's inner signature (see keySignature.ts), so earlier ones are not compared.
 const fingerprintKey = (address: Address) =>
-  `oms-wallet-privacy/key-fingerprint/v2/${address.toLowerCase()}`;
+  `oms-wallet-privacy/key-fingerprint/v3/${address.toLowerCase()}`;
 
 interface Entry {
   readonly address: Address;
@@ -70,8 +67,7 @@ export class PrivacySessions {
     private readonly oms: OMSWallet,
     private readonly context: OMSWalletExtensionContext,
     private readonly storage: StorageManager,
-    private readonly createBackend: CreateBackend,
-    private readonly keyChain: KeyChain
+    private readonly createBackend: CreateBackend
   ) {}
 
   /** The active Ethereum wallet's address, or a `OMS_PRIVACY_NO_WALLET` error. */
@@ -153,12 +149,12 @@ export class PrivacySessions {
   }
 
   private async setup(address: Address): Promise<PrivacyBackend> {
-    await this.ensureDeployed(address);
     requireActive(this.oms, address, 'privacy.setup');
-    const keySignature = await this.context.signReservedMessage({
+    const fullSignature = (await this.context.signReservedMessage({
       network: KEY_NETWORK,
       message: KEY_MESSAGE
-    });
+    })) as Hex;
+    const keySignature = await this.keySignature(address, fullSignature);
     const backend = await this.createBackend({
       address,
       keySignature,
@@ -188,63 +184,41 @@ export class PrivacySessions {
   }
 
   /**
-   * Deploys the wallet on the key network when it is not yet, with an empty transaction to itself,
-   * so its key-message signature is the one it will keep.
+   * The wallet key's own signature inside `fullSignature`, after WaaS confirms `fullSignature` is a
+   * valid signature by the wallet. Only that inner signature is stable: the full one changes with
+   * deployment and configuration updates.
    */
-  private async ensureDeployed(address: Address): Promise<void> {
-    if (await this.isDeployed(address)) return;
-
-    const txnIds: string[] = [];
-    const failed = (message: string, cause?: unknown) =>
+  private async keySignature(address: Address, fullSignature: Hex): Promise<Hex> {
+    const fail = (message: string) =>
       new OMSWalletPrivacyError({
-        code: txnIds.length > 0 ? 'OMS_PRIVACY_TRANSACTION_FAILED' : 'OMS_PRIVACY_WALLET_ERROR',
+        code: 'OMS_PRIVACY_KEY_MISMATCH',
         operation: 'privacy.setup',
         stage: 'setup',
-        txnIds,
-        message,
-        cause
+        message
       });
-    let response: SendTransactionResponse;
-    requireActive(this.oms, address, 'privacy.setup');
+    let extracted: { signature: Hex; signer: Address };
     try {
-      response = await this.oms.wallet.sendTransaction({
-        network: KEY_NETWORK,
-        to: address,
-        data: '0x',
-        waitForStatus: true,
-        onPrepared: (txnId) => {
-          txnIds.push(txnId);
-        }
+      extracted = await innerKeySignature({
+        signature: fullSignature,
+        wallet: address,
+        chainId: KEY_NETWORK.id,
+        message: KEY_MESSAGE
       });
-    } catch (error) {
-      throw failed(
-        `The wallet could not be deployed on ${KEY_NETWORK.displayName}, which private balances need once; see cause.`,
-        error
+    } catch {
+      throw fail(
+        'The wallet returned a signature this package cannot derive keys from. Nothing was sent.'
       );
     }
-    if (response.status !== 'executed') {
-      throw failed(`The wallet deployment on ${KEY_NETWORK.displayName} is ${response.status}.`);
-    }
-    for (let attempt = 0; attempt < DEPLOY_VISIBLE_ATTEMPTS; attempt += 1) {
-      if (await this.isDeployed(address)) return;
-      await new Promise((resolve) => setTimeout(resolve, DEPLOY_VISIBLE_INTERVAL_MS));
-    }
-    throw failed(
-      `The wallet deployment on ${KEY_NETWORK.displayName} is not visible yet. Retry shortly.`
-    );
-  }
-
-  private async isDeployed(address: Address): Promise<boolean> {
-    try {
-      return await this.keyChain.isDeployed(address);
-    } catch {
-      throw new OMSWalletPrivacyError({
-        code: 'OMS_PRIVACY_SERVICE_ERROR',
-        operation: 'privacy.setup',
-        stage: 'setup',
-        message: `The wallet's state on ${KEY_NETWORK.displayName} could not be read.`
-      });
-    }
+    // The extracted key signature alone meets the wallet's threshold, so a valid full signature
+    // means its signer is the wallet's authorized key.
+    const valid = await this.oms.wallet.isValidMessageSignature({
+      network: KEY_NETWORK,
+      walletAddress: address,
+      message: KEY_MESSAGE,
+      signature: fullSignature
+    });
+    if (!valid) throw fail('The wallet signature could not be verified. Nothing was sent.');
+    return extracted.signature;
   }
 
   private async awaitBackend(entry: Entry, operation: string): Promise<PrivacyBackend> {

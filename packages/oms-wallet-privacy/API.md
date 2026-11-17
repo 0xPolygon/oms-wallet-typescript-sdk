@@ -172,7 +172,7 @@ privateSend(quote: PrivacyQuote<"privateSend">, options?: PrivateSendOptions): P
 export interface DepositOptions {
     selectFeeOption?: FeeOptionSelector;
     maxNetworkFee?: bigint;
-    onProgress?: (event: PrivacyProgressEvent) => void;
+    onProgress?: (event: PrivacyProgressEvent) => void | Promise<void>;
 }
 ```
 

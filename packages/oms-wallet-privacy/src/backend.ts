@@ -49,14 +49,22 @@ export interface PrivacyBackend {
     params: { chainId: number; token: Address; amount: bigint; to: Address; feeData: unknown },
     send: (call: BackendWalletCall) => Promise<Hex>
   ): Promise<{ deliveryId: string }>;
+  /** `beforeSubmit` throws to stop; it runs right before the withdrawal is handed to the service. */
   unshield(params: {
     chainId: number;
     token: Address;
     amount: bigint;
     to: Address;
     feeData: unknown;
+    beforeSubmit: () => void;
   }): Promise<{ txnHash: Hex }>;
-  recover(params: { chainId: number; token: Address; to: Address }): Promise<{ txnHashes: Hex[] }>;
+  /** `beforeSubmit` throws to stop; it runs right before the recovery is handed to the service. */
+  recover(params: {
+    chainId: number;
+    token: Address;
+    to: Address;
+    beforeSubmit: () => void;
+  }): Promise<{ txnHashes: Hex[] }>;
   balances(chainIds: ReadonlyArray<number>): Promise<BackendBalance[]>;
   recoverableBalances(chainIds: ReadonlyArray<number>): Promise<BackendBalance[]>;
   deliveryStatus(deliveryId: string): Promise<DeliveryStatus>;

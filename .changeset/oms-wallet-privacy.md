@@ -10,7 +10,7 @@ Add private balances through the new `@polygonlabs/oms-wallet-privacy` package, 
 - **`new OMSWallet(...).extend(privacy())`** adds `oms.privacy` for Ethereum wallets on Ethereum, BNB Chain, Polygon, Base and Arbitrum.
 - **`shield`**, **`unshield`** and **`privateSend`** take a quote from `quoteShield`, `quoteUnshield` and `quotePrivateSend` with the privacy fee and `total`; quotes expire after 5 minutes and are single-use.
 - **`getBalances`** returns spendable and recoverable private balances; **`recover`** pays undelivered private sends back to the wallet; **`getDeliveryStatus`** reports a private send's delivery.
-- The first privacy call for a wallet that is not yet deployed on Polygon deploys it there (an empty transaction to itself), because the signature the private-balance keys are derived from changes at deployment.
+- Private-balance keys are derived from the wallet key's own signature inside the wallet's signature over a reserved message, so they stay the same when the wallet is deployed or its configuration changes (such as remote access being granted, revoked or expiring). No wallet transaction is needed to set up keys.
 - Deposits may only approve and call allowlisted contracts, and leave the allowance at exactly the quoted `total`. Each wallet transaction is reported through `onProgress` before it is submitted, and errors (`OMSWalletPrivacyError`) list every wallet transaction created.
 
 ### `@polygonlabs/oms-wallet`

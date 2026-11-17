@@ -168,8 +168,10 @@ class ProviderBackend implements PrivacyBackend {
     amount: bigint;
     to: Address;
     feeData: unknown;
+    beforeSubmit: () => void;
   }): Promise<{ txnHash: Hex }> {
     await this.useChain(params.chainId);
+    params.beforeSubmit();
     const result = await this.hinkal.withdraw(
       params.chainId,
       [params.token],
@@ -187,8 +189,10 @@ class ProviderBackend implements PrivacyBackend {
     chainId: number;
     token: Address;
     to: Address;
+    beforeSubmit: () => void;
   }): Promise<{ txnHashes: Hex[] }> {
     await this.useChain(params.chainId);
+    params.beforeSubmit();
     const hashes = await this.hinkal.withdrawStuckUtxos(params.chainId, params.token, params.to);
     return { txnHashes: hashes as Hex[] };
   }

@@ -8,7 +8,6 @@ import { createDefaultStorage } from '@polygonlabs/oms-wallet';
 
 import type { CreateBackend, PrivacyBackend } from './backend.js';
 import type { OMSWalletPrivacyStage } from './errors.js';
-import type { KeyChain } from './keyChain.js';
 import type { PrivacyContracts } from './networks.js';
 import type { PrivacyQuote, PrivacyQuoteKind } from './quote.js';
 import type {
@@ -22,10 +21,9 @@ import type {
 import { OMSWalletPrivacyError } from './errors.js';
 import { createDepositGuard, erc20Abi } from './guard.js';
 import { createProviderBackend } from './internal/hinkal/backend.js';
-import { createKeyChain } from './keyChain.js';
 import { privacyContracts, privacyNetworks } from './networks.js';
 import { createQuote, quoteInternals } from './quote.js';
-import { PrivacySessions } from './session.js';
+import { PrivacySessions, requireActive } from './session.js';
 import { DepositRun } from './transactions.js';
 
 /** How long a quote stays valid. */
@@ -45,18 +43,17 @@ const DEFAULT_DELIVERY_INTERVAL_MS = 3_000;
 export function privacy(
   options: PrivacyOptions = {}
 ): OMSWalletExtension<{ readonly privacy: PrivacyActions }> {
-  return createPrivacyExtension(createProviderBackend, options, createKeyChain());
+  return createPrivacyExtension(createProviderBackend, options);
 }
 
 /** Not exported from the package; tests pass a fake backend. */
 export function createPrivacyExtension(
   createBackend: CreateBackend,
-  options: PrivacyOptions,
-  keyChain: KeyChain
+  options: PrivacyOptions = {}
 ): OMSWalletExtension<{ readonly privacy: PrivacyActions }> {
   return (oms, context) => {
     const storage = options.storage ?? createDefaultStorage();
-    const sessions = new PrivacySessions(oms, context, storage, createBackend, keyChain);
+    const sessions = new PrivacySessions(oms, context, storage, createBackend);
     return { privacy: createPrivacyActions(oms, sessions) };
   };
 }
@@ -327,7 +324,8 @@ function createPrivacyActions(oms: OMSWallet, sessions: PrivacySessions): Privac
             token: quote.token,
             amount: quote.amount,
             to: quote.to!,
-            feeData: internals.backendData
+            feeData: internals.backendData,
+            beforeSubmit: () => requireActive(oms, wallet, operation)
           })
         );
         return Object.freeze({ txnHash });
@@ -362,7 +360,12 @@ function createPrivacyActions(oms: OMSWallet, sessions: PrivacySessions): Privac
           });
         }
         const { txnHashes } = await backendCall(operation, 'withdraw', [], () =>
-          backend.recover({ chainId, token, to: wallet })
+          backend.recover({
+            chainId,
+            token,
+            to: wallet,
+            beforeSubmit: () => requireActive(oms, wallet, operation)
+          })
         );
         return Object.freeze({ txnHashes: Object.freeze([...txnHashes]) });
       });
@@ -382,7 +385,23 @@ async function waitForDelivery(
   const intervalMs = polling.intervalMs ?? DEFAULT_DELIVERY_INTERVAL_MS;
   const deadline = Date.now() + timeoutMs;
   for (;;) {
-    const status = await actions.getDeliveryStatus({ deliveryId });
+    let status: DeliveryStatus;
+    try {
+      status = await actions.getDeliveryStatus({ deliveryId });
+    } catch (error) {
+      // The send went through; only its status is unknown. Keep everything needed to follow it.
+      throw new OMSWalletPrivacyError({
+        code: error instanceof OMSWalletPrivacyError ? error.code : 'OMS_PRIVACY_SERVICE_ERROR',
+        operation,
+        stage: 'delivery',
+        txnIds,
+        deliveryId,
+        message:
+          'The private send was submitted, but its delivery status could not be read. Do not send ' +
+          'it again; check getDeliveryStatus with this deliveryId later.',
+        cause: error instanceof OMSWalletPrivacyError ? error.cause : undefined
+      });
+    }
     if (status.status === 'delivered') return status;
     if (status.status === 'failed') {
       throw new OMSWalletPrivacyError({

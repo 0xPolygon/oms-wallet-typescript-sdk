@@ -58,7 +58,9 @@ privacy fee.
 `shield` and `privateSend` send up to three wallet transactions: an allowance reset to 0, an approval
 of exactly `total`, and the deposit. Steps that are not needed are skipped; native-token deposits need
 no approval. Each step is reported through `onProgress`: `prepared` with its `txnId` before anything
-is submitted, and `confirmed` once it executed. Results list every transaction, with
+is submitted, and `confirmed` once it executed. `onProgress` is awaited for `prepared` events, so an
+async callback can store the `txnId` durably first; if it throws or rejects, that transaction is not
+executed. Results list every transaction, with
 its `networkFee` when one was paid (sponsored transactions have none).
 
 By default the network fee of each transaction is paid in the token being moved, and the call fails
@@ -67,15 +69,18 @@ of `total`. Pass
 `selectFeeOption` to choose another fee token, and `maxNetworkFee` to cap the fee in the moved
 token.
 
-`unshield` and `recover` send no wallet transaction (apart from the one-time deployment below): the
-privacy service submits the withdrawal, and its fee is part of the quote.
+`unshield` and `recover` send no wallet transaction: the privacy service submits the withdrawal, and
+its fee is part of the quote. They stop with `OMS_PRIVACY_WALLET_CHANGED` if the active wallet
+changes or signs out before the withdrawal is handed to the service.
 
 ### Private send delivery
 
 A private send deposits `total` into the sender's private balance and pre-authorizes a payment of
 `amount` to the recipient, which the privacy service submits later. `deliveryId` identifies it; treat
 it as private. Check it with `getDeliveryStatus({ deliveryId })` (`pending`, `delivered` or
-`failed`), or pass `waitForDelivery: true` (default timeout 15 minutes).
+`failed`), or pass `waitForDelivery: true` (default timeout 15 minutes). If the status cannot be read
+while waiting, the error still carries the `deliveryId` and transaction IDs: the send went through,
+so do not send it again.
 
 If delivery fails, the funds stay in the sender's private balance as `recoverable` in
 `getBalances()`. `recover({ network, token })` pays all of them back to the wallet.
@@ -98,13 +103,15 @@ See [API.md](./API.md) for every public function and type.
 - **Keys.** The private balance's keys are derived from the wallet's signature over a fixed message
   that starts with `OMS Wallet reserved message:`, signed on Polygon. OMS Wallet refuses that
   message in `signMessage`, so code that can only call `signMessage`, such as a dApp connected
-  through wagmi, cannot obtain the signature; code that can call `OMSWallet.extend` can. The keys depend on the
-  wallet producing the same signature every time, and a wallet's signature changes once it is
-  deployed. So the first privacy call for a wallet that is not yet deployed on Polygon deploys it
-  first, with an empty transaction to itself (a Polygon network fee unless sponsored), and only then
-  derives the keys. Deployment is read from public Polygon RPC endpoints; if none answers, the call
-  fails with `OMS_PRIVACY_SERVICE_ERROR`. The package also stores a fingerprint of the derived keys (in `localStorage` in
-  browsers, in memory elsewhere, or in the `storage` passed to `privacy()`) and stops with
+  through wagmi, cannot obtain the signature; code that can call `OMSWallet.extend` can. A smart
+  wallet's full signature changes when the wallet is deployed and when its configuration changes
+  (for example when remote access is granted, revoked or expires), so keys come only from the part
+  that depends on the wallet's own key, the wallet address and the message: the wallet key's ECDSA
+  signature inside it. The package decodes that part, requires exactly one such key signature that
+  alone meets the wallet's threshold, and has WaaS confirm the full signature before using it; it
+  never sends a wallet transaction to set up keys. The keys therefore only change if the wallet's
+  key itself changes. The package also stores a fingerprint of the derived keys (in `localStorage`
+  in browsers, in memory elsewhere, or in the `storage` passed to `privacy()`) and stops with
   `OMS_PRIVACY_KEY_MISMATCH` if they ever change, instead of showing an empty balance.
 - **Privacy service.** Proofs are generated remotely: the service receives the private balance's
   viewing key, so it can see private balances and history. It cannot move funds: withdrawals are

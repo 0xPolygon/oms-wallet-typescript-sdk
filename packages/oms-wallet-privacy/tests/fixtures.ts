@@ -1,4 +1,5 @@
 import { expect, vi } from 'vitest';
+import { privateKeyToAccount } from 'viem/accounts';
 import { type Address, type Hex, decodeFunctionData, getAddress, zeroAddress } from 'viem';
 
 import {
@@ -17,9 +18,21 @@ import type { BackendBalance, BackendWalletCall, PrivacyBackend } from '../src/b
 import { erc20Abi } from '../src/guard.js';
 import { privacyContracts } from '../src/networks.js';
 import { createPrivacyExtension } from '../src/privacy.js';
+import { KEY_MESSAGE } from '../src/session.js';
 
-export const WALLET: Address = '0x1111111111111111111111111111111111111111';
-export const OTHER_WALLET: Address = '0x2222222222222222222222222222222222222222';
+// Throwaway keys: setup derives keys from a real (EOA-mode) wallet signature.
+const accounts = [
+  privateKeyToAccount('0x0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef'),
+  privateKeyToAccount('0xfedcba9876543210fedcba9876543210fedcba9876543210fedcba9876543210')
+];
+export const WALLET: Address = accounts[0]!.address;
+export const OTHER_WALLET: Address = accounts[1]!.address;
+
+export function signAs(address: Address | undefined, message: string): Promise<Hex> {
+  const account = accounts.find((candidate) => candidate.address === address);
+  if (!account) throw new Error(`No test key for ${address}`);
+  return account.signMessage({ message });
+}
 export const RECIPIENT: Address = '0x3333333333333333333333333333333333333333';
 export const USDC: Address = '0x3c499c542cEF5E3811e1192ce70d8cC03d5c3359';
 export const NETWORK = Networks.polygon;
@@ -67,6 +80,10 @@ export class FakeWallet {
   get listenerCount(): number {
     return this.listeners.size;
   }
+
+  /** WaaS's check of the full key signature; true unless a test says otherwise. */
+  signatureValid = true;
+  isValidMessageSignature = vi.fn(async () => this.signatureValid);
 
   sendTransaction = vi.fn(
     async (params: SendTransactionParams): Promise<SendTransactionResponse> => {
@@ -174,16 +191,22 @@ export class FakeBackend implements PrivacyBackend {
     if (this.failWith.deliveryStatus) throw new Error('provider scheduling failure');
     return { deliveryId: 'delivery-1' };
   }
-  async unshield(): Promise<{ txnHash: Hex }> {
+  async unshield(params: { beforeSubmit: () => void }): Promise<{ txnHash: Hex }> {
     this.check('unshield');
+    await this.beforeSubmitDelay?.();
+    params.beforeSubmit();
     return { txnHash: `0x${'ab'.repeat(32)}` };
   }
-  async recover(params: { to: Address }): Promise<{ txnHashes: Hex[] }> {
+  async recover(params: { to: Address; beforeSubmit: () => void }): Promise<{ txnHashes: Hex[] }> {
     this.check('recover');
+    await this.beforeSubmitDelay?.();
+    params.beforeSubmit();
     this.recoveredTo = params.to;
     return { txnHashes: [`0x${'cd'.repeat(32)}`] };
   }
   recoveredTo: Address | undefined;
+  /** Runs inside unshield/recover before the submission check, like the adapter's chain switch. */
+  beforeSubmitDelay: (() => Promise<void>) | undefined;
   async balances(): Promise<BackendBalance[]> {
     this.check('balances');
     return this.balanceList;
@@ -223,35 +246,24 @@ export function decodeApproval(data: Hex): { spender: Address; amount: bigint } 
 }
 
 /** Builds `oms.privacy` over a fake wallet and backend factory. */
-export function setup(
-  options: { backends?: FakeBackend[]; storage?: MemoryStorageManager; deployed?: boolean[] } = {}
-) {
+export function setup(options: { backends?: FakeBackend[]; storage?: MemoryStorageManager } = {}) {
   const wallet = new FakeWallet();
   const backends = options.backends ?? [new FakeBackend()];
   const created: FakeBackend[] = [];
   const createBackend = vi.fn(async (params: { address: Address; keySignature: string }) => {
     const backend = backends[Math.min(created.length, backends.length - 1)]!;
     created.push(backend);
-    expect(params.keySignature).toBe(`signature:${params.address}`);
+    expect(params.keySignature).toBe(await signAs(params.address, KEY_MESSAGE));
     return backend;
   });
   // Signs for the wallet active when called, like the real wallet.
-  const signReservedMessage = vi.fn(async (_params: { network: unknown; message: string }) => {
-    return `signature:${wallet.activeWallet?.address}`;
+  const signReservedMessage = vi.fn(async (params: { network: unknown; message: string }) => {
+    return signAs(wallet.activeWallet?.address as Address | undefined, params.message);
   });
   const context: OMSWalletExtensionContext = { signReservedMessage };
   const oms = { wallet } as unknown as OMSWallet;
   const storage = options.storage ?? new MemoryStorageManager();
-  // Answers in order, then repeats the last answer; deployed unless a test says otherwise.
-  const deployedAnswers = [...(options.deployed ?? [true])];
-  const isDeployed = vi.fn(async () =>
-    deployedAnswers.length > 1 ? deployedAnswers.shift()! : deployedAnswers[0]!
-  );
-  const { privacy } = createPrivacyExtension(
-    createBackend,
-    { storage },
-    { isDeployed }
-  )(oms, context);
+  const { privacy } = createPrivacyExtension(createBackend, { storage })(oms, context);
   return {
     privacy,
     wallet,
@@ -260,7 +272,6 @@ export function setup(
     created,
     createBackend,
     signReservedMessage,
-    storage,
-    isDeployed
+    storage
   };
 }

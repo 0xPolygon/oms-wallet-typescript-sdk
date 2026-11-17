@@ -57,6 +57,7 @@
     "test:watch": "vitest"
   },
   "dependencies": {
+    "@0xsequence/wallet-primitives": "3.0.15",
     "@hinkal/common": "0.3.14",
     "buffer": "6.0.3",
     "ethers": "6.17.0"

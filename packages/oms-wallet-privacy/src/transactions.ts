@@ -56,13 +56,30 @@ export class DepositRun {
     return this.transactions.map((transaction) => transaction.step);
   }
 
+  /** Reports progress; errors from the callback cannot affect the operation. */
   emit(event: PrivacyProgressEvent): void {
     try {
-      this.params.options.onProgress?.(event);
+      const result = this.params.options.onProgress?.(event);
+      if (result instanceof Promise) result.catch(() => {});
     } catch {
-      // Progress callbacks cannot affect the operation.
+      // Ignored by design.
     }
   }
+
+  /**
+   * Reports a `prepared` step and waits for the callback, so an app can store the transaction ID
+   * before anything is submitted. A rejection stops the transaction before it executes.
+   */
+  private async emitPrepared(event: PrivacyProgressEvent): Promise<void> {
+    try {
+      await this.params.options.onProgress?.(event);
+    } catch (error) {
+      this.progressFailed = true;
+      throw error;
+    }
+  }
+
+  private progressFailed = false;
 
   error(
     params: Omit<ConstructorParameters<typeof OMSWalletPrivacyError>[0], 'operation' | 'txnIds'>
@@ -118,10 +135,10 @@ export class DepositRun {
         value: call.value,
         selectFeeOption,
         waitForStatus: true,
-        onPrepared: (id) => {
+        onPrepared: async (id) => {
           txnId = id;
           this.txnIds.push(id);
-          this.emit({ step, state: 'prepared', txnId: id });
+          await this.emitPrepared({ step, state: 'prepared', txnId: id });
         }
       });
     } catch (error) {
@@ -137,6 +154,13 @@ export class DepositRun {
             ? 'The active wallet changed.'
             : `The wallet could not send the ${step} transaction; see cause.`,
           cause: error
+        });
+      }
+      if (this.progressFailed) {
+        throw this.error({
+          code: 'OMS_PRIVACY_TRANSACTION_FAILED',
+          stage: step,
+          message: `onProgress failed for the prepared ${step} transaction ${txnId}, so it was not executed.`
         });
       }
       guard.record(step);
