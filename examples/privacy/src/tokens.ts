@@ -60,10 +60,15 @@ export function formatAmount(amount: bigint, token: DemoToken | undefined): stri
   return `${formatUnits(amount, token.decimals)} ${token.symbol}`;
 }
 
-/** Parses a decimal amount, or returns undefined when it is not a positive number. */
+/**
+ * Parses a decimal amount, or returns undefined when it is not a positive number or has more
+ * decimals than the token (`parseUnits` would round them).
+ */
 export function parseAmount(value: string, token: DemoToken): bigint | undefined {
+  const trimmed = value.trim();
+  if ((trimmed.split('.')[1]?.length ?? 0) > token.decimals) return undefined;
   try {
-    const amount = parseUnits(value.trim(), token.decimals);
+    const amount = parseUnits(trimmed, token.decimals);
     return amount > 0n ? amount : undefined;
   } catch {
     return undefined;

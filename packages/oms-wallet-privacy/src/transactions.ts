@@ -94,8 +94,50 @@ export class DepositRun {
     return error;
   }
 
-  /** Sends `call` if the guard allows it and returns its on-chain hash once it executed. */
+  private ended = false;
+  private inFlight: Promise<unknown> | undefined;
+
+  /**
+   * Sends `call` if the guard allows it and returns its on-chain hash once it executed. Calls run
+   * one at a time, and none after `end()`: the privacy backend can return or fail while a call it
+   * started is still running, and such a call must not outlive the operation.
+   */
   async send(call: Omit<WalletCall, 'chainId'>): Promise<Hex> {
+    if (this.ended) {
+      // Not the operation's failure: it already reported its outcome.
+      throw new OMSWalletPrivacyError({
+        code: 'OMS_PRIVACY_UNAUTHORIZED_TRANSACTION',
+        operation: this.params.operation,
+        txnIds: this.txnIds,
+        message: 'A wallet transaction was requested after the operation ended, and was refused.'
+      });
+    }
+    if (this.inFlight) {
+      throw this.error({
+        code: 'OMS_PRIVACY_UNAUTHORIZED_TRANSACTION',
+        message:
+          'A wallet transaction was requested while another one was running, and was refused.'
+      });
+    }
+    const sending = this.sendOne(call);
+    this.inFlight = sending;
+    try {
+      return await sending;
+    } finally {
+      this.inFlight = undefined;
+    }
+  }
+
+  /**
+   * Refuses further calls and waits for one still running, so `transactions`, `txnIds` and
+   * `failure` are final. Call it before reporting the operation's outcome.
+   */
+  async end(): Promise<void> {
+    this.ended = true;
+    await this.inFlight?.catch(() => undefined);
+  }
+
+  private async sendOne(call: Omit<WalletCall, 'chainId'>): Promise<Hex> {
     const { network, wallet, guard } = this.params;
     let step: PrivacyTransactionStep;
     try {

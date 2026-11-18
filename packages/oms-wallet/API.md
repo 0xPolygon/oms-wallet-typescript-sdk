@@ -53,10 +53,13 @@ export interface OMSWalletExtensionContext {
 
 ### `OMSWalletExtensionMembers`
 
-The members a list of extensions adds: the intersection of the objects they return.
+The members a list of extensions adds: the intersection of the objects they return. A union
+returned by one extension stays a union.
 
 ```typescript
-export type OMSWalletExtensionMembers<E extends readonly object[]> = (E[number] extends infer M ? (M extends object ? (members: M) => void : never) : never) extends (members: infer All) => void ? All : never;
+export type OMSWalletExtensionMembers<E extends readonly object[]> = {
+    [K in keyof E]: (members: E[K]) => void;
+}[number] extends (members: infer All) => void ? All : never;
 ```
 
 ### `OMSWalletReservedMember`

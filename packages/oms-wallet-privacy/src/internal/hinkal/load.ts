@@ -39,7 +39,11 @@ async function load(): Promise<LoadedProvider> {
   // Parts of the provider use Node's `Buffer` global, which browsers lack. Set it only if absent,
   // so apps need no polyfill of their own.
   const globals = globalThis as { Buffer?: unknown };
-  if (globals.Buffer === undefined) globals.Buffer = (await import('buffer')).Buffer;
+  if (globals.Buffer === undefined) {
+    const { Buffer } = await import('buffer');
+    // Another library may have set it while the import loaded.
+    globals.Buffer ??= Buffer;
+  }
   const [provider, ethers] = await Promise.all([
     import('@hinkal/common/providers/prepareEthersHinkal'),
     import('ethers')

@@ -32,6 +32,20 @@ export default defineConfig([
             }
           ]
         }
+      ],
+      // `no-restricted-imports` sees only static imports; this covers `import()` and `require()`.
+      'no-restricted-syntax': [
+        'error',
+        {
+          selector:
+            'ImportExpression[source.value=/^(@hinkal\\/|ethers(\\/|$))|internal\\/hinkal\\/(?!backend\\.js$)/]',
+          message: 'Only src/internal/hinkal may use the privacy provider or ethers.'
+        },
+        {
+          selector:
+            "CallExpression[callee.name='require'][arguments.0.value=/^(@hinkal\\/|ethers(\\/|$))|internal\\/hinkal\\/(?!backend\\.js$)/]",
+          message: 'Only src/internal/hinkal may use the privacy provider or ethers.'
+        }
       ]
     }
   },

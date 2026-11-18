@@ -111,6 +111,32 @@ describe('wallet binding', () => {
     expect(fetchMock).not.toHaveBeenCalled();
   });
 
+  it('uses the arguments as they were when the call was made', async () => {
+    const bodies: Array<Record<string, unknown>> = [];
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+        const url = input.toString();
+        bodies.push(JSON.parse(init?.body as string));
+        if (url.endsWith('/SignMessage')) return jsonResponse({ signature: '0x01' });
+        throw new Error('stop after the first request');
+      })
+    );
+    const wallet = createWalletWithSession(walletAddress);
+    const message = { network: Networks.polygon, message: 'ordinary' };
+    const signing = wallet.signMessage(message);
+    message.message = reservedMessage;
+    await signing;
+    const transaction = { network: Networks.polygon, to: otherAddress, value: 1n };
+    const sending = wallet.sendTransaction(transaction);
+    transaction.to = walletAddress;
+    transaction.value = 2n;
+    await sending.catch(() => undefined);
+
+    expect(bodies[0]).toMatchObject({ message: 'ordinary' });
+    expect(bodies[1]).toMatchObject({ to: otherAddress, value: '1' });
+  });
+
   it('signs for the wallet active when the call was made', async () => {
     signingFetch();
     const wallet = createWalletWithSession(walletAddress);
@@ -161,6 +187,27 @@ describe('onPrepared', () => {
     });
 
     expect(order).toEqual(['prepare', 'prepared:txn-1', 'execute']);
+  });
+
+  it('stops before fee selection and Execute when another wallet becomes active after Prepare', async () => {
+    const order: string[] = [];
+    const fetchMock = transactionFetch(order);
+    const wallet = createWalletWithSession(walletAddress);
+    const selectFeeOption = vi.fn();
+
+    await expect(
+      wallet.sendTransaction({
+        network: Networks.polygon,
+        to: otherAddress,
+        value: 1n,
+        selectFeeOption,
+        onPrepared: () => {
+          (wallet as any).activeWalletAccount = testWalletAccount('other-id', otherAddress);
+        }
+      })
+    ).rejects.toThrow('Active wallet session changed');
+    expect(selectFeeOption).not.toHaveBeenCalled();
+    expect(requestCount(fetchMock, 'Execute')).toBe(0);
   });
 
   it('stops the transaction before Execute when the callback throws', async () => {
@@ -245,6 +292,32 @@ describe('OMSWallet.extend', () => {
     expect(() => base.extend(() => ({ toString: 1 }) as object)).toThrow(
       'An OMSWallet extension cannot replace "toString"'
     );
+  });
+
+  it('refuses class instances, whose prototype methods would be lost', () => {
+    class Plugin {
+      run() {
+        return 1;
+      }
+    }
+    expect(() =>
+      new OMSWallet({ publishableKey: 'pk_dev_sdbx_project_key' }).extend(() => new Plugin())
+    ).toThrow('An OMSWallet extension must return a plain object, not a class instance');
+    const bare = Object.assign(Object.create(null) as object, { run: () => 1 });
+    expect(
+      new OMSWallet({ publishableKey: 'pk_dev_sdbx_project_key' }).extend(() => bare).run()
+    ).toBe(1);
+  });
+
+  it('keeps getters as getters', () => {
+    let count = 1;
+    const oms = new OMSWallet({ publishableKey: 'pk_dev_sdbx_project_key' }).extend(() => ({
+      get count() {
+        return count;
+      }
+    }));
+    count = 2;
+    expect(oms.count).toBe(2);
   });
 
   it('names the member when the same extension is added twice', () => {

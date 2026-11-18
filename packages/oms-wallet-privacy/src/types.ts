@@ -176,11 +176,14 @@ export interface PrivacyActions {
   readonly networks: ReadonlyArray<Network>;
   /** Private balances of the active wallet with a non-zero amount. */
   getBalances(params?: GetPrivateBalancesParams): Promise<PrivateBalance[]>;
-  /** Moves tokens from the wallet into its private balance. */
+  /** Quotes moving tokens from the wallet into its private balance; `shield` runs it. */
   quoteShield(params: QuoteShieldParams): Promise<PrivacyQuote<'shield'>>;
-  /** Moves tokens from the private balance to an address. */
+  /** Quotes moving tokens from the private balance to an address; `unshield` runs it. */
   quoteUnshield(params: QuoteUnshieldParams): Promise<PrivacyQuote<'unshield'>>;
-  /** Sends tokens from the wallet to an address without an on-chain link between the two. */
+  /**
+   * Quotes sending tokens from the wallet to an address without an on-chain link between the two;
+   * `privateSend` runs it.
+   */
   quotePrivateSend(params: QuotePrivateSendParams): Promise<PrivacyQuote<'privateSend'>>;
   shield(quote: PrivacyQuote<'shield'>, options?: DepositOptions): Promise<ShieldResult>;
   /** Sends no wallet transaction: the privacy service submits the withdrawal. */

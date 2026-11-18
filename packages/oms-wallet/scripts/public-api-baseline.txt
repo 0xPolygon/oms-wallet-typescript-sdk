@@ -694,9 +694,10 @@ export interface OMSWalletParams {
 export interface OMSWalletExtensionContext {
     /**
      * Signs a message that starts with `OMS Wallet reserved message:` with the active Ethereum
-     * wallet. `WalletClient.signMessage` refuses such messages, so code that can only call
-     * `signMessage`, such as a dApp connected through wagmi, cannot obtain this signature. Any code
-     * that can call `OMSWallet.extend` can.
+     * wallet. `WalletClient.signMessage` refuses such messages, so code that can only ask the wallet
+     * to sign, such as a dApp sending `personal_sign` through the wagmi connector, cannot obtain this
+     * signature. Any code that can call `OMSWallet.extend` can; this is not a boundary against code
+     * running in the app itself.
      */
     signReservedMessage(params: SignMessageParams): Promise<string>;
 }
@@ -708,8 +709,13 @@ export type OMSWalletReservedMember = 'wallet' | 'indexer' | 'extend';
 type OMSWalletTakenMembers<K extends PropertyKey> = {
     [P in K]?: `"${P & string}" is already on this OMSWallet`;
 };
-/** The members a list of extensions adds: the intersection of the objects they return. */
-export type OMSWalletExtensionMembers<E extends readonly object[]> = (E[number] extends infer M ? (M extends object ? (members: M) => void : never) : never) extends (members: infer All) => void ? All : never;
+/**
+ * The members a list of extensions adds: the intersection of the objects they return. A union
+ * returned by one extension stays a union.
+ */
+export type OMSWalletExtensionMembers<E extends readonly object[]> = {
+    [K in keyof E]: (members: E[K]) => void;
+}[number] extends (members: infer All) => void ? All : never;
 export declare class OMSWallet {
     readonly wallet: WalletClient;
     readonly indexer: IndexerClient;
@@ -728,8 +734,9 @@ export declare class OMSWallet {
      * order, and each one gets the wallet with the earlier ones added; `extend(a, b)` is the same as
      * `extend(a).extend(b)`. An extension cannot add `wallet`, `indexer` or `extend`, or a member the
      * wallet already has, such as one an earlier extension added; adding the same extension twice is
-     * an error. TypeScript reports a member the wallet already has; a member repeated within one call
-     * is reported when `extend` runs.
+     * an error. TypeScript reports a member the wallet already has; a member repeated within one call,
+     * or a name every object has such as `toString`, is reported when `extend` runs. An extension
+     * returns a plain object: a class instance is refused, since only own properties are added.
      */
     extend<const E extends readonly [object, ...object[]]>(...extensions: {
         [K in keyof E]: OMSWalletExtension<E[K] & OMSWalletTakenMembers<OMSWalletReservedMember | keyof this>>;

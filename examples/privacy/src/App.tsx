@@ -204,7 +204,15 @@ function App() {
 
   useEffect(() => {
     return omsWallet.wallet.onSessionChange((event) => {
-      if (event.reason === 'expired') showSessionExpired(event.expiredSession);
+      if (event.reason === 'expired') {
+        showSessionExpired(event.expiredSession);
+        return;
+      }
+      if (event.reason !== 'walletChanged' && event.reason !== 'signedOut') return;
+      // The change can come from another tab: drop everything shown for the previous wallet.
+      setSession(omsWallet.wallet.session);
+      setPrivateBalances(undefined);
+      resetActions();
     });
   }, []);
 
@@ -526,7 +534,12 @@ function App() {
       (error) =>
         updateAction(kind, {
           quote: null,
-          status: `Failed: ${describeError(error)} Get a new quote to retry.`
+          // Keep a delivery ID the error carries, so its delivery can still be checked below.
+          result:
+            isOMSWalletPrivacyError(error) && error.deliveryId
+              ? { hashes: [], deliveryId: error.deliveryId }
+              : null,
+          status: `Failed: ${describeError(error)} ${retryAdvice(error)}`
         })
     );
   }
@@ -549,6 +562,10 @@ function App() {
 
   function recover(balance: PrivateBalance) {
     void runAction('Recover', async () => {
+      // `recover` acts for the active wallet; make sure it is the one these balances are for.
+      if (activeEthereumAddress(omsWallet.wallet) !== walletAddress) {
+        throw new Error('The active wallet changed. Check its balances before recovering.');
+      }
       const result = await privacy.recover({ network: balance.network, token: balance.token });
       appendLog(`Recovered in ${result.txnHashes.length} transaction(s).`);
       await refreshBalances();
@@ -1013,9 +1030,8 @@ function transactionHashes(transactions: ReadonlyArray<PrivacyTransaction>): Hex
 }
 
 function describeProgress(event: PrivacyProgressEvent): string {
-  if (event.step === 'delivery') {
-    return `Delivery ${event.state} (${event.deliveryId})`;
-  }
+  // The delivery ID is private: it is shown with the result, never logged.
+  if (event.step === 'delivery') return `Delivery ${event.state}`;
   const step =
     event.step === 'reset-approval'
       ? 'Reset approval'
@@ -1026,6 +1042,21 @@ function describeProgress(event: PrivacyProgressEvent): string {
   return event.state === 'prepared'
     ? `${step}: prepared ${event.txnId}`
     : `${step}: confirmed ${event.txnHash ? shortHash(event.txnHash) : event.txnId}${fee}`;
+}
+
+/** What to do after a failure: retry only when nothing can have been sent. */
+function retryAdvice(error: unknown): string {
+  if (!isOMSWalletPrivacyError(error)) return 'Get a new quote to retry.';
+  if (error.deliveryId || error.stage === 'delivery') {
+    return 'The send may still be delivered: do not send it again.';
+  }
+  if (
+    error.txnIds.length > 0 ||
+    (error.stage === 'withdraw' && error.code === 'OMS_PRIVACY_SERVICE_ERROR')
+  ) {
+    return 'Check the transactions and your balances before trying again.';
+  }
+  return 'Get a new quote to retry.';
 }
 
 function describeError(error: unknown): string {

@@ -29,7 +29,12 @@ while (queue.length > 0) {
   });
   const specifiers = [
     ...text.matchAll(/^(?:import|export)\b[^;]*?\bfrom\s+['"]([^'"]+)['"]/gm),
-    ...text.matchAll(/\bimport\(\s*['"]([^'"]+)['"]\s*\)/g)
+    ...text.matchAll(/\bimport\(\s*['"]([^'"]+)['"]\s*\)/g),
+    // Side-effect imports and `import x = require('...')`.
+    ...text.matchAll(/^\s*import\s+['"]([^'"]+)['"]/gm),
+    ...text.matchAll(/\brequire\(\s*['"]([^'"]+)['"]\s*\)/g),
+    // `/// <reference path="..." />` and `/// <reference types="..." />`.
+    ...text.matchAll(/^\/\/\/\s*<reference\s+(?:path|types)=['"]([^'"]+)['"]/gm)
   ].map((match) => match[1]);
   for (const specifier of specifiers) {
     if (specifier.startsWith('.')) {

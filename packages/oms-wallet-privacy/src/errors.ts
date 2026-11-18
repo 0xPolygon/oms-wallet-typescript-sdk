@@ -56,8 +56,10 @@ export interface OMSWalletPrivacyErrorParams {
 
 /**
  * An error from `oms.privacy`. `txnIds` lists every wallet transaction the operation had created
- * when it failed, so an app can tell "nothing was sent" (empty) from "a deposit may have been
- * sent" and reconcile with `wallet.getTransactionStatus` and `oms.privacy.getBalances`.
+ * when it failed, so for `shield` and `privateSend` an app can tell "no wallet transaction was sent"
+ * (empty) from "a deposit may have been sent" and reconcile with `wallet.getTransactionStatus` and
+ * `oms.privacy.getBalances`. `unshield` and `recover` send no wallet transaction, so their `txnIds`
+ * is always empty; the message says whether the withdrawal may have been submitted.
  * `cause` is only set to an `OMSWalletError` from the wallet.
  */
 export class OMSWalletPrivacyError extends Error {

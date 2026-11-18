@@ -22,9 +22,10 @@ export interface OMSWalletParams {
 export interface OMSWalletExtensionContext {
   /**
    * Signs a message that starts with `OMS Wallet reserved message:` with the active Ethereum
-   * wallet. `WalletClient.signMessage` refuses such messages, so code that can only call
-   * `signMessage`, such as a dApp connected through wagmi, cannot obtain this signature. Any code
-   * that can call `OMSWallet.extend` can.
+   * wallet. `WalletClient.signMessage` refuses such messages, so code that can only ask the wallet
+   * to sign, such as a dApp sending `personal_sign` through the wagmi connector, cannot obtain this
+   * signature. Any code that can call `OMSWallet.extend` can; this is not a boundary against code
+   * running in the app itself.
    */
   signReservedMessage(params: SignMessageParams): Promise<string>;
 }
@@ -52,10 +53,13 @@ type OMSWalletTakenMembers<K extends PropertyKey> = {
   [P in K]?: `"${P & string}" is already on this OMSWallet`;
 };
 
-/** The members a list of extensions adds: the intersection of the objects they return. */
-export type OMSWalletExtensionMembers<E extends readonly object[]> = (
-  E[number] extends infer M ? (M extends object ? (members: M) => void : never) : never
-) extends (members: infer All) => void
+/**
+ * The members a list of extensions adds: the intersection of the objects they return. A union
+ * returned by one extension stays a union.
+ */
+export type OMSWalletExtensionMembers<E extends readonly object[]> = {
+  [K in keyof E]: (members: E[K]) => void;
+}[number] extends (members: infer All) => void
   ? All
   : never;
 
@@ -141,8 +145,9 @@ export class OMSWallet {
    * order, and each one gets the wallet with the earlier ones added; `extend(a, b)` is the same as
    * `extend(a).extend(b)`. An extension cannot add `wallet`, `indexer` or `extend`, or a member the
    * wallet already has, such as one an earlier extension added; adding the same extension twice is
-   * an error. TypeScript reports a member the wallet already has; a member repeated within one call
-   * is reported when `extend` runs.
+   * an error. TypeScript reports a member the wallet already has; a member repeated within one call,
+   * or a name every object has such as `toString`, is reported when `extend` runs. An extension
+   * returns a plain object: a class instance is refused, since only own properties are added.
    */
   extend<const E extends readonly [object, ...object[]]>(
     ...extensions: {
@@ -219,6 +224,13 @@ function applyExtension(oms: OMSWallet, extension: OMSWalletExtension<object>): 
       message: 'An OMSWallet extension must return an object'
     });
   }
+  // Only own properties are added, so a class instance would lose the methods on its prototype.
+  const prototype = Object.getPrototypeOf(added) as object | null;
+  if (prototype !== null && Object.getPrototypeOf(prototype) !== null) {
+    throw new OMSWalletValidationError({
+      message: 'An OMSWallet extension must return a plain object, not a class instance'
+    });
+  }
   for (const key of Reflect.ownKeys(added)) {
     if (typeof key === 'string' && reservedMembers.has(key)) {
       throw new OMSWalletValidationError({
@@ -234,16 +246,18 @@ function applyExtension(oms: OMSWallet, extension: OMSWalletExtension<object>): 
     }
   }
   // The extended object inherits from this one, so `instanceof OMSWallet`, `wallet` and `indexer`
-  // stay; the extension's members are its own, read-only properties.
+  // stay; the extension's members are its own, read-only properties. Getters stay getters.
   const extended = Object.create(oms) as OMSWallet;
   extendedInstances.add(extended);
   for (const key of Reflect.ownKeys(added)) {
-    Object.defineProperty(extended, key, {
-      value: (added as Record<PropertyKey, unknown>)[key],
-      enumerable: true,
-      writable: false,
-      configurable: false
-    });
+    const descriptor = Object.getOwnPropertyDescriptor(added, key)!;
+    Object.defineProperty(
+      extended,
+      key,
+      'value' in descriptor
+        ? { value: descriptor.value, enumerable: true, writable: false, configurable: false }
+        : { get: descriptor.get, set: descriptor.set, enumerable: true, configurable: false }
+    );
   }
   return extended;
 }

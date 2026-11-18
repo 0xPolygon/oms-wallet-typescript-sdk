@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { zeroAddress } from 'viem';
+import { zeroAddress, type Hex } from 'viem';
 
 import { MemoryStorageManager, Networks, OMSWalletTransactionError } from '@polygonlabs/oms-wallet';
 
@@ -103,8 +103,8 @@ describe('setup', () => {
     expect(createBackend).not.toHaveBeenCalled();
   });
 
-  it('signs only for the wallet active when setup starts, and fails if it changes', async () => {
-    const { privacy, wallet, createBackend } = setup({
+  it('signs nothing when the wallet changes before the operation runs', async () => {
+    const { privacy, wallet, createBackend, signReservedMessage } = setup({
       backends: [new FakeBackend(), new FakeBackend(OTHER_WALLET)]
     });
     const pending = privacy.getBalances();
@@ -113,10 +113,8 @@ describe('setup', () => {
     const error = await rejection(pending);
 
     expect(error.code).toBe('OMS_PRIVACY_WALLET_CHANGED');
-    // Setup finishes in the background, for the wallet it started with.
-    await vi.waitFor(() =>
-      expect(createBackend.mock.calls.map(([params]) => params.address)).toEqual([WALLET])
-    );
+    expect(signReservedMessage).not.toHaveBeenCalled();
+    expect(createBackend).not.toHaveBeenCalled();
   });
 
   it('requires an active Ethereum wallet', async () => {
@@ -623,7 +621,7 @@ describe('unshield, recover, balances', () => {
 
     expect(error).toMatchObject({
       code: 'OMS_PRIVACY_SERVICE_ERROR',
-      message: 'The privacy service failed.'
+      message: 'The privacy service failed before the withdrawal was submitted.'
     });
     expect(error.cause).toBeUndefined();
   });
@@ -809,4 +807,214 @@ describe('review fixes', () => {
     expect(error.message).toContain('not executed');
     expect(executed).toEqual([]);
   });
+});
+
+describe('second review fixes', () => {
+  const tick = () => new Promise((resolve) => setTimeout(resolve, 5));
+  const sendQuote = (privacy: ReturnType<typeof setup>['privacy']) =>
+    privacy.quotePrivateSend({ network: NETWORK, token: USDC, amount: 100n, to: RECIPIENT });
+
+  it('reports the deposit when the provider fails while the deposit is still running', async () => {
+    const { privacy, backend, wallet } = setup();
+    // The provider starts the deposit and its delivery proofs together; the proofs fail first.
+    backend.privateSend = async (params, send) => {
+      const [approveCall, depositCall] = backend.privateSendCalls(params.amount + backend.fee);
+      await send(approveCall!);
+      void send(depositCall!).catch(() => {});
+      throw new Error('relayer not available');
+    };
+    let release!: () => void;
+    const gate = new Promise<void>((resolve) => (release = resolve));
+    const send = wallet.sendTransaction.getMockImplementation()!;
+    wallet.sendTransaction.mockImplementation(async (params) => {
+      if (wallet.sent.length === 1) await gate;
+      return send(params);
+    });
+    const pending = rejection(privacy.privateSend(await sendQuote(privacy)));
+    await tick();
+    release();
+
+    const error = await pending;
+    expect(error).toMatchObject({
+      code: 'OMS_PRIVACY_SERVICE_ERROR',
+      stage: 'delivery',
+      txnIds: ['txn-1', 'txn-2']
+    });
+    expect(error.message).toContain('Do not send it again');
+  });
+
+  it('starts no deposit once the provider has failed', async () => {
+    const { privacy, backend, wallet } = setup();
+    backend.privateSend = async (params, send) => {
+      const calls = backend.privateSendCalls(params.amount + backend.fee);
+      void (async () => {
+        for (const call of calls) await send(call);
+      })().catch(() => {});
+      throw new Error('relayer not available');
+    };
+
+    const error = await rejection(privacy.privateSend(await sendQuote(privacy)));
+    await tick();
+    expect(error).toMatchObject({
+      code: 'OMS_PRIVACY_SERVICE_ERROR',
+      stage: 'deposit',
+      txnIds: ['txn-1']
+    });
+    expect(wallet.sent.map((sent) => decodeApproval(sent.params.data as Hex).amount)).toEqual([
+      100n + backend.fee
+    ]);
+  });
+
+  it('refuses wallet transactions the provider requests after the operation or while one runs', async () => {
+    const { privacy, backend, wallet } = setup();
+    let late: (() => Promise<unknown>) | undefined;
+    backend.privateSend = async (params, send) => {
+      const [approveCall, depositCall] = backend.privateSendCalls(params.amount + backend.fee);
+      const overlapping = await Promise.allSettled([send(approveCall!), send(approveCall!)]);
+      expect(overlapping.map((result) => result.status)).toEqual(['fulfilled', 'rejected']);
+      late = () => send(depositCall!);
+      throw new Error('provider failure');
+    };
+
+    const error = await rejection(privacy.privateSend(await sendQuote(privacy)));
+    expect(error.code).toBe('OMS_PRIVACY_UNAUTHORIZED_TRANSACTION');
+    await expect(late!()).rejects.toThrow('after the operation ended');
+    expect(wallet.sent).toHaveLength(1);
+  });
+
+  it('keeps getBalances in the queue until both reads settle', async () => {
+    const { privacy, backend } = setup();
+    const order: string[] = [];
+    let release!: () => void;
+    const gate = new Promise<void>((resolve) => (release = resolve));
+    backend.balances = async () => {
+      throw new Error('rpc down');
+    };
+    backend.recoverableBalances = async () => {
+      order.push('recoverable:start');
+      await gate;
+      order.push('recoverable:end');
+      return [];
+    };
+    backend.quoteFee = async () => {
+      order.push('quoteFee');
+      return { fee: 1n, data: {} };
+    };
+
+    const balances = rejection(privacy.getBalances());
+    const quote = privacy.quoteUnshield({ network: NETWORK, token: USDC, amount: 1n });
+    await tick();
+    release();
+    await balances;
+    await quote;
+    expect(order).toEqual(['recoverable:start', 'recoverable:end', 'quoteFee']);
+  });
+
+  it('does not return balances or quotes for a wallet that is no longer active', async () => {
+    const { privacy, backend, wallet } = setup();
+    let release!: () => void;
+    const gate = new Promise<void>((resolve) => (release = resolve));
+    backend.balances = async () => {
+      await gate;
+      return [{ chainId: NETWORK.id, token: USDC, amount: 7n }];
+    };
+    backend.quoteFee = async () => {
+      await gate;
+      return { fee: 1n, data: {} };
+    };
+
+    const balances = rejection(privacy.getBalances());
+    const quote = rejection(privacy.quoteUnshield({ network: NETWORK, token: USDC, amount: 1n }));
+    await tick();
+    wallet.switchTo(OTHER_WALLET);
+    wallet.switchTo(WALLET);
+    release();
+    expect((await balances).code).toBe('OMS_PRIVACY_WALLET_CHANGED');
+    expect((await quote).code).toBe('OMS_PRIVACY_WALLET_CHANGED');
+  });
+
+  it('binds a quote to the inputs at the call and the package’s own network', async () => {
+    const { privacy, backend } = setup();
+    const quotedFor: bigint[] = [];
+    backend.quoteFee = async (params: { amount: bigint }) => {
+      quotedFor.push(params.amount);
+      await tick();
+      return { fee: 1n, data: {} };
+    };
+    const network = { ...Networks.polygon };
+    const params = { network, token: USDC, amount: 100n, to: RECIPIENT };
+    const pending = privacy.quotePrivateSend(params);
+    params.amount = 1000n;
+    (network as { id: number }).id = Networks.base.id;
+    const quote = await pending;
+
+    expect(quotedFor).toEqual([100n]);
+    expect(quote.amount).toBe(100n);
+    expect(quote.network).toBe(Networks.polygon);
+  });
+
+  it('refuses the zero address as a recipient', async () => {
+    const { privacy } = setup();
+    for (const quote of [
+      privacy.quotePrivateSend({ network: NETWORK, token: USDC, amount: 1n, to: zeroAddress }),
+      privacy.quoteUnshield({ network: NETWORK, token: USDC, amount: 1n, to: zeroAddress })
+    ]) {
+      expect((await rejection(quote)).code).toBe('OMS_PRIVACY_INVALID_PARAMS');
+    }
+  });
+
+  it('times out a delivery status read that never settles, keeping the delivery ID', async () => {
+    const { privacy, backend } = setup();
+    backend.deliveryStatus = () => new Promise(() => {});
+
+    const error = await rejection(
+      privacy.privateSend(await sendQuote(privacy), {
+        waitForDelivery: true,
+        deliveryPolling: { timeoutMs: 20, intervalMs: 1 }
+      })
+    );
+    expect(error).toMatchObject({
+      code: 'OMS_PRIVACY_DELIVERY_TIMEOUT',
+      deliveryId: 'delivery-1',
+      txnIds: ['txn-1', 'txn-2']
+    });
+  });
+
+  it('refuses invalid delivery polling before sending anything', async () => {
+    const { privacy, wallet } = setup();
+    for (const deliveryPolling of [{ timeoutMs: Number.NaN }, { intervalMs: 0 }]) {
+      const error = await rejection(
+        privacy.privateSend(await sendQuote(privacy), { waitForDelivery: true, deliveryPolling })
+      );
+      expect(error.code).toBe('OMS_PRIVACY_INVALID_PARAMS');
+    }
+    expect(wallet.sent).toHaveLength(0);
+  });
+
+  it.each(['unshield', 'recover'] as const)(
+    'says a %s may have been submitted when the service fails after taking it',
+    async (kind) => {
+      const { privacy, backend } = setup();
+      backend.balanceList = [{ chainId: NETWORK.id, token: USDC, amount: 1_000n }];
+      backend.recoverableList = [{ chainId: NETWORK.id, token: USDC, amount: 50n }];
+      const quote =
+        kind === 'unshield'
+          ? await privacy.quoteUnshield({ network: NETWORK, token: USDC, amount: 100n })
+          : undefined;
+      backend.beforeSubmitDelay = undefined;
+      const submit = backend[kind].bind(backend);
+      backend[kind] = (async (params: Parameters<typeof submit>[0]) => {
+        await submit(params as never);
+        throw new Error('response lost');
+      }) as never;
+
+      const error = await rejection(
+        kind === 'unshield'
+          ? privacy.unshield(quote!)
+          : privacy.recover({ network: NETWORK, token: USDC })
+      );
+      expect(error).toMatchObject({ code: 'OMS_PRIVACY_SERVICE_ERROR', txnIds: [] });
+      expect(error.message).toContain('may have been submitted');
+    }
+  );
 });

@@ -1592,7 +1592,9 @@ export class WalletClientImpl implements WalletClient {
     this.redirectAuthStorage?.delete(this.storageKeys.redirectAuth);
   }
 
-  async signMessage(params: SignMessageParams): Promise<string> {
+  async signMessage(input: SignMessageParams): Promise<string> {
+    // Copied before the check: the request must sign exactly the message that was checked.
+    const params = { network: input.network, message: input.message };
     if (isReservedMessage(params.message)) {
       throw new OMSWalletValidationError({
         operation: WalletOperation.signMessage,
@@ -1606,7 +1608,8 @@ export class WalletClientImpl implements WalletClient {
    * Signs a message reserved for OMS Wallet extensions. Not part of `WalletClient`: extensions reach
    * it through the context `OMSWallet.extend` passes them.
    */
-  async signReservedMessage(params: SignMessageParams): Promise<string> {
+  async signReservedMessage(input: SignMessageParams): Promise<string> {
+    const params = { network: input.network, message: input.message };
     if (!isReservedMessage(params.message)) {
       throw new OMSWalletValidationError({
         operation: WalletOperation.signMessage,
@@ -1618,13 +1621,16 @@ export class WalletClientImpl implements WalletClient {
 
   private async signEthereumMessage(params: SignMessageParams): Promise<string> {
     return this.runOperation(WalletOperation.signMessage, async () => {
-      // Read before any await: the call acts for the wallet active when it was made.
+      // Read before any await: the call acts for the wallet active when it was made, with the
+      // arguments it was made with.
       const walletId = this.walletId;
+      const network = params.network.id.toString();
+      const message = params.message;
       await this.requireActiveEthereumSession(WalletOperation.signMessage);
       const request: SignMessageRequest = {
-        network: params.network.id.toString(),
+        network,
         walletId: this.requireCallWallet(walletId, WalletOperation.signMessage),
-        message: params.message
+        message
       };
       const response = await this.client.signMessage(request);
       return response.signature;
@@ -1646,13 +1652,16 @@ export class WalletClientImpl implements WalletClient {
 
   async signTypedData(params: SignTypedDataParams): Promise<string> {
     return this.runOperation(WalletOperation.signTypedData, async () => {
-      // Read before any await: the call acts for the wallet active when it was made.
+      // Read before any await: the call acts for the wallet active when it was made, with the
+      // arguments it was made with.
       const walletId = this.walletId;
+      const network = params.network.id.toString();
+      const typedData = normalizeJsonBigInts(params.typedData);
       await this.requireActiveEthereumSession(WalletOperation.signTypedData);
       const request: SignTypedDataRequest = {
-        network: params.network.id.toString(),
+        network,
         walletId: this.requireCallWallet(walletId, WalletOperation.signTypedData),
-        typedData: normalizeJsonBigInts(params.typedData)
+        typedData
       };
       const response = await this.client.signTypedData(request);
       return response.signature;
@@ -1789,29 +1798,37 @@ export class WalletClientImpl implements WalletClient {
   >(params: SendContractTransactionParams<abi, functionName>): Promise<SendTransactionResponse>;
   async sendTransaction(params: SendTransactionParams): Promise<SendTransactionResponse> {
     return this.runOperation(WalletOperation.sendTransaction, async () => {
-      // Read before any await: the call acts for the wallet active when it was made.
+      // Read before any await: the call acts for the wallet active when it was made, with the
+      // arguments it was made with.
       const walletId = this.walletId;
-      await this.requireActiveEthereumSession(WalletOperation.sendTransaction);
+      const { network, selectFeeOption, waitForStatus, statusPolling, onPrepared } = params;
       const data =
         'abi' in params ? encodeFunctionData(params as EncodeFunctionDataParameters) : params.data;
-
-      const request: PrepareEthereumTransactionRequest = {
-        network: params.network.id.toString(),
-        walletId: this.requireCallWallet(walletId, WalletOperation.sendTransaction),
+      const fields = {
+        network: network.id.toString(),
         to: params.to,
         value: (params.value ?? 0n).toString(),
         data,
         mode: toGeneratedTransactionMode(params.mode ?? TransactionMode.Relayer)
       };
+      // Invalid options fail before anything is prepared.
+      if (waitForStatus !== false) this.validateTransactionStatusPollingOptions(statusPolling);
+      await this.requireActiveEthereumSession(WalletOperation.sendTransaction);
+
+      const request: PrepareEthereumTransactionRequest = {
+        ...fields,
+        walletId: this.requireCallWallet(walletId, WalletOperation.sendTransaction)
+      };
 
       const prepared = await this.client.prepareEthereumTransaction(request);
       return this.executePreparedTransaction({
         prepared,
-        network: params.network,
-        selectFeeOption: params.selectFeeOption,
-        waitForStatus: params.waitForStatus,
-        statusPolling: params.statusPolling,
-        onPrepared: params.onPrepared
+        network,
+        selectFeeOption,
+        waitForStatus,
+        statusPolling,
+        onPrepared,
+        walletId
       });
     });
   }
@@ -3009,12 +3026,21 @@ export class WalletClientImpl implements WalletClient {
     waitForStatus?: boolean;
     statusPolling?: TransactionStatusPollingOptions;
     onPrepared?: (txnId: string) => void | Promise<void>;
+    /** The wallet the call is for; fee selection and Execute stop if another one is active. */
+    walletId?: string;
   }): Promise<SendTransactionResponse> {
     if (params.waitForStatus !== false) {
       this.validateTransactionStatusPollingOptions(params.statusPolling);
     }
     // Nothing is submitted yet: a callback that throws stops the transaction here.
     await params.onPrepared?.(params.prepared.txnId);
+    const requireCallWallet = () => {
+      if (params.walletId !== undefined) {
+        this.requireCallWallet(params.walletId, WalletOperation.sendTransaction);
+      }
+    };
+    // Fee balances are read for the active wallet, so it must still be the call's.
+    requireCallWallet();
     const feeOption = await this.selectFeeOption({
       feeOptions: params.prepared.feeOptions,
       sponsored: params.prepared.sponsored,
@@ -3026,6 +3052,7 @@ export class WalletClientImpl implements WalletClient {
       request.feeOption = toGeneratedFeeOptionSelection(feeOption);
     }
 
+    requireCallWallet();
     let executed: ExecuteResponse;
     const revision = this.sessionRevision;
     // Records whether the Execute request reached `fetch`; it aborts with nothing else.

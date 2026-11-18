@@ -741,6 +741,18 @@ const packagedOms = new OMSWallet({ publishableKey: 'pk_dev_sdbx_project_key' })
 packagedOms.extend(packagedExtension);
 const severalMembers: OMSWalletExtensionMembers<[{ a: 1 }, { b: 2 }]> = { a: 1, b: 2 };
 void severalMembers;
+declare const unionExtension: OMSWalletExtension<
+  { kind: 'a'; a: number } | { kind: 'b'; b: number }
+>;
+const unionOms = new OMSWallet({ publishableKey: 'pk_dev_sdbx_project_key' }).extend(
+  unionExtension,
+  () => ({ other: true as const })
+);
+const unionKind: 'a' | 'b' = unionOms.kind;
+const unionOther: true = unionOms.other;
+// @ts-expect-error a union-typed extension does not make the wallet `never`.
+const unionNever: never = unionOms;
+void [unionKind, unionOther, unionNever];
 // @ts-expect-error extend needs at least one extension.
 new OMSWallet({ publishableKey: 'pk_dev_sdbx_project_key' }).extend();
 void new OMSWallet({ publishableKey: 'pk_dev_sdbx_project_key' }).wallet.sendTransaction({

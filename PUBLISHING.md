@@ -41,7 +41,7 @@ touches a package without one.
 
 1. Merging PRs with changesets into `master` triggers the `Release` workflow
    (`.github/workflows/npm-release-trigger.yml`), which opens or updates a
-   **`changesets: Release / Deploy`** PR. That PR applies the pending changesets, bumps both package
+   **`changesets: Release / Deploy`** PR. That PR applies the pending changesets, bumps all three package
    versions in lockstep, and updates each `CHANGELOG.md`.
 2. Review and merge that Release PR.
 3. On merge, the same workflow uses npm `11.15.0` and runs the full release gates. It then packs
@@ -66,8 +66,9 @@ To inspect and approve a staged release:
 ```bash
 npm stage list @polygonlabs/oms-wallet
 npm stage list @polygonlabs/oms-wallet-wagmi-connector
+npm stage list @polygonlabs/oms-wallet-privacy
 npm stage view <stage-id>
-npm stage approve <stage-id> # prompts for 2FA; approve both package stage IDs
+npm stage approve <stage-id> # prompts for 2FA; approve all three package stage IDs
 ```
 
 If one tarball stages and a later tarball fails, do not merge another release. The workflow creates
@@ -90,8 +91,8 @@ pnpm check:exports   # publint — validates the publishable packages' exports/t
 
 These are the same standard scripts the CI workflow runs (`.github/workflows/ci-trigger.yml`): the
 shared `ci` composite runs lint/typecheck/test, a build job runs `build` + `check:exports`, and a
-drift-check job runs the `codegen-drift-check` script, which only `@polygonlabs/oms-wallet`
-defines (it rebuilds, then checks the public API baseline and `API.md`). The release helper additionally verifies
+drift-check job runs the `codegen-drift-check` script, which `@polygonlabs/oms-wallet` and
+`@polygonlabs/oms-wallet-privacy` define (each rebuilds, then checks its public API and `API.md`). The release helper additionally verifies
 the fixed-package invariant and the pnpm-packed manifests immediately before staging.
 
 ## Prerelease / snapshot builds
@@ -104,10 +105,10 @@ still CI, not a local release:
 2. Set the **`snapshot_tag`** input to a non-semver dist-tag (e.g. `canary`, `pre-0.3.0`).
 
 The workflow versions the fixed package group with `changeset version --snapshot <tag>` on the
-runner (never committed), then packs and stages both temporary versions. If the branch has no
+runner (never committed), then packs and stages all three temporary versions. If the branch has no
 versioned changeset, the workflow creates a temporary patch changeset so the snapshot cannot
 succeed without producing packages. The snapshot path skips git tags and GitHub Releases, so
 **`snapshot_tag` must be a lowercase, non-version tag other than `latest`**. The workflow validates
-the input and aborts before versioning if the tag is unsafe. An npm maintainer must approve both
+the input and aborts before versioning if the tag is unsafe. An npm maintainer must approve all three
 stages before consumers can install the result with
 `pnpm add @polygonlabs/oms-wallet@<tag>`.

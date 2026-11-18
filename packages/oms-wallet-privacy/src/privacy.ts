@@ -64,13 +64,22 @@ function createPrivacyActions(oms: OMSWallet, sessions: PrivacySessions): Privac
 
     async getBalances(params = {}) {
       const operation = 'privacy.getBalances';
-      const networks = params.networks ?? privacyNetworks;
-      for (const network of networks) requireContracts(network, operation);
-      return sessions.run(operation, async (backend) => {
+      const networks = (params.networks ?? privacyNetworks).map((network) =>
+        requireNetwork(network, operation)
+      );
+      return sessions.run(operation, async (backend, _wallet, requireCurrent) => {
         const chainIds = networks.map((network) => network.id);
-        const [spendable, recoverable] = await backendCall(operation, 'quote', [], () =>
-          Promise.all([backend.balances(chainIds), backend.recoverableBalances(chainIds)])
-        );
+        const [spendable, recoverable] = await backendCall(operation, 'quote', [], async () => {
+          // Both reads settle before the operation leaves the queue, even when one fails.
+          const [spendable, recoverable] = await Promise.allSettled([
+            backend.balances(chainIds),
+            backend.recoverableBalances(chainIds)
+          ]);
+          if (spendable.status === 'rejected') throw spendable.reason;
+          if (recoverable.status === 'rejected') throw recoverable.reason;
+          return [spendable.value, recoverable.value] as const;
+        });
+        requireCurrent();
         const byKey = new Map<
           string,
           { network: Network; token: Address; amount: bigint; recoverable: bigint }
@@ -102,16 +111,16 @@ function createPrivacyActions(oms: OMSWallet, sessions: PrivacySessions): Privac
 
     async quoteShield(params) {
       const operation = 'privacy.quoteShield';
-      requireContracts(params.network, operation);
+      const network = requireNetwork(params.network, operation);
       const token = requireAddress(params.token, 'token', operation);
-      requireAmount(params.amount, operation);
+      const amount = requireAmount(params.amount, operation);
       const wallet = sessions.activeAddress(operation);
       return createQuote(
         {
           kind: 'shield',
-          network: params.network,
+          network,
           token,
-          amount: params.amount,
+          amount,
           fee: 0n,
           expiresAt: expiry()
         },
@@ -121,25 +130,21 @@ function createPrivacyActions(oms: OMSWallet, sessions: PrivacySessions): Privac
 
     async quoteUnshield(params) {
       const operation = 'privacy.quoteUnshield';
-      requireContracts(params.network, operation);
+      const network = requireNetwork(params.network, operation);
       const token = requireAddress(params.token, 'token', operation);
-      requireAmount(params.amount, operation);
-      const to = params.to === undefined ? undefined : requireAddress(params.to, 'to', operation);
-      return sessions.run(operation, async (backend, wallet) => {
+      const amount = requireAmount(params.amount, operation);
+      const to = params.to === undefined ? undefined : requireRecipient(params.to, operation);
+      return sessions.run(operation, async (backend, wallet, requireCurrent) => {
         const { fee, data } = await backendCall(operation, 'quote', [], () =>
-          backend.quoteFee({
-            kind: 'unshield',
-            chainId: params.network.id,
-            token,
-            amount: params.amount
-          })
+          backend.quoteFee({ kind: 'unshield', chainId: network.id, token, amount })
         );
+        requireCurrent();
         return createQuote(
           {
             kind: 'unshield',
-            network: params.network,
+            network,
             token,
-            amount: params.amount,
+            amount,
             fee,
             to: to ?? wallet,
             expiresAt: expiry()
@@ -151,25 +156,21 @@ function createPrivacyActions(oms: OMSWallet, sessions: PrivacySessions): Privac
 
     async quotePrivateSend(params) {
       const operation = 'privacy.quotePrivateSend';
-      requireContracts(params.network, operation);
+      const network = requireNetwork(params.network, operation);
       const token = requireAddress(params.token, 'token', operation);
-      const to = requireAddress(params.to, 'to', operation);
-      requireAmount(params.amount, operation);
-      return sessions.run(operation, async (backend, wallet) => {
+      const to = requireRecipient(params.to, operation);
+      const amount = requireAmount(params.amount, operation);
+      return sessions.run(operation, async (backend, wallet, requireCurrent) => {
         const { fee, data } = await backendCall(operation, 'quote', [], () =>
-          backend.quoteFee({
-            kind: 'privateSend',
-            chainId: params.network.id,
-            token,
-            amount: params.amount
-          })
+          backend.quoteFee({ kind: 'privateSend', chainId: network.id, token, amount })
         );
+        requireCurrent();
         return createQuote(
           {
             kind: 'privateSend',
-            network: params.network,
+            network,
             token,
-            amount: params.amount,
+            amount,
             fee,
             to,
             expiresAt: expiry()
@@ -223,6 +224,7 @@ function createPrivacyActions(oms: OMSWallet, sessions: PrivacySessions): Privac
 
     async privateSend(quote, options = {}) {
       const operation = 'privacy.privateSend';
+      if (options.waitForDelivery) validatePolling(options.deliveryPolling, operation);
       const sent = await sessions.run(operation, async (backend, wallet, requireCurrent) => {
         const internals = useQuote(quote, 'privateSend', wallet, operation);
         const contracts = await checkedContracts(backend, quote.network, operation);
@@ -268,6 +270,9 @@ function createPrivacyActions(oms: OMSWallet, sessions: PrivacySessions): Privac
             (call) => run.send(call)
           ));
         } catch (error) {
+          // The provider can fail while a deposit it started is still running: wait for it, so the
+          // error reports what was actually sent.
+          await run.end();
           if (run.failure) throw run.failure;
           if (error instanceof OMSWalletPrivacyError) throw error;
           const deposited = run.confirmedSteps.includes('deposit');
@@ -282,6 +287,7 @@ function createPrivacyActions(oms: OMSWallet, sessions: PrivacySessions): Privac
               : 'The privacy service failed before the deposit.'
           });
         }
+        await run.end();
         run.emit({ step: 'delivery', state: 'pending', deliveryId });
         return { run, deliveryId };
       });
@@ -323,15 +329,24 @@ function createPrivacyActions(oms: OMSWallet, sessions: PrivacySessions): Privac
             message: 'The private balance cannot cover the amount and fee.'
           });
         }
-        const { txnHash } = await backendCall(operation, 'withdraw', [], () =>
-          backend.unshield({
-            chainId,
-            token: quote.token,
-            amount: quote.amount,
-            to: quote.to!,
-            feeData: internals.backendData,
-            beforeSubmit: () => requireCurrent()
-          })
+        let handedOver = false;
+        const { txnHash } = await backendCall(
+          operation,
+          'withdraw',
+          [],
+          () =>
+            backend.unshield({
+              chainId,
+              token: quote.token,
+              amount: quote.amount,
+              to: quote.to!,
+              feeData: internals.backendData,
+              beforeSubmit: () => {
+                requireCurrent();
+                handedOver = true;
+              }
+            }),
+          withdrawalFailure(() => handedOver)
         );
         return Object.freeze({ txnHash });
       });
@@ -349,10 +364,10 @@ function createPrivacyActions(oms: OMSWallet, sessions: PrivacySessions): Privac
 
     async recover(params) {
       const operation = 'privacy.recover';
-      requireContracts(params.network, operation);
+      const network = requireNetwork(params.network, operation);
       const token = requireAddress(params.token, 'token', operation);
       return sessions.run(operation, async (backend, wallet, requireCurrent) => {
-        const chainId = params.network.id;
+        const chainId = network.id;
         const recoverable = await backendCall(operation, 'withdraw', [], () =>
           backend.recoverableBalances([chainId])
         );
@@ -364,13 +379,22 @@ function createPrivacyActions(oms: OMSWallet, sessions: PrivacySessions): Privac
             message: 'There are no recoverable funds for this token.'
           });
         }
-        const { txnHashes } = await backendCall(operation, 'withdraw', [], () =>
-          backend.recover({
-            chainId,
-            token,
-            to: wallet,
-            beforeSubmit: () => requireCurrent()
-          })
+        let handedOver = false;
+        const { txnHashes } = await backendCall(
+          operation,
+          'withdraw',
+          [],
+          () =>
+            backend.recover({
+              chainId,
+              token,
+              to: wallet,
+              beforeSubmit: () => {
+                requireCurrent();
+                handedOver = true;
+              }
+            }),
+          withdrawalFailure(() => handedOver)
         );
         return Object.freeze({ txnHashes: Object.freeze([...txnHashes]) });
       });
@@ -389,10 +413,20 @@ async function waitForDelivery(
   const timeoutMs = polling.timeoutMs ?? DEFAULT_DELIVERY_TIMEOUT_MS;
   const intervalMs = polling.intervalMs ?? DEFAULT_DELIVERY_INTERVAL_MS;
   const deadline = Date.now() + timeoutMs;
+  const timedOut = () =>
+    new OMSWalletPrivacyError({
+      code: 'OMS_PRIVACY_DELIVERY_TIMEOUT',
+      operation,
+      stage: 'delivery',
+      txnIds,
+      deliveryId,
+      message: 'The delivery did not finish in time. It may still finish; check getDeliveryStatus.'
+    });
   for (;;) {
-    let status: DeliveryStatus;
+    let status: DeliveryStatus | undefined;
     try {
-      status = await actions.getDeliveryStatus({ deliveryId });
+      // A status read that never settles must not outlast the timeout.
+      status = await beforeDeadline(actions.getDeliveryStatus({ deliveryId }), deadline);
     } catch (error) {
       // The send went through; only its status is unknown. Keep everything needed to follow it.
       throw new OMSWalletPrivacyError({
@@ -407,6 +441,7 @@ async function waitForDelivery(
         cause: error instanceof OMSWalletPrivacyError ? error.cause : undefined
       });
     }
+    if (status === undefined) throw timedOut();
     if (status.status === 'delivered') return status;
     if (status.status === 'failed') {
       throw new OMSWalletPrivacyError({
@@ -419,18 +454,36 @@ async function waitForDelivery(
           'The private send could not be delivered. The funds are recoverable with recover().'
       });
     }
-    if (Date.now() + intervalMs > deadline) {
-      throw new OMSWalletPrivacyError({
-        code: 'OMS_PRIVACY_DELIVERY_TIMEOUT',
-        operation,
-        stage: 'delivery',
-        txnIds,
-        deliveryId,
-        message:
-          'The delivery did not finish in time. It may still finish; check getDeliveryStatus.'
-      });
-    }
+    if (Date.now() + intervalMs > deadline) throw timedOut();
     await new Promise((resolve) => setTimeout(resolve, intervalMs));
+  }
+}
+
+/** `promise`'s value, or undefined once `deadline` passes first. */
+async function beforeDeadline<T>(promise: Promise<T>, deadline: number): Promise<T | undefined> {
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  try {
+    return await Promise.race([
+      promise,
+      new Promise<undefined>((resolve) => {
+        timer = setTimeout(() => resolve(undefined), Math.max(0, deadline - Date.now()));
+      })
+    ]);
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
+function validatePolling(polling: DeliveryPollingOptions | undefined, operation: string): void {
+  const { timeoutMs, intervalMs } = polling ?? {};
+  if (timeoutMs !== undefined && !(Number.isFinite(timeoutMs) && timeoutMs >= 0)) {
+    throw invalidParams(
+      operation,
+      'deliveryPolling.timeoutMs must be a finite number of 0 or more.'
+    );
+  }
+  if (intervalMs !== undefined && !(Number.isFinite(intervalMs) && intervalMs > 0)) {
+    throw invalidParams(operation, 'deliveryPolling.intervalMs must be a finite positive number.');
   }
 }
 
@@ -464,6 +517,19 @@ function invalidParams(operation: string, message: string): OMSWalletPrivacyErro
   return new OMSWalletPrivacyError({ code: 'OMS_PRIVACY_INVALID_PARAMS', operation, message });
 }
 
+/** The package's own frozen `Network` for `network`'s chain, so a quote cannot change chain. */
+function requireNetwork(network: Network, operation: string): Network {
+  requireContracts(network, operation);
+  return privacyNetworks.find((candidate) => candidate.id === network.id)!;
+}
+
+/** A recipient address; the zero address is refused, since funds sent there are lost. */
+function requireRecipient(value: string, operation: string): Address {
+  const address = requireAddress(value, 'to', operation);
+  if (address === zeroAddress) throw invalidParams(operation, 'to must not be the zero address.');
+  return address;
+}
+
 function requireContracts(network: Network, operation: string): PrivacyContracts {
   const contracts = network && privacyContracts(network);
   if (!contracts) {
@@ -483,9 +549,10 @@ function requireAddress(value: string, name: string, operation: string): Address
   return getAddress(value);
 }
 
-function requireAmount(amount: bigint, operation: string): void {
+function requireAmount(amount: bigint, operation: string): bigint {
   if (typeof amount !== 'bigint' || amount <= 0n)
     throw invalidParams(operation, 'amount must be a positive bigint.');
+  return amount;
 }
 
 /** Checks a quote can run now for `wallet` and marks it used. */
@@ -535,7 +602,8 @@ async function backendCall<T>(
   operation: string,
   stage: OMSWalletPrivacyStage,
   txnIds: ReadonlyArray<string>,
-  call: () => Promise<T>
+  call: () => Promise<T>,
+  message: () => string = () => 'The privacy service failed.'
 ): Promise<T> {
   try {
     return await call();
@@ -546,7 +614,16 @@ async function backendCall<T>(
       operation,
       stage,
       txnIds,
-      message: 'The privacy service failed.'
+      message: message()
     });
   }
+}
+
+/** For a withdrawal the privacy service submits: whether a failure means it may have been sent. */
+function withdrawalFailure(handedOver: () => boolean): () => string {
+  return () =>
+    handedOver()
+      ? 'The privacy service failed after the withdrawal was handed to it, so it may have been ' +
+        'submitted. Check getBalances before trying again.'
+      : 'The privacy service failed before the withdrawal was submitted.';
 }

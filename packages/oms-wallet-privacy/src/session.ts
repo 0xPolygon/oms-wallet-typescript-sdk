@@ -41,7 +41,8 @@ const fingerprintKey = (address: Address) =>
 
 interface Entry {
   readonly address: Address;
-  readonly backend: Promise<PrivacyBackend>;
+  /** Set up by the entry's first operation, in the queue, so it never overlaps an earlier one. */
+  backend: Promise<PrivacyBackend> | undefined;
   /** The last of this entry's operations, settled; the backend is destroyed after it. */
   tail: Promise<unknown>;
   pending: number;
@@ -142,7 +143,7 @@ export class PrivacySessions {
 
     const entry: Entry = {
       address,
-      backend: this.setup(address),
+      backend: undefined,
       tail: Promise.resolve(),
       pending: 0,
       idleTimer: undefined,
@@ -150,10 +151,6 @@ export class PrivacySessions {
       walletChanged: false,
       unsubscribe: () => {}
     };
-    // A failed setup is reported by the operation that awaits it; the next call starts over.
-    entry.backend.catch(() => {
-      if (entries.get(wallet) === entry) this.close(entry);
-    });
     entry.unsubscribe = wallet.onSessionChange((event) => {
       if (event.reason === 'expiryUpdated') return;
       if (event.activeWallet?.address.toLowerCase() === address.toLowerCase()) return;
@@ -238,6 +235,14 @@ export class PrivacySessions {
   }
 
   private async awaitBackend(entry: Entry, operation: string): Promise<PrivacyBackend> {
+    if (!entry.backend) {
+      const wallet = this.oms.wallet;
+      entry.backend = this.setup(entry.address);
+      // A failed setup is reported by the operation that awaits it; the next call starts over.
+      entry.backend.catch(() => {
+        if (entries.get(wallet) === entry) this.close(entry);
+      });
+    }
     try {
       return await entry.backend;
     } catch (error) {
@@ -269,7 +274,7 @@ export class PrivacySessions {
     if (entries.get(this.oms.wallet) === entry) entries.delete(this.oms.wallet);
     void entry.tail
       .then(() => entry.backend)
-      .then((backend) => backend.destroy())
+      .then((backend) => backend?.destroy())
       .catch(() => {});
   }
 }

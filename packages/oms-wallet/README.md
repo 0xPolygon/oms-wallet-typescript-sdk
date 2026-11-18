@@ -463,8 +463,9 @@ const isValid = await omsWallet.wallet.isValidMessageSignature({
 
 Messages that start with `OMS Wallet reserved message:` are refused with `OMSWalletValidationError`,
 as text or hex. They are reserved for extensions, which derive keys from such signatures (see
-[Extensions](#extensions)), so code that can only call `signMessage`, such as a dApp connected
-through wagmi, cannot obtain them.
+[Extensions](#extensions)), so code that can only ask the wallet to sign, such as a dApp sending
+`personal_sign` through the wagmi connector, cannot obtain them. This is not a boundary against
+code running in the app itself.
 
 ### Sign and Verify Typed Data
 
@@ -821,9 +822,11 @@ await omsWallet.wallet.sendTransaction({
 ```
 
 `sendTransaction`, `signMessage` and `signTypedData` act for the wallet that is active when they
-are called. If another wallet becomes active while the call is still checking the session, before
-any request is made, the call fails with `OMSWalletSessionError` instead of acting for the new
-wallet. Requests already made stay bound to the original wallet.
+are called, with the arguments they were called with: changing the params object afterwards has no
+effect. If another wallet becomes active before the call makes its request, or, for
+`sendTransaction`, before fee selection or Execute, the call fails with `OMSWalletSessionError`
+instead of acting for the new wallet. A failure before Execute leaves the prepared transaction
+unexecuted. Requests already made stay bound to the original wallet.
 
 To store the transaction ID before anything is submitted, pass `onPrepared`. It runs after the
 wallet API prepares the transaction and before it is executed; throwing from it stops the
@@ -1154,9 +1157,10 @@ to run them.
 
 ## Extensions
 
-`extend` returns a new `OMSWallet` with the members an extension adds, without changing the original;
-`wallet` and `indexer` stay the same objects. Extensions cannot add `wallet`, `indexer` or `extend`,
-or replace a member the wallet already has, such as one an earlier extension added.
+`extend` returns a new `OMSWallet` with the members one or more extensions add, without changing the
+original; `wallet` and `indexer` stay the same objects. Extensions cannot add `wallet`, `indexer` or
+`extend`, or replace a member the wallet already has, such as one an earlier extension added. An
+extension returns a plain object; its properties, getters included, become read-only members.
 
 ```typescript
 import { OMSWallet } from '@polygonlabs/oms-wallet'
@@ -1168,8 +1172,8 @@ await oms.privacy.getBalances()
 
 An extension is a function `(oms, context) => members`. `context.signReservedMessage` signs messages
 that start with `OMS Wallet reserved message:`, which `signMessage` refuses. It is available to any
-code that calls `extend`, so it keeps those signatures from code that only has `signMessage`, such
-as a connected dApp, not from the app itself.
+code that calls `extend`, so it keeps those signatures from code that can only ask the wallet to
+sign, such as a connected dApp, not from the app itself.
 
 ## Private balances
 

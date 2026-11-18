@@ -80,7 +80,9 @@ token.
 
 `unshield` and `recover` send no wallet transaction: the privacy service submits the withdrawal, and
 its fee is part of the quote. They stop with `OMS_PRIVACY_WALLET_CHANGED` if the active wallet
-changes or signs out before the withdrawal is handed to the service.
+changed or signed out after the call started, even if the same wallet is active again, before the
+withdrawal is handed to the service. Balance reads and quotes fail the same way instead of returning
+results for a wallet that is no longer active.
 
 ### Private send delivery
 
@@ -101,9 +103,12 @@ one of them goes through.
 ### Errors
 
 Every failure is an `OMSWalletPrivacyError` with a `code` (`OMS_PRIVACY_*`), the `operation`, the
-`stage` it reached, and `txnIds`: every wallet transaction created so far. An empty `txnIds` means
-nothing was sent. Otherwise, store the IDs and reconcile: check each with
-`oms.wallet.getTransactionStatus({ txnId })`, then `oms.privacy.getBalances()` for funds to recover.
+`stage` it reached, and `txnIds`: every wallet transaction created so far. For `shield` and
+`privateSend`, an empty `txnIds` means no wallet transaction was sent; otherwise store the IDs and
+reconcile: check each with `oms.wallet.getTransactionStatus({ txnId })`, then
+`oms.privacy.getBalances()` for funds to recover. `unshield` and `recover` send no wallet
+transaction, so their `txnIds` is always empty: when their message says the withdrawal may have been
+submitted, check `getBalances()` before trying again.
 A failed or timed-out call never re-sends a deposit on its own. `cause` is set only to an
 `OMSWalletError` from the wallet; errors from the privacy service are not forwarded.
 
@@ -115,8 +120,9 @@ See [API.md](./API.md) for every public function and type.
 
 - **Keys.** The private balance's keys are derived from the wallet's signature over a fixed message
   that starts with `OMS Wallet reserved message:`, signed on Polygon. OMS Wallet refuses that
-  message in `signMessage`, so code that can only call `signMessage`, such as a dApp connected
-  through wagmi, cannot obtain the signature; code that can call `OMSWallet.extend` can. A smart
+  message in `signMessage`, so code that can only ask the wallet to sign, such as a dApp sending
+  `personal_sign` through the wagmi connector, cannot obtain the signature; code that can call
+  `OMSWallet.extend`, or any code running in the app itself, can. A smart
   wallet's full signature changes when the wallet is deployed and when its configuration changes
   (for example when remote access is granted, revoked or expires), so keys come only from the part
   that depends on the wallet's own key, the wallet address and the message: the wallet key's ECDSA

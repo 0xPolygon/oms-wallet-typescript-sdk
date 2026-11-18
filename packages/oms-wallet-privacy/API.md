@@ -73,7 +73,7 @@ export interface PrivateBalance {
 
 ### `PrivacyActions.quoteShield`
 
-Moves tokens from the wallet into its private balance.
+Quotes moving tokens from the wallet into its private balance; `shield` runs it.
 
 ```typescript
 quoteShield(params: QuoteShieldParams): Promise<PrivacyQuote<"shield">>;
@@ -81,7 +81,7 @@ quoteShield(params: QuoteShieldParams): Promise<PrivacyQuote<"shield">>;
 
 ### `PrivacyActions.quoteUnshield`
 
-Moves tokens from the private balance to an address.
+Quotes moving tokens from the private balance to an address; `unshield` runs it.
 
 ```typescript
 quoteUnshield(params: QuoteUnshieldParams): Promise<PrivacyQuote<"unshield">>;
@@ -89,7 +89,8 @@ quoteUnshield(params: QuoteUnshieldParams): Promise<PrivacyQuote<"unshield">>;
 
 ### `PrivacyActions.quotePrivateSend`
 
-Sends tokens from the wallet to an address without an on-chain link between the two.
+Quotes sending tokens from the wallet to an address without an on-chain link between the two;
+`privateSend` runs it.
 
 ```typescript
 quotePrivateSend(params: QuotePrivateSendParams): Promise<PrivacyQuote<"privateSend">>;
@@ -329,8 +330,10 @@ export interface RecoverResult {
 ### `OMSWalletPrivacyError`
 
 An error from `oms.privacy`. `txnIds` lists every wallet transaction the operation had created
-when it failed, so an app can tell "nothing was sent" (empty) from "a deposit may have been
-sent" and reconcile with `wallet.getTransactionStatus` and `oms.privacy.getBalances`.
+when it failed, so for `shield` and `privateSend` an app can tell "no wallet transaction was sent"
+(empty) from "a deposit may have been sent" and reconcile with `wallet.getTransactionStatus` and
+`oms.privacy.getBalances`. `unshield` and `recover` send no wallet transaction, so their `txnIds`
+is always empty; the message says whether the withdrawal may have been submitted.
 `cause` is only set to an `OMSWalletError` from the wallet.
 
 ```typescript

@@ -96,6 +96,27 @@ describe('innerKeySignature', () => {
     ).rejects.toThrow('Non-canonical');
   });
 
+  it('rejects a chained signature with a truncated or extra link', async () => {
+    const chained = fixture.vectors.find((vector) => vector.signature.startsWith('0x01'))!;
+    const bytes = hexToBytes(chained.signature);
+    const first = 4 + ((bytes[1]! << 16) | (bytes[2]! << 8) | bytes[3]!);
+    expect(first).toBeLessThan(bytes.length);
+    for (const signature of [
+      bytesToHex(bytes.slice(0, first + 2)),
+      bytesToHex(bytes.slice(0, bytes.length - 1)),
+      bytesToHex(new Uint8Array([...bytes, 0x00]))
+    ]) {
+      await expect(
+        innerKeySignature({
+          signature,
+          wallet: chained.wallet,
+          chainId: chained.chainId,
+          message: fixture.message
+        })
+      ).rejects.toThrow('Malformed chained signature.');
+    }
+  });
+
   it('rejects malformed signatures', async () => {
     const scw = fixture.vectors.find(
       (vector) => vector.mode === 'SCW' && vector.label === 'deployed'

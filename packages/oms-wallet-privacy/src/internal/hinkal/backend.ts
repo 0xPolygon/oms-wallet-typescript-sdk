@@ -41,7 +41,17 @@ export const createProviderBackend: CreateBackend = async (params) => {
     params.keySignature,
     { generateProofRemotely: true, disableCaching: true }
   );
-  return new ProviderBackend(hinkal, state, params.address);
+  try {
+    return new ProviderBackend(hinkal, state, params.address);
+  } catch (error) {
+    // Nothing else holds the instance yet, so release it here.
+    try {
+      await hinkal.destroy();
+    } catch {
+      // The construction error is the one to report.
+    }
+    throw error;
+  }
 };
 
 class ProviderBackend implements PrivacyBackend {

@@ -68,12 +68,20 @@ export async function innerKeySignature(params: {
   // Chained signature: flag 0x01, then uint24-length-prefixed links. The first link signs the
   // message; later links sign configuration updates that are not on chain yet.
   if (bytes.length > 0 && (bytes[0]! & 0x03) === 0x01) {
-    if (bytes.length < 4) throw new KeySignatureError('Malformed chained signature.');
-    const length = (bytes[1]! << 16) | (bytes[2]! << 8) | bytes[3]!;
-    if (length === 0 || 4 + length > bytes.length) {
-      throw new KeySignatureError('Malformed chained signature.');
+    // Every link must be well-formed and the links must end exactly at the end of the signature.
+    const links: Uint8Array[] = [];
+    for (let offset = 1; offset < bytes.length;) {
+      if (offset + 3 > bytes.length) throw new KeySignatureError('Malformed chained signature.');
+      const length = (bytes[offset]! << 16) | (bytes[offset + 1]! << 8) | bytes[offset + 2]!;
+      offset += 3;
+      if (length === 0 || offset + length > bytes.length) {
+        throw new KeySignatureError('Malformed chained signature.');
+      }
+      links.push(bytes.slice(offset, offset + length));
+      offset += length;
     }
-    bytes = bytes.slice(4, 4 + length);
+    if (links.length === 0) throw new KeySignatureError('Malformed chained signature.');
+    bytes = links[0]!;
   }
 
   let decoded: ReturnType<typeof SequenceSignature.decodeSignature>;
