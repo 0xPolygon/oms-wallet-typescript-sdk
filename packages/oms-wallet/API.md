@@ -11,9 +11,14 @@ export declare class OMSWallet {
     readonly wallet: WalletClient;
     readonly indexer: IndexerClient;
     constructor(params: OMSWalletParams);
-    extend<const E extends object & {
-        [P in OMSWalletReservedMember | keyof this]?: `"${P & string}" is already on this OMSWallet`;
-    }>(extension: OMSWalletExtension<E>): this & E;
+    extend<const E extends readonly [
+        object,
+        ...object[]
+    ]>(...extensions: {
+        [K in keyof E]: OMSWalletExtension<E[K] & {
+            [P in OMSWalletReservedMember | keyof this]?: `"${P & string}" is already on this OMSWallet`;
+        }>;
+    }): this & OMSWalletExtensionMembers<E>;
 }
 ```
 
@@ -44,6 +49,14 @@ What `OMSWallet.extend` gives an extension besides the wallet itself.
 export interface OMSWalletExtensionContext {
     signReservedMessage(params: SignMessageParams): Promise<string>;
 }
+```
+
+### `OMSWalletExtensionMembers`
+
+The members a list of extensions adds: the intersection of the objects they return.
+
+```typescript
+export type OMSWalletExtensionMembers<E extends readonly object[]> = (E[number] extends infer M ? (M extends object ? (members: M) => void : never) : never) extends (members: infer All) => void ? All : never;
 ```
 
 ### `OMSWalletReservedMember`

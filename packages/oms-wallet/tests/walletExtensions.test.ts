@@ -203,6 +203,36 @@ describe('OMSWallet.extend', () => {
     expect(oms.b).toBe(2);
   });
 
+  it('adds several extensions in order, like chained calls', () => {
+    const seen: unknown[] = [];
+    const oms = new OMSWallet({ publishableKey: 'pk_dev_sdbx_project_key' }).extend(
+      () => ({ a: 1 }),
+      (inner) => {
+        seen.push((inner as OMSWallet & { a: number }).a);
+        return { b: 2 };
+      }
+    );
+
+    expect(seen).toEqual([1]);
+    expect(oms.a).toBe(1);
+    expect(oms.b).toBe(2);
+    expect(oms).toBeInstanceOf(OMSWallet);
+  });
+
+  it('refuses a repeated member within one call and an empty call', () => {
+    const base = new OMSWallet({ publishableKey: 'pk_dev_sdbx_project_key' });
+    const extend = base.extend.bind(base) as (...extensions: unknown[]) => unknown;
+
+    expect(() =>
+      extend(
+        () => ({ a: 1 }),
+        () => ({ a: 2 })
+      )
+    ).toThrow('"a" is already added to this OMSWallet by an extension. Add each extension once.');
+    expect(() => extend()).toThrow('Pass at least one OMSWallet extension');
+    expect('a' in base).toBe(false);
+  });
+
   it('refuses reserved and existing members', () => {
     const base = new OMSWallet({ publishableKey: 'pk_dev_sdbx_project_key' }).extend(() => ({
       a: 1

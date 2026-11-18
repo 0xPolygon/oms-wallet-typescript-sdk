@@ -2,6 +2,7 @@ export { OMSWallet } from './omsWallet.js';
 export type {
   OMSWalletExtension,
   OMSWalletExtensionContext,
+  OMSWalletExtensionMembers,
   OMSWalletParams,
   OMSWalletReservedMember
 } from './omsWallet.js';

@@ -52,6 +52,13 @@ type OMSWalletTakenMembers<K extends PropertyKey> = {
   [P in K]?: `"${P & string}" is already on this OMSWallet`;
 };
 
+/** The members a list of extensions adds: the intersection of the objects they return. */
+export type OMSWalletExtensionMembers<E extends readonly object[]> = (
+  E[number] extends infer M ? (M extends object ? (members: M) => void : never) : never
+) extends (members: infer All) => void
+  ? All
+  : never;
+
 export class OMSWallet {
   public readonly wallet: WalletClient;
   public readonly indexer: IndexerClient;
@@ -128,58 +135,31 @@ export class OMSWallet {
   }
 
   /**
-   * Returns a new `OMSWallet` with the members `extension` adds, for example
-   * `new OMSWallet({ publishableKey }).extend(privacy())`. This instance is not changed, the
-   * result is still an `OMSWallet` with the same `wallet` and `indexer`, and calls can be chained.
-   * An extension cannot add `wallet`, `indexer` or `extend`, or a member the wallet already has,
-   * such as one an earlier extension added; adding the same extension twice is an error.
+   * Returns a new `OMSWallet` with the members the extensions add, for example
+   * `new OMSWallet({ publishableKey }).extend(privacy())`. This instance is not changed, and the
+   * result is still an `OMSWallet` with the same `wallet` and `indexer`. Extensions are added in
+   * order, and each one gets the wallet with the earlier ones added; `extend(a, b)` is the same as
+   * `extend(a).extend(b)`. An extension cannot add `wallet`, `indexer` or `extend`, or a member the
+   * wallet already has, such as one an earlier extension added; adding the same extension twice is
+   * an error. TypeScript reports a member the wallet already has; a member repeated within one call
+   * is reported when `extend` runs.
    */
-  extend<const E extends object & OMSWalletTakenMembers<OMSWalletReservedMember | keyof this>>(
-    extension: OMSWalletExtension<E>
-  ): this & E {
-    // Read through `wallet`, not a private field: an extended instance inherits it from this one.
-    // Shared clients can come from another copy of this SDK on the page, so this is not `instanceof`.
-    const walletClient = this.wallet as Partial<Pick<WalletClientImpl, 'signReservedMessage'>>;
-    if (typeof walletClient.signReservedMessage !== 'function') {
-      throw new OMSWalletValidationError({ message: 'This OMSWallet cannot be extended' });
+  extend<const E extends readonly [object, ...object[]]>(
+    ...extensions: {
+      [K in keyof E]: OMSWalletExtension<
+        E[K] & OMSWalletTakenMembers<OMSWalletReservedMember | keyof this>
+      >;
     }
-    const signReserved = walletClient.signReservedMessage.bind(walletClient);
-    const context: OMSWalletExtensionContext = {
-      signReservedMessage: (params) => signReserved(params)
-    };
-    const added: unknown = extension(this, context);
-    if (typeof added !== 'object' || added === null) {
-      throw new OMSWalletValidationError({
-        message: 'An OMSWallet extension must return an object'
-      });
+  ): this & OMSWalletExtensionMembers<E> {
+    // Typed as non-empty; JavaScript callers can still pass none.
+    if ((extensions as readonly unknown[]).length === 0) {
+      throw new OMSWalletValidationError({ message: 'Pass at least one OMSWallet extension' });
     }
-    for (const key of Reflect.ownKeys(added)) {
-      if (typeof key === 'string' && reservedMembers.has(key)) {
-        throw new OMSWalletValidationError({
-          message: `An OMSWallet extension cannot add "${key}"`
-        });
-      }
-      if (key in this) {
-        throw new OMSWalletValidationError({
-          message: addedByExtension(this, key)
-            ? `"${String(key)}" is already added to this OMSWallet by an extension. Add each extension once.`
-            : `An OMSWallet extension cannot replace "${String(key)}"`
-        });
-      }
-    }
-    // The extended object inherits from this one, so `instanceof OMSWallet`, `wallet` and `indexer`
-    // stay; the extension's members are its own, read-only properties.
-    const extended = Object.create(this) as this;
-    extendedInstances.add(extended);
-    for (const key of Reflect.ownKeys(added)) {
-      Object.defineProperty(extended, key, {
-        value: (added as Record<PropertyKey, unknown>)[key],
-        enumerable: true,
-        writable: false,
-        configurable: false
-      });
-    }
-    return extended as this & E;
+    const extended = (extensions as readonly OMSWalletExtension<object>[]).reduce<OMSWallet>(
+      applyExtension,
+      this
+    );
+    return extended as this & OMSWalletExtensionMembers<E>;
   }
 }
 
@@ -220,4 +200,50 @@ function addedByExtension(instance: object, key: PropertyKey): boolean {
     if (Object.prototype.hasOwnProperty.call(owner, key)) return extendedInstances.has(owner);
   }
   return false;
+}
+
+function applyExtension(oms: OMSWallet, extension: OMSWalletExtension<object>): OMSWallet {
+  // Read through `wallet`, not a private field: an extended instance inherits it from this one.
+  // Shared clients can come from another copy of this SDK on the page, so this is not `instanceof`.
+  const walletClient = oms.wallet as Partial<Pick<WalletClientImpl, 'signReservedMessage'>>;
+  if (typeof walletClient.signReservedMessage !== 'function') {
+    throw new OMSWalletValidationError({ message: 'This OMSWallet cannot be extended' });
+  }
+  const signReserved = walletClient.signReservedMessage.bind(walletClient);
+  const context: OMSWalletExtensionContext = {
+    signReservedMessage: (params) => signReserved(params)
+  };
+  const added: unknown = extension(oms, context);
+  if (typeof added !== 'object' || added === null) {
+    throw new OMSWalletValidationError({
+      message: 'An OMSWallet extension must return an object'
+    });
+  }
+  for (const key of Reflect.ownKeys(added)) {
+    if (typeof key === 'string' && reservedMembers.has(key)) {
+      throw new OMSWalletValidationError({
+        message: `An OMSWallet extension cannot add "${key}"`
+      });
+    }
+    if (key in oms) {
+      throw new OMSWalletValidationError({
+        message: addedByExtension(oms, key)
+          ? `"${String(key)}" is already added to this OMSWallet by an extension. Add each extension once.`
+          : `An OMSWallet extension cannot replace "${String(key)}"`
+      });
+    }
+  }
+  // The extended object inherits from this one, so `instanceof OMSWallet`, `wallet` and `indexer`
+  // stay; the extension's members are its own, read-only properties.
+  const extended = Object.create(oms) as OMSWallet;
+  extendedInstances.add(extended);
+  for (const key of Reflect.ownKeys(added)) {
+    Object.defineProperty(extended, key, {
+      value: (added as Record<PropertyKey, unknown>)[key],
+      enumerable: true,
+      writable: false,
+      configurable: false
+    });
+  }
+  return extended;
 }

@@ -480,7 +480,7 @@ export {};
 
 ## index.d.ts
 export { OMSWallet } from './omsWallet.js';
-export type { OMSWalletExtension, OMSWalletExtensionContext, OMSWalletParams, OMSWalletReservedMember } from './omsWallet.js';
+export type { OMSWalletExtension, OMSWalletExtensionContext, OMSWalletExtensionMembers, OMSWalletParams, OMSWalletReservedMember } from './omsWallet.js';
 export { DEFAULT_SESSION_LIFETIME_SECONDS, MAX_SESSION_LIFETIME_SECONDS } from './wallet.js';
 export { RemoteAccessClient } from './clients/remoteAccessClient.js';
 export type { RemoteAccessClientParams } from './clients/remoteAccessClient.js';
@@ -708,6 +708,8 @@ export type OMSWalletReservedMember = 'wallet' | 'indexer' | 'extend';
 type OMSWalletTakenMembers<K extends PropertyKey> = {
     [P in K]?: `"${P & string}" is already on this OMSWallet`;
 };
+/** The members a list of extensions adds: the intersection of the objects they return. */
+export type OMSWalletExtensionMembers<E extends readonly object[]> = (E[number] extends infer M ? (M extends object ? (members: M) => void : never) : never) extends (members: infer All) => void ? All : never;
 export declare class OMSWallet {
     readonly wallet: WalletClient;
     readonly indexer: IndexerClient;
@@ -720,13 +722,18 @@ export declare class OMSWallet {
      */
     constructor(params: OMSWalletParams);
     /**
-     * Returns a new `OMSWallet` with the members `extension` adds, for example
-     * `new OMSWallet({ publishableKey }).extend(privacy())`. This instance is not changed, the
-     * result is still an `OMSWallet` with the same `wallet` and `indexer`, and calls can be chained.
-     * An extension cannot add `wallet`, `indexer` or `extend`, or a member the wallet already has,
-     * such as one an earlier extension added; adding the same extension twice is an error.
+     * Returns a new `OMSWallet` with the members the extensions add, for example
+     * `new OMSWallet({ publishableKey }).extend(privacy())`. This instance is not changed, and the
+     * result is still an `OMSWallet` with the same `wallet` and `indexer`. Extensions are added in
+     * order, and each one gets the wallet with the earlier ones added; `extend(a, b)` is the same as
+     * `extend(a).extend(b)`. An extension cannot add `wallet`, `indexer` or `extend`, or a member the
+     * wallet already has, such as one an earlier extension added; adding the same extension twice is
+     * an error. TypeScript reports a member the wallet already has; a member repeated within one call
+     * is reported when `extend` runs.
      */
-    extend<const E extends object & OMSWalletTakenMembers<OMSWalletReservedMember | keyof this>>(extension: OMSWalletExtension<E>): this & E;
+    extend<const E extends readonly [object, ...object[]]>(...extensions: {
+        [K in keyof E]: OMSWalletExtension<E[K] & OMSWalletTakenMembers<OMSWalletReservedMember | keyof this>>;
+    }): this & OMSWalletExtensionMembers<E>;
 }
 export {};
 

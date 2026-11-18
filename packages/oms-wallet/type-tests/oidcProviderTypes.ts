@@ -38,6 +38,9 @@ import {
   type GetSolanaBalancesParams,
   type GetTransactionHistoryParams,
   type OMSWalletParams,
+  type OMSWalletExtensionContext,
+  type OMSWalletExtension,
+  type OMSWalletExtensionMembers,
   type IndexerClient,
   type FeeToken,
   type OidcAuthMode,
@@ -723,6 +726,23 @@ new OMSWallet({ publishableKey: 'pk_dev_sdbx_project_key' }).extend(() => ({ wal
 new OMSWallet({ publishableKey: 'pk_dev_sdbx_project_key' }).extend(() => ({ extend: 1 }));
 // @ts-expect-error the same extension cannot be added twice.
 extendedOms.extend(() => ({ second: 'again' }));
+const severalOms = new OMSWallet({ publishableKey: 'pk_dev_sdbx_project_key' }).extend(
+  (_oms, context) => ({ third: context.signReservedMessage }),
+  () => ({ fourth: 4 as const })
+);
+const severalFourth: 4 = severalOms.fourth;
+const severalSign: OMSWalletExtensionContext['signReservedMessage'] = severalOms.third;
+void [severalFourth, severalSign];
+declare const packagedExtension: OMSWalletExtension<{ packaged: { run(): void } }>;
+const packagedOms = new OMSWallet({ publishableKey: 'pk_dev_sdbx_project_key' }).extend(
+  packagedExtension
+);
+// @ts-expect-error a packaged extension cannot be added again.
+packagedOms.extend(packagedExtension);
+const severalMembers: OMSWalletExtensionMembers<[{ a: 1 }, { b: 2 }]> = { a: 1, b: 2 };
+void severalMembers;
+// @ts-expect-error extend needs at least one extension.
+new OMSWallet({ publishableKey: 'pk_dev_sdbx_project_key' }).extend();
 void new OMSWallet({ publishableKey: 'pk_dev_sdbx_project_key' }).wallet.sendTransaction({
   network: Networks.polygon,
   to: '0x1111111111111111111111111111111111111111',

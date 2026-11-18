@@ -7,6 +7,7 @@
         "OMSWalletParams",
         "OMSWalletExtension",
         "OMSWalletExtensionContext",
+        "OMSWalletExtensionMembers",
         "OMSWalletReservedMember"
       ]
     },
