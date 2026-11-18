@@ -736,11 +736,12 @@ export declare class OMSWallet {
      * wallet already has, such as one an earlier extension added; adding the same extension twice is
      * an error. TypeScript reports a member the wallet already has; a member repeated within one call,
      * or a name every object has such as `toString`, is reported when `extend` runs. An extension
-     * returns a plain object: a class instance is refused, since only own properties are added.
+     * returns a plain object: a class instance is refused, since only own properties are added. The
+     * added members are read-only; getters stay live.
      */
     extend<const E extends readonly [object, ...object[]]>(...extensions: {
         [K in keyof E]: OMSWalletExtension<E[K] & OMSWalletTakenMembers<OMSWalletReservedMember | keyof this>>;
-    }): this & OMSWalletExtensionMembers<E>;
+    }): this & Readonly<OMSWalletExtensionMembers<E>>;
 }
 export {};
 

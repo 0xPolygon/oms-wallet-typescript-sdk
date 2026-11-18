@@ -146,6 +146,12 @@ See [API.md](./API.md) for every public function and type.
   service is trusted to build the intended deposit.
 - **Concurrency.** Operations of one wallet run one at a time in a page. Spending the same private
   funds twice from two tabs or devices fails at the protocol level.
+- **Timeouts.** Reads (balances, fees, allowances, delivery status) fail with
+  `OMS_PRIVACY_SERVICE_ERROR` after two minutes without an answer, so other operations are not held
+  up. The privacy service cannot cancel a request, so the read still runs in the background, and the
+  service's own reads on that network can wait for it. Calls that move funds have no such limit: they
+  end through the wallet's transaction handling. When a private send fails, work the service started
+  in parallel, such as looking up the deposit, can still run briefly; it cannot send anything.
 
 ## Runtime
 

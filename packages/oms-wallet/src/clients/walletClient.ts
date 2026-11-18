@@ -1799,9 +1799,12 @@ export class WalletClientImpl implements WalletClient {
   async sendTransaction(params: SendTransactionParams): Promise<SendTransactionResponse> {
     return this.runOperation(WalletOperation.sendTransaction, async () => {
       // Read before any await: the call acts for the wallet active when it was made, with the
-      // arguments it was made with.
+      // arguments it was made with. Objects are copied, so later changes to them have no effect.
       const walletId = this.walletId;
-      const { network, selectFeeOption, waitForStatus, statusPolling, onPrepared } = params;
+      const walletAddress = this.activeWalletAccount?.address;
+      const network = Object.freeze({ ...params.network });
+      const statusPolling = params.statusPolling && Object.freeze({ ...params.statusPolling });
+      const { selectFeeOption, waitForStatus, onPrepared } = params;
       const data =
         'abi' in params ? encodeFunctionData(params as EncodeFunctionDataParameters) : params.data;
       const fields = {
@@ -1828,7 +1831,7 @@ export class WalletClientImpl implements WalletClient {
         waitForStatus,
         statusPolling,
         onPrepared,
-        walletId
+        wallet: { id: walletId, address: walletAddress }
       });
     });
   }
@@ -3026,22 +3029,19 @@ export class WalletClientImpl implements WalletClient {
     waitForStatus?: boolean;
     statusPolling?: TransactionStatusPollingOptions;
     onPrepared?: (txnId: string) => void | Promise<void>;
-    /** The wallet the call is for; fee selection and Execute stop if another one is active. */
-    walletId?: string;
+    /**
+     * The wallet the call is for: fee balances are read for it, and Execute stops if another
+     * wallet is active by then. Callbacks such as the fee selector may run after a switch.
+     */
+    wallet?: { id: string; address?: string };
   }): Promise<SendTransactionResponse> {
     if (params.waitForStatus !== false) {
       this.validateTransactionStatusPollingOptions(params.statusPolling);
     }
     // Nothing is submitted yet: a callback that throws stops the transaction here.
     await params.onPrepared?.(params.prepared.txnId);
-    const requireCallWallet = () => {
-      if (params.walletId !== undefined) {
-        this.requireCallWallet(params.walletId, WalletOperation.sendTransaction);
-      }
-    };
-    // Fee balances are read for the active wallet, so it must still be the call's.
-    requireCallWallet();
     const feeOption = await this.selectFeeOption({
+      walletAddress: params.wallet?.address,
       feeOptions: params.prepared.feeOptions,
       sponsored: params.prepared.sponsored,
       network: params.network,
@@ -3052,7 +3052,7 @@ export class WalletClientImpl implements WalletClient {
       request.feeOption = toGeneratedFeeOptionSelection(feeOption);
     }
 
-    requireCallWallet();
+    if (params.wallet) this.requireCallWallet(params.wallet.id, WalletOperation.sendTransaction);
     let executed: ExecuteResponse;
     const revision = this.sessionRevision;
     // Records whether the Execute request reached `fetch`; it aborts with nothing else.
@@ -3144,6 +3144,8 @@ export class WalletClientImpl implements WalletClient {
   }
 
   private async selectFeeOption(params: {
+    /** Whose balances to show the selector; the active wallet when not given. */
+    walletAddress?: string;
     feeOptions: GeneratedFeeOption[];
     sponsored: boolean;
     network?: Network | SolanaNetwork | TronNetwork;
@@ -3164,7 +3166,7 @@ export class WalletClientImpl implements WalletClient {
     }
 
     const options = params.network
-      ? await this.enrichFeeOptionsWithBalances(params.network, feeOptions)
+      ? await this.enrichFeeOptionsWithBalances(params.network, feeOptions, params.walletAddress)
       : feeOptions.map((feeOption, index) => ({
           feeOption,
           selection: feeOptionSelection(feeOption, index)
@@ -3178,7 +3180,8 @@ export class WalletClientImpl implements WalletClient {
 
   private async enrichFeeOptionsWithBalances(
     network: Network | SolanaNetwork | TronNetwork,
-    feeOptions: FeeOption[]
+    feeOptions: FeeOption[],
+    callWalletAddress?: string
   ): Promise<FeeOptionWithBalance[]> {
     if (typeof network === 'string') {
       return isTronNetwork(network)
@@ -3186,7 +3189,7 @@ export class WalletClientImpl implements WalletClient {
         : this.enrichSolanaFeeOptionsWithBalances(network, feeOptions);
     }
 
-    const walletAddress = this.activeWalletAccount?.address;
+    const walletAddress = callWalletAddress ?? this.activeWalletAccount?.address;
     if (!walletAddress) {
       throw new Error('No active wallet session');
     }

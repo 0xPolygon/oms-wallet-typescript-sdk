@@ -68,7 +68,8 @@ export async function innerKeySignature(params: {
   // Chained signature: flag 0x01, then uint24-length-prefixed links. The first link signs the
   // message; later links sign configuration updates that are not on chain yet.
   if (bytes.length > 0 && (bytes[0]! & 0x03) === 0x01) {
-    // Every link must be well-formed and the links must end exactly at the end of the signature.
+    // Checks the framing only: every link has a valid length and the links end exactly at the end
+    // of the signature. The links themselves are not parsed; WaaS verifies the full signature.
     const links: Uint8Array[] = [];
     for (let offset = 1; offset < bytes.length;) {
       if (offset + 3 > bytes.length) throw new KeySignatureError('Malformed chained signature.');

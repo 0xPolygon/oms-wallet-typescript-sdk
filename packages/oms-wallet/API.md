@@ -18,7 +18,7 @@ export declare class OMSWallet {
         [K in keyof E]: OMSWalletExtension<E[K] & {
             [P in OMSWalletReservedMember | keyof this]?: `"${P & string}" is already on this OMSWallet`;
         }>;
-    }): this & OMSWalletExtensionMembers<E>;
+    }): this & Readonly<OMSWalletExtensionMembers<E>>;
 }
 ```
 

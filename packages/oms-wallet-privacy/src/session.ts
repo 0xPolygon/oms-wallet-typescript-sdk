@@ -34,6 +34,19 @@ const KEY_NETWORK = Networks.polygon;
 /** Torn down after this long without an operation. */
 export const IDLE_TIMEOUT_MS = 60_000;
 
+/**
+ * Longest wait for a backend read (balances, fees, allowance, delivery status). The privacy
+ * provider cannot cancel its requests, so a read that never settles would hold the queue; past this
+ * the operation fails and the queue moves on, while the read finishes in the background. Calls that
+ * move funds have no limit: they end through the wallet's own transaction handling.
+ */
+export const READ_TIMEOUT_MS = 120_000;
+
+/** A backend read that took longer than `READ_TIMEOUT_MS`. */
+export class ReadTimeoutError extends Error {
+  override readonly name = 'ReadTimeoutError';
+}
+
 // v1 and v2 fingerprints came from full wallet signatures, which can change; v3 keys come from
 // the wallet key's inner signature (see keySignature.ts), so earlier ones are not compared.
 const fingerprintKey = (address: Address) =>
@@ -97,7 +110,7 @@ export class PrivacySessions {
    * `OMS_PRIVACY_WALLET_CHANGED` once the active wallet has changed since the operation started,
    * even if the same wallet is active again. Wallet calls act for the wallet active when they are
    * made, so `action` calls `requireCurrent` synchronously right before each one and right before
-   * anything is submitted.
+   * anything is submitted. With `read`, the result is also checked before it is returned.
    */
   async run<T>(
     operation: string,
@@ -105,7 +118,8 @@ export class PrivacySessions {
       backend: PrivacyBackend,
       address: Address,
       requireCurrent: RequireCurrent
-    ) => Promise<T>
+    ) => Promise<T>,
+    options: { read?: boolean } = {}
   ): Promise<T> {
     const address = this.activeAddress(operation);
     const wallet = this.oms.wallet;
@@ -122,7 +136,10 @@ export class PrivacySessions {
       requireCurrent();
       // After a failed setup this throws that failure, for every operation queued behind it.
       const backend = await this.awaitBackend(entry, operation);
-      return action(backend, address, requireCurrent);
+      const value = await action(withReadTimeLimit(backend), address, requireCurrent);
+      // A read returns nothing for a wallet that is no longer the one it started for.
+      if (options.read) requireCurrent();
+      return value;
     });
     const settled = result.catch(() => undefined);
     queues.set(wallet, settled);
@@ -281,6 +298,40 @@ export class PrivacySessions {
 
 /** Throws `OMS_PRIVACY_WALLET_CHANGED`, with `txnIds` if given, unless the operation's wallet is still current. */
 export type RequireCurrent = (txnIds?: ReadonlyArray<string>) => void;
+
+/** `backend` with every read limited to `READ_TIMEOUT_MS`. */
+function withReadTimeLimit(backend: PrivacyBackend): PrivacyBackend {
+  const limit = <T>(read: Promise<T>): Promise<T> => {
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    const timeout = new Promise<never>((_, reject) => {
+      timer = setTimeout(
+        () => reject(new ReadTimeoutError('The privacy service did not answer in time.')),
+        READ_TIMEOUT_MS
+      );
+    });
+    return Promise.race([read, timeout]).finally(() => clearTimeout(timer));
+  };
+  return {
+    get address() {
+      return backend.address;
+    },
+    get keyFingerprint() {
+      return backend.keyFingerprint;
+    },
+    checkContracts: (chainId, contracts) => backend.checkContracts(chainId, contracts),
+    readAllowance: (chainId, token, owner, spender) =>
+      limit(backend.readAllowance(chainId, token, owner, spender)),
+    quoteFee: (params) => limit(backend.quoteFee(params)),
+    buildShieldDeposit: (params) => backend.buildShieldDeposit(params),
+    privateSend: (params, send) => backend.privateSend(params, send),
+    unshield: (params) => backend.unshield(params),
+    recover: (params) => backend.recover(params),
+    balances: (chainIds) => limit(backend.balances(chainIds)),
+    recoverableBalances: (chainIds) => limit(backend.recoverableBalances(chainIds)),
+    deliveryStatus: (deliveryId) => limit(backend.deliveryStatus(deliveryId)),
+    destroy: () => backend.destroy()
+  };
+}
 
 export function walletChanged(
   operation: string,

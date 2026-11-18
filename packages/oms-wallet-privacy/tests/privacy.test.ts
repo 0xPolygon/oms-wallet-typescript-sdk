@@ -4,7 +4,7 @@ import { zeroAddress, type Hex } from 'viem';
 import { MemoryStorageManager, Networks, OMSWalletTransactionError } from '@polygonlabs/oms-wallet';
 
 import { OMSWalletPrivacyError, type PrivacyProgressEvent } from '../src/index.js';
-import { IDLE_TIMEOUT_MS, KEY_MESSAGE } from '../src/session.js';
+import { IDLE_TIMEOUT_MS, KEY_MESSAGE, READ_TIMEOUT_MS } from '../src/session.js';
 import {
   CONTRACTS,
   FakeBackend,
@@ -1017,4 +1017,78 @@ describe('second review fixes', () => {
       expect(error.message).toContain('may have been submitted');
     }
   );
+});
+
+describe('third review fixes', () => {
+  const tick = () => new Promise((resolve) => setTimeout(resolve, 5));
+
+  it('fails a backend read that never settles and frees the queue', async () => {
+    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] });
+    try {
+      const { privacy, backend } = setup();
+      backend.deliveryStatus = () => new Promise(() => {});
+
+      const stalled = rejection(privacy.getDeliveryStatus({ deliveryId: 'd1' }));
+      await vi.advanceTimersByTimeAsync(READ_TIMEOUT_MS);
+      expect(await stalled).toMatchObject({
+        code: 'OMS_PRIVACY_SERVICE_ERROR',
+        message: 'The privacy service did not answer in time.'
+      });
+      await expect(privacy.getBalances()).resolves.toEqual([]);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('reads the delivery it was called for, for the wallet it was called for', async () => {
+    const { privacy, backend, wallet } = setup();
+    const read: string[] = [];
+    let release!: () => void;
+    const gate = new Promise<void>((resolve) => (release = resolve));
+    backend.deliveryStatus = async (deliveryId: string) => {
+      read.push(deliveryId);
+      await gate;
+      return { status: 'delivered' };
+    };
+
+    const params = { deliveryId: 'A' };
+    const pending = rejection(privacy.getDeliveryStatus(params));
+    params.deliveryId = 'B';
+    await tick();
+    wallet.switchTo(OTHER_WALLET);
+    release();
+
+    expect((await pending).code).toBe('OMS_PRIVACY_WALLET_CHANGED');
+    expect(read).toEqual(['A']);
+  });
+
+  it('reports every transaction the run created, even ones that started after the failure', async () => {
+    const { privacy, backend, wallet } = setup();
+    let release!: () => void;
+    const gate = new Promise<void>((resolve) => (release = resolve));
+    const send = wallet.sendTransaction.getMockImplementation()!;
+    wallet.sendTransaction.mockImplementation(async (params) => {
+      await gate;
+      return send(params);
+    });
+    backend.privateSend = async (params, sendCall) => {
+      const [, deposit] = backend.privateSendCalls(params.amount + backend.fee);
+      void sendCall(deposit!).catch(() => {});
+      await sendCall(deposit!);
+      return { deliveryId: 'unreachable' };
+    };
+
+    const pending = rejection(
+      privacy.privateSend(
+        await privacy.quotePrivateSend({ network: NETWORK, token: USDC, amount: 1n, to: RECIPIENT })
+      )
+    );
+    await tick();
+    release();
+
+    expect(await pending).toMatchObject({
+      code: 'OMS_PRIVACY_UNAUTHORIZED_TRANSACTION',
+      txnIds: ['txn-1']
+    });
+  });
 });

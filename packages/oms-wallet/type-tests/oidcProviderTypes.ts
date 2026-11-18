@@ -753,6 +753,8 @@ const unionOther: true = unionOms.other;
 // @ts-expect-error a union-typed extension does not make the wallet `never`.
 const unionNever: never = unionOms;
 void [unionKind, unionOther, unionNever];
+// @ts-expect-error extension members are read-only, as at runtime.
+unionOms.other = true;
 // @ts-expect-error extend needs at least one extension.
 new OMSWallet({ publishableKey: 'pk_dev_sdbx_project_key' }).extend();
 void new OMSWallet({ publishableKey: 'pk_dev_sdbx_project_key' }).wallet.sendTransaction({

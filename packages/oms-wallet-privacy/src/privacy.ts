@@ -23,7 +23,7 @@ import { createDepositGuard, erc20Abi } from './guard.js';
 import { createProviderBackend } from './internal/hinkal/backend.js';
 import { privacyContracts, privacyNetworks } from './networks.js';
 import { createQuote, quoteInternals } from './quote.js';
-import { PrivacySessions } from './session.js';
+import { PrivacySessions, ReadTimeoutError } from './session.js';
 import { DepositRun } from './transactions.js';
 
 /** How long a quote stays valid. */
@@ -67,46 +67,49 @@ function createPrivacyActions(oms: OMSWallet, sessions: PrivacySessions): Privac
       const networks = (params.networks ?? privacyNetworks).map((network) =>
         requireNetwork(network, operation)
       );
-      return sessions.run(operation, async (backend, _wallet, requireCurrent) => {
-        const chainIds = networks.map((network) => network.id);
-        const [spendable, recoverable] = await backendCall(operation, 'quote', [], async () => {
-          // Both reads settle before the operation leaves the queue, even when one fails.
-          const [spendable, recoverable] = await Promise.allSettled([
-            backend.balances(chainIds),
-            backend.recoverableBalances(chainIds)
-          ]);
-          if (spendable.status === 'rejected') throw spendable.reason;
-          if (recoverable.status === 'rejected') throw recoverable.reason;
-          return [spendable.value, recoverable.value] as const;
-        });
-        requireCurrent();
-        const byKey = new Map<
-          string,
-          { network: Network; token: Address; amount: bigint; recoverable: bigint }
-        >();
-        const entry = (chainId: number, token: Address) => {
-          const network = networks.find((candidate) => candidate.id === chainId);
-          if (!network) return undefined;
-          const key = `${chainId}:${token.toLowerCase()}`;
-          let value = byKey.get(key);
-          if (!value) {
-            value = { network, token: getAddress(token), amount: 0n, recoverable: 0n };
-            byKey.set(key, value);
+      return sessions.run(
+        operation,
+        async (backend) => {
+          const chainIds = networks.map((network) => network.id);
+          const [spendable, recoverable] = await backendCall(operation, 'quote', [], async () => {
+            // Both reads settle before the operation leaves the queue, even when one fails.
+            const [spendable, recoverable] = await Promise.allSettled([
+              backend.balances(chainIds),
+              backend.recoverableBalances(chainIds)
+            ]);
+            if (spendable.status === 'rejected') throw spendable.reason;
+            if (recoverable.status === 'rejected') throw recoverable.reason;
+            return [spendable.value, recoverable.value] as const;
+          });
+          const byKey = new Map<
+            string,
+            { network: Network; token: Address; amount: bigint; recoverable: bigint }
+          >();
+          const entry = (chainId: number, token: Address) => {
+            const network = networks.find((candidate) => candidate.id === chainId);
+            if (!network) return undefined;
+            const key = `${chainId}:${token.toLowerCase()}`;
+            let value = byKey.get(key);
+            if (!value) {
+              value = { network, token: getAddress(token), amount: 0n, recoverable: 0n };
+              byKey.set(key, value);
+            }
+            return value;
+          };
+          for (const balance of spendable) {
+            const value = entry(balance.chainId, balance.token);
+            if (value) value.amount += balance.amount;
           }
-          return value;
-        };
-        for (const balance of spendable) {
-          const value = entry(balance.chainId, balance.token);
-          if (value) value.amount += balance.amount;
-        }
-        for (const balance of recoverable) {
-          const value = entry(balance.chainId, balance.token);
-          if (value) value.recoverable += balance.amount;
-        }
-        return [...byKey.values()]
-          .filter((balance) => balance.amount > 0n || balance.recoverable > 0n)
-          .map((balance): PrivateBalance => Object.freeze(balance));
-      });
+          for (const balance of recoverable) {
+            const value = entry(balance.chainId, balance.token);
+            if (value) value.recoverable += balance.amount;
+          }
+          return [...byKey.values()]
+            .filter((balance) => balance.amount > 0n || balance.recoverable > 0n)
+            .map((balance): PrivateBalance => Object.freeze(balance));
+        },
+        { read: true }
+      );
     },
 
     async quoteShield(params) {
@@ -134,24 +137,27 @@ function createPrivacyActions(oms: OMSWallet, sessions: PrivacySessions): Privac
       const token = requireAddress(params.token, 'token', operation);
       const amount = requireAmount(params.amount, operation);
       const to = params.to === undefined ? undefined : requireRecipient(params.to, operation);
-      return sessions.run(operation, async (backend, wallet, requireCurrent) => {
-        const { fee, data } = await backendCall(operation, 'quote', [], () =>
-          backend.quoteFee({ kind: 'unshield', chainId: network.id, token, amount })
-        );
-        requireCurrent();
-        return createQuote(
-          {
-            kind: 'unshield',
-            network,
-            token,
-            amount,
-            fee,
-            to: to ?? wallet,
-            expiresAt: expiry()
-          },
-          { wallet, backendData: data }
-        );
-      });
+      return sessions.run(
+        operation,
+        async (backend, wallet) => {
+          const { fee, data } = await backendCall(operation, 'quote', [], () =>
+            backend.quoteFee({ kind: 'unshield', chainId: network.id, token, amount })
+          );
+          return createQuote(
+            {
+              kind: 'unshield',
+              network,
+              token,
+              amount,
+              fee,
+              to: to ?? wallet,
+              expiresAt: expiry()
+            },
+            { wallet, backendData: data }
+          );
+        },
+        { read: true }
+      );
     },
 
     async quotePrivateSend(params) {
@@ -160,24 +166,19 @@ function createPrivacyActions(oms: OMSWallet, sessions: PrivacySessions): Privac
       const token = requireAddress(params.token, 'token', operation);
       const to = requireRecipient(params.to, operation);
       const amount = requireAmount(params.amount, operation);
-      return sessions.run(operation, async (backend, wallet, requireCurrent) => {
-        const { fee, data } = await backendCall(operation, 'quote', [], () =>
-          backend.quoteFee({ kind: 'privateSend', chainId: network.id, token, amount })
-        );
-        requireCurrent();
-        return createQuote(
-          {
-            kind: 'privateSend',
-            network,
-            token,
-            amount,
-            fee,
-            to,
-            expiresAt: expiry()
-          },
-          { wallet, backendData: data }
-        );
-      });
+      return sessions.run(
+        operation,
+        async (backend, wallet) => {
+          const { fee, data } = await backendCall(operation, 'quote', [], () =>
+            backend.quoteFee({ kind: 'privateSend', chainId: network.id, token, amount })
+          );
+          return createQuote(
+            { kind: 'privateSend', network, token, amount, fee, to, expiresAt: expiry() },
+            { wallet, backendData: data }
+          );
+        },
+        { read: true }
+      );
     },
 
     async shield(quote, options = {}) {
@@ -273,7 +274,8 @@ function createPrivacyActions(oms: OMSWallet, sessions: PrivacySessions): Privac
           // The provider can fail while a deposit it started is still running: wait for it, so the
           // error reports what was actually sent.
           await run.end();
-          if (run.failure) throw run.failure;
+          const failure = run.settledFailure();
+          if (failure) throw failure;
           if (error instanceof OMSWalletPrivacyError) throw error;
           const deposited = run.confirmedSteps.includes('deposit');
           throw run.error({
@@ -354,11 +356,15 @@ function createPrivacyActions(oms: OMSWallet, sessions: PrivacySessions): Privac
 
     async getDeliveryStatus(params) {
       const operation = 'privacy.getDeliveryStatus';
-      if (typeof params.deliveryId !== 'string' || params.deliveryId.trim() === '') {
+      const deliveryId = params.deliveryId;
+      if (typeof deliveryId !== 'string' || deliveryId.trim() === '') {
         throw invalidParams(operation, 'deliveryId is required.');
       }
-      return sessions.run(operation, (backend) =>
-        backendCall(operation, 'delivery', [], () => backend.deliveryStatus(params.deliveryId))
+      return sessions.run(
+        operation,
+        (backend) =>
+          backendCall(operation, 'delivery', [], () => backend.deliveryStatus(deliveryId)),
+        { read: true }
       );
     },
 
@@ -614,7 +620,7 @@ async function backendCall<T>(
       operation,
       stage,
       txnIds,
-      message: message()
+      message: error instanceof ReadTimeoutError ? error.message : message()
     });
   }
 }

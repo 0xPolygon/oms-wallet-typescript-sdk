@@ -823,10 +823,11 @@ await omsWallet.wallet.sendTransaction({
 
 `sendTransaction`, `signMessage` and `signTypedData` act for the wallet that is active when they
 are called, with the arguments they were called with: changing the params object afterwards has no
-effect. If another wallet becomes active before the call makes its request, or, for
-`sendTransaction`, before fee selection or Execute, the call fails with `OMSWalletSessionError`
-instead of acting for the new wallet. A failure before Execute leaves the prepared transaction
-unexecuted. Requests already made stay bound to the original wallet.
+effect. Every request a call makes (Prepare, Execute, signing) is for that wallet: if another wallet
+is active by then, the call fails with `OMSWalletSessionError` instead of acting for the new wallet.
+Fee balances given to `selectFeeOption` are that wallet's. Callbacks such as `selectFeeOption` and
+`onPrepared` can run after a switch; Execute is then refused. A failure before Execute leaves the
+prepared transaction unexecuted.
 
 To store the transaction ID before anything is submitted, pass `onPrepared`. It runs after the
 wallet API prepares the transaction and before it is executed; throwing from it stops the

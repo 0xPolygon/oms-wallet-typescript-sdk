@@ -84,8 +84,8 @@ Run the same gates CI runs before handing off release-affecting changes:
 ```bash
 pnpm install --frozen-lockfile
 pnpm lint      # eslint + markdownlint + prettier + typecheck
-pnpm test      # release helper + SDK + connector test suites
-pnpm build     # build packages (dual CJS+ESM) + all examples
+pnpm test      # release helper + SDK, connector and privacy test suites (+ example workers)
+pnpm build     # build packages (SDK dual CJS+ESM; connector and privacy ESM) + all examples
 pnpm check:exports   # publint — validates the publishable packages' exports/types
 ```
 

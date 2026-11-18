@@ -1,7 +1,13 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { stringToHex } from 'viem';
 
-import { Networks, OMSWallet, OMSWalletSessionError, OMSWalletValidationError } from '../src';
+import {
+  type FeeOptionSelector,
+  Networks,
+  OMSWallet,
+  OMSWalletSessionError,
+  OMSWalletValidationError
+} from '../src';
 import { MemoryStorageManager } from '../src/storageManager';
 import {
   MockSigner,
@@ -56,7 +62,12 @@ describe('reserved messages', () => {
     const fetchMock = signingFetch();
     const wallet = createWalletWithSession(walletAddress);
 
-    for (const message of [reservedMessage, stringToHex(reservedMessage)]) {
+    for (const message of [
+      reservedMessage,
+      stringToHex(reservedMessage),
+      // Invalid UTF-8 after the prefix.
+      `${stringToHex(reservedMessage)}ff` as const
+    ]) {
       await expect(wallet.signMessage({ network: Networks.polygon, message })).rejects.toThrow(
         OMSWalletValidationError
       );
@@ -189,24 +200,59 @@ describe('onPrepared', () => {
     expect(order).toEqual(['prepare', 'prepared:txn-1', 'execute']);
   });
 
-  it('stops before fee selection and Execute when another wallet becomes active after Prepare', async () => {
-    const order: string[] = [];
-    const fetchMock = transactionFetch(order);
+  it('shows fee balances of the call wallet and stops before Execute after a switch', async () => {
+    const indexerBodies: Array<Record<string, any>> = [];
+    const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = input.toString();
+      if (url.endsWith('/PrepareEthereumTransaction')) {
+        return jsonResponse({
+          txnId: 'txn-1',
+          status: 'quoted',
+          feeOptions: [
+            {
+              token: { network: '137', name: 'POL', symbol: 'POL', type: 'NATIVE' },
+              value: '1',
+              displayValue: '0.000000000000000001'
+            }
+          ],
+          sponsored: false,
+          expiresAt: '2099-01-01T00:00:00Z'
+        });
+      }
+      if (url.endsWith('/GetTokenBalancesDetails')) {
+        indexerBodies.push(JSON.parse(init?.body as string));
+        return jsonResponse({
+          page: { page: 0, pageSize: 40, more: false },
+          nativeBalances: [],
+          balances: []
+        });
+      }
+      throw new Error(`Unexpected request: ${url}`);
+    });
+    vi.stubGlobal('fetch', fetchMock);
     const wallet = createWalletWithSession(walletAddress);
-    const selectFeeOption = vi.fn();
+    const network = { ...Networks.polygon };
+    const selectFeeOption = vi.fn(
+      (options: Parameters<FeeOptionSelector>[0]) => options[0]!.selection
+    );
 
     await expect(
       wallet.sendTransaction({
-        network: Networks.polygon,
+        network,
         to: otherAddress,
         value: 1n,
         selectFeeOption,
         onPrepared: () => {
           (wallet as any).activeWalletAccount = testWalletAccount('other-id', otherAddress);
+          network.id = Networks.mainnet.id;
         }
       })
     ).rejects.toThrow('Active wallet session changed');
-    expect(selectFeeOption).not.toHaveBeenCalled();
+    expect(indexerBodies[0]).toMatchObject({
+      chainIds: [137],
+      filter: { accountAddresses: [walletAddress] }
+    });
+    expect(selectFeeOption).toHaveBeenCalledOnce();
     expect(requestCount(fetchMock, 'Execute')).toBe(0);
   });
 
@@ -307,6 +353,25 @@ describe('OMSWallet.extend', () => {
     expect(
       new OMSWallet({ publishableKey: 'pk_dev_sdbx_project_key' }).extend(() => bare).run()
     ).toBe(1);
+  });
+
+  it('checks and adds one snapshot of the members', () => {
+    let calls = 0;
+    const shifty = new Proxy(
+      {},
+      {
+        ownKeys: () => (calls++ === 0 ? [] : ['wallet']),
+        getOwnPropertyDescriptor: () => ({
+          value: 'replaced',
+          enumerable: true,
+          configurable: true,
+          writable: true
+        })
+      }
+    );
+    const base = new OMSWallet({ publishableKey: 'pk_dev_sdbx_project_key' });
+    const extended = base.extend(() => shifty);
+    expect(extended.wallet).toBe(base.wallet);
   });
 
   it('keeps getters as getters', () => {

@@ -147,7 +147,8 @@ export class OMSWallet {
    * wallet already has, such as one an earlier extension added; adding the same extension twice is
    * an error. TypeScript reports a member the wallet already has; a member repeated within one call,
    * or a name every object has such as `toString`, is reported when `extend` runs. An extension
-   * returns a plain object: a class instance is refused, since only own properties are added.
+   * returns a plain object: a class instance is refused, since only own properties are added. The
+   * added members are read-only; getters stay live.
    */
   extend<const E extends readonly [object, ...object[]]>(
     ...extensions: {
@@ -155,7 +156,7 @@ export class OMSWallet {
         E[K] & OMSWalletTakenMembers<OMSWalletReservedMember | keyof this>
       >;
     }
-  ): this & OMSWalletExtensionMembers<E> {
+  ): this & Readonly<OMSWalletExtensionMembers<E>> {
     // Typed as non-empty; JavaScript callers can still pass none.
     if ((extensions as readonly unknown[]).length === 0) {
       throw new OMSWalletValidationError({ message: 'Pass at least one OMSWallet extension' });
@@ -164,7 +165,7 @@ export class OMSWallet {
       applyExtension,
       this
     );
-    return extended as this & OMSWalletExtensionMembers<E>;
+    return extended as this & Readonly<OMSWalletExtensionMembers<E>>;
   }
 }
 
@@ -231,7 +232,13 @@ function applyExtension(oms: OMSWallet, extension: OMSWalletExtension<object>): 
       message: 'An OMSWallet extension must return a plain object, not a class instance'
     });
   }
-  for (const key of Reflect.ownKeys(added)) {
+  // One snapshot of the members, checked and then added, so an object cannot change in between.
+  const descriptors = Object.getOwnPropertyDescriptors(added) as Record<
+    PropertyKey,
+    PropertyDescriptor
+  >;
+  const keys = Reflect.ownKeys(descriptors);
+  for (const key of keys) {
     if (typeof key === 'string' && reservedMembers.has(key)) {
       throw new OMSWalletValidationError({
         message: `An OMSWallet extension cannot add "${key}"`
@@ -246,17 +253,18 @@ function applyExtension(oms: OMSWallet, extension: OMSWalletExtension<object>): 
     }
   }
   // The extended object inherits from this one, so `instanceof OMSWallet`, `wallet` and `indexer`
-  // stay; the extension's members are its own, read-only properties. Getters stay getters.
+  // stay; the extension's members are its own, read-only properties. Getters stay getters; setters
+  // are not added, since members are read-only.
   const extended = Object.create(oms) as OMSWallet;
   extendedInstances.add(extended);
-  for (const key of Reflect.ownKeys(added)) {
-    const descriptor = Object.getOwnPropertyDescriptor(added, key)!;
+  for (const key of keys) {
+    const descriptor = descriptors[key]!;
     Object.defineProperty(
       extended,
       key,
       'value' in descriptor
         ? { value: descriptor.value, enumerable: true, writable: false, configurable: false }
-        : { get: descriptor.get, set: descriptor.set, enumerable: true, configurable: false }
+        : { get: descriptor.get, enumerable: true, configurable: false }
     );
   }
   return extended;

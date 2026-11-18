@@ -127,6 +127,7 @@ function App() {
   const [walletCopyLabel, setWalletCopyLabel] = useState<'Copy' | 'Copied'>('Copy');
   const oidcCallbackStarted = useRef(false);
   const sessionRestoreStarted = useRef(false);
+  const balanceRefresh = useRef(0);
 
   const walletAddress = session ? activeEthereumAddress(omsWallet.wallet) : undefined;
   const isSignedIn = walletAddress != null;
@@ -173,9 +174,13 @@ function App() {
 
   // The wallet balance comes from the indexer and is quick. The first private-balance read also
   // sets up the privacy keys (a wallet signature and the privacy library), so it is loaded apart.
+  // Each refresh is for one wallet, network and token; an answer from an older refresh is dropped,
+  // so a slow read can never show one wallet's balance under another.
   const refreshBalances = useCallback(async () => {
     const address = activeEthereumAddress(omsWallet.wallet);
     if (!address) return;
+    const refresh = ++balanceRefresh.current;
+    const isCurrent = () => refresh === balanceRefresh.current;
     setBalanceStatus('Loading balances...');
     const walletRead = omsWallet.indexer
       .getBalances({ networks: [network], walletAddress: address, includeMetadata: false })
@@ -187,10 +192,13 @@ function App() {
             : publicBalances.balances.find(
                 (balance) => balance.contractAddress?.toLowerCase() === token.address.toLowerCase()
               )?.balance;
-        setWalletBalance(BigInt(raw ?? '0'));
+        if (isCurrent()) setWalletBalance(BigInt(raw ?? '0'));
       });
-    const privateRead = privacy.getBalances().then(setPrivateBalances);
+    const privateRead = privacy.getBalances().then((balances) => {
+      if (isCurrent()) setPrivateBalances(balances);
+    });
     const results = await Promise.allSettled([walletRead, privateRead]);
+    if (!isCurrent()) return;
     const errors = results.flatMap((result) =>
       result.status === 'rejected' ? [describeError(result.reason)] : []
     );
@@ -210,7 +218,9 @@ function App() {
       }
       if (event.reason !== 'walletChanged' && event.reason !== 'signedOut') return;
       // The change can come from another tab: drop everything shown for the previous wallet.
+      balanceRefresh.current += 1;
       setSession(omsWallet.wallet.session);
+      setWalletBalance(undefined);
       setPrivateBalances(undefined);
       resetActions();
     });

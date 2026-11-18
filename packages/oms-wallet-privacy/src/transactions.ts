@@ -137,6 +137,25 @@ export class DepositRun {
     await this.inFlight?.catch(() => undefined);
   }
 
+  /**
+   * The error to report once the run has ended: `failure` with every transaction the run created,
+   * including ones that started after `failure` was raised.
+   */
+  settledFailure(): OMSWalletPrivacyError | undefined {
+    const failure = this.failure;
+    if (!failure || failure.txnIds.length === this.txnIds.length) return failure;
+    return new OMSWalletPrivacyError({
+      code: failure.code,
+      operation: failure.operation,
+      stage: failure.stage,
+      txnIds: this.txnIds,
+      txnHash: failure.txnHash,
+      deliveryId: failure.deliveryId,
+      message: failure.message,
+      cause: failure.cause
+    });
+  }
+
   private async sendOne(call: Omit<WalletCall, 'chainId'>): Promise<Hex> {
     const { network, wallet, guard } = this.params;
     let step: PrivacyTransactionStep;
