@@ -52,6 +52,9 @@ import './styles.css';
 
 const MANUAL_WALLET_SELECTION_KEY = 'oms-privacy-manual-wallet-selection';
 const SESSION_LIFETIME_SECONDS_KEY = 'oms-privacy-session-lifetime-seconds';
+/** After an action, how often and how far apart to read private balances until they change. */
+const PRIVATE_BALANCE_READS = 6;
+const PRIVATE_BALANCE_READ_DELAY_MS = 3_000;
 const privacy = omsWallet.privacy;
 
 type AuthStep = 'email' | 'code';
@@ -128,6 +131,7 @@ function App() {
   const oidcCallbackStarted = useRef(false);
   const sessionRestoreStarted = useRef(false);
   const balanceRefresh = useRef(0);
+  const [sessionChanges, setSessionChanges] = useState(0);
 
   const walletAddress = session ? activeEthereumAddress(omsWallet.wallet) : undefined;
   const isSignedIn = walletAddress != null;
@@ -196,9 +200,10 @@ function App() {
       });
     const privateRead = privacy.getBalances().then((balances) => {
       if (isCurrent()) setPrivateBalances(balances);
+      return balances;
     });
     const results = await Promise.allSettled([walletRead, privateRead]);
-    if (!isCurrent()) return;
+    if (!isCurrent()) return undefined;
     const errors = results.flatMap((result) =>
       result.status === 'rejected' ? [describeError(result.reason)] : []
     );
@@ -208,7 +213,23 @@ function App() {
         ? `Balance error: ${errors.join(' ')}`
         : `Updated ${new Date().toLocaleTimeString()}.`
     );
+    return results[1].status === 'fulfilled' ? results[1].value : undefined;
   }, [appendLog, network, token.address]);
+
+  // The privacy service indexes a transaction shortly after it executes, so a read right after can
+  // still return the old private balance. Read again a few times until it changes.
+  const refreshUntilPrivateBalancesChange = useCallback(
+    async (before: string) => {
+      for (let attempt = 0; attempt < PRIVATE_BALANCE_READS; attempt += 1) {
+        if (attempt > 0)
+          await new Promise((resolve) => setTimeout(resolve, PRIVATE_BALANCE_READ_DELAY_MS));
+        const balances = await refreshBalances();
+        // Stop on an error, a newer refresh, or a change.
+        if (balances === undefined || privateBalancesKey(balances) !== before) return;
+      }
+    },
+    [refreshBalances]
+  );
 
   useEffect(() => {
     return omsWallet.wallet.onSessionChange((event) => {
@@ -216,10 +237,12 @@ function App() {
         showSessionExpired(event.expiredSession);
         return;
       }
-      if (event.reason !== 'walletChanged' && event.reason !== 'signedOut') return;
-      // The change can come from another tab: drop everything shown for the previous wallet.
+      if (event.reason === 'expiryUpdated') return;
+      // Sign-ins, wallet changes and sign-outs can come from another tab: drop everything shown for
+      // the previous session.
       balanceRefresh.current += 1;
       setSession(omsWallet.wallet.session);
+      setSessionChanges((count) => count + 1);
       setWalletBalance(undefined);
       setPrivateBalances(undefined);
       resetActions();
@@ -253,7 +276,8 @@ function App() {
       return;
     }
     void refreshBalances();
-  }, [refreshBalances, walletAddress]);
+    // `sessionChanges` reloads balances when the same wallet signs in again.
+  }, [refreshBalances, walletAddress, sessionChanges]);
 
   const sessionDetails = useMemo(
     () => [
@@ -512,6 +536,7 @@ function App() {
     const feeOptions = payFeeWithAnyToken
       ? { selectFeeOption: FeeOptionSelector.firstAvailable }
       : {};
+    const balancesBefore = privateBalancesKey(privateBalances);
     void runAction(
       `Run ${kind}`,
       async () => {
@@ -539,7 +564,7 @@ function App() {
           result = { hashes: [unshielded.txnHash] };
         }
         updateAction(kind, { quote: null, result, status: 'Done.' });
-        await refreshBalances();
+        void refreshUntilPrivateBalancesChange(balancesBefore);
       },
       (error) =>
         updateAction(kind, {
@@ -576,9 +601,10 @@ function App() {
       if (activeEthereumAddress(omsWallet.wallet) !== walletAddress) {
         throw new Error('The active wallet changed. Check its balances before recovering.');
       }
+      const balancesBefore = privateBalancesKey(privateBalances);
       const result = await privacy.recover({ network: balance.network, token: balance.token });
       appendLog(`Recovered in ${result.txnHashes.length} transaction(s).`);
-      await refreshBalances();
+      void refreshUntilPrivateBalancesChange(balancesBefore);
     });
   }
 
@@ -731,7 +757,9 @@ function App() {
                 <button
                   type="button"
                   className="secondary subtle"
-                  onClick={() => void runAction('Refresh balances', refreshBalances)}
+                  onClick={() =>
+                    void runAction('Refresh balances', async () => void (await refreshBalances()))
+                  }
                   disabled={isBusy}
                 >
                   Refresh
@@ -1030,6 +1058,18 @@ function OtherPrivateBalances({
         );
       })}
     </ul>
+  );
+}
+
+/** Compares private balances across reads. */
+function privateBalancesKey(balances: ReadonlyArray<PrivateBalance> | undefined): string {
+  return JSON.stringify(
+    (balances ?? []).map((balance) => [
+      balance.network.id,
+      balance.token.toLowerCase(),
+      balance.amount.toString(),
+      balance.recoverable.toString()
+    ])
   );
 }
 

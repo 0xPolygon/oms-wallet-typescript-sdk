@@ -4,7 +4,7 @@ import { zeroAddress, type Hex } from 'viem';
 import { MemoryStorageManager, Networks, OMSWalletTransactionError } from '@polygonlabs/oms-wallet';
 
 import { OMSWalletPrivacyError, type PrivacyProgressEvent } from '../src/index.js';
-import { IDLE_TIMEOUT_MS, KEY_MESSAGE, READ_TIMEOUT_MS } from '../src/session.js';
+import { IDLE_TIMEOUT_MS, KEY_MESSAGE, SERVICE_TIMEOUT_MS } from '../src/session.js';
 import {
   CONTRACTS,
   FakeBackend,
@@ -1029,7 +1029,7 @@ describe('third review fixes', () => {
       backend.deliveryStatus = () => new Promise(() => {});
 
       const stalled = rejection(privacy.getDeliveryStatus({ deliveryId: 'd1' }));
-      await vi.advanceTimersByTimeAsync(READ_TIMEOUT_MS);
+      await vi.advanceTimersByTimeAsync(SERVICE_TIMEOUT_MS);
       expect(await stalled).toMatchObject({
         code: 'OMS_PRIVACY_SERVICE_ERROR',
         message: 'The privacy service did not answer in time.'
@@ -1090,5 +1090,42 @@ describe('third review fixes', () => {
       code: 'OMS_PRIVACY_UNAUTHORIZED_TRANSACTION',
       txnIds: ['txn-1']
     });
+  });
+});
+
+describe('setup time limit', () => {
+  it('fails a setup that does not finish in time, starts over next call, and destroys a late backend', async () => {
+    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] });
+    try {
+      // `late` is never handed out by the fixture; the next setup gets `fresh`.
+      const late = new FakeBackend();
+      const fresh = new FakeBackend();
+      const { privacy, createBackend, created } = setup({ backends: [fresh] });
+      let resolveLate!: (backend: FakeBackend) => void;
+      const original = createBackend.getMockImplementation()!;
+      createBackend.mockImplementationOnce(
+        () => new Promise<FakeBackend>((resolve) => (resolveLate = resolve)) as never
+      );
+
+      const stalled = rejection(privacy.getBalances());
+      await vi.advanceTimersByTimeAsync(SERVICE_TIMEOUT_MS);
+      expect(await stalled).toMatchObject({
+        code: 'OMS_PRIVACY_SERVICE_ERROR',
+        stage: 'setup',
+        message: 'The privacy service did not answer in time.'
+      });
+
+      createBackend.mockImplementation(original);
+      await expect(privacy.getBalances()).resolves.toEqual([]);
+      expect(createBackend).toHaveBeenCalledTimes(2);
+      expect(created).toEqual([fresh]);
+
+      resolveLate(late);
+      await vi.advanceTimersByTimeAsync(0);
+      expect(late.destroyed).toBe(true);
+      expect(fresh.destroyed).toBe(false);
+    } finally {
+      vi.useRealTimers();
+    }
   });
 });

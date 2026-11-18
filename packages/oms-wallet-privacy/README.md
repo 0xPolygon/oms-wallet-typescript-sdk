@@ -78,8 +78,8 @@ of `total`. Pass
 `selectFeeOption` to choose another fee token, and `maxNetworkFee` to cap the fee in the moved
 token.
 
-`unshield` and `recover` send no wallet transaction: the privacy service submits the withdrawal, and
-its fee is part of the quote. They stop with `OMS_PRIVACY_WALLET_CHANGED` if the active wallet
+`unshield` and `recover` send no wallet transaction: the privacy service submits the withdrawal. An
+unshield's privacy fee is part of its quote. They stop with `OMS_PRIVACY_WALLET_CHANGED` if the active wallet
 changed or signed out after the call started, even if the same wallet is active again, before the
 withdrawal is handed to the service. Balance reads and quotes fail the same way instead of returning
 results for a wallet that is no longer active.
@@ -103,7 +103,7 @@ one of them goes through.
 ### Errors
 
 Every failure is an `OMSWalletPrivacyError` with a `code` (`OMS_PRIVACY_*`), the `operation`, the
-`stage` it reached, and `txnIds`: every wallet transaction created so far. For `shield` and
+`stage` it reached, if any, and `txnIds`: every wallet transaction created so far. For `shield` and
 `privateSend`, an empty `txnIds` means no wallet transaction was sent; otherwise store the IDs and
 reconcile: check each with `oms.wallet.getTransactionStatus({ txnId })`, then
 `oms.privacy.getBalances()` for funds to recover. `unshield` and `recover` send no wallet
@@ -146,12 +146,13 @@ See [API.md](./API.md) for every public function and type.
   service is trusted to build the intended deposit.
 - **Concurrency.** Operations of one wallet run one at a time in a page. Spending the same private
   funds twice from two tabs or devices fails at the protocol level.
-- **Timeouts.** Reads (balances, fees, allowances, delivery status) fail with
-  `OMS_PRIVACY_SERVICE_ERROR` after two minutes without an answer, so other operations are not held
-  up. The privacy service cannot cancel a request, so the read still runs in the background, and the
-  service's own reads on that network can wait for it. Calls that move funds have no such limit: they
-  end through the wallet's transaction handling. When a private send fails, work the service started
-  in parallel, such as looking up the deposit, can still run briefly; it cannot send anything.
+- **Timeouts.** Setting up the private balance and reads (balances, fees, allowances, delivery
+  status) fail with `OMS_PRIVACY_SERVICE_ERROR` after two minutes without an answer, so other
+  operations are not held up. The privacy service cannot cancel a request, so it still runs in the
+  background, and the service's own reads on that network can wait for it. Calls that move funds have
+  no such limit: they end through the wallet's transaction handling. When a private send fails, work
+  the service started in parallel, such as its deposit, can still run for a few seconds; a private
+  send started in that time can take that deposit as its own.
 
 ## Runtime
 

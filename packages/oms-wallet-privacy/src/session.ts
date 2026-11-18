@@ -35,16 +35,29 @@ const KEY_NETWORK = Networks.polygon;
 export const IDLE_TIMEOUT_MS = 60_000;
 
 /**
- * Longest wait for a backend read (balances, fees, allowance, delivery status). The privacy
- * provider cannot cancel its requests, so a read that never settles would hold the queue; past this
- * the operation fails and the queue moves on, while the read finishes in the background. Calls that
- * move funds have no limit: they end through the wallet's own transaction handling.
+ * Longest wait for setting up a backend and for each backend read (balances, fees, allowance,
+ * delivery status). The privacy provider cannot cancel its requests, so one that never settles would
+ * hold the queue; past this the operation fails and the queue moves on, while the request finishes in
+ * the background. Calls that move funds have no limit: they end through the wallet's own transaction
+ * handling.
  */
-export const READ_TIMEOUT_MS = 120_000;
+export const SERVICE_TIMEOUT_MS = 120_000;
 
-/** A backend read that took longer than `READ_TIMEOUT_MS`. */
-export class ReadTimeoutError extends Error {
-  override readonly name = 'ReadTimeoutError';
+/** Setup or a backend read that took longer than `SERVICE_TIMEOUT_MS`. */
+export class ServiceTimeoutError extends Error {
+  override readonly name = 'ServiceTimeoutError';
+}
+
+/** `promise`, or a `ServiceTimeoutError` once `SERVICE_TIMEOUT_MS` passes first. */
+function timeLimited<T>(promise: Promise<T>): Promise<T> {
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  const timeout = new Promise<never>((_, reject) => {
+    timer = setTimeout(
+      () => reject(new ServiceTimeoutError('The privacy service did not answer in time.')),
+      SERVICE_TIMEOUT_MS
+    );
+  });
+  return Promise.race([promise, timeout]).finally(() => clearTimeout(timer));
 }
 
 // v1 and v2 fingerprints came from full wallet signatures, which can change; v3 keys come from
@@ -254,10 +267,15 @@ export class PrivacySessions {
   private async awaitBackend(entry: Entry, operation: string): Promise<PrivacyBackend> {
     if (!entry.backend) {
       const wallet = this.oms.wallet;
-      entry.backend = this.setup(entry.address);
-      // A failed setup is reported by the operation that awaits it; the next call starts over.
-      entry.backend.catch(() => {
+      const setup = this.setup(entry.address);
+      entry.backend = timeLimited(setup);
+      // A failed or timed-out setup is reported by the operation that awaits it; the next call
+      // starts over. A backend that arrives after the time limit is destroyed, never used.
+      entry.backend.catch((error: unknown) => {
         if (entries.get(wallet) === entry) this.close(entry);
+        if (error instanceof ServiceTimeoutError) {
+          setup.then((late) => late.destroy()).catch(() => {});
+        }
       });
     }
     try {
@@ -270,7 +288,9 @@ export class PrivacySessions {
         stage: 'setup',
         message: isOMSWalletError(error)
           ? 'The wallet could not authorize the private balance; see cause.'
-          : 'The privacy service could not be set up.',
+          : error instanceof ServiceTimeoutError
+            ? error.message
+            : 'The privacy service could not be set up.',
         cause: error
       });
     }
@@ -299,18 +319,8 @@ export class PrivacySessions {
 /** Throws `OMS_PRIVACY_WALLET_CHANGED`, with `txnIds` if given, unless the operation's wallet is still current. */
 export type RequireCurrent = (txnIds?: ReadonlyArray<string>) => void;
 
-/** `backend` with every read limited to `READ_TIMEOUT_MS`. */
+/** `backend` with every read limited to `SERVICE_TIMEOUT_MS`. */
 function withReadTimeLimit(backend: PrivacyBackend): PrivacyBackend {
-  const limit = <T>(read: Promise<T>): Promise<T> => {
-    let timer: ReturnType<typeof setTimeout> | undefined;
-    const timeout = new Promise<never>((_, reject) => {
-      timer = setTimeout(
-        () => reject(new ReadTimeoutError('The privacy service did not answer in time.')),
-        READ_TIMEOUT_MS
-      );
-    });
-    return Promise.race([read, timeout]).finally(() => clearTimeout(timer));
-  };
   return {
     get address() {
       return backend.address;
@@ -320,15 +330,15 @@ function withReadTimeLimit(backend: PrivacyBackend): PrivacyBackend {
     },
     checkContracts: (chainId, contracts) => backend.checkContracts(chainId, contracts),
     readAllowance: (chainId, token, owner, spender) =>
-      limit(backend.readAllowance(chainId, token, owner, spender)),
-    quoteFee: (params) => limit(backend.quoteFee(params)),
+      timeLimited(backend.readAllowance(chainId, token, owner, spender)),
+    quoteFee: (params) => timeLimited(backend.quoteFee(params)),
     buildShieldDeposit: (params) => backend.buildShieldDeposit(params),
     privateSend: (params, send) => backend.privateSend(params, send),
     unshield: (params) => backend.unshield(params),
     recover: (params) => backend.recover(params),
-    balances: (chainIds) => limit(backend.balances(chainIds)),
-    recoverableBalances: (chainIds) => limit(backend.recoverableBalances(chainIds)),
-    deliveryStatus: (deliveryId) => limit(backend.deliveryStatus(deliveryId)),
+    balances: (chainIds) => timeLimited(backend.balances(chainIds)),
+    recoverableBalances: (chainIds) => timeLimited(backend.recoverableBalances(chainIds)),
+    deliveryStatus: (deliveryId) => timeLimited(backend.deliveryStatus(deliveryId)),
     destroy: () => backend.destroy()
   };
 }

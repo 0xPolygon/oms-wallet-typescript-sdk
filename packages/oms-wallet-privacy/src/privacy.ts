@@ -23,7 +23,7 @@ import { createDepositGuard, erc20Abi } from './guard.js';
 import { createProviderBackend } from './internal/hinkal/backend.js';
 import { privacyContracts, privacyNetworks } from './networks.js';
 import { createQuote, quoteInternals } from './quote.js';
-import { PrivacySessions, ReadTimeoutError } from './session.js';
+import { PrivacySessions, ServiceTimeoutError } from './session.js';
 import { DepositRun } from './transactions.js';
 
 /** How long a quote stays valid. */
@@ -620,7 +620,7 @@ async function backendCall<T>(
       operation,
       stage,
       txnIds,
-      message: error instanceof ReadTimeoutError ? error.message : message()
+      message: error instanceof ServiceTimeoutError ? error.message : message()
     });
   }
 }
