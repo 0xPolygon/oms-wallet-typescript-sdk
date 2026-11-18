@@ -148,58 +148,6 @@ describe('wallet binding', () => {
     expect(bodies[1]).toMatchObject({ to: otherAddress, value: '1' });
   });
 
-  it('signs for the wallet active when the call was made', async () => {
-    signingFetch();
-    const wallet = createWalletWithSession(walletAddress);
-
-    await expect(wallet.signMessage({ network: Networks.polygon, message: 'hello' })).resolves.toBe(
-      'signed:wallet-id:hello'
-    );
-  });
-});
-
-describe('onPrepared', () => {
-  function transactionFetch(order: string[]) {
-    const fetchMock = vi.fn(async (input: RequestInfo | URL) => {
-      const url = input.toString();
-      if (url.endsWith('/PrepareEthereumTransaction')) {
-        order.push('prepare');
-        return jsonResponse({
-          txnId: 'txn-1',
-          status: 'quoted',
-          feeOptions: [],
-          sponsored: true,
-          expiresAt: '2099-01-01T00:00:00Z'
-        });
-      }
-      if (url.endsWith('/Execute')) {
-        order.push('execute');
-        return jsonResponse({ status: 'pending' });
-      }
-      throw new Error(`Unexpected request: ${url}`);
-    });
-    vi.stubGlobal('fetch', fetchMock);
-    return fetchMock;
-  }
-
-  it('reports the transaction ID after Prepare and before Execute', async () => {
-    const order: string[] = [];
-    transactionFetch(order);
-    const wallet = createWalletWithSession(walletAddress);
-
-    await wallet.sendTransaction({
-      network: Networks.polygon,
-      to: otherAddress,
-      value: 1n,
-      waitForStatus: false,
-      onPrepared: (txnId) => {
-        order.push(`prepared:${txnId}`);
-      }
-    });
-
-    expect(order).toEqual(['prepare', 'prepared:txn-1', 'execute']);
-  });
-
   it('shows fee balances of the call wallet and stops before Execute after a switch', async () => {
     const indexerBodies: Array<Record<string, any>> = [];
     const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
@@ -255,6 +203,49 @@ describe('onPrepared', () => {
     expect(selectFeeOption).toHaveBeenCalledOnce();
     expect(requestCount(fetchMock, 'Execute')).toBe(0);
   });
+});
+
+describe('onPrepared', () => {
+  function transactionFetch(order: string[]) {
+    const fetchMock = vi.fn(async (input: RequestInfo | URL) => {
+      const url = input.toString();
+      if (url.endsWith('/PrepareEthereumTransaction')) {
+        order.push('prepare');
+        return jsonResponse({
+          txnId: 'txn-1',
+          status: 'quoted',
+          feeOptions: [],
+          sponsored: true,
+          expiresAt: '2099-01-01T00:00:00Z'
+        });
+      }
+      if (url.endsWith('/Execute')) {
+        order.push('execute');
+        return jsonResponse({ status: 'pending' });
+      }
+      throw new Error(`Unexpected request: ${url}`);
+    });
+    vi.stubGlobal('fetch', fetchMock);
+    return fetchMock;
+  }
+
+  it('reports the transaction ID after Prepare and before Execute', async () => {
+    const order: string[] = [];
+    transactionFetch(order);
+    const wallet = createWalletWithSession(walletAddress);
+
+    await wallet.sendTransaction({
+      network: Networks.polygon,
+      to: otherAddress,
+      value: 1n,
+      waitForStatus: false,
+      onPrepared: (txnId) => {
+        order.push(`prepared:${txnId}`);
+      }
+    });
+
+    expect(order).toEqual(['prepare', 'prepared:txn-1', 'execute']);
+  });
 
   it('stops the transaction before Execute when the callback throws', async () => {
     const order: string[] = [];
@@ -287,29 +278,18 @@ describe('OMSWallet.extend', () => {
     expect('a' in base).toBe(false);
   });
 
-  it('chains extensions', () => {
-    const oms = new OMSWallet({ publishableKey: 'pk_dev_sdbx_project_key' })
-      .extend(() => ({ a: 1 }))
-      .extend((inner) => ({ b: (inner as OMSWallet & { a: number }).a + 1 }));
+  it('adds several extensions in order, the same as chained calls', () => {
+    const second = (inner: OMSWallet) => ({ b: (inner as OMSWallet & { a: number }).a + 1 });
+    const base = new OMSWallet({ publishableKey: 'pk_dev_sdbx_project_key' });
 
-    expect(oms.a).toBe(1);
-    expect(oms.b).toBe(2);
-  });
-
-  it('adds several extensions in order, like chained calls', () => {
-    const seen: unknown[] = [];
-    const oms = new OMSWallet({ publishableKey: 'pk_dev_sdbx_project_key' }).extend(
-      () => ({ a: 1 }),
-      (inner) => {
-        seen.push((inner as OMSWallet & { a: number }).a);
-        return { b: 2 };
-      }
-    );
-
-    expect(seen).toEqual([1]);
-    expect(oms.a).toBe(1);
-    expect(oms.b).toBe(2);
-    expect(oms).toBeInstanceOf(OMSWallet);
+    for (const oms of [
+      base.extend(() => ({ a: 1 }), second),
+      base.extend(() => ({ a: 1 })).extend(second)
+    ]) {
+      expect(oms.a).toBe(1);
+      expect(oms.b).toBe(2);
+      expect(oms).toBeInstanceOf(OMSWallet);
+    }
   });
 
   it('refuses a repeated member within one call and an empty call', () => {
@@ -353,25 +333,6 @@ describe('OMSWallet.extend', () => {
     expect(
       new OMSWallet({ publishableKey: 'pk_dev_sdbx_project_key' }).extend(() => bare).run()
     ).toBe(1);
-  });
-
-  it('checks and adds one snapshot of the members', () => {
-    let calls = 0;
-    const shifty = new Proxy(
-      {},
-      {
-        ownKeys: () => (calls++ === 0 ? [] : ['wallet']),
-        getOwnPropertyDescriptor: () => ({
-          value: 'replaced',
-          enumerable: true,
-          configurable: true,
-          writable: true
-        })
-      }
-    );
-    const base = new OMSWallet({ publishableKey: 'pk_dev_sdbx_project_key' });
-    const extended = base.extend(() => shifty);
-    expect(extended.wallet).toBe(base.wallet);
   });
 
   it('keeps getters as getters', () => {

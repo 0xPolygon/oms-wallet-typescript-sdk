@@ -40,7 +40,6 @@ import {
   type OMSWalletParams,
   type OMSWalletExtensionContext,
   type OMSWalletExtension,
-  type OMSWalletExtensionMembers,
   type IndexerClient,
   type FeeToken,
   type OidcAuthMode,
@@ -739,8 +738,6 @@ const packagedOms = new OMSWallet({ publishableKey: 'pk_dev_sdbx_project_key' })
 );
 // @ts-expect-error a packaged extension cannot be added again.
 packagedOms.extend(packagedExtension);
-const severalMembers: OMSWalletExtensionMembers<[{ a: 1 }, { b: 2 }]> = { a: 1, b: 2 };
-void severalMembers;
 declare const unionExtension: OMSWalletExtension<
   { kind: 'a'; a: number } | { kind: 'b'; b: number }
 >;
