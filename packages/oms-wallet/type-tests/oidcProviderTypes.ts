@@ -721,6 +721,8 @@ void [extendedFirst, extendedSecond, extendedSign, extendedStillOms];
 new OMSWallet({ publishableKey: 'pk_dev_sdbx_project_key' }).extend(() => ({ wallet: 1 }));
 // @ts-expect-error extensions cannot add `extend`.
 new OMSWallet({ publishableKey: 'pk_dev_sdbx_project_key' }).extend(() => ({ extend: 1 }));
+// @ts-expect-error the same extension cannot be added twice.
+extendedOms.extend(() => ({ second: 'again' }));
 void new OMSWallet({ publishableKey: 'pk_dev_sdbx_project_key' }).wallet.sendTransaction({
   network: Networks.polygon,
   to: '0x1111111111111111111111111111111111111111',

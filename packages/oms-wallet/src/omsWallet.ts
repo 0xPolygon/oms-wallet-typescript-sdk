@@ -44,6 +44,14 @@ const reservedMembers: ReadonlySet<string> = new Set<OMSWalletReservedMember>([
   'extend'
 ]);
 
+/** Instances returned by `extend`, to tell members an extension added from the SDK's own. */
+const extendedInstances = new WeakSet<object>();
+
+/** Turns a repeated member name into a type error that names it. */
+type OMSWalletTakenMembers<K extends PropertyKey> = {
+  [P in K]?: `"${P & string}" is already on this OMSWallet`;
+};
+
 export class OMSWallet {
   public readonly wallet: WalletClient;
   public readonly indexer: IndexerClient;
@@ -123,9 +131,10 @@ export class OMSWallet {
    * Returns a new `OMSWallet` with the members `extension` adds, for example
    * `new OMSWallet({ publishableKey }).extend(privacy())`. This instance is not changed, the
    * result is still an `OMSWallet` with the same `wallet` and `indexer`, and calls can be chained.
-   * An extension cannot add `wallet`, `indexer` or `extend`, or a member an earlier extension added.
+   * An extension cannot add `wallet`, `indexer` or `extend`, or a member the wallet already has,
+   * such as one an earlier extension added; adding the same extension twice is an error.
    */
-  extend<const E extends object & Partial<Record<OMSWalletReservedMember, never>>>(
+  extend<const E extends object & OMSWalletTakenMembers<OMSWalletReservedMember | keyof this>>(
     extension: OMSWalletExtension<E>
   ): this & E {
     // Read through `wallet`, not a private field: an extended instance inherits it from this one.
@@ -152,13 +161,16 @@ export class OMSWallet {
       }
       if (key in this) {
         throw new OMSWalletValidationError({
-          message: `An OMSWallet extension cannot replace "${String(key)}"`
+          message: addedByExtension(this, key)
+            ? `"${String(key)}" is already added to this OMSWallet by an extension. Add each extension once.`
+            : `An OMSWallet extension cannot replace "${String(key)}"`
         });
       }
     }
     // The extended object inherits from this one, so `instanceof OMSWallet`, `wallet` and `indexer`
     // stay; the extension's members are its own, read-only properties.
     const extended = Object.create(this) as this;
+    extendedInstances.add(extended);
     for (const key of Reflect.ownKeys(added)) {
       Object.defineProperty(extended, key, {
         value: (added as Record<PropertyKey, unknown>)[key],
@@ -197,4 +209,15 @@ function sharedClientRegistry(): SharedClientRegistry {
   const holder = globalThis as { [sharedClientRegistryKey]?: SharedClientRegistry };
   holder[sharedClientRegistryKey] ??= { defaults: {}, byScope: new Map() };
   return holder[sharedClientRegistryKey];
+}
+
+function addedByExtension(instance: object, key: PropertyKey): boolean {
+  for (
+    let owner: object | null = instance;
+    owner;
+    owner = Object.getPrototypeOf(owner) as object | null
+  ) {
+    if (Object.prototype.hasOwnProperty.call(owner, key)) return extendedInstances.has(owner);
+  }
+  return false;
 }

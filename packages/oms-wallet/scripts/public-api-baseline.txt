@@ -704,6 +704,10 @@ export interface OMSWalletExtensionContext {
 export type OMSWalletExtension<E extends object> = (oms: OMSWallet, context: OMSWalletExtensionContext) => E;
 /** Members an extension cannot add or replace. */
 export type OMSWalletReservedMember = 'wallet' | 'indexer' | 'extend';
+/** Turns a repeated member name into a type error that names it. */
+type OMSWalletTakenMembers<K extends PropertyKey> = {
+    [P in K]?: `"${P & string}" is already on this OMSWallet`;
+};
 export declare class OMSWallet {
     readonly wallet: WalletClient;
     readonly indexer: IndexerClient;
@@ -719,10 +723,12 @@ export declare class OMSWallet {
      * Returns a new `OMSWallet` with the members `extension` adds, for example
      * `new OMSWallet({ publishableKey }).extend(privacy())`. This instance is not changed, the
      * result is still an `OMSWallet` with the same `wallet` and `indexer`, and calls can be chained.
-     * An extension cannot add `wallet`, `indexer` or `extend`, or a member an earlier extension added.
+     * An extension cannot add `wallet`, `indexer` or `extend`, or a member the wallet already has,
+     * such as one an earlier extension added; adding the same extension twice is an error.
      */
-    extend<const E extends object & Partial<Record<OMSWalletReservedMember, never>>>(extension: OMSWalletExtension<E>): this & E;
+    extend<const E extends object & OMSWalletTakenMembers<OMSWalletReservedMember | keyof this>>(extension: OMSWalletExtension<E>): this & E;
 }
+export {};
 
 ## operations.d.ts
 export declare const WalletOperation: {

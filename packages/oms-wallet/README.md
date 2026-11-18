@@ -1156,7 +1156,7 @@ to run them.
 
 `extend` returns a new `OMSWallet` with the members an extension adds, without changing the original;
 `wallet` and `indexer` stay the same objects. Extensions cannot add `wallet`, `indexer` or `extend`,
-or replace a member an earlier extension added.
+or replace a member the wallet already has, such as one an earlier extension added.
 
 ```typescript
 import { OMSWallet } from '@polygonlabs/oms-wallet'

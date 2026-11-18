@@ -212,5 +212,20 @@ describe('OMSWallet.extend', () => {
       expect(() => base.extend(() => ({ [key]: 1 }) as object)).toThrow(OMSWalletValidationError);
     }
     expect(() => base.extend(() => ({ a: 2 }) as object)).toThrow(OMSWalletValidationError);
+    expect(() => base.extend(() => ({ toString: 1 }) as object)).toThrow(
+      'An OMSWallet extension cannot replace "toString"'
+    );
+  });
+
+  it('names the member when the same extension is added twice', () => {
+    const counter = () => () => ({ counter: { value: 1 } });
+    const once = new OMSWallet({ publishableKey: 'pk_dev_sdbx_project_key' }).extend(counter());
+    const later = once.extend(() => ({ other: 1 }));
+
+    for (const oms of [once, later]) {
+      expect(() => oms.extend(counter() as () => object)).toThrow(
+        '"counter" is already added to this OMSWallet by an extension. Add each extension once.'
+      );
+    }
   });
 });

@@ -11,7 +11,9 @@ export declare class OMSWallet {
     readonly wallet: WalletClient;
     readonly indexer: IndexerClient;
     constructor(params: OMSWalletParams);
-    extend<const E extends object & Partial<Record<OMSWalletReservedMember, never>>>(extension: OMSWalletExtension<E>): this & E;
+    extend<const E extends object & {
+        [P in OMSWalletReservedMember | keyof this]?: `"${P & string}" is already on this OMSWallet`;
+    }>(extension: OMSWalletExtension<E>): this & E;
 }
 ```
 
