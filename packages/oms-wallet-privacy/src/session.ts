@@ -42,7 +42,7 @@ const fingerprintKey = (address: Address) =>
 interface Entry {
   readonly address: Address;
   readonly backend: Promise<PrivacyBackend>;
-  /** Operations run one at a time: each waits for this, then replaces it. */
+  /** The last of this entry's operations, settled; the backend is destroyed after it. */
   tail: Promise<unknown>;
   pending: number;
   idleTimer: ReturnType<typeof setTimeout> | undefined;
@@ -57,6 +57,13 @@ interface Entry {
  * share a wallet client, and so share one backend and one queue of operations.
  */
 const entries = new WeakMap<WalletClient, Entry>();
+
+/**
+ * The last queued operation per wallet client, settled. Operations run one at a time across
+ * entries, so one started for a wallet before it was switched away and back cannot overlap one
+ * started after.
+ */
+const queues = new WeakMap<WalletClient, Promise<unknown>>();
 
 /**
  * Runs privacy operations for the active wallet. Backends are created on first use and torn down
@@ -85,31 +92,40 @@ export class PrivacySessions {
 
   /**
    * Runs `action` with the active wallet's backend, after any operation already running for it.
-   * `action` receives the address it is bound to. Wallet calls act for the wallet active when they
-   * are made, so `action` checks that address synchronously right before each one.
+   * `action` receives the address it is bound to and `requireCurrent`, which throws
+   * `OMS_PRIVACY_WALLET_CHANGED` once the active wallet has changed since the operation started,
+   * even if the same wallet is active again. Wallet calls act for the wallet active when they are
+   * made, so `action` calls `requireCurrent` synchronously right before each one and right before
+   * anything is submitted.
    */
   async run<T>(
     operation: string,
-    action: (backend: PrivacyBackend, address: Address) => Promise<T>
+    action: (
+      backend: PrivacyBackend,
+      address: Address,
+      requireCurrent: RequireCurrent
+    ) => Promise<T>
   ): Promise<T> {
     const address = this.activeAddress(operation);
+    const wallet = this.oms.wallet;
     const entry = this.entryFor(address);
     entry.pending += 1;
     if (entry.idleTimer !== undefined) clearTimeout(entry.idleTimer);
     entry.idleTimer = undefined;
 
-    const result = entry.tail.then(async () => {
-      if (
-        entry.walletChanged ||
-        this.oms.wallet.activeWallet?.address.toLowerCase() !== address.toLowerCase()
-      ) {
-        throw walletChanged(operation);
-      }
+    const requireCurrent: RequireCurrent = (txnIds) => {
+      if (entry.walletChanged) throw walletChanged(operation, txnIds);
+      requireActive(this.oms, address, operation, txnIds);
+    };
+    const result = (queues.get(wallet) ?? Promise.resolve()).then(async () => {
+      requireCurrent();
       // After a failed setup this throws that failure, for every operation queued behind it.
       const backend = await this.awaitBackend(entry, operation);
-      return action(backend, address);
+      return action(backend, address, requireCurrent);
     });
-    entry.tail = result.catch(() => undefined);
+    const settled = result.catch(() => undefined);
+    queues.set(wallet, settled);
+    entry.tail = settled;
     try {
       return await result;
     } finally {
@@ -257,6 +273,9 @@ export class PrivacySessions {
       .catch(() => {});
   }
 }
+
+/** Throws `OMS_PRIVACY_WALLET_CHANGED`, with `txnIds` if given, unless the operation's wallet is still current. */
+export type RequireCurrent = (txnIds?: ReadonlyArray<string>) => void;
 
 export function walletChanged(
   operation: string,

@@ -23,7 +23,7 @@ import { createDepositGuard, erc20Abi } from './guard.js';
 import { createProviderBackend } from './internal/hinkal/backend.js';
 import { privacyContracts, privacyNetworks } from './networks.js';
 import { createQuote, quoteInternals } from './quote.js';
-import { PrivacySessions, requireActive } from './session.js';
+import { PrivacySessions } from './session.js';
 import { DepositRun } from './transactions.js';
 
 /** How long a quote stays valid. */
@@ -181,7 +181,7 @@ function createPrivacyActions(oms: OMSWallet, sessions: PrivacySessions): Privac
 
     async shield(quote, options = {}) {
       const operation = 'privacy.shield';
-      return sessions.run(operation, async (backend, wallet) => {
+      return sessions.run(operation, async (backend, wallet, requireCurrent) => {
         useQuote(quote, 'shield', wallet, operation);
         const contracts = await checkedContracts(backend, quote.network, operation);
         const chainId = quote.network.id;
@@ -199,7 +199,8 @@ function createPrivacyActions(oms: OMSWallet, sessions: PrivacySessions): Privac
             pool: contracts.pool,
             depositSelector: contracts.depositSelector
           }),
-          options
+          options,
+          requireCurrent
         });
 
         if (!isNative(quote.token)) {
@@ -222,7 +223,7 @@ function createPrivacyActions(oms: OMSWallet, sessions: PrivacySessions): Privac
 
     async privateSend(quote, options = {}) {
       const operation = 'privacy.privateSend';
-      const sent = await sessions.run(operation, async (backend, wallet) => {
+      const sent = await sessions.run(operation, async (backend, wallet, requireCurrent) => {
         const internals = useQuote(quote, 'privateSend', wallet, operation);
         const contracts = await checkedContracts(backend, quote.network, operation);
         const chainId = quote.network.id;
@@ -240,7 +241,8 @@ function createPrivacyActions(oms: OMSWallet, sessions: PrivacySessions): Privac
             pool: contracts.pool,
             depositSelector: contracts.depositSelector
           }),
-          options
+          options,
+          requireCurrent
         });
 
         if (!isNative(quote.token)) {
@@ -273,7 +275,10 @@ function createPrivacyActions(oms: OMSWallet, sessions: PrivacySessions): Privac
             code: 'OMS_PRIVACY_SERVICE_ERROR',
             stage: deposited ? 'delivery' : 'deposit',
             message: deposited
-              ? 'The deposit executed but its delivery could not be scheduled. The funds are recoverable with recover().'
+              ? 'The deposit executed, but the privacy service did not confirm the delivery, so it ' +
+                'may still happen. Do not send it again. The funds show as recoverable until the ' +
+                'delivery spends them; recover() and the delivery spend the same funds, so only one ' +
+                'of them can go through.'
               : 'The privacy service failed before the deposit.'
           });
         }
@@ -303,7 +308,7 @@ function createPrivacyActions(oms: OMSWallet, sessions: PrivacySessions): Privac
 
     async unshield(quote) {
       const operation = 'privacy.unshield';
-      return sessions.run(operation, async (backend, wallet) => {
+      return sessions.run(operation, async (backend, wallet, requireCurrent) => {
         const internals = useQuote(quote, 'unshield', wallet, operation);
         const chainId = quote.network.id;
         const balances = await backendCall(operation, 'withdraw', [], () =>
@@ -325,7 +330,7 @@ function createPrivacyActions(oms: OMSWallet, sessions: PrivacySessions): Privac
             amount: quote.amount,
             to: quote.to!,
             feeData: internals.backendData,
-            beforeSubmit: () => requireActive(oms, wallet, operation)
+            beforeSubmit: () => requireCurrent()
           })
         );
         return Object.freeze({ txnHash });
@@ -346,7 +351,7 @@ function createPrivacyActions(oms: OMSWallet, sessions: PrivacySessions): Privac
       const operation = 'privacy.recover';
       requireContracts(params.network, operation);
       const token = requireAddress(params.token, 'token', operation);
-      return sessions.run(operation, async (backend, wallet) => {
+      return sessions.run(operation, async (backend, wallet, requireCurrent) => {
         const chainId = params.network.id;
         const recoverable = await backendCall(operation, 'withdraw', [], () =>
           backend.recoverableBalances([chainId])
@@ -364,7 +369,7 @@ function createPrivacyActions(oms: OMSWallet, sessions: PrivacySessions): Privac
             chainId,
             token,
             to: wallet,
-            beforeSubmit: () => requireActive(oms, wallet, operation)
+            beforeSubmit: () => requireCurrent()
           })
         );
         return Object.freeze({ txnHashes: Object.freeze([...txnHashes]) });

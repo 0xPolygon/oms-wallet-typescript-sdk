@@ -515,7 +515,7 @@ describe('privateSend', () => {
     expect(wallet.sent).toHaveLength(1);
   });
 
-  it('says the funds are recoverable when scheduling fails after the deposit, without backend text', async () => {
+  it('says the delivery may still happen when scheduling is unconfirmed after the deposit, without backend text', async () => {
     const { privacy, backend } = setup();
     backend.failWith.deliveryStatus = new Error('x');
 
@@ -535,7 +535,9 @@ describe('privateSend', () => {
       stage: 'delivery',
       txnIds: ['txn-1', 'txn-2']
     });
+    expect(error.message).toContain('may still happen. Do not send it again.');
     expect(error.message).toContain('recover()');
+    expect(error.deliveryId).toBeUndefined();
     expect(error.message).not.toContain('provider');
     expect(error.cause).toBeUndefined();
   });
@@ -681,6 +683,60 @@ describe('review fixes', () => {
       expect(backend.recoveredTo).toBeUndefined();
     }
   );
+
+  it.each(['unshield', 'recover'] as const)(
+    'stops %s when the wallet is switched away and back before submission',
+    async (kind) => {
+      const { privacy, wallet, backend } = setup();
+      backend.balanceList = [{ chainId: NETWORK.id, token: USDC, amount: 1_000n }];
+      backend.recoverableList = [{ chainId: NETWORK.id, token: USDC, amount: 50n }];
+      const quote =
+        kind === 'unshield'
+          ? await privacy.quoteUnshield({ network: NETWORK, token: USDC, amount: 100n })
+          : undefined;
+      backend.beforeSubmitDelay = async () => {
+        wallet.switchTo(OTHER_WALLET);
+        wallet.switchTo(WALLET);
+      };
+
+      const error = await rejection(
+        kind === 'unshield'
+          ? privacy.unshield(quote!)
+          : privacy.recover({ network: NETWORK, token: USDC })
+      );
+
+      expect(error.code).toBe('OMS_PRIVACY_WALLET_CHANGED');
+      expect(backend.recoveredTo).toBeUndefined();
+      expect(backend.calls.filter((call) => call === kind)).toHaveLength(1);
+    }
+  );
+
+  it('does not start an operation for a wallet while one from before a switch away and back still runs', async () => {
+    const { privacy, wallet, backend } = setup();
+    backend.balanceList = [{ chainId: NETWORK.id, token: USDC, amount: 1_000n }];
+    const quote = await privacy.quoteUnshield({ network: NETWORK, token: USDC, amount: 100n });
+    const order: string[] = [];
+    let release!: () => void;
+    const blocked = new Promise<void>((resolve) => (release = resolve));
+    backend.beforeSubmitDelay = async () => {
+      order.push('unshield:waiting');
+      await blocked;
+      order.push('unshield:end');
+    };
+
+    const unshield = rejection(privacy.unshield(quote));
+    await vi.waitFor(() => expect(order).toEqual(['unshield:waiting']));
+    wallet.switchTo(OTHER_WALLET);
+    wallet.switchTo(WALLET);
+    const balances = privacy.getBalances().then(() => order.push('balances'));
+    await new Promise((resolve) => setTimeout(resolve, 10));
+    expect(order).toEqual(['unshield:waiting']);
+
+    release();
+    expect((await unshield).code).toBe('OMS_PRIVACY_WALLET_CHANGED');
+    await balances;
+    expect(order).toEqual(['unshield:waiting', 'unshield:end', 'balances']);
+  });
 
   it('keeps the delivery ID when a status read fails after scheduling', async () => {
     const { privacy, backend } = setup();

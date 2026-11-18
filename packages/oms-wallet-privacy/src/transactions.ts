@@ -12,6 +12,7 @@ import type {
 } from '@polygonlabs/oms-wallet';
 
 import type { createDepositGuard, WalletCall } from './guard.js';
+import type { RequireCurrent } from './session.js';
 import type {
   DepositOptions,
   NetworkFee,
@@ -22,7 +23,6 @@ import type {
 
 import { OMSWalletPrivacyError } from './errors.js';
 import { PolicyViolation } from './guard.js';
-import { requireActive } from './session.js';
 
 type DepositGuard = ReturnType<typeof createDepositGuard>;
 
@@ -48,6 +48,7 @@ export class DepositRun {
       total: bigint;
       guard: DepositGuard;
       options: DepositOptions;
+      requireCurrent: RequireCurrent;
     }
   ) {}
 
@@ -119,7 +120,7 @@ export class DepositRun {
 
     let response: SendTransactionResponse;
     try {
-      requireActive(this.oms, wallet, this.params.operation);
+      this.params.requireCurrent();
     } catch {
       throw this.error({
         code: 'OMS_PRIVACY_WALLET_CHANGED',

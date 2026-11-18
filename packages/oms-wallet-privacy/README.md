@@ -13,32 +13,40 @@ ESM only. Requires `@polygonlabs/oms-wallet` 0.5 or later.
 ## Usage
 
 ```typescript
-import { Networks, OMSWallet } from '@polygonlabs/oms-wallet'
-import { privacy } from '@polygonlabs/oms-wallet-privacy'
+import { Networks, OMSWallet } from '@polygonlabs/oms-wallet';
+import { privacy } from '@polygonlabs/oms-wallet-privacy';
 
-const oms = new OMSWallet({ publishableKey }).extend(privacy())
+const oms = new OMSWallet({ publishableKey }).extend(privacy());
 // Sign in as usual with oms.wallet, then:
 
-const usdc = '0x3c499c542cEF5E3811e1192ce70d8cC03d5c3359'
+const usdc = '0x3c499c542cEF5E3811e1192ce70d8cC03d5c3359';
 
 // Shield: wallet → private balance
-const shieldQuote = await oms.privacy.quoteShield({ network: Networks.polygon, token: usdc, amount: 1_000_000n })
-await oms.privacy.shield(shieldQuote)
+const shieldQuote = await oms.privacy.quoteShield({
+  network: Networks.polygon,
+  token: usdc,
+  amount: 1_000_000n
+});
+await oms.privacy.shield(shieldQuote);
 
 // Private send: wallet → recipient, delivered later by the privacy service
 const sendQuote = await oms.privacy.quotePrivateSend({
   network: Networks.polygon,
   token: usdc,
   amount: 1_000_000n,
-  to: '0x1111111111111111111111111111111111111111',
-})
-const sent = await oms.privacy.privateSend(sendQuote, { waitForDelivery: true })
+  to: '0x1111111111111111111111111111111111111111'
+});
+const sent = await oms.privacy.privateSend(sendQuote, { waitForDelivery: true });
 
 // Unshield: private balance → an address (the own wallet by default)
-const unshieldQuote = await oms.privacy.quoteUnshield({ network: Networks.polygon, token: usdc, amount: 500_000n })
-await oms.privacy.unshield(unshieldQuote)
+const unshieldQuote = await oms.privacy.quoteUnshield({
+  network: Networks.polygon,
+  token: usdc,
+  amount: 500_000n
+});
+await oms.privacy.unshield(unshieldQuote);
 
-const balances = await oms.privacy.getBalances()
+const balances = await oms.privacy.getBalances();
 ```
 
 `oms.privacy.networks` lists the networks with private balances: Ethereum, BNB Chain, Polygon, Base
@@ -81,10 +89,14 @@ A private send deposits `total` into the sender's private balance and pre-author
 it as private. Check it with `getDeliveryStatus({ deliveryId })` (`pending`, `delivered` or
 `failed`), or pass `waitForDelivery: true` (default timeout 15 minutes). If the status cannot be read
 while waiting, the error still carries the `deliveryId` and transaction IDs: the send went through,
-so do not send it again.
+so do not send it again. If the deposit executed but the service did not confirm the delivery (a
+`delivery`-stage `OMS_PRIVACY_SERVICE_ERROR` without a `deliveryId`), the delivery may still happen:
+do not send it again either.
 
 If delivery fails, the funds stay in the sender's private balance as `recoverable` in
-`getBalances()`. `recover({ network, token })` pays all of them back to the wallet.
+`getBalances()`. `recover({ network, token })` pays all of them back to the wallet. Funds also show as
+`recoverable` while a delivery is pending; `recover` and the delivery spend the same funds, so only
+one of them goes through.
 
 ### Errors
 
