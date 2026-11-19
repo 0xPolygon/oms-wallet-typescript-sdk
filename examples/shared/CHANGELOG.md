@@ -1,5 +1,12 @@
 # oms-example-shared
 
+## 0.0.4
+
+### Patch Changes
+
+- Updated dependencies [[`f5e94c3`](https://github.com/0xPolygon/oms-wallet-typescript-sdk/commit/f5e94c33569632b70a4d110b5b3478c205efc7e7)]:
+  - @polygonlabs/oms-wallet@0.5.0
+
 ## 0.0.3
 
 ### Patch Changes
