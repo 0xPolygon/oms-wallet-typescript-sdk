@@ -1,0 +1,64 @@
+{
+  "groups": [
+    {
+      "label": "Setup",
+      "symbols": ["privacy", "PrivacyOptions", "PrivacyActions.networks"]
+    },
+    {
+      "label": "Balances",
+      "symbols": ["PrivacyActions.getBalances", "GetPrivateBalancesParams", "PrivateBalance"]
+    },
+    {
+      "label": "Quotes",
+      "symbols": [
+        "PrivacyActions.quoteShield",
+        "PrivacyActions.quoteUnshield",
+        "PrivacyActions.quotePrivateSend",
+        "QuoteShieldParams",
+        "QuoteUnshieldParams",
+        "QuotePrivateSendParams",
+        "PrivacyQuote",
+        "PrivacyQuoteKind"
+      ]
+    },
+    {
+      "label": "Shield and private send",
+      "symbols": [
+        "PrivacyActions.shield",
+        "PrivacyActions.privateSend",
+        "DepositOptions",
+        "PrivateSendOptions",
+        "DeliveryPollingOptions",
+        "PrivacyProgressEvent",
+        "PrivacyTransactionStep",
+        "PrivacyTransaction",
+        "NetworkFee",
+        "ShieldResult",
+        "PrivateSendResult"
+      ]
+    },
+    {
+      "label": "Unshield, delivery and recovery",
+      "symbols": [
+        "PrivacyActions.unshield",
+        "UnshieldResult",
+        "PrivacyActions.getDeliveryStatus",
+        "GetDeliveryStatusParams",
+        "DeliveryStatus",
+        "PrivacyActions.recover",
+        "RecoverParams",
+        "RecoverResult"
+      ]
+    },
+    {
+      "label": "Errors",
+      "symbols": [
+        "OMSWalletPrivacyError",
+        "isOMSWalletPrivacyError",
+        "OMSWalletPrivacyErrorCode",
+        "OMSWalletPrivacyErrorParams",
+        "OMSWalletPrivacyStage"
+      ]
+    }
+  ]
+}

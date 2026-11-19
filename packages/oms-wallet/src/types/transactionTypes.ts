@@ -79,6 +79,11 @@ export type SendTransactionBase = {
   selectFeeOption?: FeeOptionSelector;
   waitForStatus?: boolean;
   statusPolling?: TransactionStatusPollingOptions;
+  /**
+   * Called with the transaction ID once WaaS has prepared it and before it is executed, so the ID
+   * can be stored before anything is submitted. Throwing or rejecting stops the transaction.
+   */
+  onPrepared?: (txnId: string) => void | Promise<void>;
 };
 
 export type SendNativeTransactionParams = SendTransactionBase & {

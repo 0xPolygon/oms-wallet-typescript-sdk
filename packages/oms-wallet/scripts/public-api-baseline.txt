@@ -480,7 +480,7 @@ export {};
 
 ## index.d.ts
 export { OMSWallet } from './omsWallet.js';
-export type { OMSWalletParams } from './omsWallet.js';
+export type { OMSWalletExtension, OMSWalletExtensionContext, OMSWalletExtensionMembers, OMSWalletParams, OMSWalletReservedMember } from './omsWallet.js';
 export { DEFAULT_SESSION_LIFETIME_SECONDS, MAX_SESSION_LIFETIME_SECONDS } from './wallet.js';
 export { RemoteAccessClient } from './clients/remoteAccessClient.js';
 export type { RemoteAccessClientParams } from './clients/remoteAccessClient.js';
@@ -683,13 +683,39 @@ export {};
 import type { IndexerClient } from './clients/indexerClient.js';
 import type { CredentialSigner } from './credentialSigner.js';
 import type { StorageManager } from './storageManager.js';
-import type { WalletClient } from './wallet.js';
+import type { SignMessageParams, WalletClient } from './wallet.js';
 export interface OMSWalletParams {
     publishableKey: string;
     storage?: StorageManager;
     redirectAuthStorage?: StorageManager;
     credentialSigner?: CredentialSigner;
 }
+/** What `OMSWallet.extend` gives an extension besides the wallet itself. */
+export interface OMSWalletExtensionContext {
+    /**
+     * Signs a message that starts with `OMS Wallet reserved message:` with the active Ethereum
+     * wallet. `WalletClient.signMessage` refuses such messages, so code that can only ask the wallet
+     * to sign, such as a dApp sending `personal_sign` through the wagmi connector, cannot obtain this
+     * signature. Any code that can call `OMSWallet.extend` can; this is not a boundary against code
+     * running in the app itself.
+     */
+    signReservedMessage(params: SignMessageParams): Promise<string>;
+}
+/** Adds members to an `OMSWallet`. Returned by extension packages; passed to `OMSWallet.extend`. */
+export type OMSWalletExtension<E extends object> = (oms: OMSWallet, context: OMSWalletExtensionContext) => E;
+/** Members an extension cannot add or replace. */
+export type OMSWalletReservedMember = 'wallet' | 'indexer' | 'extend';
+/** Turns a repeated member name into a type error that names it. */
+type OMSWalletTakenMembers<K extends PropertyKey> = {
+    [P in K]?: `"${P & string}" is already on this OMSWallet`;
+};
+/**
+ * The members a list of extensions adds: the intersection of the objects they return. A union
+ * returned by one extension stays a union.
+ */
+export type OMSWalletExtensionMembers<E extends readonly object[]> = {
+    [K in keyof E]: (members: E[K]) => void;
+}[number] extends (members: infer All) => void ? All : never;
 export declare class OMSWallet {
     readonly wallet: WalletClient;
     readonly indexer: IndexerClient;
@@ -701,7 +727,23 @@ export declare class OMSWallet {
      * separate sessions.
      */
     constructor(params: OMSWalletParams);
+    /**
+     * Returns a new `OMSWallet` with the members the extensions add, for example
+     * `new OMSWallet({ publishableKey }).extend(privacy())`. This instance is not changed, and the
+     * result is still an `OMSWallet` with the same `wallet` and `indexer`. Extensions are added in
+     * order, and each one gets the wallet with the earlier ones added; `extend(a, b)` is the same as
+     * `extend(a).extend(b)`. An extension cannot add `wallet`, `indexer` or `extend`, or a member the
+     * wallet already has, such as one an earlier extension added; adding the same extension twice is
+     * an error. TypeScript reports a member the wallet already has; a member repeated within one call,
+     * or a name every object has such as `toString`, is reported when `extend` runs. An extension
+     * returns a plain object: a class instance is refused, since only own properties are added. The
+     * added members are read-only; getters stay live.
+     */
+    extend<const E extends readonly [object, ...object[]]>(...extensions: {
+        [K in keyof E]: OMSWalletExtension<E[K] & OMSWalletTakenMembers<OMSWalletReservedMember | keyof this>>;
+    }): this & Readonly<OMSWalletExtensionMembers<E>>;
 }
+export {};
 
 ## operations.d.ts
 export declare const WalletOperation: {
@@ -978,6 +1020,11 @@ export type SendTransactionBase = {
     selectFeeOption?: FeeOptionSelector;
     waitForStatus?: boolean;
     statusPolling?: TransactionStatusPollingOptions;
+    /**
+     * Called with the transaction ID once WaaS has prepared it and before it is executed, so the ID
+     * can be stored before anything is submitted. Throwing or rejecting stops the transaction.
+     */
+    onPrepared?: (txnId: string) => void | Promise<void>;
 };
 export type SendNativeTransactionParams = SendTransactionBase & {
     value: bigint;
@@ -1325,6 +1372,10 @@ export type OMSWalletSessionChangeEvent = {
 export type OMSWalletSessionChangeListener = (event: OMSWalletSessionChangeEvent) => void | Promise<void>;
 export interface SignMessageParams {
     network: Network;
+    /**
+     * UTF-8 text. Messages that start with `OMS Wallet reserved message:` are refused: only OMS
+     * Wallet extensions can have them signed.
+     */
     message: string;
 }
 export interface SignSolanaMessageParams {

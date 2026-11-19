@@ -11,6 +11,14 @@ export declare class OMSWallet {
     readonly wallet: WalletClient;
     readonly indexer: IndexerClient;
     constructor(params: OMSWalletParams);
+    extend<const E extends readonly [
+        object,
+        ...object[]
+    ]>(...extensions: {
+        [K in keyof E]: OMSWalletExtension<E[K] & {
+            [P in OMSWalletReservedMember | keyof this]?: `"${P & string}" is already on this OMSWallet`;
+        }>;
+    }): this & Readonly<OMSWalletExtensionMembers<E>>;
 }
 ```
 
@@ -23,6 +31,43 @@ export interface OMSWalletParams {
     redirectAuthStorage?: StorageManager;
     credentialSigner?: CredentialSigner;
 }
+```
+
+### `OMSWalletExtension`
+
+Adds members to an `OMSWallet`. Returned by extension packages; passed to `OMSWallet.extend`.
+
+```typescript
+export type OMSWalletExtension<E extends object> = (oms: OMSWallet, context: OMSWalletExtensionContext) => E;
+```
+
+### `OMSWalletExtensionContext`
+
+What `OMSWallet.extend` gives an extension besides the wallet itself.
+
+```typescript
+export interface OMSWalletExtensionContext {
+    signReservedMessage(params: SignMessageParams): Promise<string>;
+}
+```
+
+### `OMSWalletExtensionMembers`
+
+The members a list of extensions adds: the intersection of the objects they return. A union
+returned by one extension stays a union.
+
+```typescript
+export type OMSWalletExtensionMembers<E extends readonly object[]> = {
+    [K in keyof E]: (members: E[K]) => void;
+}[number] extends (members: infer All) => void ? All : never;
+```
+
+### `OMSWalletReservedMember`
+
+Members an extension cannot add or replace.
+
+```typescript
+export type OMSWalletReservedMember = "wallet" | "indexer" | "extend";
 ```
 
 ## Authentication and sessions
@@ -1288,6 +1333,7 @@ export type SendTransactionBase = {
     selectFeeOption?: FeeOptionSelector;
     waitForStatus?: boolean;
     statusPolling?: TransactionStatusPollingOptions;
+    onPrepared?: (txnId: string) => void | Promise<void>;
 };
 ```
 

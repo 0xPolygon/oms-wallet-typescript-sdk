@@ -280,6 +280,10 @@ export type OMSWalletSessionChangeListener = (
 
 export interface SignMessageParams {
   network: Network;
+  /**
+   * UTF-8 text. Messages that start with `OMS Wallet reserved message:` are refused: only OMS
+   * Wallet extensions can have them signed.
+   */
   message: string;
 }
 

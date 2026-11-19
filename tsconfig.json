@@ -3,6 +3,7 @@
   "files": [],
   "references": [
     { "path": "packages/oms-wallet" },
-    { "path": "packages/oms-wallet-wagmi-connector" }
+    { "path": "packages/oms-wallet-wagmi-connector" },
+    { "path": "packages/oms-wallet-privacy" }
   ]
 }

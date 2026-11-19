@@ -38,6 +38,8 @@ import {
   type GetSolanaBalancesParams,
   type GetTransactionHistoryParams,
   type OMSWalletParams,
+  type OMSWalletExtensionContext,
+  type OMSWalletExtension,
   type IndexerClient,
   type FeeToken,
   type OidcAuthMode,
@@ -704,4 +706,57 @@ function createClient(params: { publishableKey: string }) {
 
 void createClient({
   publishableKey: 'pk_dev_sdbx_project_key'
+});
+
+const extendedOms = new OMSWallet({ publishableKey: 'pk_dev_sdbx_project_key' })
+  .extend((_oms, context) => ({
+    first: 1 as const,
+    sign: () => context.signReservedMessage({ network: Networks.polygon, message: 'm' })
+  }))
+  .extend(() => ({ second: 'two' as const }));
+const extendedFirst: 1 = extendedOms.first;
+const extendedSecond: 'two' = extendedOms.second;
+const extendedSign: Promise<string> = extendedOms.sign();
+const extendedStillOms: OMSWallet = extendedOms;
+void [extendedFirst, extendedSecond, extendedSign, extendedStillOms];
+// @ts-expect-error extensions cannot add `wallet`.
+new OMSWallet({ publishableKey: 'pk_dev_sdbx_project_key' }).extend(() => ({ wallet: 1 }));
+// @ts-expect-error extensions cannot add `extend`.
+new OMSWallet({ publishableKey: 'pk_dev_sdbx_project_key' }).extend(() => ({ extend: 1 }));
+// @ts-expect-error the same extension cannot be added twice.
+extendedOms.extend(() => ({ second: 'again' }));
+const severalOms = new OMSWallet({ publishableKey: 'pk_dev_sdbx_project_key' }).extend(
+  (_oms, context) => ({ third: context.signReservedMessage }),
+  () => ({ fourth: 4 as const })
+);
+const severalFourth: 4 = severalOms.fourth;
+const severalSign: OMSWalletExtensionContext['signReservedMessage'] = severalOms.third;
+void [severalFourth, severalSign];
+declare const packagedExtension: OMSWalletExtension<{ packaged: { run(): void } }>;
+const packagedOms = new OMSWallet({ publishableKey: 'pk_dev_sdbx_project_key' }).extend(
+  packagedExtension
+);
+// @ts-expect-error a packaged extension cannot be added again.
+packagedOms.extend(packagedExtension);
+declare const unionExtension: OMSWalletExtension<
+  { kind: 'a'; a: number } | { kind: 'b'; b: number }
+>;
+const unionOms = new OMSWallet({ publishableKey: 'pk_dev_sdbx_project_key' }).extend(
+  unionExtension,
+  () => ({ other: true as const })
+);
+const unionKind: 'a' | 'b' = unionOms.kind;
+const unionOther: true = unionOms.other;
+// @ts-expect-error a union-typed extension does not make the wallet `never`.
+const unionNever: never = unionOms;
+void [unionKind, unionOther, unionNever];
+// @ts-expect-error extension members are read-only, as at runtime.
+unionOms.other = true;
+// @ts-expect-error extend needs at least one extension.
+new OMSWallet({ publishableKey: 'pk_dev_sdbx_project_key' }).extend();
+void new OMSWallet({ publishableKey: 'pk_dev_sdbx_project_key' }).wallet.sendTransaction({
+  network: Networks.polygon,
+  to: '0x1111111111111111111111111111111111111111',
+  value: 1n,
+  onPrepared: (txnId: string) => void txnId
 });

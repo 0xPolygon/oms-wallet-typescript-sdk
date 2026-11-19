@@ -2,7 +2,14 @@
   "groups": [
     {
       "label": "OMSWallet",
-      "symbols": ["OMSWallet", "OMSWalletParams"]
+      "symbols": [
+        "OMSWallet",
+        "OMSWalletParams",
+        "OMSWalletExtension",
+        "OMSWalletExtensionContext",
+        "OMSWalletExtensionMembers",
+        "OMSWalletReservedMember"
+      ]
     },
     {
       "label": "Authentication and sessions",
