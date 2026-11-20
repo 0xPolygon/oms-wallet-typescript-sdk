@@ -105,6 +105,9 @@ Each RPC nonce is durably advanced before dispatch. All WaaS responses must pass
 | `signTypedData(id, chainId, typedData)` | Validate EIP-712 domain/data, sign, and verify with WaaS.           |
 | `prepareTransfer(id, transfer)`         | Validate a native/ERC-20 transfer; require sponsored quote.         |
 | `executeTransfer(id)`                   | Submit the stored quote once; reconcile repeated calls.             |
+| `prepareUserOperation(id, operation)`   | Encode and quote one sponsored contract call for review.            |
+| `executeUserOperation(id)`              | Submit the stored contract-call quote once.                         |
+| `sendUserOperation(id, operation)`      | Prepare and submit a sponsored contract call in one step.           |
 | `getOperation(id)`                      | Return persisted result; poll pending/uncertain transfer status.    |
 
 Idempotency IDs must contain 8–100 letters, digits, underscores, or hyphens. Changed input under the same ID raises `IDEMPOTENCY_CONFLICT`. Reusing an ID never prepares another transfer. A new quote after expiry requires a new ID and operator review.
@@ -114,6 +117,44 @@ Idempotency IDs must contain 8–100 letters, digits, underscores, or hyphens. C
 `WalletError` exposes a safe code, message, and HTTP-oriented status. `UpstreamError` also exposes the numeric WaaS error code and RPC method. Raw tokens, private keys, and upstream response bodies are excluded. Validation failures, unsigned gateway failures, and attestation failures must be surfaced instead of weakening verification.
 
 `IndexerClient.getBalances(address, page?)` returns base-unit strings, metadata, a fetch timestamp, per-chain errors, and `nextPage`. Keep errors separate from zero balances and follow pagination. Unknown token decimals stay unknown.
+
+## Contract calls
+
+`sendUserOperation`, `prepareUserOperation` and `executeUserOperation` are not in 0.2.0; they ship in the next release. `sendUserOperation` calls any contract from the wallet with sponsored gas. Describe the call with an ABI, the name of a function in it and its arguments, which the SDK encodes with viem, or pass pre-encoded `data`. With a typed ABI (`as const`, or viem's `erc20Abi`), function names and arguments are type-checked:
+
+```ts
+const erc20Abi = [
+  {
+    type: 'function',
+    name: 'transfer',
+    stateMutability: 'nonpayable',
+    inputs: [
+      { name: 'to', type: 'address' },
+      { name: 'amount', type: 'uint256' },
+    ],
+    outputs: [{ type: 'bool' }],
+  },
+] as const;
+
+const paymentId = crypto.randomUUID(); // persist and reuse on retries
+const payment = await wallet.sendUserOperation(paymentId, {
+  chainId: 137,
+  calls: [
+    {
+      to: '0x3c499c542cef5e3811e1192ce70d8cc03d5c3359', // USDC on Polygon
+      abi: erc20Abi,
+      functionName: 'transfer',
+      args: ['0x2222222222222222222222222222222222222222', 2_500_000n],
+      // value: '0', // optional native amount in base units
+    },
+  ],
+});
+// Poll getOperation(payment.id) until it is executed or failed.
+```
+
+Use `prepareUserOperation`, then `executeUserOperation` with the same ID, when an operator should review the encoded `transaction` before it is sent. The same idempotency rules apply: retrying an ID returns the stored operation and never submits the call again. WaaS executes one call per transaction, so `calls` must contain exactly one call; calls to the wallet's own address are refused.
+
+This is the SDK's only path for arbitrary contract calls. Never build `to`, `data`, `abi`, `functionName` or `args` from untrusted input such as a browser request; decide the target, function, arguments and value on your server and check them there. Approvals, allowances and operator rights that a call grants outlast the operation, and `WalletSwaps` does not track them. Do not expose arbitrary contract calls as a dashboard endpoint.
 
 ## Trails swaps and recovery
 

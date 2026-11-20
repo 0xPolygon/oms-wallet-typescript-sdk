@@ -1,11 +1,14 @@
+import type { Abi, ContractFunctionName } from 'viem';
+
 import { zeroAddress } from 'viem';
 import { z } from 'zod';
 
-import type { Operation, Transfer } from '../client.js';
+import type { Operation, Transfer, UserOperation } from '../client.js';
 import type { TrailsIntent, TrailsReceipt } from './protocol.js';
 import type { SwapRequest } from './quote.js';
 import type { RecoveryRecord, SwapRecord, SwapView, WalletSwapsOptions } from './types.js';
 
+import { normalizeUserOperation } from '../client.js';
 import { sha256 } from '../encoding.js';
 import { WalletError } from '../errors.js';
 import { canonicalJson } from '../json.js';
@@ -109,7 +112,7 @@ export class WalletSwaps {
         operation.chainId !== chainId ||
         exceptOperations.includes(operation.id) ||
         !uncertain(operation) ||
-        !['transfer', 'deployment', 'recovery'].includes(operation.kind)
+        !['transfer', 'userOperation', 'deployment', 'recovery'].includes(operation.kind)
       )
         continue;
       if (!disabled)
@@ -142,6 +145,38 @@ export class WalletSwaps {
       if (op.status === 'quoted') await this.available(op.chainId, undefined, [id]);
       return this.options.wallet.executeTransfer(id);
     });
+  }
+  async prepareUserOperation<
+    const abi extends Abi | readonly unknown[] = Abi,
+    functionName extends ContractFunctionName<abi> = ContractFunctionName<abi>
+  >(id: string, operation: UserOperation<abi, functionName>) {
+    // Coordinate on the same chain and call that the wallet hashes, stores and quotes.
+    const { chainId, transaction } = normalizeUserOperation(operation);
+    return this.options.executor.run(async () => {
+      idSchema.parse(id);
+      // A retry of an existing operation returns it, or raises a conflict, without submitting;
+      // executeUserOperation checks the chain again while it is still quoted.
+      const existing = (await this.options.wallet.listOperations([id])).some((o) => o.id === id);
+      if (!existing) await this.available(chainId, undefined, [id]);
+      return this.options.wallet.prepareUserOperation(id, { chainId, calls: [transaction] });
+    });
+  }
+  executeUserOperation(id: string) {
+    return this.options.executor.run(async () => {
+      idSchema.parse(id);
+      const op = (await this.options.wallet.listOperations([id])).find((o) => o.id === id);
+      if (!op || op.kind !== 'userOperation')
+        throw new WalletError('NOT_FOUND', 'User operation not found.', 404);
+      if (op.status === 'quoted') await this.available(op.chainId, undefined, [id]);
+      return this.options.wallet.executeUserOperation(id);
+    });
+  }
+  async sendUserOperation<
+    const abi extends Abi | readonly unknown[] = Abi,
+    functionName extends ContractFunctionName<abi> = ContractFunctionName<abi>
+  >(id: string, operation: UserOperation<abi, functionName>) {
+    await this.prepareUserOperation(id, operation);
+    return this.executeUserOperation(id);
   }
   quoteSwap(id: string, input: SwapRequest): Promise<SwapView> {
     return this.options.executor.run(async () => {

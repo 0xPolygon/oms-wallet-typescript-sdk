@@ -67,6 +67,17 @@ const state:StateStore={read:async()=>null,write:async()=>{}};
 const wallet=new ServerWallet({subject:'consumer',issuer:'https://issuer.example',audience:'test',store:state,executor:new SerialExecutor(),transport:{request:async()=>{throw new Error('Offline consumer');}},tokenProvider:async()=>({token:'test',expiresAt:1})});
 const swaps=new WalletSwaps({wallet,store,executor:new SerialExecutor(),trails:new TrailsClient({apiKey:'fixture'}),chains:new EvmChainReader({137:'https://rpc.example'}),assets:[],enabled:false,environment:'consumer'});
 void swaps.listSwaps();
+const erc20=[{type:'function',name:'transfer',inputs:[{name:'to',type:'address'},{name:'amount',type:'uint256'}],outputs:[{type:'bool'}],stateMutability:'nonpayable'}] as const;
+const pay=()=>wallet.sendUserOperation('consumer-payment',{chainId:137,calls:[{to:'0x3c499c542cEF5E3811e1192ce70d8cC03d5c3359',abi:erc20,functionName:'transfer',args:['0x2222222222222222222222222222222222222222',1n]}]});
+void pay;
+// Function names and arguments are checked against a typed ABI.
+// @ts-expect-error misspelled function name
+const misspelled=()=>wallet.sendUserOperation('consumer-typo',{chainId:137,calls:[{to:'0x3c499c542cEF5E3811e1192ce70d8cC03d5c3359',abi:erc20,functionName:'tranfser',args:['0x2222222222222222222222222222222222222222',1n]}]});
+// @ts-expect-error arguments of the wrong types
+const wrongArgs=()=>swaps.sendUserOperation('consumer-args',{chainId:137,calls:[{to:'0x3c499c542cEF5E3811e1192ce70d8cC03d5c3359',abi:erc20,functionName:'transfer',args:[123,'abc']}]});
+// @ts-expect-error a selector instead of a function name
+const selector=()=>wallet.prepareUserOperation('consumer-hex',{chainId:137,calls:[{to:'0x3c499c542cEF5E3811e1192ce70d8cC03d5c3359',abi:erc20,functionName:'0x123',args:['0x2222222222222222222222222222222222222222',1n]}]});
+void misspelled; void wrongArgs; void selector;
 `
 );
 writeFileSync(

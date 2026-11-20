@@ -1,4 +1,12 @@
-import { encodeFunctionData, getAddress, isAddress, parseUnits } from 'viem';
+import type {
+  Abi,
+  AbiStateMutability,
+  ContractFunctionArgs,
+  ContractFunctionName,
+  Hex
+} from 'viem';
+
+import { encodeFunctionData, getAddress, isAddress, isHex, parseUnits } from 'viem';
 import { z } from 'zod';
 
 import type { RecoveryTransaction } from './authorization.js';
@@ -42,7 +50,7 @@ export interface Transfer {
 }
 export interface Operation {
   id: string;
-  kind: 'transfer' | 'sign' | 'signTypedData' | 'deployment' | 'recovery';
+  kind: 'transfer' | 'userOperation' | 'sign' | 'signTypedData' | 'deployment' | 'recovery';
   inputHash: string;
   createdAt: string;
   status:
@@ -62,6 +70,30 @@ export interface Operation {
   verified?: boolean;
   txnHash?: string;
   error?: string;
+}
+/**
+ * One contract call: either an ABI, the name of a function in it and its arguments, which the SDK
+ * encodes, or pre-encoded `data`. `value` is the native amount in base units (decimal string),
+ * default `'0'`. With a typed ABI such as viem's `erc20Abi`, the function name and arguments are
+ * type-checked as they are by viem's `encodeFunctionData`.
+ */
+export type Call<
+  abi extends Abi | readonly unknown[] = Abi,
+  functionName extends ContractFunctionName<abi> = ContractFunctionName<abi>,
+  args = ContractFunctionArgs<abi, AbiStateMutability, functionName>
+> = { to: string; value?: string } & (
+  | ({ abi: abi; functionName: functionName; data?: never } & (readonly [] extends args
+      ? { args?: args }
+      : { args: args }))
+  | { data: Hex; abi?: never; functionName?: never; args?: never }
+);
+export interface UserOperation<
+  abi extends Abi | readonly unknown[] = Abi,
+  functionName extends ContractFunctionName<abi> = ContractFunctionName<abi>
+> {
+  chainId: number;
+  /** WaaS executes one call per transaction, so exactly one call is accepted. */
+  calls: readonly Call<abi, functionName>[];
 }
 export interface ServerWalletOptions {
   subject: string;
@@ -104,6 +136,97 @@ export function parseAmount(value: string, decimals: number): string {
   if (amount <= 0n || amount >= 2n ** 256n)
     throw new WalletError('INVALID_AMOUNT', 'Amount is outside the supported range.');
   return amount.toString();
+}
+
+const abiCallFields = ['to', 'value', 'abi', 'functionName', 'args'];
+const rawCallFields = ['to', 'value', 'data'];
+
+function encodeCall(call: unknown): { to: string; value: string; data: Hex } {
+  if (!call || typeof call !== 'object' || Array.isArray(call))
+    throw new WalletError('INVALID_CALL', 'Provide the call to make.');
+  const fields = Object.fromEntries(
+    Object.entries(call).filter(([, item]) => item !== undefined)
+  ) as Record<string, unknown>;
+  const raw = 'data' in fields;
+  if (raw && ['abi', 'functionName', 'args'].some((key) => key in fields))
+    throw new WalletError('INVALID_CALL', 'Provide either an ABI call or hex calldata, not both.');
+  const unexpected = Object.keys(fields).find(
+    (key) => !(raw ? rawCallFields : abiCallFields).includes(key)
+  );
+  if (unexpected) throw new WalletError('INVALID_CALL', `Unexpected call field "${unexpected}".`);
+  if (typeof fields.to !== 'string' || !isAddress(fields.to))
+    throw new WalletError('INVALID_ADDRESS', 'Provide a valid EVM contract address.');
+  const value = 'value' in fields ? fields.value : '0';
+  if (
+    typeof value !== 'string' ||
+    !/^(0|[1-9][0-9]{0,77})$/.test(value) ||
+    BigInt(value) >= 2n ** 256n
+  )
+    throw new WalletError(
+      'INVALID_AMOUNT',
+      'Provide the call value as a base-unit decimal string.'
+    );
+  let data: unknown;
+  if (raw) data = fields.data;
+  else {
+    const { abi, functionName, args } = fields;
+    if (
+      !Array.isArray(abi) ||
+      typeof functionName !== 'string' ||
+      !(args === undefined || Array.isArray(args))
+    )
+      throw new WalletError(
+        'INVALID_CALL',
+        'Provide an ABI, the name of a function in it and its arguments.'
+      );
+    // viem would otherwise pick the first function when the name is missing, and treat a hex
+    // name as a selector without checking the ABI.
+    if (
+      !abi.some(
+        (item: unknown) =>
+          !!item &&
+          typeof item === 'object' &&
+          (item as { type?: unknown }).type === 'function' &&
+          (item as { name?: unknown }).name === functionName
+      )
+    )
+      throw new WalletError('INVALID_CALL', `The ABI has no function named "${functionName}".`);
+    try {
+      data = encodeFunctionData({
+        abi: abi as Abi,
+        functionName,
+        args: args as readonly unknown[]
+      });
+    } catch {
+      throw new WalletError(
+        'INVALID_CALL',
+        'The ABI, function name and arguments do not encode a valid call.'
+      );
+    }
+  }
+  if (typeof data !== 'string' || !isHex(data, { strict: true }) || data.length % 2)
+    throw new WalletError('INVALID_CALL', 'Calldata must be 0x-prefixed, even-length hex.');
+  // Lowercase so the same call hashes the same under one operation ID, however it was supplied.
+  return { to: getAddress(fields.to), value, data: data.toLowerCase() as Hex };
+}
+
+/**
+ * Validate and encode a user operation once, at the start of a call, so later changes to the
+ * caller's object cannot change the chain or call between review, coordination and the quote.
+ */
+export function normalizeUserOperation(input: unknown): {
+  chainId: number;
+  transaction: { to: string; value: string; data: Hex };
+} {
+  if (!input || typeof input !== 'object')
+    throw new WalletError('INVALID_CALL', 'Provide a chain and the call to make.');
+  const { chainId, calls } = input as { chainId?: unknown; calls?: unknown };
+  if (typeof chainId !== 'number' || !Number.isInteger(chainId))
+    throw new WalletError('INVALID_CALL', 'Provide a chain and the call to make.');
+  requireChain(chainId);
+  if (!Array.isArray(calls) || calls.length !== 1)
+    throw new WalletError('UNSUPPORTED_BATCH', 'Exactly one call is supported per user operation.');
+  return { chainId, transaction: encodeCall(calls[0]) };
 }
 
 /** One instance represents one OIDC identity and one EVM wallet. */
@@ -456,12 +579,82 @@ export class ServerWallet {
       }
     });
   }
+  /**
+   * Validate, encode and quote a sponsored contract call. Review the persisted `transaction`
+   * before calling `executeUserOperation`, or use `sendUserOperation` to do both.
+   */
+  async prepareUserOperation<
+    const abi extends Abi | readonly unknown[] = Abi,
+    functionName extends ContractFunctionName<abi> = ContractFunctionName<abi>
+  >(id: string, input: UserOperation<abi, functionName>): Promise<Operation> {
+    const { chainId, transaction } = normalizeUserOperation(input);
+    return this.options.executor.run(async () => {
+      const { operation, hash } = await this.existing(id, 'userOperation', {
+        chainId,
+        ...transaction
+      });
+      if (operation) return operation;
+      const state = await this.load();
+      await this.ensure(state);
+      // A self-call can reconfigure the wallet; deployment uses its own narrow path.
+      if (transaction.to.toLowerCase() === state.wallet!.address.toLowerCase())
+        throw new WalletError('INVALID_CALL', 'Calls to the wallet itself are not allowed.');
+      const op: Operation = {
+        id,
+        kind: 'userOperation',
+        inputHash: hash,
+        createdAt: new Date().toISOString(),
+        chainId,
+        status: 'preparing',
+        transaction
+      };
+      await this.writeOperation(op);
+      try {
+        op.quote = quoteSchema.parse(
+          await this.activeCall(state, 'PrepareEthereumTransaction', {
+            network: String(chainId),
+            walletId: state.wallet!.id,
+            ...transaction,
+            mode: 'relayer'
+          })
+        );
+        if (!op.quote.sponsored)
+          throw new WalletError(
+            'SPONSORSHIP_REQUIRED',
+            'This call is not sponsored. Enable gas sponsorship for this project/network.',
+            409
+          );
+        op.status = 'quoted';
+        await this.writeOperation(op);
+        return op;
+      } catch (error) {
+        op.status = 'failed';
+        op.error = error instanceof WalletError ? error.code : 'PREPARATION_FAILED';
+        await this.writeOperation(op);
+        throw error;
+      }
+    });
+  }
+  executeUserOperation(id: string): Promise<Operation> {
+    return this.executePrepared(id, ['userOperation']);
+  }
+  /**
+   * Prepare and submit a sponsored contract call. Retrying with the same ID never submits it
+   * again: it returns the persisted operation, polling its status while it is in flight.
+   */
+  async sendUserOperation<
+    const abi extends Abi | readonly unknown[] = Abi,
+    functionName extends ContractFunctionName<abi> = ContractFunctionName<abi>
+  >(id: string, input: UserOperation<abi, functionName>): Promise<Operation> {
+    const prepared = await this.prepareUserOperation(id, input);
+    return this.executeUserOperation(prepared.id);
+  }
   executeTransfer(id: string): Promise<Operation> {
     return this.executePrepared(id, ['transfer']);
   }
   /** Executes only a previously prepared, persisted and sponsored operation. */
   executeOperation(id: string): Promise<Operation> {
-    return this.executePrepared(id, ['transfer', 'deployment', 'recovery']);
+    return this.executePrepared(id, ['transfer', 'userOperation', 'deployment', 'recovery']);
   }
   private executePrepared(id: string, kinds: Operation['kind'][]): Promise<Operation> {
     return this.options.executor.run(async () => {
@@ -493,7 +686,7 @@ export class ServerWallet {
   }
   private async refresh(op: Operation): Promise<Operation> {
     if (
-      !['transfer', 'deployment', 'recovery'].includes(op.kind) ||
+      !['transfer', 'userOperation', 'deployment', 'recovery'].includes(op.kind) ||
       !op.quote ||
       !['submitting', 'pending', 'unknown'].includes(op.status)
     )

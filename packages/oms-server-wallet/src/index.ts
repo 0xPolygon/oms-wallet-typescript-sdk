@@ -1,5 +1,12 @@
 export { ServerWallet, parseAmount } from './client.js';
-export type { ServerWalletOptions, WalletSnapshot, Transfer, Operation } from './client.js';
+export type {
+  ServerWalletOptions,
+  WalletSnapshot,
+  Transfer,
+  Call,
+  UserOperation,
+  Operation
+} from './client.js';
 export { WaasTransport } from './transport.js';
 export type { RpcTransport } from './transport.js';
 export { EncryptedStore, SerialExecutor } from './storage.js';

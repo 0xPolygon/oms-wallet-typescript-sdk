@@ -484,3 +484,53 @@ it('uses fresh recovery state and expires reviews before deploying or signing', 
   expect(executes(h)).toHaveLength(1);
   expect(h.waas.remote.calls.filter((c) => c.method === 'SignTypedData')).toHaveLength(0);
 });
+it('coordinates user operations with swap debits in both directions', async () => {
+  const h = await swapHarness();
+  const call = { chainId: 137, calls: [{ to: token, data: '0xd0e30db0' as const }] };
+  await h.swaps.prepareUserOperation('prepared-call-1', call);
+  await h.confirm();
+  await expect(h.swaps.executeUserOperation('prepared-call-1')).rejects.toMatchObject({
+    code: 'DEBIT_PENDING'
+  });
+  await expect(h.swaps.sendUserOperation('prepared-call-2', call)).rejects.toMatchObject({
+    code: 'DEBIT_PENDING'
+  });
+  expect(executes(h)).toHaveLength(0);
+
+  // Retrying an existing operation returns it instead of DEBIT_PENDING; it still cannot submit.
+  expect((await h.swaps.prepareUserOperation('prepared-call-1', call)).status).toBe('quoted');
+  await expect(h.swaps.sendUserOperation('prepared-call-1', call)).rejects.toMatchObject({
+    code: 'DEBIT_PENDING'
+  });
+  expect(executes(h)).toHaveLength(0);
+
+  const other = await swapHarness();
+  await other.waas.client.sendUserOperation('pending-call-1', call);
+  const quote = await other.quote();
+  await expect(other.swaps.confirmSwap(quote.id, quote.quote.revision)).rejects.toMatchObject({
+    code: 'DEBIT_PENDING'
+  });
+});
+it('returns a finished user operation while a swap holds its chain', async () => {
+  const h = await swapHarness();
+  const call = { chainId: 137, calls: [{ to: token, data: '0xd0e30db0' as const }] };
+  await h.swaps.sendUserOperation('finished-call-1', call);
+  h.waas.remote.txnStatus = 'executed';
+  expect((await h.swaps.sendUserOperation('finished-call-1', call)).status).toBe('executed');
+  await h.confirm();
+  expect((await h.swaps.sendUserOperation('finished-call-1', call)).status).toBe('executed');
+  expect(executes(h)).toHaveLength(1);
+});
+it('coordinates on the chain fixed when the user operation is requested', async () => {
+  const h = await swapHarness();
+  await h.confirm();
+  const input = { chainId: 8453, calls: [{ to: token, data: '0xd0e30db0' as const }] };
+  const pending = h.swaps.prepareUserOperation('moved-call-1', input);
+  input.chainId = 137;
+  const op = await pending;
+  expect(op.chainId).toBe(8453);
+  const body = h.waas.remote.calls
+    .filter((c) => c.method === 'PrepareEthereumTransaction')
+    .at(-1)!.body;
+  expect(body).toMatchObject({ network: '8453' });
+});
