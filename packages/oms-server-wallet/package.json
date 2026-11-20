@@ -50,7 +50,7 @@
     "clean": "rm -rf dist",
     "build": "pnpm clean && tsc -p tsconfig.build.json",
     "typecheck": "tsc -p tsconfig.json",
-    "test": "vitest run",
+    "test": "vitest run && pnpm run test:release",
     "test:coverage": "vitest run --coverage",
     "test:package": "node --import tsx scripts/check-package.ts",
     "check:exports": "pnpm build && publint",
@@ -59,7 +59,9 @@
     "lint:md": "markdownlint-cli2 \"**/*.md\"",
     "format": "markdownlint-cli2 --fix \"**/*.md\" && eslint . --fix && prettier --write .",
     "prepack": "pnpm build",
-    "prepare": "husky"
+    "prepare": "husky",
+    "test:release": "node --test scripts/*.test.mjs",
+    "ci:stage-release": "node scripts/stage-npm-package.mjs"
   },
   "dependencies": {
     "@0xsequence/wallet-primitives": "3.0.11",
@@ -83,6 +85,7 @@
     "markdownlint-cli2": "0.24.1",
     "prettier": "3.10.1",
     "publint": "0.3.25",
+    "semver": "7.8.6",
     "tsx": "4.23.15",
     "typescript": "5.9.3",
     "vitest": "4.1.12"

@@ -179,4 +179,4 @@ pnpm test:coverage
 pnpm test:package # pack, then install into a clean consumer with install scripts disabled
 ```
 
-Every pull request needs a changeset (`pnpm exec changeset`, or `pnpm exec changeset add --empty` for CI, docs and tooling changes).
+Every pull request needs a changeset (`pnpm exec changeset`, or `pnpm exec changeset add --empty` for CI, docs and tooling changes). Releases are CI-only; see [PUBLISHING.md](PUBLISHING.md).
