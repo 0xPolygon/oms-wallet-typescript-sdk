@@ -1,0 +1,17 @@
+{
+  "compilerOptions": {
+    "target": "ES2022",
+    "lib": ["ES2022", "DOM", "DOM.Iterable"],
+    "module": "NodeNext",
+    "moduleResolution": "NodeNext",
+    "strict": true,
+    "skipLibCheck": true,
+    "noEmit": true,
+    "types": ["node"],
+    "paths": {
+      "@polygonlabs/oms-server-wallet-sdk": ["./src/index.ts"],
+      "@polygonlabs/oms-server-wallet-sdk/trails": ["./src/trails/index.ts"]
+    }
+  },
+  "include": ["src", "tests", "scripts", "*.ts"]
+}
