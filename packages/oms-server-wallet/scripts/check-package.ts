@@ -15,20 +15,41 @@ import {
 // Packaging + an isolated consumer only. This script has no publication/deployment command.
 const output = resolve('.data/package');
 mkdirSync(output, { recursive: true });
-// Build separately and pack without lifecycle scripts, so their output cannot precede the
-// JSON report and packing never installs git hooks.
-execFileSync('pnpm', ['build'], { stdio: 'inherit' });
-const packed = execFileSync(
-  'pnpm',
-  ['pack', '--pack-destination', output, '--json', '--config.ignore-scripts=true'],
-  { encoding: 'utf8', stdio: ['ignore', 'pipe', 'inherit'] }
-);
-const pack = JSON.parse(packed) as {
+// PACKAGE_TARBALL checks an archive packed elsewhere (the release run checks the exact file it
+// stages). Otherwise build separately and pack without lifecycle scripts, so their output cannot
+// precede the JSON report and packing never installs git hooks.
+function packedArchive(): {
   filename: string;
   name: string;
   version: string;
   files: { path: string }[];
-};
+} {
+  const given = process.env.PACKAGE_TARBALL;
+  if (given) {
+    const filename = resolve(given);
+    const manifest = JSON.parse(
+      execFileSync('tar', ['-xOzf', filename, 'package/package.json'], { encoding: 'utf8' })
+    ) as { name: string; version: string };
+    const files = execFileSync('tar', ['-tzf', filename], { encoding: 'utf8' })
+      .split('\n')
+      .filter((entry) => entry && !entry.endsWith('/'))
+      .map((entry) => ({ path: entry.replace(/^package\//, '') }));
+    return { filename, name: manifest.name, version: manifest.version, files };
+  }
+  execFileSync('pnpm', ['build'], { stdio: 'inherit' });
+  const packed = execFileSync(
+    'pnpm',
+    ['pack', '--pack-destination', output, '--json', '--config.ignore-scripts=true'],
+    { encoding: 'utf8', stdio: ['ignore', 'pipe', 'inherit'] }
+  );
+  return JSON.parse(packed) as {
+    filename: string;
+    name: string;
+    version: string;
+    files: { path: string }[];
+  };
+}
+const pack = packedArchive();
 const integrity = `sha512-${createHash('sha512').update(readFileSync(pack.filename)).digest('base64')}`;
 if (
   pack.files.some(

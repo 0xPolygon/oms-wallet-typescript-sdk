@@ -34,9 +34,9 @@ How testing works in this repo. `AGENTS.md` points here so agents know how to ve
   protocol code once (attestation `Sequence/1` and `Sequence/2`, request signing, publishable keys,
   addresses) with `pnpm --filter oms-wallet-protocol test`. The SDK suites test the copies only
   through their public behaviour.
-- **Release helpers:** `scripts/stage-npm-packages.test.mjs` and `scripts/prepare-npm-snapshot.test.mjs`
-  use Node's built-in test runner to validate fixed-group and independent-package, packed-manifest,
-  and snapshot-tag safeguards without contacting npm
+- **Release helpers:** `scripts/release-common.test.mjs` and `scripts/prepare-npm-snapshot.test.mjs`
+  use Node's built-in test runner to validate fixed-group and independent-package, artifact
+  (SHA-512, packed manifest, listed files) and snapshot-tag safeguards without contacting npm
 - **API docs generator:** `packages/oms-wallet/scripts/generate-api-docs.test.cjs` covers the
   generator that produces `API.md`; run it with
   `pnpm --filter @polygonlabs/oms-wallet test:api-generator`

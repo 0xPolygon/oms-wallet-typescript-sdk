@@ -5,8 +5,17 @@ on:
     branches: [master]
   workflow_dispatch:
     inputs:
+      mode:
+        description: 'snapshot stages snapshot versions; the dry runs pack and verify everything but stage nothing.'
+        required: true
+        type: choice
+        default: snapshot
+        options:
+          - snapshot
+          - snapshot-dry-run
+          - stable-dry-run
       snapshot_tag:
-        description: 'npm dist-tag for snapshot (e.g. canary, pre-0.3.0). Non-semver values only.'
+        description: 'npm dist-tag for a snapshot (e.g. canary, pre-0.3.0). Non-semver values only.'
         required: true
         default: 'snapshot'
 
@@ -14,9 +23,69 @@ concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: false
 
+permissions:
+  contents: read
+
 jobs:
+  # Runs every release gate and packs the packages, with no npm OIDC and no release-bot token: the
+  # packed-consumer check installs a fresh dependency tree and runs it. The staging jobs below stage
+  # exactly the tarballs this job uploads, after checking each one's SHA-512 and manifest.
+  verify:
+    name: Verify and pack
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    env:
+      PACK_MODE: ${{ (github.event_name == 'push' || inputs.mode == 'stable-dry-run') && 'stable' || 'snapshot' }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: pnpm/action-setup@0ebf47130e4866e96fce0953f49152a61190b271 # v6.0.9
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version-file: .nvmrc
+          cache: pnpm
+      # The release PR changes package manifests without regenerating the lockfile. Link
+      # co-released workspace packages locally so the not-yet-public versions still install.
+      - run: pnpm install --no-frozen-lockfile --config.link-workspace-packages=true
+      - name: Version snapshot
+        if: env.PACK_MODE == 'snapshot'
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+          SNAPSHOT_TAG: ${{ inputs.snapshot_tag }}
+          SNAPSHOT_PACKAGES_FILE: ${{ runner.temp }}/snapshot-packages.json
+        run: node scripts/prepare-npm-snapshot.mjs
+      - name: Release gates
+        run: pnpm run ci:verify-release
+      - name: Pack
+        env:
+          NPM_PACK_MODE: ${{ env.PACK_MODE }}
+          NPM_PACK_DIR: ${{ runner.temp }}/release-packages
+          SNAPSHOT_PACKAGES_FILE: ${{ runner.temp }}/snapshot-packages.json
+        run: node scripts/pack-npm-packages.mjs
+      - name: Install the packed server SDK into a clean consumer
+        env:
+          PACK_DIR: ${{ runner.temp }}/release-packages
+        run: |
+          tarball=$(find "$PACK_DIR" -name 'polygonlabs-oms-server-wallet-sdk-*.tgz' -print -quit)
+          if [ -z "$tarball" ]; then
+            echo 'The server SDK is not part of this release.'
+          else
+            PACKAGE_TARBALL="$tarball" pnpm --filter @polygonlabs/oms-server-wallet-sdk test:package
+          fi
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: release-packages
+          path: ${{ runner.temp }}/release-packages
+          if-no-files-found: error
+          retention-days: 7
+
   release:
+    name: Release PR or stage packages
     if: github.event_name == 'push'
+    needs: verify
     runs-on: ubuntu-latest
     # npm trusted publishing accepts tokens only from this environment, which only master may use.
     environment: npm-release
@@ -35,32 +104,38 @@ jobs:
           fetch-depth: 0
           token: ${{ steps.app-token.outputs.token }}
       - uses: pnpm/action-setup@0ebf47130e4866e96fce0953f49152a61190b271 # v6.0.9
+      # No dependency cache in a job with publishing credentials, so a poisoned cache cannot reach it.
       - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
           node-version-file: .nvmrc
-          cache: pnpm
           registry-url: 'https://registry.npmjs.org'
       - name: Install npm with staged-publishing support
         run: npm install --global npm@11.15.0
-      # The release PR changes package manifests without regenerating the lockfile. Link
-      # co-released workspace packages locally so the not-yet-public versions still install.
+      # Changesets needs the workspace to version packages and open the release PR.
       - run: pnpm install --no-frozen-lockfile --config.link-workspace-packages=true
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: release-packages
+          path: ${{ runner.temp }}/release-packages
       - name: Create release PR or stage versioned packages
         uses: changesets/action@a45c4d594aa4e2c509dc14a9f2b3b67ba3780d0d # v1.9.0
         with:
           title: 'changesets: Release / Deploy'
           commit: 'release: version packages'
           commitMode: github-api
-          # When a merged release PR has consumed all changesets, this command packs with
-          # pnpm (rewriting workspace: ranges) and stages the tarballs with npm. Its
-          # `New tag:` output lets the action create package tags and GitHub Releases.
-          publish: pnpm run ci:stage-release
+          # When a merged release PR has consumed all changesets, this command stages the tarballs
+          # the verify job packed and checked. Its `New tag:` output lets the action create package
+          # tags and GitHub Releases.
+          publish: node scripts/stage-npm-packages.mjs
           createGithubReleases: true
         env:
           GITHUB_TOKEN: ${{ steps.app-token.outputs.token }}
+          NPM_STAGE_ARTIFACT_DIR: ${{ runner.temp }}/release-packages
 
   snapshot:
-    if: github.event_name == 'workflow_dispatch'
+    name: Stage snapshot packages
+    if: github.event_name == 'workflow_dispatch' && inputs.mode == 'snapshot'
+    needs: verify
     runs-on: ubuntu-latest
     # Same environment as releases, so a snapshot cannot be staged from an unmerged branch.
     environment: npm-release
@@ -68,27 +143,51 @@ jobs:
       contents: read
       id-token: write # required for npm OIDC trusted publishing
     steps:
+      # Only the staging script runs here: nothing is installed, built or packed.
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
-          fetch-depth: 0
-      - uses: pnpm/action-setup@0ebf47130e4866e96fce0953f49152a61190b271 # v6.0.9
+          persist-credentials: false
       - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
           node-version-file: .nvmrc
-          cache: pnpm
           registry-url: 'https://registry.npmjs.org'
       - name: Install npm with staged-publishing support
         run: npm install --global npm@11.15.0
-      - run: pnpm install --no-frozen-lockfile --config.link-workspace-packages=true
-      - name: Version snapshot
-        env:
-          GITHUB_TOKEN: ${{ github.token }}
-          SNAPSHOT_TAG: ${{ inputs.snapshot_tag }}
-          SNAPSHOT_PACKAGES_FILE: ${{ runner.temp }}/snapshot-packages.json
-        run: node scripts/prepare-npm-snapshot.mjs
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: release-packages
+          path: ${{ runner.temp }}/release-packages
       - name: Stage snapshot packages
         env:
+          NPM_STAGE_ARTIFACT_DIR: ${{ runner.temp }}/release-packages
           NPM_STAGE_CREATE_GIT_TAGS: 'false'
           NPM_STAGE_TAG: ${{ inputs.snapshot_tag }}
-          NPM_STAGE_PACKAGES_FILE: ${{ runner.temp }}/snapshot-packages.json
-        run: pnpm run ci:stage-release
+        run: node scripts/stage-npm-packages.mjs
+
+  dry-run:
+    name: Stage packages (dry run)
+    if: github.event_name == 'workflow_dispatch' && endsWith(inputs.mode, '-dry-run')
+    needs: verify
+    runs-on: ubuntu-latest
+    # No environment and no OIDC: a dry run checks the artifact and npm state, and stages nothing.
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version-file: .nvmrc
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: release-packages
+          path: ${{ runner.temp }}/release-packages
+      - name: Stage packages (dry run)
+        env:
+          NPM_STAGE_ARTIFACT_DIR: ${{ runner.temp }}/release-packages
+          NPM_STAGE_DRY_RUN: 'true'
+          NPM_STAGE_CREATE_GIT_TAGS: ${{ inputs.mode == 'stable-dry-run' && 'true' || 'false' }}
+          NPM_STAGE_TAG: ${{ inputs.mode == 'stable-dry-run' && 'latest' || inputs.snapshot_tag }}
+        run: node scripts/stage-npm-packages.mjs

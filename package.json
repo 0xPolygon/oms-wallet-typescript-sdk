@@ -46,7 +46,7 @@
     "deploy:privy-import-worker": "pnpm --filter privy-import-worker-example deploy",
     "dev:smart-session-example": "pnpm --filter smart-session-example dev",
     "build:smart-session-example": "pnpm --filter smart-session-example build",
-    "ci:stage-release": "pnpm lint && pnpm test && pnpm build && pnpm check:exports && pnpm --filter oms-wallet-protocol codegen-drift-check && pnpm --filter @polygonlabs/oms-server-wallet-sdk test:coverage && node scripts/stage-npm-packages.mjs",
+    "ci:verify-release": "pnpm lint && pnpm test && pnpm build && pnpm check:exports && pnpm --filter oms-wallet-protocol codegen-drift-check && pnpm --filter @polygonlabs/oms-server-wallet-sdk test:coverage",
     "prepare": "husky"
   },
   "devDependencies": {
