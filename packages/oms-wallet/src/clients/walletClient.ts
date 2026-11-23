@@ -143,6 +143,7 @@ import {
   KeyFormat as GeneratedKeyFormat,
   TransportPurpose as GeneratedTransportPurpose
 } from '../generated/waas.gen.js';
+import { isCredentialGoneCode } from '../internal/protocol/waasErrors.js';
 import { TronNetworks } from '../networks.js';
 import { isOmsRelayOidcProvider, resolveOidcProviderConfig } from '../oidc.js';
 import { WalletOperation } from '../operations.js';
@@ -4004,7 +4005,7 @@ export class WalletClientImpl implements WalletClient {
         return response;
       }
       const errorCode = await waasErrorCode(response);
-      if (errorCode === 7202 || errorCode === 7203) {
+      if (errorCode !== undefined && isCredentialGoneCode(errorCode)) {
         this.rejectedSessionCredentialRevision = revision;
       } else if (errorCode === 7207 && this.sessionRevision === revision) {
         // Unauthorized: a wallet access error, or a revoked credential. `GetCredential` involves no
@@ -4189,7 +4190,6 @@ function normalizeCredentialId(value: string): string {
   return value.trim().toLowerCase();
 }
 
-/** Whether a failed WaaS response is `KeyNotFound` (7202) or `KeyExpired` (7203). */
 /** The WaaS error code of a failed response, or undefined when its body has none. */
 async function waasErrorCode(response: Response): Promise<number | undefined> {
   try {

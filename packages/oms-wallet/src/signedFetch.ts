@@ -1,5 +1,6 @@
 import type { CredentialSigner } from './credentialSigner.js';
 
+import { WALLET_SIGNATURE_HEADER } from './internal/protocol/requestSigning.js';
 import { WaasErrorCode } from './internal/protocol/waasErrors.js';
 import { RequestUtils } from './utils/requestUtils.js';
 
@@ -103,7 +104,7 @@ export function createSignedFetch(
       if (init?.signal) sentRequestSignals.add(init.signal);
       const response = await send(input, {
         ...init,
-        headers: { ...headers, 'OMS-Wallet-Signature': signatureHeader }
+        headers: { ...headers, [WALLET_SIGNATURE_HEADER]: signatureHeader }
       });
       if (retry >= MAX_NONCE_RETRIES || !(await isNonceRejectedResponse(response))) {
         return response;

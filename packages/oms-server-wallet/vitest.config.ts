@@ -13,6 +13,8 @@ export default defineConfig({
     coverage: {
       provider: 'v8',
       include: ['src/**/*.ts'],
+      // The protocol copies are covered by packages/oms-wallet-protocol's own tests.
+      exclude: ['src/internal/protocol/**'],
       thresholds: { statements: 80, branches: 70, functions: 80, lines: 80 }
     }
   }
