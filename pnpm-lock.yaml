@@ -385,8 +385,8 @@ importers:
         specifier: 2.0.0
         version: 2.0.0
       cbor-x:
-        specifier: 1.6.6
-        version: 1.6.6
+        specifier: 1.6.9
+        version: 1.6.9
       reflect-metadata:
         specifier: 0.2.2
         version: 0.2.2
@@ -422,8 +422,8 @@ importers:
         specifier: ^2.0.0
         version: 2.0.0
       cbor-x:
-        specifier: ^1.6.6
-        version: 1.6.6
+        specifier: ^1.6.9
+        version: 1.6.9
       reflect-metadata:
         specifier: ^0.2.2
         version: 0.2.2
@@ -475,8 +475,8 @@ importers:
         specifier: 2.0.0
         version: 2.0.0
       cbor-x:
-        specifier: 1.6.6
-        version: 1.6.6
+        specifier: 1.6.9
+        version: 1.6.9
       prettier:
         specifier: ^3.0.0
         version: 3.9.5
@@ -608,33 +608,33 @@ packages:
     resolution: {integrity: sha512-6zABk/ECA/QYSCQ1NGiVwwbQerUCZ+TQbp64Q3AgmfNvurHH0j8TtXa1qbShXA6qqkpAj4V5W8pP6mLe1mcMqA==}
     engines: {node: '>=18'}
 
-  '@cbor-extract/cbor-extract-darwin-arm64@2.2.2':
-    resolution: {integrity: sha512-ZKZ/F8US7JR92J4DMct6cLW/Y66o2K576+zjlEN/MevH70bFIsB10wkZEQPLzl2oNh2SMGy55xpJ9JoBRl5DOA==}
+  '@cbor-extract/cbor-extract-darwin-arm64@2.2.3':
+    resolution: {integrity: sha512-qpUy9Yoisi6a7QHOVa+AlnqfN7eVstSRhpLwiLnwi6i3SNLkM5D2Z7MXl4LC5nUGA77mZEt479cPH3u8GD163Q==}
     cpu: [arm64]
     os: [darwin]
 
-  '@cbor-extract/cbor-extract-darwin-x64@2.2.2':
-    resolution: {integrity: sha512-32b1mgc+P61Js+KW9VZv/c+xRw5EfmOcPx990JbCBSkYJFY0l25VinvyyWfl+3KjibQmAcYwmyzKF9J4DyKP/Q==}
+  '@cbor-extract/cbor-extract-darwin-x64@2.2.3':
+    resolution: {integrity: sha512-6bZbK7dyKn8BUNmG3UfzSnM4L/OzJ8xGAtBHYycprl+bgvtZmZoQC7CucWXuF/oHJP5skzqkqFr6BLSSGIkoWw==}
     cpu: [x64]
     os: [darwin]
 
-  '@cbor-extract/cbor-extract-linux-arm64@2.2.2':
-    resolution: {integrity: sha512-wfqgzqCAy/Vn8i6WVIh7qZd0DdBFaWBjPdB6ma+Wihcjv0gHqD/mw3ouVv7kbbUNrab6dKEx/w3xQZEdeXIlzg==}
+  '@cbor-extract/cbor-extract-linux-arm64@2.2.3':
+    resolution: {integrity: sha512-QAuFuQkOw0cm4MNc+QwxH9aiMxmrczESnVEu33B8m2Du9fBuH/1AvJfmO8YajpeWLoHqt2iUG3d1/gIWAKY8IQ==}
     cpu: [arm64]
     os: [linux]
 
-  '@cbor-extract/cbor-extract-linux-arm@2.2.2':
-    resolution: {integrity: sha512-tNg0za41TpQfkhWjptD+0gSD2fggMiDCSacuIeELyb2xZhr7PrhPe5h66Jc67B/5dmpIhI2QOUtv4SBsricyYQ==}
+  '@cbor-extract/cbor-extract-linux-arm@2.2.3':
+    resolution: {integrity: sha512-joCovTc7uEYCL9XxdAJJpGIH7Vvc31Fi7vh3HnlY5zgkLSU/64WxYl5iUi/puE21qT3bmxMfOZEZUbnqVKeJTQ==}
     cpu: [arm]
     os: [linux]
 
-  '@cbor-extract/cbor-extract-linux-x64@2.2.2':
-    resolution: {integrity: sha512-rpiLnVEsqtPJ+mXTdx1rfz4RtUGYIUg2rUAZgd1KjiC1SehYUSkJN7Yh+aVfSjvCGtVP0/bfkQkXpPXKbmSUaA==}
+  '@cbor-extract/cbor-extract-linux-x64@2.2.3':
+    resolution: {integrity: sha512-IQMPVLulOvFv9Had7J1idJyfQzsFamDVdjH37qW7suHI7mgO4w1Oo3MisL7AjnWARxo0/ZmEEQ3i81WA7y34Ug==}
     cpu: [x64]
     os: [linux]
 
-  '@cbor-extract/cbor-extract-win32-x64@2.2.2':
-    resolution: {integrity: sha512-dI+9P7cfWxkTQ+oE+7Aa6onEn92PHgfWXZivjNheCRmTBDBf2fx6RyTi0cmgpYLnD1KLZK9ZYrMxaPZ4oiXhGA==}
+  '@cbor-extract/cbor-extract-win32-x64@2.2.3':
+    resolution: {integrity: sha512-fGFfq6F3l0GCoKOZeyjjm3q+NHO7jo8ILtQ93U3rYJOgG2BGLS/QmBdoFLNEsoWPjyxAS8svWhTyo73MTDawog==}
     cpu: [x64]
     os: [win32]
 
@@ -3346,6 +3346,7 @@ packages:
 
   axios-retry@4.5.0:
     resolution: {integrity: sha512-aR99oXhpEDGo0UuAlYcn2iGRds30k366Zfa05XWScR9QaQD4JYiP3/1Qt1u7YlefUOK+cn0CcwoL1oefavQUlQ==}
+    deprecated: axios-retry is no longer maintained. See https://github.com/softonic/axios-retry for alternatives.
     peerDependencies:
       axios: 0.x || 1.x
 
@@ -3482,12 +3483,12 @@ packages:
     resolution: {integrity: sha512-F705O3xrsUtgt98j7leetNhTWPe+5S72rlL5O4jA1pKqBVQ/dT1O1D6PFxmSXvc0SUOinWS57DKx0I3CHrXJHQ==}
     hasBin: true
 
-  cbor-extract@2.2.2:
-    resolution: {integrity: sha512-hlSxxI9XO2yQfe9g6msd3g4xCfDqK5T5P0fRMLuaLHhxn4ViPrm+a+MUfhrvH2W962RGxcBwEGzLQyjbDG1gng==}
+  cbor-extract@2.2.3:
+    resolution: {integrity: sha512-zTOCEYwiQDChj5DV/sUqccv3jhdZqbhymztwcrW2LncIG2fPPkb1ceK5rmr0bdtxzJCXoWzZ95shA+uaSH8cKw==}
     hasBin: true
 
-  cbor-x@1.6.6:
-    resolution: {integrity: sha512-8QiD9PGOxyQHo7s2pzwTBH6lTjqekxPdl9Aq6fXvZgCuCJHOht1puDEA/fTr6mciB76c+M+Gi0qT2i1a4pm4Wg==}
+  cbor-x@1.6.9:
+    resolution: {integrity: sha512-TCT9XHLb4iPGQ99fpQjcTRncbus6cXHvSD/RY+bPrDACBCJKiQLmAM6r7/BgQcI5i+8h4gwp4vjfb6S6T8bPGw==}
 
   centrifuge@5.6.0:
     resolution: {integrity: sha512-Cs0uYnlngtxbsm8lwKXb5PCD3fhgVDRyqEaAtXEp0BMmP4pE/tcwFWCFxcYy6b2faChjmsrF9IgA/G44OSqu/w==}
@@ -6624,22 +6625,22 @@ snapshots:
 
   '@bcoe/v8-coverage@1.0.2': {}
 
-  '@cbor-extract/cbor-extract-darwin-arm64@2.2.2':
+  '@cbor-extract/cbor-extract-darwin-arm64@2.2.3':
     optional: true
 
-  '@cbor-extract/cbor-extract-darwin-x64@2.2.2':
+  '@cbor-extract/cbor-extract-darwin-x64@2.2.3':
     optional: true
 
-  '@cbor-extract/cbor-extract-linux-arm64@2.2.2':
+  '@cbor-extract/cbor-extract-linux-arm64@2.2.3':
     optional: true
 
-  '@cbor-extract/cbor-extract-linux-arm@2.2.2':
+  '@cbor-extract/cbor-extract-linux-arm@2.2.3':
     optional: true
 
-  '@cbor-extract/cbor-extract-linux-x64@2.2.2':
+  '@cbor-extract/cbor-extract-linux-x64@2.2.3':
     optional: true
 
-  '@cbor-extract/cbor-extract-win32-x64@2.2.2':
+  '@cbor-extract/cbor-extract-win32-x64@2.2.3':
     optional: true
 
   '@changesets/apply-release-plan@8.1.0':
@@ -11056,21 +11057,21 @@ snapshots:
 
   canonicalize@2.1.0: {}
 
-  cbor-extract@2.2.2:
+  cbor-extract@2.2.3:
     dependencies:
       node-gyp-build-optional-packages: 5.1.1
     optionalDependencies:
-      '@cbor-extract/cbor-extract-darwin-arm64': 2.2.2
-      '@cbor-extract/cbor-extract-darwin-x64': 2.2.2
-      '@cbor-extract/cbor-extract-linux-arm': 2.2.2
-      '@cbor-extract/cbor-extract-linux-arm64': 2.2.2
-      '@cbor-extract/cbor-extract-linux-x64': 2.2.2
-      '@cbor-extract/cbor-extract-win32-x64': 2.2.2
+      '@cbor-extract/cbor-extract-darwin-arm64': 2.2.3
+      '@cbor-extract/cbor-extract-darwin-x64': 2.2.3
+      '@cbor-extract/cbor-extract-linux-arm': 2.2.3
+      '@cbor-extract/cbor-extract-linux-arm64': 2.2.3
+      '@cbor-extract/cbor-extract-linux-x64': 2.2.3
+      '@cbor-extract/cbor-extract-win32-x64': 2.2.3
     optional: true
 
-  cbor-x@1.6.6:
+  cbor-x@1.6.9:
     optionalDependencies:
-      cbor-extract: 2.2.2
+      cbor-extract: 2.2.3
 
   centrifuge@5.6.0:
     dependencies:
