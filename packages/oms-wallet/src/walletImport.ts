@@ -1,11 +1,11 @@
 import type { ImportWalletParams } from './wallet.js';
 
+import { base58Decode } from './internal/protocol/addresses.js';
 import {
   base64DecodeBytes,
   base64EncodeBytes,
   toArrayBuffer
 } from './internal/protocol/encoding.js';
-import { decodeBase58 } from './utils/base58.js';
 
 const secp256k1Order = 0xfffffffffffffffffffffffffffffffebaaedce6af48a03bbfd25e8cd0364141n;
 
@@ -80,7 +80,7 @@ function solanaPrivateKeyPlaintext(value: string | Uint8Array): Uint8Array {
   if (typeof value === 'string') {
     const privateKey = trimAsciiWhitespace(value);
     if (!privateKey) throw new Error('Solana privateKey is required');
-    const decoded = decodeBase58(privateKey);
+    const decoded = base58Decode(privateKey);
     if (!decoded) throw new Error('Solana privateKey must be base58 encoded');
     if (decoded.length !== 32 && decoded.length !== 64) {
       throw new Error('Solana privateKey must decode to a 32-byte seed or 64-byte keypair');

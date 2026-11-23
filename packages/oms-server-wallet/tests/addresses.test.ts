@@ -7,7 +7,7 @@ import {
   isSolanaAddress,
   isTronAddress,
   tronToHex
-} from '../src/addresses.js';
+} from '../src/internal/protocol/addresses.js';
 import { isWalletAddress } from '../src/protocol.js';
 
 // USDT on Tron mainnet, in both of its published forms.

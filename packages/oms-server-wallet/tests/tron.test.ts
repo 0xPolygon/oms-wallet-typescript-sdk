@@ -8,7 +8,7 @@ import {
   type TronTransaction
 } from '@polygonlabs/oms-server-wallet-sdk';
 
-import { hexToTron, tronToHex } from '../src/addresses.js';
+import { hexToTron, tronToHex } from '../src/internal/protocol/addresses.js';
 import { validateTronTypedData } from '../src/typed-data.js';
 import { SOLANA_ADDRESS, TRON_ADDRESS, TRON_RECIPIENT, TRON_TXID, sdkHarness } from './helpers.js';
 

@@ -3,8 +3,9 @@ import { z } from 'zod';
 import type { ChainQuote, FeeOption, NetworkFamily, RemoteWallet } from './protocol.js';
 import type { State } from './state.js';
 
-import { base58Decode } from './addresses.js';
 import { UpstreamError, WalletError } from './errors.js';
+import { base58Decode } from './internal/protocol/addresses.js';
+import { WaasErrorCode } from './internal/protocol/waasErrors.js';
 import { chainQuoteSchema } from './protocol.js';
 
 /** Solana and Tron, whose wallets are EOAs addressed by network name rather than chain ID. */
@@ -70,13 +71,23 @@ export interface WalletContext {
  * WaaS answers this both for an expired quote and for a transaction another Execute already
  * claimed, so it never proves on its own that nothing was sent.
  */
-const TRANSACTION_EXPIRED = 7309;
+const TRANSACTION_EXPIRED = WaasErrorCode.TransactionExpired;
 /**
  * Execute refusals WaaS v1.2.0 returns only before it claims a Solana or Tron transaction, so
  * the request sent nothing. Any other error, such as a failed broadcast, can follow the claim.
  */
-const PRE_CLAIM_REFUSALS = new Set([7103, 7200, 7207, 7304, 7305, 7306, 7307, 7308, 7310]);
-const FEE_REFUSED = 7310;
+const PRE_CLAIM_REFUSALS: ReadonlySet<number> = new Set([
+  WaasErrorCode.DataIntegrityError,
+  WaasErrorCode.InvalidRequest,
+  WaasErrorCode.Unauthorized,
+  WaasErrorCode.UnsupportedNetwork,
+  WaasErrorCode.UnsupportedTransactionMode,
+  WaasErrorCode.TransactionFailed,
+  WaasErrorCode.WalletProviderError,
+  WaasErrorCode.TransactionNotFound,
+  WaasErrorCode.InvalidFeeOption
+]);
+const FEE_REFUSED = WaasErrorCode.InvalidFeeOption;
 /**
  * How long after a quote's expiry an unconfirmed submission can still be claimed by an Execute
  * that started in time; until then an expired quote does not prove nothing was sent.

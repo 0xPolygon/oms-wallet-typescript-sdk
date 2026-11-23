@@ -53,6 +53,7 @@ export default defineConfig([
     ignores: [
       '.claude/**',
       '**/dist/**',
+      '**/coverage/**',
       '**/out-tsc/**',
       'examples/**',
       '**/tests/**',

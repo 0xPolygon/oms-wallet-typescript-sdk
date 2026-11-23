@@ -1,9 +1,9 @@
 import { hashTypedData } from 'viem';
 import { z } from 'zod';
 
-import { tronToHex } from './addresses.js';
 import { requireChain } from './environment.js';
 import { WalletError } from './errors.js';
+import { tronToHex } from './internal/protocol/addresses.js';
 import { canonicalJson } from './json.js';
 
 const address = z

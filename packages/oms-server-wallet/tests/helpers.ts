@@ -7,7 +7,7 @@ import {
 } from '@polygonlabs/oms-server-wallet-sdk';
 import type { Credential } from '../src/protocol.js';
 
-import { base58Encode, hexToTron } from '../src/addresses.js';
+import { base58Encode, hexToTron } from '../src/internal/protocol/addresses.js';
 
 /** A Solana or Tron transaction as WaaS v1.2.0 keeps it: claimed as pending before broadcast. */
 export interface FakeChainTxn {

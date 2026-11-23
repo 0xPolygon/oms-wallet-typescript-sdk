@@ -1,7 +1,7 @@
 import { z } from 'zod';
 
-import { isSolanaAddress, isTronAddress } from './addresses.js';
 import { bytesToHex, utf8 } from './encoding.js';
+import { isSolanaAddress, isTronAddress } from './internal/protocol/addresses.js';
 import {
   walletRequestPreimage,
   walletSignatureHeader

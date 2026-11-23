@@ -1,11 +1,12 @@
 import type { ChainOperation } from './chains.js';
 import type { FeeOption } from './protocol.js';
 
-import { base58Decode, isSolanaAddress } from './addresses.js';
 import { ChainWallet } from './chains.js';
 import { WalletError } from './errors.js';
+import { base58Decode, isSolanaAddress } from './internal/protocol/addresses.js';
+import { SOLANA_NETWORKS } from './internal/protocol/networks.js';
 
-export const SOLANA_NETWORKS = ['solana:mainnet', 'solana:devnet'] as const;
+export { SOLANA_NETWORKS };
 export type SolanaNetwork = (typeof SOLANA_NETWORKS)[number];
 /** SOL is native; any other asset is a token mint, on the SPL Token or Token-2022 program. */
 export interface SolanaTransfer {

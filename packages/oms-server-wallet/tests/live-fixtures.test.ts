@@ -2,7 +2,7 @@ import { readdirSync, readFileSync } from 'node:fs';
 
 import { describe, expect, it } from 'vitest';
 
-import { verifyAttestationDocument } from '../src/attestation.js';
+import { verifyAttestationDocument } from '../src/internal/protocol/attestation.js';
 
 interface LiveFixture {
   method: string;

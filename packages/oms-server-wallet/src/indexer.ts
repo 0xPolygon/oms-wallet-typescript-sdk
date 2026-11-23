@@ -4,9 +4,9 @@ import { z } from 'zod';
 import type { SolanaNetwork } from './solana.js';
 import type { TronNetwork } from './tron.js';
 
-import { isSolanaAddress, isTronAddress } from './addresses.js';
 import { CHAINS, environmentFromKey, requireChain } from './environment.js';
 import { WalletError } from './errors.js';
+import { isSolanaAddress, isTronAddress } from './internal/protocol/addresses.js';
 import { SOLANA_NETWORKS } from './solana.js';
 import { boundedText } from './transport.js';
 import { TRON_NETWORKS } from './tron.js';

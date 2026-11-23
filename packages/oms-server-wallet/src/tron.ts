@@ -1,19 +1,15 @@
 import type { ChainOperation } from './chains.js';
 import type { FeeOption } from './protocol.js';
 
-import { isTronAddress } from './addresses.js';
 import { ChainWallet } from './chains.js';
 import { WalletError } from './errors.js';
+import { isTronAddress } from './internal/protocol/addresses.js';
+import { TRON_CHAIN_IDS, TRON_NETWORKS } from './internal/protocol/networks.js';
 import { canonicalJson } from './json.js';
 import { validateTronTypedData } from './typed-data.js';
 
-export const TRON_NETWORKS = ['tron:mainnet', 'tron:nile'] as const;
+export { TRON_CHAIN_IDS, TRON_NETWORKS };
 export type TronNetwork = (typeof TRON_NETWORKS)[number];
-/** TIP-712 domain chain IDs. */
-export const TRON_CHAIN_IDS: Record<TronNetwork, number> = {
-  'tron:mainnet': 728126428,
-  'tron:nile': 3448148188
-};
 
 /**
  * Tron charges bandwidth and energy, burning TRX for what the wallet's delegated resources don't
