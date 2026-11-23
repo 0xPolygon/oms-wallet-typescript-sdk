@@ -26,7 +26,8 @@ features only one SDK has stay in the SDKs. Public types stay defined in the SDK
 - Edit here, then run `pnpm --filter oms-wallet-protocol sync` and commit both copies. Never edit a copy.
 - Code must compile for the browser SDK's CJS (`node10`) and ESM builds and the server SDK's ESM build:
   relative imports with `.js`, no top-level `await`, no `import.meta`, Web Crypto and `fetch` only.
-- Use only dependencies both SDKs declare.
+- Use only dependencies both SDKs declare; the sync fails otherwise.
+- Keep `src/` flat: one `.ts` file per module. Import modules directly; there is no barrel file.
 - Throw plain `Error`s; each SDK maps them to its own error classes.
 - A change here needs a changeset naming each SDK whose behaviour changes.
 

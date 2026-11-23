@@ -1,6 +1,6 @@
 # @polygonlabs/oms-server-wallet-sdk
 
-Standalone ESM TypeScript SDK targeting WaaS v1.2.0, with EVM, Solana and Tron wallets, OIDC authentication, encrypted credential persistence, attested responses, verified message signing, and sponsored native/ERC-20 transfers. Requires Web Crypto and Fetch (Node 24+ or Workers with `nodejs_compat`). It has no dashboard, Hono, D1, or embedded wallet SDK dependency.
+Standalone ESM TypeScript SDK targeting WaaS v1.2.0, with EVM, Solana and Tron wallets, OIDC authentication, encrypted credential persistence, attested responses, verified message signing, and sponsored native/ERC-20 transfers. Requires Web Crypto and Fetch (Node 22+ or Workers with `nodejs_compat`). It has no dashboard, Hono, D1, or embedded wallet SDK dependency.
 
 ## Installation
 

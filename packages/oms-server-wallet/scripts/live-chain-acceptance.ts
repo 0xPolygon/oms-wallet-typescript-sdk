@@ -101,6 +101,9 @@ const recording: typeof fetch = async (input, init) => {
       responseBody: await response.clone().text(),
       status: response.status,
       nonce: headers.get('X-Attestation-Nonce'),
+      // A Sequence/2 attestation binds the signature header that was sent. It is a spent, nonce-bound
+      // signature and the credential's public key; no secret.
+      boundHeader: headers.get('OMS-Wallet-Signature') ?? '',
       encodedDocument: response.headers.get('X-Attestation-Document'),
       trustedPcr0s: pcr0s,
       now: new Date().toISOString()

@@ -55,13 +55,18 @@ touches a package without one.
    release version. The workflow inspects every packed manifest and fails if any `workspace:` range
    remains.
 4. The workflow sends the pnpm-created tarballs to `npm stage publish` via **OIDC trusted
-   publishing** (no `NPM_TOKEN`). Fixed-group packages stage first, then independent ones, and
-   only versions that are neither tagged nor published are staged. After all packages stage successfully, Changesets pushes a
+   publishing** (no `NPM_TOKEN`). Packages are handled one at a time, fixed-group packages first:
+   each is looked up, packed and staged before the next, and only versions that are neither tagged
+   nor published are staged. A failure stops the job; a rerun skips what is already tagged. After all packages stage successfully, Changesets pushes a
    package tag and creates a GitHub Release from each package's `CHANGELOG.md` entry.
 5. An npm maintainer inspects and approves the staged packages with 2FA. Approve
    `@polygonlabs/oms-wallet` first, then `@polygonlabs/oms-wallet-wagmi-connector` and
    `@polygonlabs/oms-wallet-privacy`, and `@polygonlabs/oms-server-wallet-sdk` when it was staged;
    only approved packages become publicly installable.
+
+Both the release and snapshot jobs run in the `npm-release` GitHub environment. A repository admin
+restricts that environment to `master`, and each package's npm trusted publisher names it, so
+nothing can be staged from an unmerged branch.
 
 Version-bump commits are signed by GitHub's GPG key (`commitMode: github-api`) to satisfy branch
 protection. The package tags and GitHub Releases record that CI staged the exact release artifacts;
@@ -118,10 +123,11 @@ still CI, not a local release:
 
 The workflow versions the packages that have changesets with `changeset version --snapshot <tag>`
 on the runner (never committed): the whole fixed group together, and the server SDK when a changeset
-names it. It then packs and stages only those snapshot versions. If the branch has no versioned
-changeset, the workflow creates a temporary patch changeset for the fixed group so the snapshot
-cannot succeed without producing packages. The snapshot path skips git tags and GitHub Releases, so
+names it. It writes the exact names and versions it created to a file, and staging stages only
+those. If the branch has no versioned changeset, the workflow creates a temporary patch changeset for
+the fixed group only, so a snapshot of the server SDK needs a changeset that names it. The snapshot path skips git tags and GitHub Releases, so
 **`snapshot_tag` must be a lowercase, non-version tag other than `latest`**. The workflow validates
-the input and aborts before versioning if the tag is unsafe. An npm maintainer must approve every
+the input and aborts before versioning if the tag is unsafe: lowercase letters, digits and hyphens,
+in non-empty dot-separated parts, because it becomes part of a semver prerelease version. An npm maintainer must approve every
 stage before consumers can install the result with
 `pnpm add @polygonlabs/oms-wallet@<tag>`.

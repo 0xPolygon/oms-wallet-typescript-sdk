@@ -10,6 +10,8 @@ interface LiveFixture {
   requestBody: string;
   responseBody: string;
   nonce: string;
+  /** Absent in fixtures recorded before Sequence/2. */
+  boundHeader?: string;
   encodedDocument: string;
   trustedPcr0s: string[];
   now: string;
