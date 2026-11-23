@@ -291,4 +291,6 @@ pnpm --filter @polygonlabs/oms-server-wallet-sdk test:coverage
 pnpm --filter @polygonlabs/oms-server-wallet-sdk test:package # pack, then install into a clean consumer with install scripts disabled
 ```
 
+`pnpm --filter @polygonlabs/oms-server-wallet-sdk test:live` runs live acceptance for Solana devnet and Tron Nile with the variables listed in `scripts/live-chain-acceptance.ts`, read from `packages/oms-server-wallet/.env`. It only quotes transfers unless `LIVE_EXECUTE=1`, writes its report to `.data/live-chain-acceptance.json`, and records attested WaaS responses that can be copied to `tests/fixtures/live/` for offline verification.
+
 Every pull request needs a changeset (`pnpm exec changeset`, or `pnpm exec changeset add --empty` for CI, docs and tooling changes). Releases are CI-only; see the repository's [PUBLISHING.md](../../PUBLISHING.md).
