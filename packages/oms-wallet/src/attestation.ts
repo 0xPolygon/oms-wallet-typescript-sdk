@@ -7,6 +7,7 @@ import {
   randomAttestationNonce,
   verifyAttestationDocument
 } from './internal/protocol/attestation.js';
+import { untilAborted } from './signedFetch.js';
 
 type Fetch = (input: RequestInfo, init?: RequestInit) => Promise<Response>;
 
@@ -20,7 +21,8 @@ class AttestationVerificationError extends Error {
 /**
  * Verifies the attestation of every response `fetch` returns. `fetch` must be the one that sends the
  * request as it is: a `Sequence/2` attestation binds the request's signature header, so the
- * header checked is the one sent.
+ * header checked is the one sent. Verification stops when the request's signal aborts, so a stalled
+ * check cannot hold the signed-request queue past the request's deadline.
  */
 export function createAttestedFetch(fetch: Fetch, trustedPcr0s: ReadonlyArray<string>): Fetch {
   const trustedMeasurements = normalizeTrustedPcr0s(trustedPcr0s);
@@ -36,25 +38,31 @@ export function createAttestedFetch(fetch: Fetch, trustedPcr0s: ReadonlyArray<st
     });
     const requestInit = { ...init, headers: requestHeaders };
     const response = await fetch(input, requestInit);
+    const signal = init?.signal ?? undefined;
     try {
-      const responseBody = await response.clone().text();
+      const responseBody = await untilAborted(response.clone().text(), signal);
       const attestationDocument = response.headers.get(ATTESTATION_DOCUMENT_HEADER);
       if (!attestationDocument) {
         throw new Error('WaaS response is missing its attestation document');
       }
 
       const url = new URL(typeof input === 'string' ? input : input.url);
-      await verifyAttestationDocument({
-        encodedDocument: attestationDocument,
-        method: requestInit.method ?? 'GET',
-        path: url.pathname,
-        boundHeader: headers.get(ATTESTATION_BOUND_HEADER) ?? '',
-        requestBody: typeof requestInit.body === 'string' ? requestInit.body : '',
-        responseBody,
-        nonce,
-        trustedPcr0s: trustedMeasurements
-      });
+      await untilAborted(
+        verifyAttestationDocument({
+          encodedDocument: attestationDocument,
+          method: requestInit.method ?? 'GET',
+          path: url.pathname,
+          boundHeader: headers.get(ATTESTATION_BOUND_HEADER) ?? '',
+          requestBody: typeof requestInit.body === 'string' ? requestInit.body : '',
+          responseBody,
+          nonce,
+          trustedPcr0s: trustedMeasurements
+        }),
+        signal
+      );
     } catch (error) {
+      // Aborted while verifying: the request failed, and nothing unverified is returned.
+      if (signal?.aborted) throw signal.reason;
       throw new AttestationVerificationError(
         error instanceof Error ? error.message : 'WaaS attestation verification failed',
         { cause: error }
