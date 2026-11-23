@@ -112,6 +112,46 @@ describe('AWS Nitro attestation verification', () => {
     );
   });
 
+  describe('Sequence/2 through the full verifier', () => {
+    // The fixture is a real Sequence/1 document. Rewriting its user_data as Sequence/2 breaks its
+    // COSE signature, but user_data is checked first: a matching bound header gets past that check
+    // and fails only at the signature, a mismatched one fails at the binding.
+    async function sequence2Document(boundHeader: string): Promise<string> {
+      const userData = await attestationUserData(2, { ...fixtureBinding(), boundHeader });
+      return mutateAttestationPayload((payload) => payload.set('user_data', userData));
+    }
+
+    it('accepts the user data of the header that was sent', async () => {
+      const encodedDocument = await sequence2Document('sig');
+      await expect(verifyFixture({ encodedDocument, boundHeader: 'sig' })).rejects.toThrow(
+        'signature is invalid'
+      );
+    });
+
+    it.each([
+      { name: 'a different header', boundHeader: 'attacker' },
+      { name: 'no header', boundHeader: undefined }
+    ])('rejects $name', async ({ boundHeader }) => {
+      const encodedDocument = await sequence2Document('sig');
+      await expect(verifyFixture({ encodedDocument, boundHeader })).rejects.toThrow(
+        'not bound to the request and response'
+      );
+    });
+
+    it('rejects a Sequence/1 hash relabelled as Sequence/2', async () => {
+      const encodedDocument = mutateAttestationPayload((payload) => {
+        const userData = new TextDecoder().decode(payload.get('user_data') as Uint8Array);
+        payload.set(
+          'user_data',
+          new TextEncoder().encode(userData.replace('Sequence/1', 'Sequence/2'))
+        );
+      });
+      await expect(verifyFixture({ encodedDocument })).rejects.toThrow(
+        'not bound to the request and response'
+      );
+    });
+  });
+
   it('rejects user data of an unsupported version', async () => {
     const encodedDocument = mutateAttestationPayload((payload) => {
       const userData = new TextDecoder().decode(payload.get('user_data') as Uint8Array);
@@ -186,6 +226,15 @@ describe('trusted PCR0s', () => {
     expect(trustsDebugEnclave(normalizeTrustedPcr0s(['1'.repeat(96)]))).toBe(false);
   });
 });
+
+function fixtureBinding() {
+  return {
+    method: fixture.method,
+    path: fixture.path,
+    requestBody: fixture.requestBody,
+    responseBody: fixture.responseBody
+  };
+}
 
 function verifyFixture(
   overrides: Partial<Parameters<typeof verifyAttestationDocument>[0]> = {}
