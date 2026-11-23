@@ -3,10 +3,10 @@ import { z } from 'zod';
 import type { ChainQuote, FeeOption, NetworkFamily, RemoteWallet } from './protocol.js';
 import type { State } from './state.js';
 
-import { UpstreamError, WalletError } from './errors.js';
+import { WalletError } from './errors.js';
 import { base58Decode } from './internal/protocol/addresses.js';
-import { WaasErrorCode } from './internal/protocol/waasErrors.js';
 import { chainQuoteSchema } from './protocol.js';
+import { refreshStatus, settleExecuteError } from './settlement.js';
 
 /** Solana and Tron, whose wallets are EOAs addressed by network name rather than chain ID. */
 export type ChainFamily = Exclude<NetworkFamily, 'evm'>;
@@ -67,32 +67,6 @@ export interface WalletContext {
   list(): Promise<ChainOperation[]>;
 }
 
-/**
- * WaaS answers this both for an expired quote and for a transaction another Execute already
- * claimed, so it never proves on its own that nothing was sent.
- */
-const TRANSACTION_EXPIRED = WaasErrorCode.TransactionExpired;
-/**
- * Execute refusals WaaS v1.2.0 returns only before it claims a Solana or Tron transaction, so
- * the request sent nothing. Any other error, such as a failed broadcast, can follow the claim.
- */
-const PRE_CLAIM_REFUSALS: ReadonlySet<number> = new Set([
-  WaasErrorCode.DataIntegrityError,
-  WaasErrorCode.InvalidRequest,
-  WaasErrorCode.Unauthorized,
-  WaasErrorCode.UnsupportedNetwork,
-  WaasErrorCode.UnsupportedTransactionMode,
-  WaasErrorCode.TransactionFailed,
-  WaasErrorCode.WalletProviderError,
-  WaasErrorCode.TransactionNotFound,
-  WaasErrorCode.InvalidFeeOption
-]);
-const FEE_REFUSED = WaasErrorCode.InvalidFeeOption;
-/**
- * How long after a quote's expiry an unconfirmed submission can still be claimed by an Execute
- * that started in time; until then an expired quote does not prove nothing was sent.
- */
-const CLAIM_GRACE_MS = 120_000;
 const expired = () =>
   new WalletError(
     'TRANSACTION_EXPIRED',
@@ -194,69 +168,16 @@ export abstract class ChainWallet<Op extends ChainOperation> {
       op.status = result.status === 'quoted' ? 'unknown' : result.status;
       if (result.txnHash) op.txnHash = result.txnHash;
     } catch (error) {
-      if (error instanceof UpstreamError) await this.settle(state, op, error.upstreamCode);
-      else {
-        op.status = 'unknown';
-        op.error = 'SUBMISSION_UNCERTAIN';
-      }
+      await settleExecuteError(op, error, () => this.status(state, op));
     }
     await this.context.write(op);
     return op as Op;
   }
 
-  /**
-   * Settle an attested Execute refusal. A refusal WaaS returns only before claiming means this
-   * request sent nothing, and it is the only Execute for the operation. Anything else stays
-   * unknown unless the status shows the claim: WaaS reads transaction status without strong
-   * consistency, so a `quoted` or expired answer just after the request may predate the claim.
-   */
-  private async settle(state: State, op: ChainOperation, code: number): Promise<void> {
-    if (PRE_CLAIM_REFUSALS.has(code)) {
-      op.status = 'failed';
-      op.error = code === FEE_REFUSED ? 'FEE_ABOVE_QUOTE' : 'EXECUTE_REFUSED';
-      return;
-    }
-    op.status = 'unknown';
-    op.error = 'SUBMISSION_UNCERTAIN';
-    try {
-      const status = await this.status(state, op);
-      if (status.status === 'quoted') return;
-      op.status = status.status;
-      op.error = undefined;
-      if (status.txnHash) op.txnHash = status.txnHash;
-    } catch {
-      // Still unknown; getOperation polls again.
-    }
-  }
-
   private async refresh(op: ChainOperation): Promise<ChainOperation> {
     if (!op.quote || !['submitting', 'pending', 'unknown'].includes(op.status)) return op;
     const state = await this.context.load();
-    let status;
-    try {
-      status = await this.status(state, op);
-    } catch (error) {
-      // TransactionStatus answers TransactionExpired only while the row still reads as quoted.
-      // Only past the grace period can no Execute that started in time still claim it, and
-      // has every claim long since reached the replica WaaS reads from.
-      if (
-        !(error instanceof UpstreamError) ||
-        error.upstreamCode !== TRANSACTION_EXPIRED ||
-        Date.now() < Date.parse(op.quote.expiresAt) + CLAIM_GRACE_MS
-      )
-        throw error;
-      op.status = 'expired';
-      op.error = 'TRANSACTION_EXPIRED';
-      await this.context.write(op);
-      return op;
-    }
-    // An ambiguous Execute is never automatically retried, even when status still says quoted.
-    if (status.status === 'quoted') op.status = 'unknown';
-    else {
-      op.status = status.status;
-      op.error = undefined;
-    }
-    if (status.txnHash) op.txnHash = status.txnHash;
+    await refreshStatus(op, () => this.status(state, op));
     await this.context.write(op);
     return op;
   }

@@ -18,7 +18,9 @@ import {
 // Supply a durable implementation of SwapStore (contract below).
 declare const swapStore: SwapStore;
 // `wallet` is the ServerWallet constructed in the Node integration guide.
-const workflowExecutor = new SerialExecutor(); // distinct from wallet's credential executor
+// Must be distinct from the wallet's executor: swap methods call the wallet from inside this one,
+// and WalletSwaps refuses the wallet's own executor.
+const workflowExecutor = new SerialExecutor();
 const swaps = new WalletSwaps({
   wallet,
   store: swapStore,

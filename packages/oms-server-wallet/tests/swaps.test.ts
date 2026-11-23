@@ -1,4 +1,5 @@
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
+import { ServerWallet, WalletError } from '@polygonlabs/oms-server-wallet-sdk';
 import { swapView } from '@polygonlabs/oms-server-wallet-sdk/trails';
 import { swapHarness } from './swap-harness.js';
 import {
@@ -533,4 +534,106 @@ it('coordinates on the chain fixed when the user operation is requested', async 
     .filter((c) => c.method === 'PrepareEthereumTransaction')
     .at(-1)!.body;
   expect(body).toMatchObject({ network: '8453' });
+});
+
+describe('settled funding and recovery operations', () => {
+  async function editOperation(
+    h: Awaited<ReturnType<typeof swapHarness>>,
+    id: string,
+    edit: (op: Record<string, any>) => void
+  ) {
+    const op = JSON.parse((await h.waas.store.read(`operation:${id}`))!);
+    edit(op);
+    await h.waas.store.write(`operation:${id}`, JSON.stringify(op));
+  }
+
+  it('releases the origin chain once its own funding is refused before sending', async () => {
+    const h = await swapHarness();
+    await h.confirm();
+    h.waas.remote.evmExecuteRefusal = 7306;
+    await h.tick(4);
+    const record = await h.record();
+    expect(record.funding).toMatchObject({ status: 'failed', error: 'EXECUTE_REFUSED' });
+    expect(record).toMatchObject({ phase: 'attention', error: 'FUNDING_FAILED' });
+    await expect(
+      h.swaps.prepareTransfer('after-refused-funding', {
+        chainId: 137,
+        to: owner,
+        asset: 'native',
+        amount: '1'
+      })
+    ).resolves.toMatchObject({ status: 'quoted' });
+  });
+
+  it('expires the swap when the wallet funding quote ran out before it was sent', async () => {
+    const h = await swapHarness();
+    await h.confirm();
+    await h.tick(3);
+    const { fundingId } = await h.record();
+    // The quote passes the swap's own margin check, then runs out before the wallet sends it: the
+    // wallet records the funding as expired and raises QUOTE_EXPIRED.
+    const execute = vi
+      .spyOn(ServerWallet.prototype, 'executeTransfer')
+      .mockImplementation(async (id: string) => {
+        await editOperation(h, id, (op) => {
+          op.status = 'expired';
+          op.error = 'TRANSACTION_EXPIRED';
+        });
+        throw new WalletError('QUOTE_EXPIRED', 'The quote expired. Prepare a new transfer.', 409);
+      });
+    await h.tick();
+    execute.mockRestore();
+    expect(await h.record()).toMatchObject({
+      phase: 'expired',
+      action: null,
+      error: 'QUOTE_EXPIRED',
+      funding: { id: fundingId, status: 'expired' }
+    });
+    expect(executes(h)).toHaveLength(0);
+  });
+
+  it('expires the swap once its uncertain funding is known to have expired unsent', async () => {
+    const h = await swapHarness();
+    await h.confirm();
+    h.waas.remote.failExecute = true;
+    await h.tick(4);
+    const { fundingId, funding } = await h.record();
+    expect(funding?.status).toBe('unknown');
+    // WaaS reports the transaction expired and unclaimed, two minutes past its quote's expiry.
+    h.waas.remote.evmStatusError = 7309;
+    await editOperation(h, fundingId, (op) => {
+      op.quote.expiresAt = new Date(Date.now() - 121_000).toISOString();
+    });
+    await h.tick();
+    expect(await h.record()).toMatchObject({
+      phase: 'expired',
+      action: null,
+      error: 'QUOTE_EXPIRED',
+      funding: { status: 'expired' }
+    });
+    expect(executes(h)).toHaveLength(1);
+  });
+
+  it('ends a recovery whose transaction expired unsent, so a new review can start', async () => {
+    const h = await swapHarness();
+    await funded(h);
+    h.intent.status = 'FAILED';
+    h.receipt.status = 'FAILED';
+    h.flags.intentBalance = '1000';
+    const view = await h.swaps.prepareRecovery('swap-test-0001', 'recovery-expired', 'origin');
+    await h.swaps.confirmRecovery(view.id, 'recovery-expired', view.recoveries[0].revision);
+    h.waas.remote.failExecute = true;
+    await h.tick(3);
+    const recovery = (await h.record()).recoveries[0];
+    expect(recovery.transaction?.status).toBe('unknown');
+    h.waas.remote.evmStatusError = 7309;
+    await editOperation(h, recovery.transactionId, (op) => {
+      op.quote.expiresAt = new Date(Date.now() - 121_000).toISOString();
+    });
+    await h.tick();
+    const record = await h.record();
+    expect(record.activeRecoveryId).toBeUndefined();
+    expect(record.recoveries[0]).toMatchObject({ status: 'expired', error: 'RECOVERY_EXPIRED' });
+    expect(record).toMatchObject({ phase: 'attention', action: 'observe' });
+  });
 });

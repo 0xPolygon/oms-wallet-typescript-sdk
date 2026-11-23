@@ -115,10 +115,12 @@ Wallet state written by 0.2.x and 0.3.x is migrated the first time it is loaded,
 | `executeUserOperation(id)`              | Submit the stored contract-call quote once.                         |
 | `sendUserOperation(id, operation)`      | Prepare and submit a sponsored contract call in one step.           |
 | `getOperation(id)`                      | Return persisted result; poll pending/uncertain transfer status.    |
+| `listOpenOperations(legacyIds?)`        | Unsettled EVM operations, without authenticating or polling.        |
+| `readOperations(ids)`                   | The stored EVM operations with these IDs, without polling.          |
 
-Idempotency IDs must contain 8–100 letters, digits, underscores, or hyphens. Changed input under the same ID raises `IDEMPOTENCY_CONFLICT`. Reusing an ID never prepares another transfer. A new quote after expiry requires a new ID and operator review.
+Idempotency IDs must contain 8–100 letters, digits, underscores, or hyphens. Changed input under the same ID raises `IDEMPOTENCY_CONFLICT`. Reusing an ID never prepares another transfer, except one whose preparation was interrupted before its quote was stored: nothing was sent, so it is quoted again. A new quote after expiry requires a new ID and operator review. A signature that fails, or does not verify, is recorded as `failed`; signing again needs a new ID.
 
-`unknown` is a meaningful state, including a lost execution response. Keep polling `getOperation`; never generate another send merely because the first response was lost. `CREATION_UNCERTAIN` prevents blind replacement-wallet creation. Disabled wallets cannot reauthenticate even to poll a status; previously submitted transfers may still complete upstream.
+`unknown` is a meaningful state, including a lost execution response. Keep polling `getOperation`; never generate another send merely because the first response was lost. EVM operations settle like Solana and Tron ones (see below): refusals WaaS returns only before claiming the transaction mark the operation `failed` at once, and an operation WaaS still reports expired and unclaimed two minutes past its quote's expiry becomes `expired`. Executing a quote the SDK already knows has expired marks it `expired` and raises `QUOTE_EXPIRED`. `CREATION_UNCERTAIN` prevents blind replacement-wallet creation. Disabled wallets cannot reauthenticate even to poll a status; previously submitted transfers may still complete upstream.
 
 `WalletError` exposes a safe code, message, and HTTP-oriented status. `UpstreamError` also exposes the numeric WaaS error code and RPC method. Raw tokens, private keys, and upstream response bodies are excluded. Validation failures, unsigned gateway failures, and attestation failures must be surfaced instead of weakening verification.
 

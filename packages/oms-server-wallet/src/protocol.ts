@@ -63,6 +63,7 @@ export const statusSchema = z.object({
     .string()
     .regex(/^0x[0-9a-fA-F]{64}$/)
     .optional()
+    .or(z.literal('').transform(() => undefined))
 });
 export const quoteSchema = z.object({
   txnId: z.string().min(1),

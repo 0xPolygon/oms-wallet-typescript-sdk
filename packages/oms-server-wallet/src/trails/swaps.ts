@@ -8,7 +8,7 @@ import type { TrailsIntent, TrailsReceipt } from './protocol.js';
 import type { SwapRequest } from './quote.js';
 import type { RecoveryRecord, SwapRecord, SwapView, WalletSwapsOptions } from './types.js';
 
-import { normalizeUserOperation } from '../client.js';
+import { normalizeUserOperation, walletExecutors } from '../client.js';
 import { sha256 } from '../encoding.js';
 import { WalletError } from '../errors.js';
 import { canonicalJson } from '../json.js';
@@ -35,6 +35,14 @@ const errorCode = (error: unknown) =>
 export class WalletSwaps {
   private readonly now: () => number;
   constructor(private readonly options: WalletSwapsOptions) {
+    // Swap methods call the wallet from inside this executor; the wallet's own executor would wait
+    // on itself forever.
+    if (walletExecutors.get(options.wallet) === options.executor)
+      throw new WalletError(
+        'CONFIGURATION',
+        "Give WalletSwaps its own executor, not the wallet's.",
+        503
+      );
     this.now = options.clock ?? Date.now;
   }
   private remote() {
@@ -85,11 +93,14 @@ export class WalletSwaps {
   private reservedChain(record: SwapRecord): number | undefined {
     const recovery = record.recoveries.find((r) => r.id === record.activeRecoveryId);
     if (recovery) return recovery.chainId;
+    // The origin chain stays reserved while this swap's funding can still debit it: until the
+    // funding settles, or while a confirmed swap is still preparing or sending it. A funding that
+    // failed, reverted or expired debits nothing, so observing the intent afterwards reserves nothing.
     if (
       uncertain(record.funding) ||
       (record.confirmedAt &&
         !record.fundingConfirmed &&
-        record.action &&
+        ['prepare-funding', 'activate', 'fund'].includes(record.action ?? '') &&
         !['failed', 'expired'].includes(record.phase))
     )
       return record.request.originChainId;
@@ -104,7 +115,7 @@ export class WalletSwaps {
         );
     }
     const disabled = (await this.options.wallet.inspect()).disabled;
-    const operations = await this.options.wallet.listOperations(
+    const operations = await this.options.wallet.listOpenOperations(
       await this.options.legacyOperationIds?.()
     );
     for (let operation of operations) {
@@ -139,7 +150,7 @@ export class WalletSwaps {
   executeTransfer(id: string) {
     return this.options.executor.run(async () => {
       idSchema.parse(id);
-      const op = (await this.options.wallet.listOperations([id])).find((o) => o.id === id);
+      const op = (await this.options.wallet.readOperations([id])).find((o) => o.id === id);
       if (!op || op.kind !== 'transfer')
         throw new WalletError('NOT_FOUND', 'Transfer not found.', 404);
       if (op.status === 'quoted') await this.available(op.chainId, undefined, [id]);
@@ -156,7 +167,7 @@ export class WalletSwaps {
       idSchema.parse(id);
       // A retry of an existing operation returns it, or raises a conflict, without submitting;
       // executeUserOperation checks the chain again while it is still quoted.
-      const existing = (await this.options.wallet.listOperations([id])).some((o) => o.id === id);
+      const existing = (await this.options.wallet.readOperations([id])).some((o) => o.id === id);
       if (!existing) await this.available(chainId, undefined, [id]);
       return this.options.wallet.prepareUserOperation(id, { chainId, calls: [transaction] });
     });
@@ -164,7 +175,7 @@ export class WalletSwaps {
   executeUserOperation(id: string) {
     return this.options.executor.run(async () => {
       idSchema.parse(id);
-      const op = (await this.options.wallet.listOperations([id])).find((o) => o.id === id);
+      const op = (await this.options.wallet.readOperations([id])).find((o) => o.id === id);
       if (!op || op.kind !== 'userOperation')
         throw new WalletError('NOT_FOUND', 'User operation not found.', 404);
       if (op.status === 'quoted') await this.available(op.chainId, undefined, [id]);
@@ -329,7 +340,7 @@ export class WalletSwaps {
       // Never expire or release a debit using a cached, pre-submission child snapshot.
       if (['prepare-funding', 'activate', 'fund'].includes(record.action ?? '')) {
         record.funding =
-          (await this.options.wallet.listOperations([record.fundingId])).find(
+          (await this.options.wallet.readOperations([record.fundingId])).find(
             (op) => op.id === record.fundingId
           ) ?? record.funding;
         if (uncertain(record.funding) || record.funding?.status === 'executed')
@@ -337,7 +348,7 @@ export class WalletSwaps {
       }
       const recovery = this.currentRecovery(record, false);
       if (recovery) {
-        const children = await this.options.wallet.listOperations([
+        const children = await this.options.wallet.readOperations([
           recovery.deploymentId,
           recovery.transactionId
         ]);
@@ -404,7 +415,8 @@ export class WalletSwaps {
           break;
       }
       record.attempts = 0;
-      if (record.phase !== 'attention') record.error = undefined;
+      // Keep the reason a swap needs attention or ended without settling; clear progress notes.
+      if (!['attention', 'failed', 'expired'].includes(record.phase)) record.error = undefined;
       await this.save(
         record,
         record.action ? (record.phase === 'attention' ? 30_000 : 5000) : null
@@ -536,7 +548,7 @@ export class WalletSwaps {
   private async fund(record: SwapRecord) {
     const disabled = (await this.options.wallet.inspect()).disabled;
     record.funding = disabled
-      ? (await this.options.wallet.listOperations([record.fundingId])).find(
+      ? (await this.options.wallet.readOperations([record.fundingId])).find(
           (op) => op.id === record.fundingId
         )
       : ((await this.options.wallet.getOperation(record.fundingId)) ?? record.funding);
@@ -561,7 +573,16 @@ export class WalletSwaps {
         return;
       }
       await this.save(record);
-      record.funding = await this.options.wallet.executeTransfer(record.fundingId);
+      try {
+        record.funding = await this.options.wallet.executeTransfer(record.fundingId);
+      } catch (error) {
+        // The wallet's quote ran out before it was sent: it recorded the funding as expired.
+        if (!(error instanceof WalletError) || error.code !== 'QUOTE_EXPIRED') throw error;
+        record.funding =
+          (await this.options.wallet.readOperations([record.fundingId])).find(
+            (op) => op.id === record.fundingId
+          ) ?? record.funding;
+      }
     }
     if (record.funding.status === 'executed' && record.funding.txnHash) {
       const receipt = await this.options.chains.receipt(
@@ -597,6 +618,11 @@ export class WalletSwaps {
       record.phase = 'attention';
       record.action = 'observe';
       record.error = 'FUNDING_FAILED';
+    } else if (record.funding.status === 'expired') {
+      // The funding quote expired before it was broadcast: nothing left the wallet.
+      record.phase = 'expired';
+      record.action = null;
+      record.error = 'QUOTE_EXPIRED';
     } else if (uncertain(record.funding)) {
       record.phase = 'funding';
       record.error = 'FUNDING_PENDING';
@@ -690,7 +716,7 @@ export class WalletSwaps {
   }
   private async recoveryAllowed(record: SwapRecord) {
     record.funding =
-      (await this.options.wallet.listOperations([record.fundingId])).find(
+      (await this.options.wallet.readOperations([record.fundingId])).find(
         (op) => op.id === record.fundingId
       ) ?? record.funding;
     if (uncertain(record.funding))
@@ -873,7 +899,7 @@ export class WalletSwaps {
     }
     await this.enabled(true);
     recovery.deployment =
-      (await this.options.wallet.listOperations([recovery.deploymentId])).find(
+      (await this.options.wallet.readOperations([recovery.deploymentId])).find(
         (op) => op.id === recovery.deploymentId
       ) ?? recovery.deployment;
     if (!uncertain(recovery.deployment) && recovery.deployment?.status !== 'executed') {
@@ -892,10 +918,10 @@ export class WalletSwaps {
     } else
       recovery.deployment =
         (await this.options.wallet.getOperation(recovery.deploymentId)) ?? recovery.deployment;
-    if (recovery.deployment.status === 'failed')
+    if (recovery.deployment.status === 'failed' || recovery.deployment.status === 'expired')
       throw new WalletError(
         'INVALID_RECOVERY',
-        'Owner deployment failed. Prepare a new recovery review.',
+        `Owner deployment ${recovery.deployment.status}. Prepare a new recovery review.`,
         409
       );
     if (recovery.deployment.status === 'executed' && recovery.deployment.txnHash) {
@@ -1010,9 +1036,11 @@ export class WalletSwaps {
     if (!(await this.options.wallet.inspect()).disabled)
       recovery.transaction =
         (await this.options.wallet.getOperation(recovery.transactionId)) ?? recovery.transaction;
-    if (recovery.transaction?.status === 'failed') {
-      recovery.status = 'failed';
-      recovery.error = 'RECOVERY_FAILED';
+    // Expired proves, like failed, that the recovery transaction was never broadcast.
+    if (recovery.transaction?.status === 'failed' || recovery.transaction?.status === 'expired') {
+      recovery.status = recovery.transaction.status;
+      recovery.error =
+        recovery.transaction.status === 'expired' ? 'RECOVERY_EXPIRED' : 'RECOVERY_FAILED';
       record.activeRecoveryId = undefined;
       record.phase = 'attention';
       record.action = 'observe';
