@@ -66,6 +66,8 @@ export class FakeWaas implements RpcTransport {
   nullFeeOptions = false;
   /** Refuse the next Execute with this code before claiming the transaction. */
   executeRefusal: number | undefined;
+  /** Status reads still answering from before the last claim, as an eventually consistent read can. */
+  staleStatusReads = 0;
   /** Claim the transaction, then lose the Execute response. */
   chainLoseExecute = false;
   /** Where a claimed transaction is when its status is read. */
@@ -121,6 +123,11 @@ export class FakeWaas implements RpcTransport {
       return this.executeChain(body);
     if (method === 'TransactionStatus' && this.chainTxns.has(body.txnId as string)) {
       const txn = this.chainTxns.get(body.txnId as string)!;
+      if (this.staleStatusReads > 0) {
+        this.staleStatusReads--;
+        if (Date.now() > txn.expiresAt) throw new UpstreamError(7309, method);
+        return { status: 'quoted' };
+      }
       if (txn.status === 'quoted' && Date.now() > txn.expiresAt)
         throw new UpstreamError(7309, method);
       if (txn.status === 'pending') txn.status = this.chainOutcome;

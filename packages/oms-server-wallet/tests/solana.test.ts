@@ -140,16 +140,77 @@ describe('Solana quote expiry', () => {
       error: 'TRANSACTION_EXPIRED'
     });
   });
-  it('settles an Execute refused as expired by WaaS as not sent', async () => {
+  it('keeps an Execute refused as expired unknown until no claim can follow', async () => {
     const h = sdkHarness();
     await h.client.solana.prepareTransfer('sol-blockhash-1', transfer);
-    // The blockhash lapsed first: WaaS refuses before claiming, so the row is still quoted.
+    // The blockhash lapsed first, but the same refusal also means another Execute claimed it.
     h.remote.executeRefusal = 7309;
-    await expect(h.client.solana.executeTransfer('sol-blockhash-1')).rejects.toMatchObject({
-      code: 'TRANSACTION_EXPIRED'
+    expect(await h.client.solana.executeTransfer('sol-blockhash-1')).toMatchObject({
+      status: 'unknown',
+      error: 'SUBMISSION_UNCERTAIN'
     });
+    vi.useFakeTimers({ now: Date.now() + 61_000 + 120_000, toFake: ['Date'] });
     expect(await h.client.solana.getOperation('sol-blockhash-1')).toMatchObject({
-      status: 'expired'
+      status: 'expired',
+      error: 'TRANSACTION_EXPIRED'
+    });
+  });
+  it.each([
+    [7309, 'the claim was already taken'],
+    [7311, 'the broadcast failed after the claim']
+  ])(
+    'never takes a stale status read after refusal %i (%s) as proof nothing was sent',
+    async (code) => {
+      const h = sdkHarness();
+      await h.client.solana.prepareTransfer('sol-stale-1', transfer);
+      const request = h.remote.request.bind(h.remote);
+      h.remote.request = async (method, body, credential) => {
+        if (method === 'Execute') {
+          h.remote.chainTxns.get(body.txnId as string)!.status = 'pending';
+          h.remote.calls.push({ method, body });
+          const { UpstreamError } = await import('@polygonlabs/oms-server-wallet-sdk');
+          throw new UpstreamError(code, method);
+        }
+        return request(method, body, credential);
+      };
+      h.remote.staleStatusReads = 1;
+      h.remote.chainOutcome = 'executed';
+      expect(await h.client.solana.executeTransfer('sol-stale-1')).toMatchObject({
+        status: 'unknown',
+        error: 'SUBMISSION_UNCERTAIN'
+      });
+      expect(await h.client.solana.getOperation('sol-stale-1')).toMatchObject({
+        status: 'executed',
+        txnHash: SOLANA_SIGNATURE
+      });
+      expect((await h.client.solana.getOperation('sol-stale-1'))?.error).toBeUndefined();
+    }
+  );
+  it('treats a stale expired read after a lost Execute as uncertain within the grace period', async () => {
+    const h = sdkHarness();
+    h.remote.chainLoseExecute = true;
+    expect((await h.client.solana.sendTransfer('sol-stale-2', transfer)).status).toBe('unknown');
+    vi.useFakeTimers({ now: Date.now() + 61_000, toFake: ['Date'] });
+    h.remote.staleStatusReads = 1;
+    h.remote.chainOutcome = 'executed';
+    await expect(h.client.solana.getOperation('sol-stale-2')).rejects.toMatchObject({
+      upstreamCode: 7309
+    });
+    expect(await h.client.solana.getOperation('sol-stale-2')).toMatchObject({
+      status: 'executed',
+      txnHash: SOLANA_SIGNATURE
+    });
+  });
+  it('keeps the transaction hash Execute returns', async () => {
+    const h = sdkHarness();
+    const request = h.remote.request.bind(h.remote);
+    h.remote.request = async (method, body, credential) => {
+      const response = await request(method, body, credential);
+      return method === 'Execute' ? { status: 'pending', txnHash: SOLANA_SIGNATURE } : response;
+    };
+    expect(await h.client.solana.sendTransfer('sol-hash-1', transfer)).toMatchObject({
+      status: 'pending',
+      txnHash: SOLANA_SIGNATURE
     });
   });
   it('follows the claimed transaction when an Execute refusal comes after the claim', async () => {

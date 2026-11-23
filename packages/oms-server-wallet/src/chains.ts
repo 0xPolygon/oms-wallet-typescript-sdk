@@ -66,12 +66,17 @@ export interface WalletContext {
   list(): Promise<ChainOperation[]>;
 }
 
-/** Execute is refused with this code when the quote expired, before anything is broadcast. */
+/**
+ * WaaS answers this both for an expired quote and for a transaction another Execute already
+ * claimed, so it never proves on its own that nothing was sent.
+ */
 const TRANSACTION_EXPIRED = 7309;
-const refusals: Record<number, string> = {
-  [TRANSACTION_EXPIRED]: 'TRANSACTION_EXPIRED',
-  7310: 'FEE_ABOVE_QUOTE'
-};
+/**
+ * Execute refusals WaaS v1.2.0 returns only before it claims a Solana or Tron transaction, so
+ * the request sent nothing. Any other error, such as a failed broadcast, can follow the claim.
+ */
+const PRE_CLAIM_REFUSALS = new Set([7103, 7200, 7207, 7304, 7305, 7306, 7307, 7308, 7310]);
+const FEE_REFUSED = 7310;
 /**
  * How long after a quote's expiry an unconfirmed submission can still be claimed by an Execute
  * that started in time; until then an expired quote does not prove nothing was sent.
@@ -83,7 +88,6 @@ const expired = () =>
     'The quote expired before it was submitted; nothing was sent. Prepare it again under a new ID.',
     409
   );
-const okStatus = z.object({ status: z.enum(['quoted', 'pending', 'executed', 'failed']) });
 const signatureSchema = z.object({ signature: z.string().min(1).max(512) });
 const validSchema = z.object({ isValid: z.boolean() });
 
@@ -170,13 +174,14 @@ export abstract class ChainWallet<Op extends ChainOperation> {
     op.status = 'submitting';
     await this.context.write(op);
     try {
-      const result = okStatus.parse(
+      const result = this.statusSchema().parse(
         await this.context.call(state, this.family, 'Execute', {
           txnId: op.quote.txnId,
           ...(op.fee ? { feeOption: { token: op.fee.token.symbol, index: op.feeIndex } } : {})
         })
       );
       op.status = result.status === 'quoted' ? 'unknown' : result.status;
+      if (result.txnHash) op.txnHash = result.txnHash;
     } catch (error) {
       if (error instanceof UpstreamError) await this.settle(state, op, error.upstreamCode);
       else {
@@ -185,32 +190,31 @@ export abstract class ChainWallet<Op extends ChainOperation> {
       }
     }
     await this.context.write(op);
-    if ((op.status as ChainOperationStatus) === 'expired') throw expired();
     return op as Op;
   }
 
   /**
-   * After an attested refusal the Execute request has finished, so a transaction still quoted
-   * was never claimed and never broadcast. WaaS claims it, as pending, before it broadcasts.
+   * Settle an attested Execute refusal. A refusal WaaS returns only before claiming means this
+   * request sent nothing, and it is the only Execute for the operation. Anything else stays
+   * unknown unless the status shows the claim: WaaS reads transaction status without strong
+   * consistency, so a `quoted` or expired answer just after the request may predate the claim.
    */
   private async settle(state: State, op: ChainOperation, code: number): Promise<void> {
+    if (PRE_CLAIM_REFUSALS.has(code)) {
+      op.status = 'failed';
+      op.error = code === FEE_REFUSED ? 'FEE_ABOVE_QUOTE' : 'EXECUTE_REFUSED';
+      return;
+    }
+    op.status = 'unknown';
+    op.error = 'SUBMISSION_UNCERTAIN';
     try {
       const status = await this.status(state, op);
-      if (status.status !== 'quoted') {
-        op.status = status.status;
-        if (status.txnHash) op.txnHash = status.txnHash;
-        return;
-      }
-      op.status = code === TRANSACTION_EXPIRED ? 'expired' : 'failed';
-      op.error = refusals[code] ?? 'EXECUTE_REFUSED';
-    } catch (error) {
-      if (error instanceof UpstreamError && error.upstreamCode === TRANSACTION_EXPIRED) {
-        op.status = 'expired';
-        op.error = 'TRANSACTION_EXPIRED';
-        return;
-      }
-      op.status = 'unknown';
-      op.error = 'SUBMISSION_UNCERTAIN';
+      if (status.status === 'quoted') return;
+      op.status = status.status;
+      op.error = undefined;
+      if (status.txnHash) op.txnHash = status.txnHash;
+    } catch {
+      // Still unknown; getOperation polls again.
     }
   }
 
@@ -221,8 +225,9 @@ export abstract class ChainWallet<Op extends ChainOperation> {
     try {
       status = await this.status(state, op);
     } catch (error) {
-      // WaaS answers TransactionExpired only for a transaction it never claimed. Past the grace
-      // period no Execute that started in time can still claim it.
+      // TransactionStatus answers TransactionExpired only while the row still reads as quoted.
+      // Only past the grace period can no Execute that started in time still claim it, and
+      // has every claim long since reached the replica WaaS reads from.
       if (
         !(error instanceof UpstreamError) ||
         error.upstreamCode !== TRANSACTION_EXPIRED ||
@@ -235,28 +240,33 @@ export abstract class ChainWallet<Op extends ChainOperation> {
       return op;
     }
     // An ambiguous Execute is never automatically retried, even when status still says quoted.
-    op.status = status.status === 'quoted' ? 'unknown' : status.status;
+    if (status.status === 'quoted') op.status = 'unknown';
+    else {
+      op.status = status.status;
+      op.error = undefined;
+    }
     if (status.txnHash) op.txnHash = status.txnHash;
     await this.context.write(op);
     return op;
   }
 
-  private async status(state: State, op: ChainOperation) {
+  private statusSchema() {
     const valid = this.family === 'solana' ? isSolanaSignature : isTronTxid;
-    return z
-      .object({
-        status: z.enum(['quoted', 'pending', 'executed', 'failed']),
-        txnHash: z
-          .string()
-          .refine(valid)
-          .optional()
-          .or(z.literal('').transform(() => undefined))
+    return z.object({
+      status: z.enum(['quoted', 'pending', 'executed', 'failed']),
+      txnHash: z
+        .string()
+        .refine(valid)
+        .optional()
+        .or(z.literal('').transform(() => undefined))
+    });
+  }
+  private async status(state: State, op: ChainOperation) {
+    return this.statusSchema().parse(
+      await this.context.call(state, this.family, 'TransactionStatus', {
+        txnId: op.quote!.txnId
       })
-      .parse(
-        await this.context.call(state, this.family, 'TransactionStatus', {
-          txnId: op.quote!.txnId
-        })
-      );
+    );
   }
 
   /**
