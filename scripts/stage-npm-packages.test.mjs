@@ -4,6 +4,7 @@ import test from 'node:test';
 import {
   assertTrustedPublishingEnvironment,
   findWorkspaceReferences,
+  selectSnapshotPackages,
   validateReleasePackages
 } from './stage-npm-packages.mjs';
 
@@ -16,14 +17,27 @@ const releasePackages = [
   }
 ];
 const fixed = [releasePackages.map(({ name }) => name)];
+const serverPackage = {
+  name: '@polygonlabs/oms-server-wallet-sdk',
+  version: '0.4.0',
+  path: '/repo/packages/oms-server-wallet'
+};
 
-test('orders every publishable package by the Changesets fixed group', () => {
+test('orders fixed-group packages first, then independent packages by name', () => {
   const workspaces = [
+    serverPackage,
     releasePackages[1],
     { name: 'private-example', version: '0.0.0', private: true },
     releasePackages[0]
   ];
-  assert.deepEqual(validateReleasePackages(workspaces, { fixed }), releasePackages);
+  assert.deepEqual(validateReleasePackages(workspaces, { fixed }), [
+    ...releasePackages,
+    serverPackage
+  ]);
+});
+
+test('releases independent packages when there is no fixed group', () => {
+  assert.deepEqual(validateReleasePackages([serverPackage], { fixed: [] }), [serverPackage]);
 });
 
 test('rejects fixed-package version drift', () => {
@@ -34,14 +48,48 @@ test('rejects fixed-package version drift', () => {
   );
 });
 
-test('rejects a publishable package outside the fixed group', () => {
+test('rejects a fixed-group member that is not a publishable workspace package', () => {
   assert.throws(
     () =>
-      validateReleasePackages([...releasePackages, { name: 'extra', version: '1.2.3' }], {
-        fixed
-      }),
-    /Every publishable package must belong/
+      validateReleasePackages(
+        [releasePackages[0], { ...releasePackages[1], private: true }, serverPackage],
+        { fixed }
+      ),
+    /is not a publishable workspace package/
   );
+});
+
+test('stages exactly the packages the snapshot preparation versioned, in release order', () => {
+  const ordered = [
+    ...releasePackages.map((item) => ({ ...item, version: '0.0.0-canary-20260909000000' })),
+    { ...serverPackage, version: '0.4.1-canary-20260909000000' }
+  ];
+  const listed = [...ordered].reverse().map(({ name, version }) => ({ name, version }));
+  assert.deepEqual(selectSnapshotPackages(ordered, listed), ordered);
+});
+
+test('never stages an unchanged package whose version merely contains the tag', () => {
+  const workspaces = [
+    ...releasePackages.map((item) => ({ ...item, version: '0.0.0-canary-20260909000000' })),
+    { ...serverPackage, version: '0.4.0-dev-canary-rc' }
+  ];
+  const listed = workspaces.slice(0, 2).map(({ name, version }) => ({ name, version }));
+  assert.deepEqual(selectSnapshotPackages(workspaces, listed), workspaces.slice(0, 2));
+});
+
+test('rejects a snapshot list that does not match the manifests', () => {
+  assert.throws(
+    () =>
+      selectSnapshotPackages(releasePackages, [
+        { name: releasePackages[0].name, version: '9.9.9' }
+      ]),
+    /not the prepared 9\.9\.9/
+  );
+  assert.throws(
+    () => selectSnapshotPackages(releasePackages, [{ name: 'missing', version: '1.0.0' }]),
+    /is not a publishable workspace package/
+  );
+  assert.throws(() => selectSnapshotPackages(releasePackages, []), /list is empty/);
 });
 
 test('finds nested workspace protocol references in packed manifests', () => {

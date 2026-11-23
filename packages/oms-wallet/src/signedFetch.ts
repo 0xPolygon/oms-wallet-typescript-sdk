@@ -1,5 +1,7 @@
 import type { CredentialSigner } from './credentialSigner.js';
 
+import { WALLET_SIGNATURE_HEADER } from './internal/protocol/requestSigning.js';
+import { WaasErrorCode } from './internal/protocol/waasErrors.js';
 import { RequestUtils } from './utils/requestUtils.js';
 
 type Fetch = (input: RequestInfo, init?: RequestInit) => Promise<Response>;
@@ -54,20 +56,22 @@ async function isNonceRejectedResponse(response: Response): Promise<boolean> {
   if (response.status !== 412) return false;
   try {
     const body = (await response.clone().json()) as { code?: unknown };
-    return body?.code === 7206;
+    return body?.code === WaasErrorCode.PreconditionFailed;
   } catch {
     return false;
   }
 }
 
 /**
- * Signs WaaS requests with `signer`. `publishableKey` is read for each request, so a client can move
- * to a rotated key of the same project.
+ * Signs WaaS requests with `signer` and sends them with `send` (the global `fetch` by default).
+ * `publishableKey` is read for each request, so a client can move to a rotated key of the same
+ * project.
  */
 export function createSignedFetch(
   publishableKey: string | (() => string),
   signer: CredentialSigner,
-  projectId: string
+  projectId: string,
+  send: Fetch = (input, init) => globalThis.fetch(input, init)
 ): Fetch {
   return async (input: RequestInfo, init?: RequestInit): Promise<Response> => {
     const url = typeof input === 'string' ? input : (input as Request).url;
@@ -98,9 +102,9 @@ export function createSignedFetch(
         });
       }
       if (init?.signal) sentRequestSignals.add(init.signal);
-      const response = await globalThis.fetch(input, {
+      const response = await send(input, {
         ...init,
-        headers: { ...headers, 'OMS-Wallet-Signature': signatureHeader }
+        headers: { ...headers, [WALLET_SIGNATURE_HEADER]: signatureHeader }
       });
       if (retry >= MAX_NONCE_RETRIES || !(await isNonceRejectedResponse(response))) {
         return response;

@@ -1,6 +1,10 @@
 import type { CredentialSigningAlgorithm } from '../credentialSigner.js';
 
-import { base64UrlEncodeBytes } from './base64.js';
+import { base64UrlEncodeBytes } from '../internal/protocol/encoding.js';
+import {
+  walletRequestPreimage,
+  walletSignatureHeader
+} from '../internal/protocol/requestSigning.js';
 
 export class RequestUtils {
   static buildWalletRequestPreimage(
@@ -9,7 +13,7 @@ export class RequestUtils {
     scope: string,
     payload: string
   ): string {
-    return `POST /v1/Waas${endpoint}\nnonce: ${nonce}\nscope: ${scope}\n\n${payload}`;
+    return walletRequestPreimage(`/v1/Waas${endpoint}`, nonce, scope, payload);
   }
 
   static buildWalletSignatureHeader(
@@ -19,7 +23,13 @@ export class RequestUtils {
     nonce: string,
     sig: string
   ): string {
-    return `alg="${alg}", scope="${scope}", cred="${cred}", nonce=${nonce}, sig="${sig}"`;
+    return walletSignatureHeader({
+      algorithm: alg,
+      scope,
+      credential: cred,
+      nonce,
+      signature: sig
+    });
   }
 
   static async hashEmailAuthAnswer(challenge: string, code: string): Promise<string> {

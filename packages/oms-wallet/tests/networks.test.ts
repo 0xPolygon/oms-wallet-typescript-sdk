@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 
-import { Networks, findNetworkById, findNetworkByName } from '../src';
+import { Networks, SolanaNetworks, TronNetworks, findNetworkById, findNetworkByName } from '../src';
+import { SOLANA_NETWORKS, TRON_NETWORKS } from '../src/internal/protocol/networks';
 
 describe('Networks', () => {
   it('exposes the supported network registry', () => {
@@ -133,5 +134,12 @@ describe('Networks', () => {
       expect(findNetworkByName(` ${network.name.toUpperCase()} `)).toBe(network);
     }
     expect(findNetworkByName('Ethereum')).toBeUndefined();
+  });
+});
+
+describe('Solana and Tron network names', () => {
+  it('match the names the server SDK sends to WaaS', () => {
+    expect(Object.values(SolanaNetworks).sort()).toEqual([...SOLANA_NETWORKS].sort());
+    expect(Object.values(TronNetworks).sort()).toEqual([...TRON_NETWORKS].sort());
   });
 });

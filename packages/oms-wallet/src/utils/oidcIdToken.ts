@@ -1,4 +1,4 @@
-import { base64UrlEncodeBytes } from './base64.js';
+import { base64UrlEncodeBytes } from '../internal/protocol/encoding.js';
 import { base64UrlDecodeString } from './oidcRedirect.js';
 
 interface OidcIdTokenPayload {

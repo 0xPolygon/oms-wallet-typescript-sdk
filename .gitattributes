@@ -1,1 +1,3 @@
 packages/oms-wallet/src/generated/** linguist-generated=true
+# Copies of packages/oms-wallet-protocol/src, written by `pnpm --filter oms-wallet-protocol sync`.
+packages/*/src/internal/protocol/** linguist-generated=true

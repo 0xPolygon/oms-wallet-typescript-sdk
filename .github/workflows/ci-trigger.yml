@@ -32,6 +32,10 @@ jobs:
       - run: pnpm install --frozen-lockfile
       - run: pnpm run build
       - run: pnpm run check:exports
+      # The server SDK's coverage thresholds, and its packed archive installed into a clean
+      # consumer with install scripts disabled.
+      - run: pnpm --filter @polygonlabs/oms-server-wallet-sdk test:coverage
+      - run: pnpm --filter @polygonlabs/oms-server-wallet-sdk test:package
 
   # Generated-artifact drift (API.md + public-API baseline) via the shared
   # workflow, driven by each package's `codegen-drift-check` script.

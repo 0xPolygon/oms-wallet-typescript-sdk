@@ -26,9 +26,17 @@ How testing works in this repo. `AGENTS.md` points here so agents know how to ve
 - **Run:** `pnpm --filter @polygonlabs/oms-wallet exec vitest run` (or `pnpm --filter @polygonlabs/oms-wallet test`, which runs this then the type tests)
 - **Package tests:** `packages/oms-wallet-wagmi-connector/tests/**/*.ts` run from that package with
   `pnpm --filter @polygonlabs/oms-wallet-wagmi-connector test`
+- **Server SDK:** `packages/oms-server-wallet/tests/**/*.test.ts` run with
+  `pnpm --filter @polygonlabs/oms-server-wallet-sdk test`; `test:coverage` enforces its coverage
+  thresholds and `test:package` installs the packed archive into a clean consumer. `test:live` is a
+  manual, funded acceptance run against Solana devnet and Tron Nile, never part of CI.
+- **Protocol package:** `packages/oms-wallet-protocol/tests/**/*.test.ts` cover the shared WaaS
+  protocol code once (attestation `Sequence/1` and `Sequence/2`, request signing, publishable keys,
+  addresses) with `pnpm --filter oms-wallet-protocol test`. The SDK suites test the copies only
+  through their public behaviour.
 - **Release helpers:** `scripts/stage-npm-packages.test.mjs` and `scripts/prepare-npm-snapshot.test.mjs`
-  use Node's built-in test runner to validate fixed-package, packed-manifest, and snapshot-tag
-  safeguards without contacting npm
+  use Node's built-in test runner to validate fixed-group and independent-package, packed-manifest,
+  and snapshot-tag safeguards without contacting npm
 - **API docs generator:** `packages/oms-wallet/scripts/generate-api-docs.test.cjs` covers the
   generator that produces `API.md`; run it with
   `pnpm --filter @polygonlabs/oms-wallet test:api-generator`

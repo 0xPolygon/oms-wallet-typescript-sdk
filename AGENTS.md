@@ -26,7 +26,7 @@ to install extra tooling.
 
 ## Project Overview
 
-This repository is a pnpm workspace for the OMS Wallet TypeScript SDK. The workspace root is a private, non-published package that only orchestrates the workspace; the publishable `@polygonlabs/oms-wallet` library lives in `packages/oms-wallet` and is used by the React and Node examples. The SDK covers wallet authentication, OIDC redirect auth, signed WaaS requests, wallet/session storage, transaction submission, signing, access management, and indexer balance queries.
+This repository is a pnpm workspace for the OMS Wallet TypeScript SDK. The workspace root is a private, non-published package that only orchestrates the workspace; the publishable `@polygonlabs/oms-wallet` library lives in `packages/oms-wallet` and is used by the React and Node examples. The SDK covers wallet authentication, OIDC redirect auth, signed WaaS requests, wallet/session storage, transaction submission, signing, access management, and indexer balance queries. The backend SDK `@polygonlabs/oms-server-wallet-sdk` lives in `packages/oms-server-wallet`; it shares WaaS protocol code with the browser SDK through the private `packages/oms-wallet-protocol` package.
 
 ## Skills
 
@@ -58,6 +58,16 @@ Repo-local agent skills live under `.agents/skills/` (agent-neutral); `.claude/s
   provider. Only `src/internal/hinkal/` may import the provider or ethers (ESLint `no-restricted-imports`);
   everything else uses the internal `PrivacyBackend` interface, and `scripts/check-public-api.mjs` (run by its
   build) fails if the public declarations name the provider or import anything but the SDK and viem.
+- `packages/oms-server-wallet/`: ESM-only `@polygonlabs/oms-server-wallet-sdk` package, versioned independently of the
+  fixed group. Backend wallets with OIDC ID-token auth, encrypted durable state behind a caller-supplied `StateStore`
+  and `ExclusiveExecutor`, EVM/Solana/Tron wallets, sponsored transfers and contract calls, and Trails swaps and
+  recovery under the `./trails` entry point. Every WaaS response is attested. `scripts/check-package.ts`
+  (`test:package`) installs the packed archive into a clean consumer; `scripts/live-chain-acceptance.ts` (`test:live`)
+  is a manual funded run.
+- `packages/oms-wallet-protocol/`: private, never-published package holding WaaS wire-protocol code shared by both
+  SDKs (attestation `Sequence/1` and `Sequence/2`, request signing and nonces, publishable-key routing with trusted
+  PCR0s, encoding, base58/Solana/Tron addresses, Solana/Tron network names, WaaS error codes). `scripts/sync.mjs`
+  copies `src/` into `src/internal/protocol/` of `packages/oms-wallet` and `packages/oms-server-wallet`.
 - `packages/oms-wallet/tests/`: Vitest coverage for wallet, OIDC, transactions, signing, access, indexer, and errors.
 - `packages/oms-wallet/type-tests/`: Compile-time API tests.
 - `examples/react/`: Vite React demo that consumes the SDK through the workspace.
@@ -81,8 +91,8 @@ Repo-local agent skills live under `.agents/skills/` (agent-neutral); `.claude/s
 - `packages/oms-wallet/scripts/api-docs.config.json`: Symbol groups and ordering for the generated `API.md`.
 - `packages/oms-wallet/scripts/public-api-baseline.txt`: Committed public declaration baseline compared by `check-public-api.cjs`.
 - `scripts/prepare-npm-snapshot.mjs`: CI-only helper that validates the snapshot dist-tag and prepares the fixed package group for snapshot (prerelease) versioning; tested by `scripts/prepare-npm-snapshot.test.mjs`.
-- `scripts/stage-npm-packages.mjs`: CI-only staged-publishing helper that validates the fixed package set, packs with pnpm, checks packed manifests, and stages tarballs with npm OIDC.
-- `.changeset/`: changesets config. The `fixed` group keeps `@polygonlabs/oms-wallet`, `@polygonlabs/oms-wallet-wagmi-connector` and `@polygonlabs/oms-wallet-privacy` on the same version; releases are automated by the changesets release workflow.
+- `scripts/stage-npm-packages.mjs`: CI-only staged-publishing helper that validates the fixed group and independent packages, packs with pnpm, checks packed manifests, and stages tarballs with npm OIDC.
+- `.changeset/`: changesets config. The `fixed` group keeps `@polygonlabs/oms-wallet`, `@polygonlabs/oms-wallet-wagmi-connector` and `@polygonlabs/oms-wallet-privacy` on the same version; `@polygonlabs/oms-server-wallet-sdk` versions independently and `oms-wallet-protocol` is ignored. Releases are automated by the changesets release workflow.
 
 ## Commands
 
@@ -104,6 +114,11 @@ Repo-local agent skills live under `.agents/skills/` (agent-neutral); `.claude/s
 - `pnpm --filter @polygonlabs/oms-wallet-wagmi-connector test`: Run the wagmi connector package tests.
 - `pnpm --filter @polygonlabs/oms-wallet-privacy build`: Build the privacy package and check its public declarations for provider leaks.
 - `pnpm --filter @polygonlabs/oms-wallet-privacy test`: Run the privacy package tests (fake backend; no network).
+- `pnpm --filter @polygonlabs/oms-server-wallet-sdk test`: Run the server SDK tests (`test:coverage` enforces its
+  thresholds; `test:package` packs it and installs it into a clean consumer; CI runs both).
+- `pnpm --filter oms-wallet-protocol test`: Run the shared protocol tests.
+- `pnpm --filter oms-wallet-protocol sync`: Copy the protocol source into both SDKs after changing it
+  (`codegen-drift-check` runs it in check mode and fails on any difference).
 - `pnpm --filter @polygonlabs/oms-wallet-privacy generate:api`: Rebuild the privacy package and regenerate its `API.md` with the SDK's generator; grouping comes from its `scripts/api-docs.config.json`. `check:api` verifies it is current (run by its `codegen-drift-check`).
 - `pnpm build:example`: Build the React example for Vite/GitHub Pages output (it resolves the SDK from source, so no prior `pnpm build` is needed).
 - `pnpm build:custom-google-redirect-example`: Build the local-only custom Google redirect React example.
@@ -140,26 +155,34 @@ example code.
 4. Run `pnpm --filter @polygonlabs/oms-wallet test:types` directly when changing public generics, overloads, exported types, OIDC provider typing, or `packages/oms-wallet/src/index.ts`.
 5. Run `pnpm --filter @polygonlabs/oms-wallet-wagmi-connector test` and `pnpm --filter @polygonlabs/oms-wallet-wagmi-connector build` when changing the wagmi connector package.
 6. Run `pnpm --filter @polygonlabs/oms-wallet-privacy test`, `pnpm --filter @polygonlabs/oms-wallet-privacy build` and `pnpm build:privacy-example` when changing the privacy package or the core extension, reserved-message, call-time wallet binding or `onPrepared` behaviour it relies on.
-7. Run `pnpm build:node-example` when SDK exports, module resolution, or Node example usage changes.
-8. Run `pnpm build` before release/build-output work or package entrypoint changes, and `pnpm check:exports` (publint) after it when entrypoints, `exports`, or the `files` set change. Example builds do not require a prior `pnpm build` — examples resolve the SDK from source via the `@polygonlabs/source` condition.
-9. Run `pnpm --filter @polygonlabs/oms-wallet check:public-api` after `pnpm build` when changing SDK exports or public declarations.
-10. Run `pnpm build:example` when changing the React example, Vite config, public browser API shape, or Pages deployment assumptions.
-11. Run `pnpm build:custom-google-redirect-example` when changing the custom Google redirect example, OIDC redirect provider configuration, or browser callback assumptions.
-12. Run `pnpm build:custom-auth0-id-token-example` when changing the Auth0 ID-token example, OIDC ID-token parameters, or Auth0 browser callback assumptions.
-13. Run `pnpm build:trails-actions-example` when changing the Trails Actions example, shared browser example utilities, or Pages deployment assumptions.
-14. Run `pnpm build:wagmi-example` when changing the wagmi example, connector browser usage, or Pages deployment assumptions.
-15. Run `pnpm build:node-contract-deploy-example` when SDK exports, transaction APIs, module resolution, or the Node contract deploy example changes.
+7. Run `pnpm --filter @polygonlabs/oms-server-wallet-sdk test:coverage` and `test:package` when changing the server SDK.
+8. Run `pnpm --filter oms-wallet-protocol sync`, then `pnpm --filter oms-wallet-protocol test` and both SDK suites, when changing `packages/oms-wallet-protocol`.
+9. Run `pnpm build:node-example` when SDK exports, module resolution, or Node example usage changes.
+10. Run `pnpm build` before release/build-output work or package entrypoint changes, and `pnpm check:exports` (publint) after it when entrypoints, `exports`, or the `files` set change. Example builds do not require a prior `pnpm build` — examples resolve the SDK from source via the `@polygonlabs/source` condition.
+11. Run `pnpm --filter @polygonlabs/oms-wallet check:public-api` after `pnpm build` when changing SDK exports or public declarations.
+12. Run `pnpm build:example` when changing the React example, Vite config, public browser API shape, or Pages deployment assumptions.
+13. Run `pnpm build:custom-google-redirect-example` when changing the custom Google redirect example, OIDC redirect provider configuration, or browser callback assumptions.
+14. Run `pnpm build:custom-auth0-id-token-example` when changing the Auth0 ID-token example, OIDC ID-token parameters, or Auth0 browser callback assumptions.
+15. Run `pnpm build:trails-actions-example` when changing the Trails Actions example, shared browser example utilities, or Pages deployment assumptions.
+16. Run `pnpm build:wagmi-example` when changing the wagmi example, connector browser usage, or Pages deployment assumptions.
+17. Run `pnpm build:node-contract-deploy-example` when SDK exports, transaction APIs, module resolution, or the Node contract deploy example changes.
 
 ## Coding and Architecture Rules
 
 - Source files under `packages/oms-wallet/src/` use explicit `.js` extensions in relative imports so emitted JavaScript resolves correctly. Preserve that pattern in SDK source.
+- Never edit `src/internal/protocol/` in either SDK: change `packages/oms-wallet-protocol/src/` and run
+  `pnpm --filter oms-wallet-protocol sync`. Protocol code is only what builds, identifies or checks a WaaS request or
+  response; state, storage, sessions, retries, error classes and single-SDK validation stay in the SDKs. It must compile
+  for core CJS (`node10`), core ESM and server ESM (`.js` relative imports, no top-level `await`, no `import.meta`),
+  and use only dependencies both SDKs declare. Public types stay defined in the SDKs, so a protocol change does not
+  move core's public declarations.
 - Treat `packages/oms-wallet/src/index.ts` and exported types as the public API gate. Export new public types or clients intentionally, and regenerate `API.md` (`pnpm --filter @polygonlabs/oms-wallet generate:api`), and update `README.md` and type tests when public behavior changes.
 - Route wallet API calls through `WalletClient`, generated WaaS types, `createSignedFetch`, and `CredentialSigner` instead of duplicating signing or header logic.
 - Use `StorageManager` abstractions for persistence-sensitive code. Browser storage and memory fallback behavior are part of the SDK contract.
 - Preserve typed SDK error classes and `toOMSWalletError` behavior when wrapping network, generated-client, validation, session, and transaction-status failures.
 - Keep supported network metadata and chain ID lookup going through `packages/oms-wallet/src/networks.ts`, `Networks`, `findNetworkById`, and `findNetworkByName` instead of ad hoc conversion.
 - `pnpm lint` (eslint, markdownlint, prettier, and `tsc -b`) is the enforced style gate and runs in CI; `pnpm format` applies fixes. Run them before handoff, but avoid broad formatting churn in files you do not otherwise touch and match the local file style.
-- **Build-free workspace consumption.** `@polygonlabs/oms-wallet`, `@polygonlabs/oms-wallet-wagmi-connector` and `@polygonlabs/oms-wallet-privacy` expose their TypeScript source through the `@polygonlabs/source` export condition (alongside the compiled `dist/` targets), and each package's `publishConfig.exports` omits that condition so published npm packages expose only `dist/`. Workspace consumers resolve dependencies from source, not a built `dist/`:
+- **Build-free workspace consumption.** `@polygonlabs/oms-wallet`, `@polygonlabs/oms-wallet-wagmi-connector`, `@polygonlabs/oms-wallet-privacy` and `@polygonlabs/oms-server-wallet-sdk` expose their TypeScript source through the `@polygonlabs/source` export condition (alongside the compiled `dist/` targets), and each package's `publishConfig.exports` omits that condition so published npm packages expose only `dist/`. Workspace consumers resolve dependencies from source, not a built `dist/`:
   - **tsc** — the consumer's `tsconfig.lib.json` (connector) or `tsconfig.json` (examples) sets `customConditions: ["@polygonlabs/source"]`. This is why the connector no longer rebuilds the SDK first, and the examples no longer rebuild the connector — **do not reintroduce a `pnpm --dir ../oms-wallet build` / `pnpm --filter …connector build &&` prefix.**
   - **Vitest** — `ssr.resolve.conditions: ["@polygonlabs/source"]`.
   - **Vite (browser examples)** — `resolve.conditions: ["@polygonlabs/source", ...defaultClientConditions]`, importing `defaultClientConditions` from `vite`. rolldown-vite replaces rather than appends `resolve.conditions`, so the defaults must be preserved alongside the source condition; spreading Vite's exported defaults keeps the mode-sensitive `development`/`production` condition (a hardcoded list drops it, so dev builds get production bundles of deps like Lit).
@@ -231,6 +254,8 @@ execution commands.
 
 | When this changes… | Also update… |
 |---|---|
+| `packages/oms-wallet-protocol/src/` | Run `pnpm --filter oms-wallet-protocol sync` and commit both SDK copies; a changeset naming each SDK whose behaviour changes |
+| Public API exported through `packages/oms-server-wallet/src/index.ts` or `./trails` | `packages/oms-server-wallet/README.md`, `packages/oms-server-wallet/docs/` |
 | Public API exported through `packages/oms-wallet-privacy/src/index.ts` | `packages/oms-wallet-privacy/API.md` (generated: `pnpm --filter @polygonlabs/oms-wallet-privacy generate:api`), its `scripts/api-docs.config.json` when the surface changes, `packages/oms-wallet-privacy/README.md` |
 | Public API exported through `packages/oms-wallet/src/index.ts` or exported public types | `packages/oms-wallet/API.md` (generated: run `pnpm --filter @polygonlabs/oms-wallet generate:api`, do not hand-edit), `packages/oms-wallet/scripts/public-api-baseline.txt` and `api-docs.config.json` when the surface or grouping changes, `packages/oms-wallet/README.md`, `packages/oms-wallet/type-tests/oidcProviderTypes.ts` |
 | Test commands (`package.json` scripts) | `TESTING.md`, `.github/workflows/ci-trigger.yml`, `AGENTS.md` Commands section |

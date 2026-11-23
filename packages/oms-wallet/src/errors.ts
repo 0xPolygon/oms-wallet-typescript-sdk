@@ -1,5 +1,7 @@
 import type { OMSWalletOperation } from './operations.js';
 
+import { isCredentialGoneCode } from './internal/protocol/waasErrors.js';
+
 export const attestationVerificationErrorPrefix = 'WaaS attestation verification failed: ';
 
 export type OMSWalletErrorCode =
@@ -287,11 +289,11 @@ export function isCredentialEndedError(error: unknown): boolean {
   if (isOMSWalletError(error)) {
     return (
       error.upstreamError?.service === 'waas' &&
-      (error.upstreamError.code === '7202' || error.upstreamError.code === '7203')
+      isCredentialGoneCode(Number(error.upstreamError.code))
     );
   }
   const code = generatedCodeFromError(error);
-  return code === 7202 || code === 7203;
+  return code !== undefined && isCredentialGoneCode(code);
 }
 
 /**

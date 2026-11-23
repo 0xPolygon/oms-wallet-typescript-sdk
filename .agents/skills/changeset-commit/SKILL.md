@@ -18,14 +18,19 @@ fix is never to add a changeset after the fact: always stage it alongside the
 code. The release flow lives in **`PUBLISHING.md`**; this skill is the decision
 procedure.
 
-## This repo is a monorepo with a fixed version group
+## This repo is a monorepo with a fixed version group and an independent package
 
-Three packages are published — **`@polygonlabs/oms-wallet`** (the SDK),
-**`@polygonlabs/oms-wallet-wagmi-connector`** and **`@polygonlabs/oms-wallet-privacy`**.
-They are a `fixed` group in `.changeset/config.json`, so **any release bumps all of
+Four packages are published. **`@polygonlabs/oms-wallet`** (the SDK),
+**`@polygonlabs/oms-wallet-wagmi-connector`** and **`@polygonlabs/oms-wallet-privacy`**
+are a `fixed` group in `.changeset/config.json`, so **any release bumps all of
 them to the same version**, regardless of which one changed. When you author a
-changeset you only need to list **one** package — the fixed group carries the
-others along.
+changeset for them you only need to list **one** of the three — the fixed group
+carries the others along.
+
+**`@polygonlabs/oms-server-wallet-sdk`** versions on its own: list it explicitly
+when it changes. A change to `packages/oms-wallet-protocol` (private, never
+published) rewrites the copies in both SDKs, so its changeset lists the SDKs whose
+behaviour changes.
 
 ## What needs a changeset
 

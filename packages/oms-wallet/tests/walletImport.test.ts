@@ -5,7 +5,7 @@ import { WalletClientImpl } from '../src/clients/walletClient';
 import type { GetRecipientKeyRequest, ImportWalletRequest } from '../src/generated/waas.gen';
 import { MemoryStorageManager } from '../src/storageManager';
 import { WalletImportCipherSuite } from '../src/types/waas';
-import { base64DecodeBytes, base64EncodeBytes } from '../src/utils/base64';
+import { base64DecodeBytes, base64EncodeBytes } from '../src/internal/protocol/encoding';
 import { sealWalletImportPrivateKey, walletImportPlaintext } from '../src/walletImport';
 import {
   MockSigner,

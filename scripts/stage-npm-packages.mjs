@@ -10,25 +10,58 @@ const repositoryRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url))
 export function validateReleasePackages(workspaces, changesetsConfig) {
   const releasePackages = workspaces.filter((workspace) => workspace.private !== true);
   assert(releasePackages.length > 0, 'No publishable workspace packages were found.');
-  assert.equal(
-    changesetsConfig.fixed.length,
-    1,
-    'Staged publishing expects one Changesets fixed group containing every publishable package.'
-  );
-
-  const fixedNames = [...changesetsConfig.fixed[0]].sort();
-  const releaseNames = releasePackages.map((workspace) => workspace.name).sort();
-  assert.deepEqual(
-    releaseNames,
-    fixedNames,
-    'Every publishable package must belong to the single Changesets fixed group.'
-  );
-
-  const versions = new Set(releasePackages.map((workspace) => workspace.version));
-  assert.equal(versions.size, 1, 'Packages in the Changesets fixed group must have one version.');
 
   const packagesByName = new Map(releasePackages.map((workspace) => [workspace.name, workspace]));
-  return changesetsConfig.fixed[0].map((name) => packagesByName.get(name));
+  const grouped = new Set();
+  const ordered = [];
+  for (const group of changesetsConfig.fixed ?? []) {
+    const members = group.map((name) => {
+      const member = packagesByName.get(name);
+      assert(
+        member,
+        `Changesets fixed group member ${name} is not a publishable workspace package.`
+      );
+      assert(!grouped.has(name), `${name} belongs to more than one Changesets fixed group.`);
+      grouped.add(name);
+      return member;
+    });
+    const versions = new Set(members.map((member) => member.version));
+    assert.equal(versions.size, 1, 'Packages in a Changesets fixed group must have one version.');
+    ordered.push(...members);
+  }
+
+  // Independently versioned packages follow the fixed groups, so the fixed groups are staged first.
+  const independent = releasePackages
+    .filter((workspace) => !grouped.has(workspace.name))
+    .sort((left, right) => left.name.localeCompare(right.name));
+  return [...ordered, ...independent];
+}
+
+/**
+ * The packages a snapshot run stages: exactly the names and versions the snapshot preparation
+ * wrote, in release order, each checked against its manifest. Never a pending regular release.
+ */
+export function selectSnapshotPackages(releasePackages, snapshotPackages) {
+  assert(
+    Array.isArray(snapshotPackages) && snapshotPackages.length > 0,
+    'The snapshot package list is empty.'
+  );
+  const wanted = new Map(snapshotPackages.map(({ name, version }) => [name, version]));
+  assert.equal(
+    wanted.size,
+    snapshotPackages.length,
+    'The snapshot package list repeats a package.'
+  );
+  for (const [name, version] of wanted) {
+    const releasePackage = releasePackages.find((candidate) => candidate.name === name);
+    assert(releasePackage, `Snapshot package ${name} is not a publishable workspace package.`);
+    assert.equal(
+      releasePackage.version,
+      version,
+      `Snapshot package ${name} is at ${releasePackage.version}, not the prepared ${version}.`
+    );
+  }
+  return releasePackages.filter(({ name }) => wanted.has(name));
 }
 
 export function findWorkspaceReferences(value, currentPath = 'package.json') {
@@ -58,6 +91,12 @@ export function assertTrustedPublishingEnvironment(environment) {
     environment.ACTIONS_ID_TOKEN_REQUEST_TOKEN && environment.ACTIONS_ID_TOKEN_REQUEST_URL,
     'GitHub Actions OIDC is unavailable; the job needs id-token: write permission.'
   );
+}
+
+function requiredEnvironment(name) {
+  const value = process.env[name];
+  assert(value, `${name} is required.`);
+  return value;
 }
 
 function run(command, args, options = {}) {
@@ -149,23 +188,27 @@ async function main() {
     changesetsConfig
   );
 
-  const releaseStates = releasePackages.map((releasePackage) => {
-    const tag = `${releasePackage.name}@${releasePackage.version}`;
-    const tagged = createGitTags && hasGitTag(tag);
-    const published = tagged ? false : isPublished(releasePackage);
-    return { releasePackage, tag, tagged, published };
-  });
-  const packagesToStage = releaseStates.filter((state) => !state.tagged && !state.published);
+  const candidates = createGitTags
+    ? releasePackages
+    : selectSnapshotPackages(
+        releasePackages,
+        JSON.parse(await readFile(requiredEnvironment('NPM_STAGE_PACKAGES_FILE'), 'utf8'))
+      );
 
-  if (packagesToStage.length === 0) {
-    console.log('No unstaged package versions were found.');
-    await writeSummary(['### npm staged publishing', '', 'No package versions needed staging.']);
-    return;
-  }
-
+  // One package at a time, in release order: each is looked up, packed and staged before the next
+  // is looked at, so a later package's failure never hides or prevents an earlier package's stage.
   const outputDirectory = await mkdtemp(path.join(os.tmpdir(), 'oms-wallet-npm-stage-'));
   const stagedPackages = [];
-  for (const { releasePackage } of packagesToStage) {
+  for (const releasePackage of candidates) {
+    const tag = `${releasePackage.name}@${releasePackage.version}`;
+    if (createGitTags && hasGitTag(tag)) {
+      console.log(`${tag} is already tagged; skipping.`);
+      continue;
+    }
+    if (isPublished(releasePackage)) {
+      console.log(`${tag} is already published; skipping.`);
+      continue;
+    }
     const tarballPath = await packPackage(releasePackage, outputDirectory);
     runChecked(
       'npm',
@@ -173,11 +216,15 @@ async function main() {
       { stdio: 'inherit' }
     );
     stagedPackages.push(releasePackage);
-    // changesets/action v1 creates this package's tag and GitHub Release from this line,
-    // even if a later package fails. A retry can then skip the already-staged package by tag.
-    if (createGitTags) {
-      console.log(`New tag: ${releasePackage.name}@${releasePackage.version}`);
-    }
+    // changesets/action v1 creates this package's tag and GitHub Release from this line. If a later
+    // package fails, the job still fails, but a rerun skips this package by its tag.
+    if (createGitTags) console.log(`New tag: ${tag}`);
+  }
+
+  if (stagedPackages.length === 0) {
+    console.log('No unstaged package versions were found.');
+    await writeSummary(['### npm staged publishing', '', 'No package versions needed staging.']);
+    return;
   }
 
   await writeSummary([

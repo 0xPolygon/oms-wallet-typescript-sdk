@@ -1,0 +1,269 @@
+// Live acceptance for Solana devnet and Tron Nile wallets against a WaaS v1.2.0 deployment.
+//
+//   node --import tsx --env-file=.env scripts/live-chain-acceptance.ts
+//
+// Reads the same variables as the demo dashboard's acceptance: OMS_PUBLISHABLE_KEY,
+// TRUSTED_PCR0S, ENCRYPTION_KEY, OIDC_PRIVATE_JWK, OIDC_ISSUER, OIDC_AUDIENCE and OMS_ORIGIN (the
+// Origin the project allows). Secrets are never printed. By default nothing is sent: transfers
+// are only quoted. Funds move only with LIVE_EXECUTE=1, to LIVE_SOLANA_RECIPIENT and
+// LIVE_TRON_RECIPIENT, and a Tron transfer pays TRX only up to LIVE_TRON_MAX_FEE sun.
+//
+// The report goes to .data/live-chain-acceptance.json. Attested WaaS responses are recorded to
+// .data/live-chain-fixtures/ (never CommitVerifier or CompleteAuth, whose bodies hold the ID
+// token); copy them to tests/fixtures/live/ to replay their attestation offline.
+import { mkdirSync, readFileSync, existsSync, writeFileSync } from 'node:fs';
+
+import {
+  EncryptedStore,
+  IndexerClient,
+  SerialExecutor,
+  ServerWallet,
+  WaasTransport,
+  WalletError,
+  omsFetch,
+  type StateStore
+} from '../src/index.js';
+
+const env = (name: string, fallback?: string) => {
+  const value = process.env[name] ?? fallback;
+  if (!value) throw new Error(`Set ${name}.`);
+  return value;
+};
+const key = env('OMS_PUBLISHABLE_KEY');
+const pcr0s = env('TRUSTED_PCR0S').split(',');
+const issuer = env('OIDC_ISSUER').replace(/\/$/, '');
+const audience = env('OIDC_AUDIENCE');
+const origin = env('OMS_ORIGIN');
+const subject = env('LIVE_SUBJECT', `acceptance-chains-${new Date().toISOString().slice(0, 10)}`);
+const execute = process.env.LIVE_EXECUTE === '1';
+
+/** An ES256 ID token from the dashboard's registered issuer key, as its issuer mints them. */
+async function idToken() {
+  const jwk = JSON.parse(env('OIDC_PRIVATE_JWK')) as JsonWebKey;
+  const signer = await crypto.subtle.importKey(
+    'jwk',
+    jwk,
+    { name: 'ECDSA', namedCurve: 'P-256' },
+    false,
+    ['sign']
+  );
+  const encode = (value: unknown) =>
+    Buffer.from(typeof value === 'string' ? value : JSON.stringify(value)).toString('base64url');
+  const thumbprint = JSON.stringify({ crv: jwk.crv, kty: jwk.kty, x: jwk.x, y: jwk.y });
+  const kid = Buffer.from(
+    await crypto.subtle.digest('SHA-256', new TextEncoder().encode(thumbprint))
+  ).toString('base64url');
+  const now = Math.floor(Date.now() / 1000);
+  const expiresAt = now + 300;
+  const input = `${encode({ alg: 'ES256', kid, typ: 'JWT' })}.${encode({
+    iss: issuer,
+    aud: audience,
+    sub: subject,
+    iat: now,
+    exp: expiresAt,
+    jti: crypto.randomUUID()
+  })}`;
+  const signature = await crypto.subtle.sign(
+    { name: 'ECDSA', hash: 'SHA-256' },
+    signer,
+    new TextEncoder().encode(input)
+  );
+  return { token: `${input}.${Buffer.from(signature).toString('base64url')}`, expiresAt };
+}
+
+mkdirSync('.data/live-chain-fixtures', { recursive: true });
+const statePath = '.data/live-chain-state.json';
+const data: Record<string, string> = existsSync(statePath)
+  ? JSON.parse(readFileSync(statePath, 'utf8'))
+  : {};
+const disk: StateStore = {
+  async read(name) {
+    return data[name] ?? null;
+  },
+  async write(name, value) {
+    data[name] = value;
+    writeFileSync(statePath, JSON.stringify(data), { mode: 0o600 });
+  }
+};
+
+let recorded = 0;
+const secretMethods = ['CommitVerifier', 'CompleteAuth'];
+const recording: typeof fetch = async (input, init) => {
+  const response = await omsFetch(origin)(input, init);
+  const path = new URL(String(input)).pathname;
+  const method = path.split('/').pop()!;
+  if (path.startsWith('/v1/Waas') && !secretMethods.includes(method)) {
+    const headers = new Headers(init?.headers);
+    const fixture = {
+      method: 'POST',
+      path,
+      requestBody: String(init?.body),
+      responseBody: await response.clone().text(),
+      status: response.status,
+      nonce: headers.get('X-Attestation-Nonce'),
+      // A Sequence/2 attestation binds the signature header that was sent. It is a spent, nonce-bound
+      // signature and the credential's public key; no secret.
+      boundHeader: headers.get('OMS-Wallet-Signature') ?? '',
+      encodedDocument: response.headers.get('X-Attestation-Document'),
+      trustedPcr0s: pcr0s,
+      now: new Date().toISOString()
+    };
+    writeFileSync(
+      `.data/live-chain-fixtures/${String(++recorded).padStart(3, '0')}-${method}.json`,
+      `${JSON.stringify(fixture, null, 2)}\n`
+    );
+  }
+  return response;
+};
+
+const wallet = new ServerWallet({
+  subject,
+  issuer,
+  audience,
+  tokenProvider: idToken,
+  store: new EncryptedStore(disk, env('ENCRYPTION_KEY'), `live-chains:${subject}`),
+  executor: new SerialExecutor(),
+  transport: new WaasTransport(key, pcr0s, recording)
+});
+const indexer = new IndexerClient(key, omsFetch(origin));
+
+const report: { check: string; result: 'passed' | 'failed' | 'skipped'; detail?: unknown }[] = [];
+async function check(name: string, run: () => Promise<unknown>) {
+  try {
+    const detail = await run();
+    report.push({ check: name, result: 'passed', detail });
+  } catch (error) {
+    const detail =
+      error instanceof WalletError
+        ? { ...error, code: error.code, message: error.message }
+        : String(error);
+    report.push({ check: name, result: 'failed', detail });
+  }
+  console.log(JSON.stringify(report.at(-1)));
+}
+const skip = (name: string, why: string) => {
+  report.push({ check: name, result: 'skipped', detail: why });
+  console.log(JSON.stringify(report.at(-1)));
+};
+const id = (name: string) => `${name}-${Date.now()}`;
+/** Poll until the transfer executed with a hash; any other ending, or two minutes, fails. */
+const executed = async <T extends { status: string; txnHash?: string; error?: string }>(
+  read: () => Promise<T | null>
+) => {
+  for (let i = 0; i < 30; i++) {
+    const op = await read();
+    if (!op) throw new Error('Operation not found');
+    if (op.status === 'executed') {
+      if (!op.txnHash) throw new Error('Executed without a transaction hash');
+      return op;
+    }
+    if (!['pending', 'submitting', 'unknown'].includes(op.status))
+      throw new Error(`Transfer ended ${op.status}${op.error ? ` (${op.error})` : ''}`);
+    await new Promise((resolve) => setTimeout(resolve, 4_000));
+  }
+  throw new Error('Transfer did not execute within two minutes');
+};
+/** Balances, failing when the indexer reports an error for any requested network. */
+const balances = async <T extends { errors: unknown[] }>(result: Promise<T>) => {
+  const value = await result;
+  if (value.errors.length) throw new Error(`Balance errors: ${JSON.stringify(value.errors)}`);
+  return value;
+};
+
+const snapshot = await wallet.createOrRestore({ families: ['evm', 'solana', 'tron'] });
+const solana = snapshot.wallets.solana!.address;
+const tron = snapshot.wallets.tron!.address;
+await check('create and restore one wallet per family', async () => {
+  const again = await wallet.createOrRestore({ families: ['evm', 'solana', 'tron'] });
+  if (JSON.stringify(again.wallets) !== JSON.stringify(snapshot.wallets))
+    throw new Error('Restore returned different wallets');
+  return { evm: snapshot.wallet?.address, solana, tron };
+});
+
+await check('Solana message signing, verified by WaaS', () =>
+  wallet.solana.signMessage(id('live-sol-sign'), 'OMS server wallet acceptance')
+);
+await check('Solana devnet balances', () =>
+  balances(indexer.getSolanaBalances(solana, ['solana:devnet']))
+);
+const solanaRecipient = process.env.LIVE_SOLANA_RECIPIENT;
+if (!solanaRecipient) skip('Solana transfer quote', 'Set LIVE_SOLANA_RECIPIENT.');
+else {
+  const transfer = {
+    network: 'solana:devnet',
+    to: solanaRecipient,
+    asset: 'native',
+    amount: '1000'
+  } as const;
+  await check('Solana sponsored transfer quote expires within about a minute', async () => {
+    const op = await wallet.solana.prepareTransfer(id('live-sol-quote'), transfer);
+    const lifetime = Date.parse(op.quote!.expiresAt) - Date.now();
+    if (!op.quote!.sponsored || lifetime > 65_000) throw new Error('Unexpected quote');
+    return { sponsored: op.quote!.sponsored, lifetimeMs: lifetime };
+  });
+  await check('Solana expired quote is refused with nothing sent', async () => {
+    const op = await wallet.solana.prepareTransfer(id('live-sol-expiry'), transfer);
+    await new Promise((resolve) =>
+      setTimeout(resolve, Date.parse(op.quote!.expiresAt) - Date.now() + 2_000)
+    );
+    const result = await wallet.solana.executeTransfer(op.id).catch((error) => error);
+    if (!(result instanceof WalletError) || result.code !== 'TRANSACTION_EXPIRED')
+      throw new Error('Expired quote was not refused');
+    const status = (await wallet.solana.getOperation(op.id))?.status;
+    if (status !== 'expired') throw new Error(`Expired quote left the operation ${status}`);
+    return status;
+  });
+  if (!execute) skip('Solana transfer execution', 'Set LIVE_EXECUTE=1 to send 1000 lamports.');
+  else
+    await check('Solana sponsored transfer executes', async () => {
+      const op = await wallet.solana.sendTransfer(id('live-sol-send'), transfer);
+      return executed(() => wallet.solana.getOperation(op.id));
+    });
+}
+
+await check('Tron message signing, verified by WaaS', () =>
+  wallet.tron.signMessage(id('live-trx-sign'), 'OMS server wallet acceptance')
+);
+await check('Tron TIP-712 signing, verified by WaaS', () =>
+  wallet.tron.signTypedData(id('live-trx-712'), 'tron:nile', {
+    domain: { name: 'Acceptance', version: '1', chainId: 3448148188, verifyingContract: tron },
+    types: {
+      Check: [
+        { name: 'wallet', type: 'address' },
+        { name: 'note', type: 'string' }
+      ]
+    },
+    primaryType: 'Check',
+    message: { wallet: tron, note: 'OMS server wallet acceptance' }
+  })
+);
+await check('Tron Nile balances', () => balances(indexer.getTronBalances(tron, ['tron:nile'])));
+const tronRecipient = process.env.LIVE_TRON_RECIPIENT;
+if (!tronRecipient) skip('Tron transfer quote', 'Set LIVE_TRON_RECIPIENT.');
+else {
+  const transfer = { network: 'tron:nile', to: tronRecipient, value: '1' } as const;
+  await check('Tron quote without maxFee is sent only when sponsored', async () => {
+    const result = await wallet.tron
+      .prepareTransaction(id('live-trx-quote'), transfer)
+      .catch((error) => error);
+    if (result instanceof WalletError && result.code === 'SPONSORSHIP_REQUIRED')
+      return 'not covered by delegated resources: refused as expected';
+    if (result instanceof Error) throw result;
+    return { sponsored: result.quote.sponsored };
+  });
+  const maxFee = process.env.LIVE_TRON_MAX_FEE;
+  if (!execute) skip('Tron transfer execution', 'Set LIVE_EXECUTE=1 to send 1 sun.');
+  else
+    await check('Tron transfer executes within maxFee', async () => {
+      const op = await wallet.tron.sendTransaction(id('live-trx-send'), { ...transfer, maxFee });
+      return executed(() => wallet.tron.getOperation(op.id));
+    });
+}
+
+writeFileSync(
+  '.data/live-chain-acceptance.json',
+  `${JSON.stringify({ subject, at: new Date().toISOString(), report }, null, 2)}\n`
+);
+const failed = report.filter((entry) => entry.result === 'failed').length;
+console.log(`${report.length} checks, ${failed} failed, ${recorded} attested responses recorded.`);
+process.exitCode = failed ? 1 : 0;

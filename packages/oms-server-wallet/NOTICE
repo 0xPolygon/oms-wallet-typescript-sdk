@@ -1,0 +1,6 @@
+Attestation verification in src/internal/protocol/attestation.ts is copied from
+packages/oms-wallet-protocol in the OMS Wallet TypeScript SDK repository by Polygon
+Labs and contributors, licensed under Apache 2.0. It verifies AWS Nitro Enclaves
+attestation documents returned by WaaS.
+Source: https://github.com/0xPolygon/oms-wallet-typescript-sdk
+See LICENSE-APACHE-2.0.

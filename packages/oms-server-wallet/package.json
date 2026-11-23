@@ -1,0 +1,87 @@
+{
+  "name": "@polygonlabs/oms-server-wallet-sdk",
+  "version": "0.3.0",
+  "description": "Standalone TypeScript SDK for attested OMS server wallets, sponsored transfers, and durable Trails swaps and recovery.",
+  "license": "Apache-2.0",
+  "type": "module",
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "files": [
+    "dist",
+    "NOTICE",
+    "LICENSE-APACHE-2.0",
+    "CHANGELOG.md"
+  ],
+  "exports": {
+    ".": {
+      "@polygonlabs/source": "./src/index.ts",
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
+    },
+    "./trails": {
+      "@polygonlabs/source": "./src/trails/index.ts",
+      "types": "./dist/trails/index.d.ts",
+      "import": "./dist/trails/index.js"
+    }
+  },
+  "engines": {
+    "node": ">=22"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/0xPolygon/oms-wallet-typescript-sdk.git",
+    "directory": "packages/oms-server-wallet"
+  },
+  "bugs": {
+    "url": "https://github.com/0xPolygon/oms-wallet-typescript-sdk/issues"
+  },
+  "homepage": "https://github.com/0xPolygon/oms-wallet-typescript-sdk/tree/master/packages/oms-server-wallet#readme",
+  "keywords": [
+    "polygon",
+    "oms",
+    "wallet",
+    "waas",
+    "oidc",
+    "typescript"
+  ],
+  "publishConfig": {
+    "access": "public",
+    "registry": "https://registry.npmjs.org/",
+    "exports": {
+      ".": {
+        "types": "./dist/index.d.ts",
+        "import": "./dist/index.js"
+      },
+      "./trails": {
+        "types": "./dist/trails/index.d.ts",
+        "import": "./dist/trails/index.js"
+      }
+    }
+  },
+  "scripts": {
+    "clean": "rm -rf dist out-tsc *.tsbuildinfo",
+    "typecheck": "tsc -b",
+    "build": "pnpm clean && tsc -b tsconfig.lib.json",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "test:coverage": "vitest run --coverage",
+    "test:package": "node --import tsx scripts/check-package.ts",
+    "test:live": "node --import tsx --env-file=.env scripts/live-chain-acceptance.ts",
+    "prepack": "pnpm build"
+  },
+  "dependencies": {
+    "@0xsequence/wallet-primitives": "3.0.15",
+    "@peculiar/x509": "2.0.0",
+    "cbor-x": "1.6.6",
+    "reflect-metadata": "0.2.2",
+    "viem": "2.57.3",
+    "zod": "4.6.7"
+  },
+  "devDependencies": {
+    "@types/node": "26.4.1",
+    "@vitest/coverage-v8": "4.1.12",
+    "tsx": "4.23.15",
+    "typescript": "^5.9.3",
+    "vitest": "4.1.12"
+  }
+}

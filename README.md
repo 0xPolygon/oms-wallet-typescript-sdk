@@ -20,8 +20,10 @@ packages exactly as an external app would.
 | [`packages/oms-wallet`](packages/oms-wallet) | [`@polygonlabs/oms-wallet`](https://www.npmjs.com/package/@polygonlabs/oms-wallet) | The core SDK — email/OIDC authentication, EVM, Solana, and Tron wallets, attested key import, signed remote access, transaction submission and status polling, access management, and EVM/Solana/Tron balance queries. Ships dual CJS + ESM for browser and Node consumers. |
 | [`packages/oms-wallet-wagmi-connector`](packages/oms-wallet-wagmi-connector) | [`@polygonlabs/oms-wallet-wagmi-connector`](https://www.npmjs.com/package/@polygonlabs/oms-wallet-wagmi-connector) | Adapts an active Ethereum wallet from `@polygonlabs/oms-wallet` as a [wagmi](https://wagmi.sh) connector, so existing wagmi apps can use OMS Wallet as a connection option. |
 | [`packages/oms-wallet-privacy`](packages/oms-wallet-privacy) | [`@polygonlabs/oms-wallet-privacy`](https://www.npmjs.com/package/@polygonlabs/oms-wallet-privacy) | Adds `oms.privacy` through `OMSWallet.extend`: shield tokens into a private balance, unshield them, and send privately from an OMS Ethereum wallet. ESM only. |
+| [`packages/oms-server-wallet`](packages/oms-server-wallet) | [`@polygonlabs/oms-server-wallet-sdk`](https://www.npmjs.com/package/@polygonlabs/oms-server-wallet-sdk) | Backend SDK for attested server wallets: OIDC authentication with encrypted durable state, EVM, Solana and Tron wallets, sponsored transfers and contract calls, and durable Trails swaps and recovery (`/trails`). Node and Cloudflare Workers. ESM only. |
+| [`packages/oms-wallet-protocol`](packages/oms-wallet-protocol) | not published | WaaS wire-protocol code (attestation, request signing, publishable keys, addresses) copied into both SDKs by `pnpm --filter oms-wallet-protocol sync`. |
 
-All packages release **in lockstep** (a changesets `fixed` group), so they always share a version.
+The SDK, wagmi connector and privacy packages release **in lockstep** (a changesets `fixed` group), so they always share a version. The server SDK is versioned independently.
 
 ## Getting started (contributors)
 

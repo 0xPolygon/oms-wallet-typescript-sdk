@@ -20,4 +20,7 @@ examples/smart-session/wrangler.deploy.generated.json
 .vscode/*
 .codex/
 dist
+packages/oms-server-wallet/.data/
+packages/oms-server-wallet/.env
+coverage/
 .idea

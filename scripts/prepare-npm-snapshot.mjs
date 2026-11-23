@@ -10,13 +10,16 @@ const changesetDirectory = path.join(repositoryRoot, '.changeset');
 export function validateSnapshotTag(tag) {
   assert(tag, 'SNAPSHOT_TAG is required.');
   assert.notEqual(tag, 'latest', "The snapshot tag must not be 'latest'.");
+  // The tag becomes a semver prerelease identifier (0.0.0-<tag>-<timestamp>): lowercase letters,
+  // digits and hyphens, dot-separated parts that are non-empty and not numbers with leading zeros.
   assert(
-    /^[a-z][a-z0-9._-]*$/.test(tag),
-    'The snapshot tag must start with a lowercase letter and contain only lowercase letters, numbers, dots, underscores, or hyphens.'
+    /^[a-z][a-z0-9-]*(?:\.[a-z0-9-]+)*$/.test(tag) &&
+      !tag.split('.').some((part) => /^0\d+$/.test(part)),
+    'The snapshot tag must start with a lowercase letter and contain only lowercase letters, numbers, hyphens, and non-empty dot-separated parts.'
   );
   assert(
-    !/^v?\d+(?:\.\d+){0,2}(?:[-+].*)?$/.test(tag),
-    'The snapshot tag must not look like a release version.'
+    !/^v?\d+(?:\.\d+){0,2}(?:[-+].*)?$/.test(tag) && !/^[\^~<>=]/.test(tag),
+    'The snapshot tag must not look like a release version or range.'
   );
 }
 
@@ -30,29 +33,45 @@ export function changesetHasRelease(content) {
     .some((line) => /^\s*(?:"[^"]+"|'[^']+'|[^:#][^:]*):\s*(?:major|minor|patch)\s*$/.test(line));
 }
 
-export function assertSnapshotVersions(before, after, tag) {
+export function assertSnapshotVersions(before, after, tag, fixed = []) {
   assert.equal(after.length, before.length, 'The publishable package set changed unexpectedly.');
   assert(after.length > 0, 'No publishable packages were found.');
 
-  const versions = new Set(after.map(({ version }) => version));
-  assert.equal(versions.size, 1, 'Snapshot packages must have one fixed-group version.');
-
+  const changed = [];
   for (const currentPackage of after) {
     const previousPackage = before.find(({ name }) => name === currentPackage.name);
     assert(
       previousPackage,
       `Snapshot package ${currentPackage.name} was not present before versioning.`
     );
-    assert.notEqual(
-      currentPackage.version,
-      previousPackage.version,
-      `Snapshot versioning did not change ${currentPackage.name}.`
-    );
+    if (currentPackage.version === previousPackage.version) continue;
     assert(
       currentPackage.version.includes(`-${tag}-`),
       `${currentPackage.name} did not receive the requested '${tag}' snapshot version.`
     );
+    changed.push(currentPackage.name);
   }
+  assert(changed.length > 0, 'Snapshot versioning did not change any package.');
+
+  for (const group of fixed) {
+    const members = after.filter(({ name }) => group.includes(name));
+    const changedMembers = members.filter(({ name }) => changed.includes(name));
+    if (changedMembers.length === 0) continue;
+    assert.equal(
+      changedMembers.length,
+      members.length,
+      `Snapshot versioning did not change every package in the fixed group of ${changedMembers[0].name}.`
+    );
+    const versions = new Set(members.map(({ version }) => version));
+    assert.equal(versions.size, 1, 'Snapshot packages must have one fixed-group version.');
+  }
+}
+
+/** The packages snapshot versioning changed, with their new versions. */
+export function snapshotPackages(before, after) {
+  return after
+    .filter(({ name, version }) => before.find((item) => item.name === name)?.version !== version)
+    .map(({ name, version }) => ({ name, version }));
 }
 
 function runChecked(command, args, options = {}) {
@@ -69,26 +88,29 @@ function runChecked(command, args, options = {}) {
 }
 
 async function readReleasePackages() {
-  const config = JSON.parse(await readFile(path.join(changesetDirectory, 'config.json'), 'utf8'));
-  assert.equal(
-    config.fixed.length,
-    1,
-    'Snapshot versioning expects one Changesets fixed group containing every publishable package.'
-  );
-
+  const result = spawnSync('pnpm', ['--recursive', 'list', '--depth', '-1', '--json'], {
+    cwd: repositoryRoot,
+    encoding: 'utf8'
+  });
+  if (result.error) throw result.error;
+  assert.equal(result.status, 0, `pnpm list failed with exit code ${result.status}.`);
+  // pnpm resolves each package's folder, so a folder may differ from its package name.
   return Promise.all(
-    config.fixed[0].map(async (name) => {
-      const packageDirectory = name.replace('@polygonlabs/', '');
-      const manifest = JSON.parse(
-        await readFile(
-          path.join(repositoryRoot, 'packages', packageDirectory, 'package.json'),
-          'utf8'
-        )
-      );
-      assert.equal(manifest.name, name, `Could not resolve the package manifest for ${name}.`);
-      return { name, version: manifest.version };
-    })
+    JSON.parse(result.stdout)
+      .filter((workspace) => workspace.private !== true)
+      .map(async ({ name, path: packageDirectory }) => {
+        const manifest = JSON.parse(
+          await readFile(path.join(packageDirectory, 'package.json'), 'utf8')
+        );
+        assert.equal(manifest.name, name, `Could not resolve the package manifest for ${name}.`);
+        return { name, version: manifest.version };
+      })
   );
+}
+
+async function readFixedGroups() {
+  const config = JSON.parse(await readFile(path.join(changesetDirectory, 'config.json'), 'utf8'));
+  return config.fixed ?? [];
 }
 
 async function hasVersionedChangeset() {
@@ -103,14 +125,17 @@ async function hasVersionedChangeset() {
 async function main() {
   const tag = process.env.SNAPSHOT_TAG;
   validateSnapshotTag(tag);
+  const snapshotPackagesFile = process.env.SNAPSHOT_PACKAGES_FILE;
+  assert(snapshotPackagesFile, 'SNAPSHOT_PACKAGES_FILE is required.');
 
   const before = await readReleasePackages();
+  const fixed = await readFixedGroups();
   let temporaryChangeset;
   if (!(await hasVersionedChangeset())) {
     temporaryChangeset = path.join(changesetDirectory, `ci-snapshot-${process.pid}.md`);
     await writeFile(
       temporaryChangeset,
-      `---\n"${before[0].name}": patch\n---\n\nCreate a temporary CI snapshot release.\n`,
+      `---\n"${fixed[0]?.[0] ?? before[0].name}": patch\n---\n\nCreate a temporary CI snapshot release.\n`,
       { encoding: 'utf8', flag: 'wx' }
     );
     console.log('No versioned changesets found; created a temporary snapshot changeset.');
@@ -127,8 +152,11 @@ async function main() {
   }
 
   const after = await readReleasePackages();
-  assertSnapshotVersions(before, after, tag);
-  console.log(`Prepared fixed-group snapshot ${after[0].version}.`);
+  assertSnapshotVersions(before, after, tag, fixed);
+  const prepared = snapshotPackages(before, after);
+  // The staging step stages exactly this list.
+  await writeFile(snapshotPackagesFile, `${JSON.stringify(prepared, null, 2)}\n`);
+  for (const { name, version } of prepared) console.log(`Prepared snapshot ${name}@${version}.`);
 }
 
 if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {

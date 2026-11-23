@@ -2,7 +2,7 @@ import { defineConfig } from 'eslint/config';
 
 import { recommended, typescript } from '@polygonlabs/apps-team-lint';
 
-// Source-first adoption: ESLint lints the two published packages' `src` (which
+// Source-first adoption: ESLint lints the packages' `src` (which
 // target the browser + node — hence browser globals). Tests, examples, config
 // files, generated code, and helper scripts are excluded for now; bringing them
 // into the lint surface is a tracked follow-up (they also need tsconfig-project
@@ -53,6 +53,7 @@ export default defineConfig([
     ignores: [
       '.claude/**',
       '**/dist/**',
+      '**/coverage/**',
       '**/out-tsc/**',
       'examples/**',
       '**/tests/**',
@@ -60,6 +61,8 @@ export default defineConfig([
       '**/*.config.{ts,js,cjs,mjs}',
       'scripts/**',
       'packages/oms-wallet/scripts/**',
+      'packages/oms-server-wallet/scripts/**',
+      'packages/oms-wallet-protocol/scripts/**',
       'packages/oms-wallet/src/generated/**'
     ]
   }

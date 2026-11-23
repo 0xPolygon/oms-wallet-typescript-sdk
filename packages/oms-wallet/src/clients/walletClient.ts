@@ -143,6 +143,7 @@ import {
   KeyFormat as GeneratedKeyFormat,
   TransportPurpose as GeneratedTransportPurpose
 } from '../generated/waas.gen.js';
+import { isCredentialGoneCode } from '../internal/protocol/waasErrors.js';
 import { TronNetworks } from '../networks.js';
 import { isOmsRelayOidcProvider, resolveOidcProviderConfig } from '../oidc.js';
 import { WalletOperation } from '../operations.js';
@@ -570,10 +571,29 @@ export class WalletClientImpl implements WalletClient {
       params.environment.walletApiUrl,
       createDeadlineFetch(this.credentialReadFetch(signedFetch))
     );
+    // Wallet import verifies each response's attestation where the request is sent, after signing,
+    // so a `Sequence/2` attestation is checked against the signature header WaaS received.
     this.walletImportClient = params.walletImportTrustedPcr0s
       ? new WaasClient(
           params.environment.walletApiUrl,
-          createDeadlineFetch(createAttestedFetch(sessionFetch, params.walletImportTrustedPcr0s))
+          createDeadlineFetch(
+            this.sessionActivityFetch(
+              this.sessionRequestFetch(
+                createSerialFetch(
+                  createSignedFetch(
+                    publishableKey,
+                    this.credentialSigner,
+                    this.projectId,
+                    createAttestedFetch(
+                      (input, init) => globalThis.fetch(input, init),
+                      params.walletImportTrustedPcr0s
+                    )
+                  ),
+                  this.credentialSigner
+                )
+              )
+            )
+          )
         )
       : undefined;
     this.publicClient = new WaasPublicClient(
@@ -3985,7 +4005,7 @@ export class WalletClientImpl implements WalletClient {
         return response;
       }
       const errorCode = await waasErrorCode(response);
-      if (errorCode === 7202 || errorCode === 7203) {
+      if (errorCode !== undefined && isCredentialGoneCode(errorCode)) {
         this.rejectedSessionCredentialRevision = revision;
       } else if (errorCode === 7207 && this.sessionRevision === revision) {
         // Unauthorized: a wallet access error, or a revoked credential. `GetCredential` involves no
@@ -4170,7 +4190,6 @@ function normalizeCredentialId(value: string): string {
   return value.trim().toLowerCase();
 }
 
-/** Whether a failed WaaS response is `KeyNotFound` (7202) or `KeyExpired` (7203). */
 /** The WaaS error code of a failed response, or undefined when its body has none. */
 async function waasErrorCode(response: Response): Promise<number | undefined> {
   try {
