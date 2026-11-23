@@ -1,5 +1,19 @@
 # Changelog
 
+## 0.3.0
+
+### Minor Changes
+
+- [#1](https://github.com/0xPolygon/oms-server-wallet-sdk/pull/1) [`a1875b4`](https://github.com/0xPolygon/oms-server-wallet-sdk/commit/a1875b427461821fc9eb70f9aa1c79c4025a38cd) Thanks [@taylanpince](https://github.com/taylanpince)! - Export `omsFetch(origin, fetcher?)`, which sends the application's allowed `Origin` on WaaS and indexer requests, so integrations no longer need their own wrapper.
+
+- [#3](https://github.com/0xPolygon/oms-server-wallet-sdk/pull/3) [`9a8ecf0`](https://github.com/0xPolygon/oms-server-wallet-sdk/commit/9a8ecf0e6f5bbd8ca13f69bceafae6379aa33eee) Thanks [@taylanpince](https://github.com/taylanpince)! - Add `sendUserOperation`, `prepareUserOperation` and `executeUserOperation` for sponsored contract calls described by an ABI, function name and arguments, or by pre-encoded calldata.
+
+### Patch Changes
+
+- [#1](https://github.com/0xPolygon/oms-server-wallet-sdk/pull/1) [`a1875b4`](https://github.com/0xPolygon/oms-server-wallet-sdk/commit/a1875b427461821fc9eb70f9aa1c79c4025a38cd) Thanks [@taylanpince](https://github.com/taylanpince)! - `IndexerClient.getBalances` reports malformed balance responses as `WalletError('INVALID_RESPONSE')` instead of a raw `SyntaxError` or `ZodError`.
+
+- [#1](https://github.com/0xPolygon/oms-server-wallet-sdk/pull/1) [`a1875b4`](https://github.com/0xPolygon/oms-server-wallet-sdk/commit/a1875b427461821fc9eb70f9aa1c79c4025a38cd) Thanks [@taylanpince](https://github.com/taylanpince)! - Update `zod` to 4.6.7 to fix a high-severity memory-exhaustion advisory (GHSA-mrhx-c7xc-m3w5) in 4.5.4.
+
 ## 0.2.0
 
 - Add optional `/trails`: direct v1.5 API transport, exact-input quote validation, chain/token discovery, `EvmChainReader` and `WalletSwaps`.
