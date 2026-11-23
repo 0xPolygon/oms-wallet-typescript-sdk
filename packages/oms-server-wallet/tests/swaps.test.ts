@@ -1,4 +1,5 @@
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
+import { ServerWallet, WalletError } from '@polygonlabs/oms-server-wallet-sdk';
 import { swapView } from '@polygonlabs/oms-server-wallet-sdk/trails';
 import { swapHarness } from './swap-harness.js';
 import {
@@ -562,6 +563,33 @@ describe('settled funding and recovery operations', () => {
         amount: '1'
       })
     ).resolves.toMatchObject({ status: 'quoted' });
+  });
+
+  it('expires the swap when the wallet funding quote ran out before it was sent', async () => {
+    const h = await swapHarness();
+    await h.confirm();
+    await h.tick(3);
+    const { fundingId } = await h.record();
+    // The quote passes the swap's own margin check, then runs out before the wallet sends it: the
+    // wallet records the funding as expired and raises QUOTE_EXPIRED.
+    const execute = vi
+      .spyOn(ServerWallet.prototype, 'executeTransfer')
+      .mockImplementation(async (id: string) => {
+        await editOperation(h, id, (op) => {
+          op.status = 'expired';
+          op.error = 'TRANSACTION_EXPIRED';
+        });
+        throw new WalletError('QUOTE_EXPIRED', 'The quote expired. Prepare a new transfer.', 409);
+      });
+    await h.tick();
+    execute.mockRestore();
+    expect(await h.record()).toMatchObject({
+      phase: 'expired',
+      action: null,
+      error: 'QUOTE_EXPIRED',
+      funding: { id: fundingId, status: 'expired' }
+    });
+    expect(executes(h)).toHaveLength(0);
   });
 
   it('expires the swap once its uncertain funding is known to have expired unsent', async () => {

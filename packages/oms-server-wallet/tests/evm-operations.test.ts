@@ -78,6 +78,21 @@ describe('EVM execution settlement', () => {
     expect(h.remote.calls.filter((c) => c.method === 'Execute')).toHaveLength(1);
   });
 
+  it('keeps a known claim when a later status read is stale', async () => {
+    const h = sdkHarness();
+    await h.client.prepareTransfer('claimed-1', transfer);
+    expect((await h.client.executeTransfer('claimed-1')).status).toBe('pending');
+    // A read still showing the row from before the claim: quoted, then TransactionExpired.
+    h.remote.txnStatus = 'quoted';
+    expect((await h.client.getOperation('claimed-1'))?.status).toBe('pending');
+    h.remote.evmStatusError = 7309;
+    await editStored(h.store, 'claimed-1', (op) => {
+      op.quote.expiresAt = new Date(Date.now() - 600_000).toISOString();
+    });
+    expect((await h.client.getOperation('claimed-1'))?.status).toBe('pending');
+    expect(await h.client.listOpenOperations()).toHaveLength(1);
+  });
+
   it('records a quote that expired before submission', async () => {
     const h = sdkHarness();
     await h.client.prepareTransfer('expired-1', transfer);
@@ -126,7 +141,7 @@ describe('EVM operation records', () => {
     // Records written before the open index existed.
     h.store.values.delete('openOperationIndex');
     expect((await h.client.listOpenOperations()).map((op) => op.id)).toEqual(['open-op-1']);
-    expect(JSON.parse((await h.store.read('openOperationIndex'))!)).toEqual(['open-op-1']);
+    expect(JSON.parse((await h.store.read('openOperationIndex'))!).ids).toEqual(['open-op-1']);
     await h.client.executeTransfer('open-op-1');
     h.remote.txnStatus = 'executed';
     await h.client.getOperation('open-op-1');
@@ -149,12 +164,59 @@ describe('open operation index', () => {
     };
     await expect(h.client.prepareTransfer('open-op-b2', transfer)).rejects.toThrow();
     // A crash here must not leave the operation missing from the index; readers check records.
-    expect(JSON.parse((await h.store.read('openOperationIndex'))!)).toEqual([
+    expect(JSON.parse((await h.store.read('openOperationIndex'))!).ids).toEqual([
       'open-op-a1',
       'open-op-b2'
     ]);
     h.store.write = write;
     expect((await h.client.listOpenOperations()).map((op) => op.id)).toEqual(['open-op-a1']);
+  });
+});
+
+describe('open operation index with an older SDK writing', () => {
+  it('finds an operation an older version appended without updating the open index', async () => {
+    const h = sdkHarness();
+    await h.client.prepareTransfer('new-writer-1', transfer);
+    expect((await h.client.listOpenOperations()).map((op) => op.id)).toEqual(['new-writer-1']);
+    // An older SDK version, sharing the store and executor, submits a transfer: it appends to the
+    // full index and writes the record, but knows nothing of the open index.
+    const legacy = JSON.parse((await h.store.read('operation:new-writer-1'))!);
+    const ids = JSON.parse((await h.store.read('operationIndex'))!);
+    await h.store.write('operationIndex', JSON.stringify([...ids, 'old-writer-1']));
+    await h.store.write(
+      'operation:old-writer-1',
+      JSON.stringify({ ...legacy, id: 'old-writer-1', status: 'pending' })
+    );
+    expect((await h.client.listOpenOperations()).map((op) => op.id).sort()).toEqual([
+      'new-writer-1',
+      'old-writer-1'
+    ]);
+    // A new operation written after the older one does not hide it either.
+    await h.client.prepareTransfer('new-writer-2', transfer);
+    expect((await h.client.listOpenOperations()).map((op) => op.id).sort()).toEqual([
+      'new-writer-1',
+      'new-writer-2',
+      'old-writer-1'
+    ]);
+  });
+
+  it('scans entries an older version appended even when a newer write came after them', async () => {
+    const h = sdkHarness();
+    await h.client.prepareTransfer('first-new-1', transfer);
+    await h.client.listOpenOperations();
+    const record = JSON.parse((await h.store.read('operation:first-new-1'))!);
+    const ids = JSON.parse((await h.store.read('operationIndex'))!);
+    await h.store.write('operationIndex', JSON.stringify([...ids, 'old-between-1']));
+    await h.store.write(
+      'operation:old-between-1',
+      JSON.stringify({ ...record, id: 'old-between-1', status: 'unknown' })
+    );
+    await h.client.prepareTransfer('second-new-1', transfer);
+    expect((await h.client.listOpenOperations()).map((op) => op.id).sort()).toEqual([
+      'first-new-1',
+      'old-between-1',
+      'second-new-1'
+    ]);
   });
 });
 

@@ -88,11 +88,17 @@ export async function settleExecuteError(
   }
 }
 
+/** Whether WaaS has already shown that it claimed the transaction for broadcast. */
+function claimed(op: Settleable): boolean {
+  return op.status === 'pending' || !!op.txnHash;
+}
+
 /**
- * Poll an operation in flight. An ambiguous Execute is never retried, even when status still says
- * quoted. TransactionStatus answers TransactionExpired only while the row still reads as quoted;
- * past the grace period no Execute that started in time can still claim it, and every claim has
- * long since reached the replica WaaS reads from, so the operation is expired.
+ * Poll an operation in flight. Evidence of a claim is kept: WaaS reads transaction status without
+ * strong consistency, so a later read can still show the row from before the claim (`quoted`, or
+ * TransactionExpired). An ambiguous Execute is never retried, even when status still says quoted.
+ * TransactionStatus answers TransactionExpired only while the row still reads as quoted; past the
+ * grace period an operation with no evidence of a claim is treated as expired.
  */
 export async function refreshStatus(
   op: Settleable,
@@ -103,19 +109,18 @@ export async function refreshStatus(
   try {
     result = await status();
   } catch (error) {
-    if (
-      !(error instanceof UpstreamError) ||
-      error.upstreamCode !== TRANSACTION_EXPIRED ||
-      !op.quote ||
-      now < Date.parse(op.quote.expiresAt) + CLAIM_GRACE_MS
-    )
+    if (!(error instanceof UpstreamError) || error.upstreamCode !== TRANSACTION_EXPIRED)
       throw error;
+    // A stale read of a claimed transaction: keep the claim and poll again.
+    if (claimed(op)) return;
+    if (!op.quote || now < Date.parse(op.quote.expiresAt) + CLAIM_GRACE_MS) throw error;
     op.status = 'expired';
     op.error = 'TRANSACTION_EXPIRED';
     return;
   }
-  if (result.status === 'quoted') op.status = 'unknown';
-  else {
+  if (result.status === 'quoted') {
+    if (!claimed(op)) op.status = 'unknown';
+  } else {
     op.status = result.status;
     op.error = undefined;
   }

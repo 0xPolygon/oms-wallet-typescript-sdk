@@ -596,36 +596,53 @@ export class ServerWallet {
   }
   private async writeOperation(op: Operation | ChainOperation) {
     const ids: string[] = JSON.parse((await this.options.store.read('operationIndex')) ?? '[]');
-    if (!ids.includes(op.id))
-      await this.options.store.write('operationIndex', JSON.stringify([...ids, op.id]));
-    // The open index is kept only once built from the full index (see openOperationIds). It may
-    // list a settled operation, never miss an open one: an ID is added before the record says it
-    // is open and removed after the record says it settled, so a crash between leaves it listed,
-    // and readers check each record's status.
-    const open = await this.options.store.read('openOperationIndex');
-    const openIds: string[] | null = open === null ? null : JSON.parse(open);
+    const added = !ids.includes(op.id);
+    if (added) await this.options.store.write('operationIndex', JSON.stringify([...ids, op.id]));
+    // The open index may list a settled operation, never miss an open one: an ID is added before
+    // the record says it is open and removed after the record says it settled, so a crash between
+    // leaves it listed, and readers check each record's status. `synced` counts the entries of the
+    // full index it covers; it advances only while this writer appends right after it, so entries
+    // an older SDK version appended are scanned on the next read (see openOperationIds).
+    const open = await this.readOpenIndex();
     const isOpen = OPEN_STATUSES.includes(op.status);
-    if (openIds && isOpen && !openIds.includes(op.id))
-      await this.options.store.write('openOperationIndex', JSON.stringify([...openIds, op.id]));
+    const next = open && {
+      synced: added && open.synced === ids.length ? ids.length + 1 : open.synced,
+      ids: isOpen
+        ? open.ids.includes(op.id)
+          ? open.ids
+          : [...open.ids, op.id]
+        : open.ids.filter((entry) => entry !== op.id)
+    };
+    const changed =
+      !!open && !!next && (next.synced !== open.synced || next.ids.length !== open.ids.length);
+    if (changed && isOpen) await this.writeOpenIndex(next);
     await this.options.store.write(`operation:${op.id}`, JSON.stringify(op));
-    if (openIds && !isOpen && openIds.includes(op.id))
-      await this.options.store.write(
-        'openOperationIndex',
-        JSON.stringify(openIds.filter((entry) => entry !== op.id))
-      );
+    if (changed && !isOpen) await this.writeOpenIndex(next);
   }
-  /** IDs of operations not yet settled, building the index from all operations on first use. */
-  private async openOperationIds(): Promise<string[]> {
+  private async readOpenIndex(): Promise<{ synced: number; ids: string[] } | null> {
     const open = await this.options.store.read('openOperationIndex');
-    if (open !== null) return JSON.parse(open) as string[];
-    const ids: string[] = JSON.parse((await this.options.store.read('operationIndex')) ?? '[]');
-    const openIds: string[] = [];
-    for (const id of ids) {
+    return open === null ? null : (JSON.parse(open) as { synced: number; ids: string[] });
+  }
+  private writeOpenIndex(index: { synced: number; ids: string[] }) {
+    return this.options.store.write('openOperationIndex', JSON.stringify(index));
+  }
+  /**
+   * IDs of operations not yet settled. Entries of the full index past `synced` (all of them on
+   * first use, or those an older SDK version appended) are read and added before returning.
+   */
+  private async openOperationIds(): Promise<string[]> {
+    const all: string[] = JSON.parse((await this.options.store.read('operationIndex')) ?? '[]');
+    const stored = await this.readOpenIndex();
+    const open =
+      stored && stored.synced <= all.length ? stored : { synced: 0, ids: [] as string[] };
+    if (open.synced === all.length && stored === open) return open.ids;
+    const ids = [...open.ids];
+    for (const id of all.slice(open.synced)) {
       const op = await this.readOperation(id);
-      if (op && OPEN_STATUSES.includes(op.status)) openIds.push(id);
+      if (op && OPEN_STATUSES.includes(op.status) && !ids.includes(id)) ids.push(id);
     }
-    await this.options.store.write('openOperationIndex', JSON.stringify(openIds));
-    return openIds;
+    await this.writeOpenIndex({ synced: all.length, ids });
+    return ids;
   }
   /**
    * Stored EVM operations not yet settled (preparing, quoted, submitting, pending or unknown),

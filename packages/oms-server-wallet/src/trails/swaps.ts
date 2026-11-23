@@ -573,7 +573,16 @@ export class WalletSwaps {
         return;
       }
       await this.save(record);
-      record.funding = await this.options.wallet.executeTransfer(record.fundingId);
+      try {
+        record.funding = await this.options.wallet.executeTransfer(record.fundingId);
+      } catch (error) {
+        // The wallet's quote ran out before it was sent: it recorded the funding as expired.
+        if (!(error instanceof WalletError) || error.code !== 'QUOTE_EXPIRED') throw error;
+        record.funding =
+          (await this.options.wallet.readOperations([record.fundingId])).find(
+            (op) => op.id === record.fundingId
+          ) ?? record.funding;
+      }
     }
     if (record.funding.status === 'executed' && record.funding.txnHash) {
       const receipt = await this.options.chains.receipt(
