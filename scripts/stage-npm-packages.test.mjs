@@ -4,6 +4,7 @@ import test from 'node:test';
 import {
   assertTrustedPublishingEnvironment,
   findWorkspaceReferences,
+  isSnapshotVersion,
   validateReleasePackages
 } from './stage-npm-packages.mjs';
 
@@ -16,14 +17,27 @@ const releasePackages = [
   }
 ];
 const fixed = [releasePackages.map(({ name }) => name)];
+const serverPackage = {
+  name: '@polygonlabs/oms-server-wallet-sdk',
+  version: '0.4.0',
+  path: '/repo/packages/oms-server-wallet'
+};
 
-test('orders every publishable package by the Changesets fixed group', () => {
+test('orders fixed-group packages first, then independent packages by name', () => {
   const workspaces = [
+    serverPackage,
     releasePackages[1],
     { name: 'private-example', version: '0.0.0', private: true },
     releasePackages[0]
   ];
-  assert.deepEqual(validateReleasePackages(workspaces, { fixed }), releasePackages);
+  assert.deepEqual(validateReleasePackages(workspaces, { fixed }), [
+    ...releasePackages,
+    serverPackage
+  ]);
+});
+
+test('releases independent packages when there is no fixed group', () => {
+  assert.deepEqual(validateReleasePackages([serverPackage], { fixed: [] }), [serverPackage]);
 });
 
 test('rejects fixed-package version drift', () => {
@@ -34,14 +48,20 @@ test('rejects fixed-package version drift', () => {
   );
 });
 
-test('rejects a publishable package outside the fixed group', () => {
+test('rejects a fixed-group member that is not a publishable workspace package', () => {
   assert.throws(
     () =>
-      validateReleasePackages([...releasePackages, { name: 'extra', version: '1.2.3' }], {
-        fixed
-      }),
-    /Every publishable package must belong/
+      validateReleasePackages(
+        [releasePackages[0], { ...releasePackages[1], private: true }, serverPackage],
+        { fixed }
+      ),
+    /is not a publishable workspace package/
   );
+});
+
+test('stages only snapshot versions during a snapshot run', () => {
+  assert.equal(isSnapshotVersion('0.0.0-canary-20260909000000', 'canary'), true);
+  assert.equal(isSnapshotVersion('0.3.0', 'canary'), false);
 });
 
 test('finds nested workspace protocol references in packed manifests', () => {

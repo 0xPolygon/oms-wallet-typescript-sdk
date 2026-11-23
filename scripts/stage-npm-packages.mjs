@@ -10,25 +10,37 @@ const repositoryRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url))
 export function validateReleasePackages(workspaces, changesetsConfig) {
   const releasePackages = workspaces.filter((workspace) => workspace.private !== true);
   assert(releasePackages.length > 0, 'No publishable workspace packages were found.');
-  assert.equal(
-    changesetsConfig.fixed.length,
-    1,
-    'Staged publishing expects one Changesets fixed group containing every publishable package.'
-  );
-
-  const fixedNames = [...changesetsConfig.fixed[0]].sort();
-  const releaseNames = releasePackages.map((workspace) => workspace.name).sort();
-  assert.deepEqual(
-    releaseNames,
-    fixedNames,
-    'Every publishable package must belong to the single Changesets fixed group.'
-  );
-
-  const versions = new Set(releasePackages.map((workspace) => workspace.version));
-  assert.equal(versions.size, 1, 'Packages in the Changesets fixed group must have one version.');
 
   const packagesByName = new Map(releasePackages.map((workspace) => [workspace.name, workspace]));
-  return changesetsConfig.fixed[0].map((name) => packagesByName.get(name));
+  const grouped = new Set();
+  const ordered = [];
+  for (const group of changesetsConfig.fixed ?? []) {
+    const members = group.map((name) => {
+      const member = packagesByName.get(name);
+      assert(
+        member,
+        `Changesets fixed group member ${name} is not a publishable workspace package.`
+      );
+      assert(!grouped.has(name), `${name} belongs to more than one Changesets fixed group.`);
+      grouped.add(name);
+      return member;
+    });
+    const versions = new Set(members.map((member) => member.version));
+    assert.equal(versions.size, 1, 'Packages in a Changesets fixed group must have one version.');
+    ordered.push(...members);
+  }
+
+  // Independently versioned packages follow the fixed groups, so a failure staging one of them
+  // never blocks a fixed-group release.
+  const independent = releasePackages
+    .filter((workspace) => !grouped.has(workspace.name))
+    .sort((left, right) => left.name.localeCompare(right.name));
+  return [...ordered, ...independent];
+}
+
+/** Snapshot runs stage only the versions they just created, never a pending regular release. */
+export function isSnapshotVersion(version, distTag) {
+  return version.includes(`-${distTag}-`);
 }
 
 export function findWorkspaceReferences(value, currentPath = 'package.json') {
@@ -152,10 +164,16 @@ async function main() {
   const releaseStates = releasePackages.map((releasePackage) => {
     const tag = `${releasePackage.name}@${releasePackage.version}`;
     const tagged = createGitTags && hasGitTag(tag);
-    const published = tagged ? false : isPublished(releasePackage);
+    const skipped = !createGitTags && !isSnapshotVersion(releasePackage.version, distTag);
+    const published = tagged || skipped ? false : isPublished(releasePackage);
     return { releasePackage, tag, tagged, published };
   });
-  const packagesToStage = releaseStates.filter((state) => !state.tagged && !state.published);
+  const packagesToStage = releaseStates.filter(
+    (state) =>
+      !state.tagged &&
+      !state.published &&
+      (createGitTags || isSnapshotVersion(state.releasePackage.version, distTag))
+  );
 
   if (packagesToStage.length === 0) {
     console.log('No unstaged package versions were found.');
