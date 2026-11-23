@@ -20,6 +20,12 @@ export const TRON_CHAIN_IDS: Record<TronNetwork, number> = {
  * cover. Without `maxFee` only fully covered (sponsored) transactions are sent. With it, the
  * wallet pays the quoted TRX fee when it is at most `maxFee` sun; WaaS prices the transaction
  * again at execution and refuses it if the cost rose above the quote.
+ *
+ * Both limits apply to the quote and that re-check, not to the signed transaction. On chain a
+ * contract call is capped only by the fee limit WaaS seals into it, 1.2 times the estimated
+ * energy of the whole call, which the quote does not expose. If delegated resources are used up
+ * or withdrawn after the re-check, or the call needs more energy than estimated, the wallet can
+ * burn TRX up to that limit, even on a sponsored quote.
  */
 interface TronFeePolicy {
   /** The most the wallet may pay, in sun (1 TRX = 1,000,000 sun), as a decimal string. */

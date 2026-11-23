@@ -160,6 +160,8 @@ Solana and Tron operations share the store and ID space with EVM ones, so an ID 
 
 **Fees are sponsored-only by default.** A transaction is sent without TRX only when delegated resources cover it; otherwise preparing it fails with `SPONSORSHIP_REQUIRED`. To let the wallet pay, set `maxFee` in sun: the quoted fee is paid if it is at most `maxFee`, or preparing fails with `FEE_LIMIT_EXCEEDED`. WaaS prices the transaction again when it executes and refuses it, with nothing sent, if the cost rose above the quote (`failed`, `FEE_ABOVE_QUOTE`). `maxFee` is part of the request, so changing it needs a new ID.
 
+**These limits apply to the quote, not to the chain.** The signed transaction carries no `maxFee`. A TRX transfer can only burn bandwidth (and the account activation fee) that the quote already priced. A contract call is capped on chain only by the fee limit WaaS seals into it, 1.2 times the estimated energy of the whole call, and the quote does not expose that limit. If the wallet's delegated resources are used up or withdrawn between the execution-time re-check and inclusion, or the call needs more energy than estimated, the wallet can burn TRX up to that limit, even on a sponsored quote.
+
 ```ts
 const callId = crypto.randomUUID(); // persist and reuse on retries
 await wallet.tron.sendContractCall(callId, {
