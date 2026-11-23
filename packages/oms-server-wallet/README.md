@@ -1,6 +1,6 @@
 # @polygonlabs/oms-server-wallet-sdk
 
-Standalone ESM TypeScript SDK targeting WaaS v1.1.0, with OIDC authentication, encrypted credential persistence, attested responses, verified message signing, and sponsored native/ERC-20 transfers. Requires Web Crypto and Fetch (Node 24+ or Workers with `nodejs_compat`). It has no dashboard, Hono, D1, or embedded wallet SDK dependency.
+Standalone ESM TypeScript SDK targeting WaaS v1.2.0, with EVM, Solana and Tron wallets, OIDC authentication, encrypted credential persistence, attested responses, verified message signing, and sponsored native/ERC-20 transfers. Requires Web Crypto and Fetch (Node 24+ or Workers with `nodejs_compat`). It has no dashboard, Hono, D1, or embedded wallet SDK dependency.
 
 ## Installation
 
@@ -153,6 +153,41 @@ const settled = await wallet.solana.getOperation(transferId); // pending, execut
 Solana and Tron operations share the store and ID space with EVM ones, so an ID can't be reused across families. `listOperations()` and `getOperation(id)` on the `ServerWallet` still return EVM operations only.
 
 `IndexerClient.getSolanaBalances(address, networks?)` returns SOL (9 decimals) and SPL/Token-2022 balances in base units, with the token program, plus per-network errors. Balances come from the indexer, not the attested enclave: use them for display and preflight checks, not as proof of funds.
+
+## Tron wallets
+
+`wallet.tron` is the identity's Tron wallet, a secp256k1 account with a Base58Check (`T…`) address on `tron:mainnet` or `tron:nile`. Tron has no relayer: a transaction spends the wallet's bandwidth and energy and burns TRX for whatever its delegated resources don't cover.
+
+**Fees are sponsored-only by default.** A transaction is sent without TRX only when delegated resources cover it; otherwise preparing it fails with `SPONSORSHIP_REQUIRED`. To let the wallet pay, set `maxFee` in sun: the quoted fee is paid if it is at most `maxFee`, or preparing fails with `FEE_LIMIT_EXCEEDED`. WaaS prices the transaction again when it executes and refuses it, with nothing sent, if the cost rose above the quote (`failed`, `FEE_ABOVE_QUOTE`). `maxFee` is part of the request, so changing it needs a new ID.
+
+```ts
+const callId = crypto.randomUUID(); // persist and reuse on retries
+await wallet.tron.sendContractCall(callId, {
+  network: 'tron:nile',
+  contract: 'TXYZopYRdj2D9XRtbG411XZZ3kM5VkAeBf',
+  method: 'transfer', // the name only; WaaS builds the signature from the argument types
+  args: [
+    { type: 'address', value: 'TJRabPrwbZy45sbavfcjinPJC18kjpRTv8' },
+    { type: 'uint256', value: '2500000' }
+  ],
+  maxFee: '30000000' // allow up to 30 TRX in fees; omit to require delegated resources
+});
+```
+
+| Method                                     | Behavior                                                            |
+| ------------------------------------------ | ------------------------------------------------------------------- |
+| `tron.prepareTransaction(id, input)`       | Quote a TRX transfer, or a call with pre-encoded `data`.            |
+| `tron.prepareContractCall(id, input)`      | Quote a contract call that WaaS ABI-encodes from typed arguments.   |
+| `tron.execute(id)`                         | Submit the stored quote once, paying the accepted fee if any.       |
+| `tron.sendTransaction(id, input)`          | Prepare and submit a transaction in one turn of the executor.       |
+| `tron.sendContractCall(id, input)`         | Prepare and submit a contract call in one turn of the executor.     |
+| `tron.signMessage(id, message)`            | Sign a TIP-191 message and verify it with WaaS.                     |
+| `tron.signTypedData(id, network, data)`    | Validate TIP-712 data for the network, sign and verify it.          |
+| `tron.getOperation(id)` / `listOperations` | As for Solana.                                                      |
+
+Omitting `data` sends TRX (`value` must be positive); any `data`, even `0x`, makes it a contract call. Amounts are in sun as decimal strings. TIP-712 data must name the network's chain ID (`TRON_CHAIN_IDS`) and a verifying contract; `T…` and hex addresses are both accepted and hash the same. Quotes last 15 minutes, and expiry is handled as for Solana.
+
+`IndexerClient.getTronBalances(address, networks?)` returns TRX (6 decimals, in sun) and TRC-20 balances, with the same caveat as other indexer balances.
 
 ## Contract calls
 

@@ -2,12 +2,14 @@ import { getAddress } from 'viem';
 import { z } from 'zod';
 
 import type { SolanaNetwork } from './solana.js';
+import type { TronNetwork } from './tron.js';
 
 import { isSolanaAddress, isTronAddress } from './addresses.js';
 import { CHAINS, environmentFromKey, requireChain } from './environment.js';
 import { WalletError } from './errors.js';
 import { SOLANA_NETWORKS } from './solana.js';
 import { boundedText } from './transport.js';
+import { TRON_NETWORKS } from './tron.js';
 
 const quantity = z.string().regex(/^[0-9]+$/);
 const rowSchema = z.object({
@@ -120,6 +122,22 @@ export class IndexerClient {
       walletAddress,
       networks,
       SOLANA_NETWORKS
+    );
+  }
+  /** TRX (6 decimals) and TRC-20 balances on the requested networks (both by default). */
+  async getTronBalances(
+    walletAddress: string,
+    networks: readonly TronNetwork[] = TRON_NETWORKS
+  ): Promise<ChainBalances> {
+    if (!isTronAddress(walletAddress))
+      throw new WalletError('INVALID_ADDRESS', 'Provide a Base58Check Tron wallet address (T…).');
+    return this.chainBalances(
+      'tron',
+      this.environment.tronIndexerUrl,
+      'webrpc@v0.31.2;gen-typescript@v0.23.1;tron-indexer-gateway@v1',
+      walletAddress,
+      networks,
+      TRON_NETWORKS
     );
   }
   private async chainBalances(

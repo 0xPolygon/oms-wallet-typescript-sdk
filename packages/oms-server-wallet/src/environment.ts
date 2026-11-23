@@ -21,6 +21,7 @@ export function environmentFromKey(key: string) {
     origin: route.apiUrl,
     indexerUrl: `${route.apiUrl}/v1/IndexerGateway/GetTokenBalancesDetails`,
     solanaIndexerUrl: `${route.apiUrl}/v1/SolanaIndexerGateway/GetTokenBalancesDetails`,
+    tronIndexerUrl: `${route.apiUrl}/v1/TronIndexerGateway/GetTokenBalancesDetails`,
     stage: route.stage,
     mode: route.mode
   };

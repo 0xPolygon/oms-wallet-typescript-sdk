@@ -36,6 +36,7 @@ import {
 } from './protocol.js';
 import { SolanaWallet } from './solana.js';
 import { readState, writeState } from './state.js';
+import { TronWallet } from './tron.js';
 import { validateTypedData } from './typed-data.js';
 
 export interface WalletSnapshot {
@@ -247,6 +248,8 @@ export function normalizeUserOperation(input: unknown): {
 export class ServerWallet {
   /** The identity's Solana wallet, sharing this instance's credential, store and executor. */
   readonly solana: SolanaWallet;
+  /** The identity's Tron wallet, sharing this instance's credential, store and executor. */
+  readonly tron: TronWallet;
   constructor(private readonly options: ServerWalletOptions) {
     if (!options.subject || options.subject.length > 128)
       throw new WalletError(
@@ -254,6 +257,7 @@ export class ServerWallet {
         'Wallet identifiers must contain 1–128 characters.'
       );
     this.solana = new SolanaWallet(this.context());
+    this.tron = new TronWallet(this.context());
   }
   private context(): WalletContext {
     const chainOperation = (op: Operation | ChainOperation | null) =>
