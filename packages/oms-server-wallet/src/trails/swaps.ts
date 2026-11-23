@@ -8,7 +8,7 @@ import type { TrailsIntent, TrailsReceipt } from './protocol.js';
 import type { SwapRequest } from './quote.js';
 import type { RecoveryRecord, SwapRecord, SwapView, WalletSwapsOptions } from './types.js';
 
-import { normalizeUserOperation } from '../client.js';
+import { normalizeUserOperation, walletExecutors } from '../client.js';
 import { sha256 } from '../encoding.js';
 import { WalletError } from '../errors.js';
 import { canonicalJson } from '../json.js';
@@ -35,6 +35,14 @@ const errorCode = (error: unknown) =>
 export class WalletSwaps {
   private readonly now: () => number;
   constructor(private readonly options: WalletSwapsOptions) {
+    // Swap methods call the wallet from inside this executor; the wallet's own executor would wait
+    // on itself forever.
+    if (walletExecutors.get(options.wallet) === options.executor)
+      throw new WalletError(
+        'CONFIGURATION',
+        "Give WalletSwaps its own executor, not the wallet's.",
+        503
+      );
     this.now = options.clock ?? Date.now;
   }
   private remote() {
@@ -104,7 +112,7 @@ export class WalletSwaps {
         );
     }
     const disabled = (await this.options.wallet.inspect()).disabled;
-    const operations = await this.options.wallet.listOperations(
+    const operations = await this.options.wallet.listOpenOperations(
       await this.options.legacyOperationIds?.()
     );
     for (let operation of operations) {
@@ -139,7 +147,7 @@ export class WalletSwaps {
   executeTransfer(id: string) {
     return this.options.executor.run(async () => {
       idSchema.parse(id);
-      const op = (await this.options.wallet.listOperations([id])).find((o) => o.id === id);
+      const op = (await this.options.wallet.readOperations([id])).find((o) => o.id === id);
       if (!op || op.kind !== 'transfer')
         throw new WalletError('NOT_FOUND', 'Transfer not found.', 404);
       if (op.status === 'quoted') await this.available(op.chainId, undefined, [id]);
@@ -156,7 +164,7 @@ export class WalletSwaps {
       idSchema.parse(id);
       // A retry of an existing operation returns it, or raises a conflict, without submitting;
       // executeUserOperation checks the chain again while it is still quoted.
-      const existing = (await this.options.wallet.listOperations([id])).some((o) => o.id === id);
+      const existing = (await this.options.wallet.readOperations([id])).some((o) => o.id === id);
       if (!existing) await this.available(chainId, undefined, [id]);
       return this.options.wallet.prepareUserOperation(id, { chainId, calls: [transaction] });
     });
@@ -164,7 +172,7 @@ export class WalletSwaps {
   executeUserOperation(id: string) {
     return this.options.executor.run(async () => {
       idSchema.parse(id);
-      const op = (await this.options.wallet.listOperations([id])).find((o) => o.id === id);
+      const op = (await this.options.wallet.readOperations([id])).find((o) => o.id === id);
       if (!op || op.kind !== 'userOperation')
         throw new WalletError('NOT_FOUND', 'User operation not found.', 404);
       if (op.status === 'quoted') await this.available(op.chainId, undefined, [id]);
@@ -329,7 +337,7 @@ export class WalletSwaps {
       // Never expire or release a debit using a cached, pre-submission child snapshot.
       if (['prepare-funding', 'activate', 'fund'].includes(record.action ?? '')) {
         record.funding =
-          (await this.options.wallet.listOperations([record.fundingId])).find(
+          (await this.options.wallet.readOperations([record.fundingId])).find(
             (op) => op.id === record.fundingId
           ) ?? record.funding;
         if (uncertain(record.funding) || record.funding?.status === 'executed')
@@ -337,7 +345,7 @@ export class WalletSwaps {
       }
       const recovery = this.currentRecovery(record, false);
       if (recovery) {
-        const children = await this.options.wallet.listOperations([
+        const children = await this.options.wallet.readOperations([
           recovery.deploymentId,
           recovery.transactionId
         ]);
@@ -536,7 +544,7 @@ export class WalletSwaps {
   private async fund(record: SwapRecord) {
     const disabled = (await this.options.wallet.inspect()).disabled;
     record.funding = disabled
-      ? (await this.options.wallet.listOperations([record.fundingId])).find(
+      ? (await this.options.wallet.readOperations([record.fundingId])).find(
           (op) => op.id === record.fundingId
         )
       : ((await this.options.wallet.getOperation(record.fundingId)) ?? record.funding);
@@ -690,7 +698,7 @@ export class WalletSwaps {
   }
   private async recoveryAllowed(record: SwapRecord) {
     record.funding =
-      (await this.options.wallet.listOperations([record.fundingId])).find(
+      (await this.options.wallet.readOperations([record.fundingId])).find(
         (op) => op.id === record.fundingId
       ) ?? record.funding;
     if (uncertain(record.funding))
@@ -873,7 +881,7 @@ export class WalletSwaps {
     }
     await this.enabled(true);
     recovery.deployment =
-      (await this.options.wallet.listOperations([recovery.deploymentId])).find(
+      (await this.options.wallet.readOperations([recovery.deploymentId])).find(
         (op) => op.id === recovery.deploymentId
       ) ?? recovery.deployment;
     if (!uncertain(recovery.deployment) && recovery.deployment?.status !== 'executed') {

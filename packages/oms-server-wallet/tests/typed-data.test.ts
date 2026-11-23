@@ -121,7 +121,8 @@ describe('WaaS typed-data signing', () => {
       code: 'SIGNATURE_INVALID'
     });
     expect(await h.create().signTypedData('typed-invalid', 137, typedData)).toMatchObject({
-      status: 'unknown'
+      status: 'failed',
+      error: 'SIGNATURE_INVALID'
     });
     expect(await h.client.getOperation('typed-invalid')).not.toHaveProperty('signature');
     expect(h.remote.calls.filter((c) => c.method === 'SignTypedData')).toHaveLength(1);

@@ -6,7 +6,7 @@ import type {
   Hex
 } from 'viem';
 
-import { encodeFunctionData, getAddress, isAddress, isHex, parseUnits } from 'viem';
+import { encodeFunctionData, erc20Abi, getAddress, isAddress, isHex, parseUnits } from 'viem';
 import { z } from 'zod';
 
 import type { RecoveryTransaction } from './authorization.js';
@@ -34,6 +34,7 @@ import {
   walletFamily,
   walletSchema
 } from './protocol.js';
+import { refreshStatus, settleExecuteError } from './settlement.js';
 import { SolanaWallet } from './solana.js';
 import { readState, writeState } from './state.js';
 import { TronWallet } from './tron.js';
@@ -69,7 +70,9 @@ export interface Operation {
     | 'executed'
     | 'failed'
     | 'unknown'
-    | 'signed';
+    | 'signed'
+    /** The quote expired before anything was broadcast. Prepare again under a new ID. */
+    | 'expired';
   chainId: number;
   transfer?: Transfer;
   transaction?: { to: string; data: string; value: string };
@@ -244,6 +247,21 @@ export function normalizeUserOperation(input: unknown): {
   return { chainId, transaction: encodeCall(calls[0]) };
 }
 
+/** Operation statuses that can still change: an operation in one of them is not settled. */
+const OPEN_STATUSES: readonly string[] = [
+  'preparing',
+  'quoted',
+  'submitting',
+  'pending',
+  'unknown'
+];
+
+/**
+ * Each wallet's executor, kept out of the public API so other parts of this package can refuse to
+ * share it: a caller that runs a wallet method inside the same executor waits on itself forever.
+ */
+export const walletExecutors = new WeakMap<ServerWallet, ExclusiveExecutor>();
+
 /** One instance represents one OIDC identity and one EVM wallet. */
 export class ServerWallet {
   /** The identity's Solana wallet, sharing this instance's credential, store and executor. */
@@ -256,6 +274,7 @@ export class ServerWallet {
         'INVALID_IDENTITY',
         'Wallet identifiers must contain 1–128 characters.'
       );
+    walletExecutors.set(this, options.executor);
     this.solana = new SolanaWallet(this.context());
     this.tron = new TronWallet(this.context());
   }
@@ -580,6 +599,54 @@ export class ServerWallet {
     if (!ids.includes(op.id))
       await this.options.store.write('operationIndex', JSON.stringify([...ids, op.id]));
     await this.options.store.write(`operation:${op.id}`, JSON.stringify(op));
+    // Kept only once built from the full index (see openOperationIds), so it never misses one.
+    const open = await this.options.store.read('openOperationIndex');
+    if (open === null) return;
+    const openIds: string[] = JSON.parse(open);
+    const isOpen = OPEN_STATUSES.includes(op.status);
+    if (isOpen !== openIds.includes(op.id))
+      await this.options.store.write(
+        'openOperationIndex',
+        JSON.stringify(isOpen ? [...openIds, op.id] : openIds.filter((entry) => entry !== op.id))
+      );
+  }
+  /** IDs of operations not yet settled, building the index from all operations on first use. */
+  private async openOperationIds(): Promise<string[]> {
+    const open = await this.options.store.read('openOperationIndex');
+    if (open !== null) return JSON.parse(open) as string[];
+    const ids: string[] = JSON.parse((await this.options.store.read('operationIndex')) ?? '[]');
+    const openIds: string[] = [];
+    for (const id of ids) {
+      const op = await this.readOperation(id);
+      if (op && OPEN_STATUSES.includes(op.status)) openIds.push(id);
+    }
+    await this.options.store.write('openOperationIndex', JSON.stringify(openIds));
+    return openIds;
+  }
+  /**
+   * Stored EVM operations not yet settled (preparing, quoted, submitting, pending or unknown),
+   * including imported legacy IDs, without authenticating or polling. Reads only open operations.
+   */
+  listOpenOperations(legacyIds: readonly string[] = []): Promise<Operation[]> {
+    return this.options.executor.run(async () => {
+      const operations: Operation[] = [];
+      for (const id of new Set([...(await this.openOperationIds()), ...legacyIds])) {
+        const op = await this.readEvmOperation(id);
+        if (op && OPEN_STATUSES.includes(op.status)) operations.push(op);
+      }
+      return operations;
+    });
+  }
+  /** The stored EVM operations with these IDs, without authenticating or polling. */
+  readOperations(ids: readonly string[]): Promise<Operation[]> {
+    return this.options.executor.run(async () => {
+      const operations: Operation[] = [];
+      for (const id of new Set(ids)) {
+        const op = await this.readEvmOperation(id);
+        if (op) operations.push(op);
+      }
+      return operations;
+    });
   }
   /** Includes imported legacy IDs. Reads persisted status without authenticating or polling. */
   listOperations(legacyIds: readonly string[] = []): Promise<Operation[]> {
@@ -616,19 +683,22 @@ export class ServerWallet {
         'An operation ID of 8–100 letters, digits, underscores or hyphens is required.'
       );
     const hash = await sha256(JSON.stringify(input));
-    const operation = await this.readOperation(id);
+    const stored = await this.readOperation(id);
     if (
-      operation &&
-      (operation.inputHash !== hash ||
-        operation.kind !== kind ||
-        ('family' in operation ? operation.family : 'evm') !== family)
+      stored &&
+      (stored.inputHash !== hash ||
+        stored.kind !== kind ||
+        ('family' in stored ? stored.family : 'evm') !== family)
     )
       throw new WalletError(
         'IDEMPOTENCY_CONFLICT',
         'This operation ID was already used with different input.',
         409
       );
-    return { operation, hash };
+    // A preparation interrupted before its quote was stored sent nothing that can move funds: run
+    // it again under the same ID instead of returning it stuck. Signing attempts are never re-run.
+    const interrupted = stored?.status === 'preparing';
+    return { operation: interrupted ? null : stored, hash };
   }
   prepareTransfer(id: string, input: Transfer): Promise<Operation> {
     return this.options.executor.run(async () => {
@@ -662,49 +732,25 @@ export class ServerWallet {
         status: 'preparing',
         transfer
       };
-      await this.writeOperation(op);
       const native = transfer.asset === 'native';
-      const data = native
-        ? undefined
-        : encodeFunctionData({
-            abi: [
-              {
-                type: 'function',
-                name: 'transfer',
-                inputs: [{ type: 'address' }, { type: 'uint256' }],
-                outputs: [{ type: 'bool' }],
-                stateMutability: 'nonpayable'
-              }
-            ],
-            functionName: 'transfer',
-            args: [getAddress(transfer.to), BigInt(transfer.amount)]
-          });
-      try {
-        op.quote = quoteSchema.parse(
-          await this.activeCall(state, 'PrepareEthereumTransaction', {
-            network: String(transfer.chainId),
-            walletId: state.wallets.evm!.id,
-            to: native ? transfer.to : transfer.asset,
-            value: native ? transfer.amount : '0',
-            ...(data ? { data } : {}),
-            mode: 'relayer'
-          })
-        );
-        if (!op.quote.sponsored)
-          throw new WalletError(
-            'SPONSORSHIP_REQUIRED',
-            'This transfer is not sponsored. Enable gas sponsorship for this project/network.',
-            409
-          );
-        op.status = 'quoted';
-        await this.writeOperation(op);
-        return op;
-      } catch (error) {
-        op.status = 'failed';
-        op.error = error instanceof WalletError ? error.code : 'PREPARATION_FAILED';
-        await this.writeOperation(op);
-        throw error;
-      }
+      return this.quote(
+        op,
+        state,
+        {
+          to: native ? transfer.to : transfer.asset,
+          value: native ? transfer.amount : '0',
+          ...(native
+            ? {}
+            : {
+                data: encodeFunctionData({
+                  abi: erc20Abi,
+                  functionName: 'transfer',
+                  args: [getAddress(transfer.to), BigInt(transfer.amount)]
+                })
+              })
+        },
+        'This transfer is not sponsored. Enable gas sponsorship for this project/network.'
+      );
     });
   }
   /**
@@ -736,31 +782,12 @@ export class ServerWallet {
         status: 'preparing',
         transaction
       };
-      await this.writeOperation(op);
-      try {
-        op.quote = quoteSchema.parse(
-          await this.activeCall(state, 'PrepareEthereumTransaction', {
-            network: String(chainId),
-            walletId: state.wallets.evm!.id,
-            ...transaction,
-            mode: 'relayer'
-          })
-        );
-        if (!op.quote.sponsored)
-          throw new WalletError(
-            'SPONSORSHIP_REQUIRED',
-            'This call is not sponsored. Enable gas sponsorship for this project/network.',
-            409
-          );
-        op.status = 'quoted';
-        await this.writeOperation(op);
-        return op;
-      } catch (error) {
-        op.status = 'failed';
-        op.error = error instanceof WalletError ? error.code : 'PREPARATION_FAILED';
-        await this.writeOperation(op);
-        throw error;
-      }
+      return this.quote(
+        op,
+        state,
+        transaction,
+        'This call is not sponsored. Enable gas sponsorship for this project/network.'
+      );
     });
   }
   executeUserOperation(id: string): Promise<Operation> {
@@ -792,21 +819,25 @@ export class ServerWallet {
       if (op.status !== 'quoted') return this.refresh(op);
       if (!op.quote?.sponsored)
         throw new WalletError('SPONSORSHIP_REQUIRED', 'Transfer requires gas sponsorship.', 409);
-      if (Date.parse(op.quote.expiresAt) <= Date.now())
+      if (Date.parse(op.quote.expiresAt) <= Date.now()) {
+        op.status = 'expired';
+        op.error = 'TRANSACTION_EXPIRED';
+        await this.writeOperation(op);
         throw new WalletError('QUOTE_EXPIRED', 'The quote expired. Prepare a new transfer.', 409);
+      }
       const state = await this.load();
       await this.ensure(state, ['evm']);
       op.status = 'submitting';
       await this.writeOperation(op);
+      const quote = op.quote;
       try {
         const result = statusSchema.parse(
-          await this.activeCall(state, 'Execute', { txnId: op.quote.txnId })
+          await this.activeCall(state, 'Execute', { txnId: quote.txnId })
         );
         op.status = result.status === 'quoted' ? 'unknown' : result.status;
         op.txnHash = result.txnHash;
-      } catch {
-        op.status = 'unknown';
-        op.error = 'SUBMISSION_UNCERTAIN';
+      } catch (error) {
+        await settleExecuteError(op, error, () => this.transactionStatus(state, quote.txnId));
       }
       await this.writeOperation(op);
       return op;
@@ -820,14 +851,13 @@ export class ServerWallet {
     )
       return op;
     const state = await this.load();
-    const result = statusSchema.parse(
-      await this.activeCall(state, 'TransactionStatus', { txnId: op.quote.txnId })
-    );
-    // An ambiguous Execute is never automatically retried, even when status still says quoted.
-    op.status = result.status === 'quoted' ? 'unknown' : result.status;
-    op.txnHash = result.txnHash;
+    const txnId = op.quote.txnId;
+    await refreshStatus(op, () => this.transactionStatus(state, txnId));
     await this.writeOperation(op);
     return op;
+  }
+  private async transactionStatus(state: State, txnId: string) {
+    return statusSchema.parse(await this.activeCall(state, 'TransactionStatus', { txnId }));
   }
   /** EVM operations only; see `solana.getOperation` for Solana ones. */
   getOperation(id: string): Promise<Operation | null> {
@@ -870,31 +900,7 @@ export class ServerWallet {
         status: 'preparing',
         createdAt: new Date().toISOString()
       };
-      await this.writeOperation(op);
-      try {
-        op.quote = quoteSchema.parse(
-          await this.activeCall(state, 'PrepareEthereumTransaction', {
-            network: String(chainId),
-            walletId: state.wallets.evm!.id,
-            ...call,
-            mode: 'relayer'
-          })
-        );
-        if (!op.quote.sponsored)
-          throw new WalletError(
-            'SPONSORSHIP_REQUIRED',
-            'Recovery and deployment require gas sponsorship.',
-            409
-          );
-        op.status = 'quoted';
-        await this.writeOperation(op);
-        return op;
-      } catch (error) {
-        op.status = 'failed';
-        op.error = error instanceof WalletError ? error.code : 'PREPARATION_FAILED';
-        await this.writeOperation(op);
-        throw error;
-      }
+      return this.quote(op, state, call, 'Recovery and deployment require gas sponsorship.');
     });
   }
   signMessage(id: string, chainId: number, message: string): Promise<Operation> {
@@ -915,33 +921,25 @@ export class ServerWallet {
         status: 'unknown'
       };
       await this.writeOperation(op);
-      const result = signatureSchema.parse(
-        await this.activeCall(state, 'SignMessage', {
-          network: String(chainId),
-          walletId: state.wallets.evm!.id,
-          message
-        })
-      );
-      const validity = validSchema.parse(
-        await this.options.transport.request('IsValidMessageSignature', {
-          network: String(chainId),
-          networkFamily: 'evm',
-          walletAddress: state.wallets.evm!.address,
-          message,
-          signature: result.signature
-        })
-      );
-      if (!validity.isValid)
-        throw new WalletError(
-          'SIGNATURE_INVALID',
-          'WaaS returned a signature that did not verify.',
-          502
+      return this.recordSignature(op, async () => {
+        const result = signatureSchema.parse(
+          await this.activeCall(state, 'SignMessage', {
+            network: String(chainId),
+            walletId: state.wallets.evm!.id,
+            message
+          })
         );
-      op.signature = result.signature;
-      op.verified = true;
-      op.status = 'signed';
-      await this.writeOperation(op);
-      return op;
+        const validity = validSchema.parse(
+          await this.options.transport.request('IsValidMessageSignature', {
+            network: String(chainId),
+            networkFamily: 'evm',
+            walletAddress: state.wallets.evm!.address,
+            message,
+            signature: result.signature
+          })
+        );
+        return { signature: result.signature, valid: validity.isValid };
+      });
     });
   }
   /** Backend EIP-712 primitive. Callers must validate the authorization's semantics first. */
@@ -962,22 +960,68 @@ export class ServerWallet {
         status: 'unknown'
       };
       await this.writeOperation(op);
-      const { signature } = signatureSchema.parse(
-        await this.activeCall(state, 'SignTypedData', {
-          network: String(chainId),
+      return this.recordSignature(op, async () => {
+        const { signature } = signatureSchema.parse(
+          await this.activeCall(state, 'SignTypedData', {
+            network: String(chainId),
+            walletId: state.wallets.evm!.id,
+            typedData
+          })
+        );
+        const { isValid } = validSchema.parse(
+          await this.options.transport.request('IsValidTypedDataSignature', {
+            network: String(chainId),
+            walletAddress: state.wallets.evm!.address,
+            typedData,
+            signature
+          })
+        );
+        return { signature, valid: isValid };
+      });
+    });
+  }
+  /**
+   * Store a new EVM operation and quote its sponsored relayer transaction. A failed or
+   * unsponsored quote is recorded as failed with its error code.
+   */
+  private async quote(
+    op: Operation,
+    state: State,
+    call: { to: string; value: string; data?: string },
+    unsponsored: string
+  ): Promise<Operation> {
+    await this.writeOperation(op);
+    try {
+      op.quote = quoteSchema.parse(
+        await this.activeCall(state, 'PrepareEthereumTransaction', {
+          network: String(op.chainId),
           walletId: state.wallets.evm!.id,
-          typedData
+          ...call,
+          mode: 'relayer'
         })
       );
-      const { isValid } = validSchema.parse(
-        await this.options.transport.request('IsValidTypedDataSignature', {
-          network: String(chainId),
-          walletAddress: state.wallets.evm!.address,
-          typedData,
-          signature
-        })
-      );
-      if (!isValid)
+      if (!op.quote.sponsored) throw new WalletError('SPONSORSHIP_REQUIRED', unsponsored, 409);
+      op.status = 'quoted';
+      await this.writeOperation(op);
+      return op;
+    } catch (error) {
+      op.status = 'failed';
+      op.error = error instanceof WalletError ? error.code : 'PREPARATION_FAILED';
+      await this.writeOperation(op);
+      throw error;
+    }
+  }
+  /**
+   * Sign, check the signature with WaaS, and record the outcome. A failed attempt is recorded as
+   * failed with its error code; signing again needs a new ID, as for Solana and Tron.
+   */
+  private async recordSignature(
+    op: Operation,
+    sign: () => Promise<{ signature: string; valid: boolean }>
+  ): Promise<Operation> {
+    try {
+      const { signature, valid } = await sign();
+      if (!valid)
         throw new WalletError(
           'SIGNATURE_INVALID',
           'WaaS returned a signature that did not verify.',
@@ -986,8 +1030,13 @@ export class ServerWallet {
       op.signature = signature;
       op.verified = true;
       op.status = 'signed';
+    } catch (error) {
+      op.status = 'failed';
+      op.error = error instanceof WalletError ? error.code : 'SIGNING_FAILED';
       await this.writeOperation(op);
-      return op;
-    });
+      throw error;
+    }
+    await this.writeOperation(op);
+    return op;
   }
 }

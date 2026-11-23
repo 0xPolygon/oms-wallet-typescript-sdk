@@ -52,6 +52,10 @@ export class FakeWaas implements RpcTransport {
   sponsored = true;
   failCreate = false;
   failExecute = false;
+  /** Refuse the next EVM Execute with this code, before claiming the transaction. */
+  evmExecuteRefusal: number | undefined;
+  /** Answer EVM TransactionStatus with this error code. */
+  evmStatusError: number | undefined;
   failRevoke = false;
   expiredOnce = false;
   txnStatus = 'quoted';
@@ -168,10 +172,17 @@ export class FakeWaas implements RpcTransport {
         expiresAt: new Date(Date.now() + 60_000).toISOString()
       };
     if (method === 'Execute') {
+      if (this.evmExecuteRefusal) {
+        const code = this.evmExecuteRefusal;
+        this.evmExecuteRefusal = undefined;
+        throw new UpstreamError(code, method);
+      }
       this.txnStatus = 'pending';
       if (this.failExecute) throw new Error('Lost execute response');
       return { status: this.txnStatus };
     }
+    if (method === 'TransactionStatus' && this.evmStatusError)
+      throw new UpstreamError(this.evmStatusError, method);
     if (method === 'TransactionStatus')
       return {
         status: this.txnStatus,
