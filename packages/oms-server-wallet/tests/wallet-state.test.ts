@@ -9,7 +9,7 @@ import {
   type StateStore
 } from '@polygonlabs/oms-server-wallet-sdk';
 
-import { chainQuoteSchema, walletFamily } from '../src/protocol.js';
+import { chainQuoteSchema, isWalletAddress, walletFamily } from '../src/protocol.js';
 import { FakeWaas, MemoryStore, SOLANA_ADDRESS, TRON_ADDRESS, sdkHarness } from './helpers.js';
 
 /** A store left by the published 0.2.0 package; see fixtures/record-state-0.2.0.mjs. */
@@ -118,7 +118,18 @@ describe('state migration from 0.2.x and 0.3.x', () => {
         creating: []
       })
     ],
-    ['a malformed credential', JSON.stringify({ credential: { id: '0x04', nonce: 'x' } })]
+    ['a malformed credential', JSON.stringify({ credential: { id: '0x04', nonce: 'x' } })],
+    ['an unrelated record', JSON.stringify({ unrelated: 'unrecognised record' })],
+    ['an empty object', '{}'],
+    ['a legacy record missing its flags', JSON.stringify({ disabled: false })],
+    [
+      'a legacy record with unknown fields',
+      JSON.stringify({ disabled: false, creating: false, wallets: {} })
+    ],
+    [
+      'a current record with unknown fields',
+      JSON.stringify({ version: 2, wallets: {}, disabled: false, creating: [], extra: 1 })
+    ]
   ])('fails closed on %s without contacting WaaS', async (_, value) => {
     const h = sdkHarness();
     await h.store.write('wallet', value);
@@ -219,6 +230,41 @@ describe('one wallet per network family', () => {
     state.credential.expiresAt = new Date(0).toISOString();
     await h.store.write('wallet', JSON.stringify(state));
     await expect(h.client.createOrRestore()).rejects.toMatchObject({ code: 'WALLET_MISMATCH' });
+  });
+  it('compares Solana addresses exactly, in discovery and binding', async () => {
+    // Tron addresses carry a checksum, so no case variant of one is valid.
+    const family = 'solana';
+    // A different, still valid, address that differs from the original only in case.
+    const swapCase = (address: string) => {
+      for (let i = 0; i < address.length; i++) {
+        const char = address[i];
+        const other = char === char.toLowerCase() ? char.toUpperCase() : char.toLowerCase();
+        const swapped = address.slice(0, i) + other + address.slice(i + 1);
+        if (other !== char && isWalletAddress(family, swapped)) return swapped;
+      }
+      throw new Error(`No case variant of ${address} is a ${family} address`);
+    };
+    // A listed wallet whose address differs from the stored one only in case.
+    const listed = sdkHarness();
+    const created = await listed.client.createOrRestore({ families: [family] });
+    const wallet = listed.remote.others.find((entry) => entry.networkFamily === family)!;
+    wallet.address = swapCase(wallet.address);
+    await expect(listed.client.rotate()).rejects.toMatchObject({ code: 'WALLET_MISMATCH' });
+    expect((await listed.client.inspect()).wallets).toEqual(created.wallets);
+
+    // A binding response that differs from the listed wallet only in case.
+    const bound = sdkHarness();
+    const request = bound.remote.request.bind(bound.remote);
+    bound.remote.request = async (method, body, credential) => {
+      const response = (await request(method, body, credential)) as {
+        wallet?: { address: string };
+      };
+      if (method === 'UseWallet' && response.wallet)
+        return { wallet: { ...response.wallet, address: swapCase(response.wallet.address) } };
+      return response;
+    };
+    await bound.client.createOrRestore({ families: [family] });
+    await expect(bound.client.rotate()).rejects.toMatchObject({ code: 'WALLET_MISMATCH' });
   });
   it('settles an uncertain create of one family without duplicating it', async () => {
     const h = sdkHarness();

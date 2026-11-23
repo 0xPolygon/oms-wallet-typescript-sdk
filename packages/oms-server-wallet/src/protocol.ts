@@ -33,6 +33,10 @@ export function isWalletAddress(family: NetworkFamily, address: string): boolean
   if (family === 'tron') return isTronAddress(address);
   return /^0x[0-9a-fA-F]{40}$/.test(address);
 }
+/** EVM addresses compare case-insensitively; base58 Solana and Tron addresses only exactly. */
+export function sameAddress(family: NetworkFamily, a: string, b: string): boolean {
+  return family === 'evm' ? a.toLowerCase() === b.toLowerCase() : a === b;
+}
 /** The family of a listed wallet, or undefined for a family this SDK does not use. */
 export function walletFamily(wallet: RemoteWallet): NetworkFamily | undefined {
   const byFamily = NETWORK_FAMILIES.find((family) => family === wallet.networkFamily);

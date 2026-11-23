@@ -28,6 +28,7 @@ import {
   listSchema,
   NETWORK_FAMILIES,
   quoteSchema,
+  sameAddress,
   statusSchema,
   walletFamily,
   walletSchema
@@ -455,8 +456,7 @@ export class ServerWallet {
         (stored &&
           !found.some(
             (wallet) =>
-              wallet.id === stored.id &&
-              wallet.address.toLowerCase() === stored.address.toLowerCase()
+              wallet.id === stored.id && sameAddress(family, wallet.address, stored.address)
           ))
       )
         throw new WalletError(
@@ -472,7 +472,7 @@ export class ServerWallet {
       );
       if (
         bound.id !== found[0].id ||
-        bound.address.toLowerCase() !== found[0].address.toLowerCase() ||
+        !sameAddress(family, bound.address, found[0].address) ||
         !isWalletAddress(family, bound.address)
       )
         throw new WalletError(

@@ -31,13 +31,14 @@ const credentialSchema = z.object({
   nonce: z.string().regex(/^[0-9]{1,30}$/),
   expiresAt: z.string().optional()
 });
-const legacySchema = z.object({
+/** 0.2.x and 0.3.x always wrote both flags, so a record without them is not theirs. */
+const legacySchema = z.strictObject({
   wallet: storedWallet('evm').optional(),
   credential: credentialSchema.optional(),
-  disabled: z.boolean().default(false),
-  creating: z.boolean().default(false)
+  disabled: z.boolean(),
+  creating: z.boolean()
 });
-const stateSchema = z.object({
+const stateSchema = z.strictObject({
   version: z.literal(2),
   wallets: z.object({
     evm: storedWallet('evm').optional(),
