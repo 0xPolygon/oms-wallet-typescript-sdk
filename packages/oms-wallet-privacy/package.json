@@ -1,6 +1,6 @@
 {
   "name": "@polygonlabs/oms-wallet-privacy",
-  "version": "0.5.0",
+  "version": "0.5.1",
   "description": "Private balances for OMS Wallet: shield, unshield and private send.",
   "license": "Apache-2.0",
   "type": "module",

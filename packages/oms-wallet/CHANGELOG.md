@@ -1,5 +1,19 @@
 # @polygonlabs/oms-wallet
 
+## 0.5.1
+
+### Patch Changes
+
+- [#121](https://github.com/0xPolygon/oms-wallet-typescript-sdk/pull/121) [`b91320a`](https://github.com/0xPolygon/oms-wallet-typescript-sdk/commit/b91320a98cda58dc3eb09644ab74c9c0d8c099b0) Thanks [@tolgahan-arikan](https://github.com/tolgahan-arikan)! - Enclave attestation now accepts the `Sequence/2` format alongside `Sequence/1`.
+  
+  - A `Sequence/2` attestation also binds the request's `OMS-Wallet-Signature` header, so a response proves which credential signed the request the enclave answered. Both SDKs verify it against the header they sent.
+  - Unknown attestation formats are rejected.
+  - Upgrade before WaaS switches to `Sequence/2`: earlier versions reject those responses (`@polygonlabs/oms-wallet` during wallet import; `@polygonlabs/oms-server-wallet-sdk` on every request).
+
+- [#121](https://github.com/0xPolygon/oms-wallet-typescript-sdk/pull/121) [`b91320a`](https://github.com/0xPolygon/oms-wallet-typescript-sdk/commit/b91320a98cda58dc3eb09644ab74c9c0d8c099b0) Thanks [@tolgahan-arikan](https://github.com/tolgahan-arikan)! - Publishable keys are checked more strictly: the project part must be letters and digits, and the secret part letters, digits and `-`. Other characters now fail with `Invalid publishableKey.` instead of reaching request headers.
+
+- [#121](https://github.com/0xPolygon/oms-wallet-typescript-sdk/pull/121) [`b91320a`](https://github.com/0xPolygon/oms-wallet-typescript-sdk/commit/b91320a98cda58dc3eb09644ab74c9c0d8c099b0) Thanks [@tolgahan-arikan](https://github.com/tolgahan-arikan)! - Updates `@peculiar/x509` to 2.x and `cbor-x` to 1.6.6, the versions the server wallet SDK uses for attestation.
+
 ## 0.5.0
 
 ### Minor Changes

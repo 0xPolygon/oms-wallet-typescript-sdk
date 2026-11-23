@@ -1,5 +1,28 @@
 # Changelog
 
+## 0.4.0
+
+### Minor Changes
+
+- [#121](https://github.com/0xPolygon/oms-wallet-typescript-sdk/pull/121) [`b91320a`](https://github.com/0xPolygon/oms-wallet-typescript-sdk/commit/b91320a98cda58dc3eb09644ab74c9c0d8c099b0) Thanks [@tolgahan-arikan](https://github.com/tolgahan-arikan)! - Keep one wallet per network family (`evm`, `solana`, `tron`) and add `createOrRestore({ families })`. `WalletSnapshot.wallets` lists them; `WalletSnapshot.wallet` is still the EVM wallet, and EVM methods are unchanged. Wallet state from 0.2.x and 0.3.x is migrated on first load, and state in neither format fails with `INVALID_STATE`. Wallet responses are read with the WaaS v1.2.0 shapes, including fee options.
+
+- [#121](https://github.com/0xPolygon/oms-wallet-typescript-sdk/pull/121) [`b91320a`](https://github.com/0xPolygon/oms-wallet-typescript-sdk/commit/b91320a98cda58dc3eb09644ab74c9c0d8c099b0) Thanks [@tolgahan-arikan](https://github.com/tolgahan-arikan)! - Add Solana wallets as `wallet.solana`: sponsored SOL, SPL and Token-2022 transfers (`prepareTransfer`, `executeTransfer`, `sendTransfer`), verified off-chain message signing, and `IndexerClient.getSolanaBalances`. Solana quotes last about a minute; an expired quote fails with `TRANSACTION_EXPIRED` and an operation whose Execute was already called stays `unknown` until WaaS shows its claim or, two minutes past expiry, still reports it unclaimed.
+
+- [#121](https://github.com/0xPolygon/oms-wallet-typescript-sdk/pull/121) [`b91320a`](https://github.com/0xPolygon/oms-wallet-typescript-sdk/commit/b91320a98cda58dc3eb09644ab74c9c0d8c099b0) Thanks [@tolgahan-arikan](https://github.com/tolgahan-arikan)! - Add Tron wallets as `wallet.tron`: TRX transfers, raw and ABI contract calls, verified TIP-191 and TIP-712 signing, and `IndexerClient.getTronBalances`. Transactions are sent only when the wallet's delegated resources cover them, unless the caller sets `maxFee` in sun to let the wallet pay a quoted TRX fee up to that amount. Both limits apply to the quote and WaaS's execution-time re-check; on chain a contract call is bounded only by the fee limit WaaS seals into it.
+
+### Patch Changes
+
+- [#121](https://github.com/0xPolygon/oms-wallet-typescript-sdk/pull/121) [`b91320a`](https://github.com/0xPolygon/oms-wallet-typescript-sdk/commit/b91320a98cda58dc3eb09644ab74c9c0d8c099b0) Thanks [@tolgahan-arikan](https://github.com/tolgahan-arikan)! - Enclave attestation now accepts the `Sequence/2` format alongside `Sequence/1`.
+  
+  - A `Sequence/2` attestation also binds the request's `OMS-Wallet-Signature` header, so a response proves which credential signed the request the enclave answered. Both SDKs verify it against the header they sent.
+  - Unknown attestation formats are rejected.
+  - Upgrade before WaaS switches to `Sequence/2`: earlier versions reject those responses (`@polygonlabs/oms-wallet` during wallet import; `@polygonlabs/oms-server-wallet-sdk` on every request).
+
+- [#121](https://github.com/0xPolygon/oms-wallet-typescript-sdk/pull/121) [`b91320a`](https://github.com/0xPolygon/oms-wallet-typescript-sdk/commit/b91320a98cda58dc3eb09644ab74c9c0d8c099b0) Thanks [@tolgahan-arikan](https://github.com/tolgahan-arikan)! - The server wallet SDK now supports Node.js 22 and later (previously 24 and later).
+  
+  - Source, issues and releases move to [`0xPolygon/oms-wallet-typescript-sdk`](https://github.com/0xPolygon/oms-wallet-typescript-sdk) under `packages/oms-server-wallet`.
+  - Updates `@0xsequence/wallet-primitives` to 3.0.15 and `viem` to 2.57.3.
+
 ## 0.3.0
 
 ### Minor Changes
