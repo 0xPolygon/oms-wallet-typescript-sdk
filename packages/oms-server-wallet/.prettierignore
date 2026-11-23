@@ -1,0 +1,6 @@
+# Prettier does not format md files — markdownlint owns those.
+*.md
+dist/
+coverage/
+.data/
+pnpm-lock.yaml

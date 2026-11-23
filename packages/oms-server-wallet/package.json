@@ -1,0 +1,93 @@
+{
+  "name": "@polygonlabs/oms-server-wallet-sdk",
+  "version": "0.3.0",
+  "description": "Standalone TypeScript SDK for attested OMS server wallets, sponsored transfers, and durable Trails swaps and recovery.",
+  "license": "Apache-2.0",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/0xPolygon/oms-server-wallet-sdk.git"
+  },
+  "homepage": "https://github.com/0xPolygon/oms-server-wallet-sdk#readme",
+  "bugs": {
+    "url": "https://github.com/0xPolygon/oms-server-wallet-sdk/issues"
+  },
+  "keywords": [
+    "polygon",
+    "oms",
+    "wallet",
+    "waas",
+    "oidc",
+    "typescript"
+  ],
+  "engines": {
+    "node": ">=24"
+  },
+  "packageManager": "pnpm@11.27.0",
+  "publishConfig": {
+    "access": "public",
+    "registry": "https://registry.npmjs.org/"
+  },
+  "type": "module",
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "files": [
+    "dist",
+    "NOTICE",
+    "LICENSE-APACHE-2.0",
+    "CHANGELOG.md"
+  ],
+  "exports": {
+    "./trails": {
+      "types": "./dist/trails/index.d.ts",
+      "import": "./dist/trails/index.js"
+    },
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
+    }
+  },
+  "scripts": {
+    "clean": "rm -rf dist",
+    "build": "pnpm clean && tsc -p tsconfig.build.json",
+    "typecheck": "tsc -p tsconfig.json",
+    "test": "vitest run && pnpm run test:release",
+    "test:coverage": "vitest run --coverage",
+    "test:package": "node --import tsx scripts/check-package.ts",
+    "check:exports": "pnpm build && publint",
+    "lint": "concurrently --group --prefix-colors auto 'pnpm:lint:md' 'pnpm:lint:ts' 'prettier --check .'",
+    "lint:ts": "eslint .",
+    "lint:md": "markdownlint-cli2 \"**/*.md\"",
+    "format": "markdownlint-cli2 --fix \"**/*.md\" && eslint . --fix && prettier --write .",
+    "prepack": "pnpm build",
+    "prepare": "husky",
+    "test:release": "node --test scripts/*.test.mjs",
+    "ci:stage-release": "node scripts/stage-npm-package.mjs"
+  },
+  "dependencies": {
+    "@0xsequence/wallet-primitives": "3.0.11",
+    "@peculiar/x509": "2.0.0",
+    "cbor-x": "1.6.6",
+    "reflect-metadata": "0.2.2",
+    "viem": "2.56.3",
+    "zod": "4.6.7"
+  },
+  "devDependencies": {
+    "@changesets/changelog-github": "1.0.1",
+    "@changesets/cli": "3.0.3",
+    "@commitlint/cli": "21.2.4",
+    "@polygonlabs/apps-team-lint": "2.3.0",
+    "@types/node": "26.4.1",
+    "@vitest/coverage-v8": "4.1.12",
+    "concurrently": "10.0.7",
+    "eslint": "10.15.0",
+    "husky": "9.1.7",
+    "lint-staged": "17.6.1",
+    "markdownlint-cli2": "0.24.1",
+    "prettier": "3.10.1",
+    "publint": "0.3.25",
+    "semver": "7.8.6",
+    "tsx": "4.23.15",
+    "typescript": "5.9.3",
+    "vitest": "4.1.12"
+  }
+}

@@ -1,0 +1,12 @@
+name: CI
+
+on:
+  pull_request:
+    branches: [main]
+
+permissions:
+  contents: read
+
+jobs:
+  verification:
+    uses: ./.github/workflows/verification.yml
