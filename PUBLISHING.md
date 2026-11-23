@@ -108,7 +108,7 @@ shared `ci` composite runs lint/typecheck/test, a build job runs `build` + `chec
 drift-check job runs the `codegen-drift-check` script, which `@polygonlabs/oms-wallet` and
 `@polygonlabs/oms-wallet-privacy` define (each rebuilds, then checks its public API and `API.md`), and
 `oms-wallet-protocol` defines (it fails when a copy in either SDK differs from the protocol source).
-The build job also runs the server SDK's coverage thresholds and packed-consumer check. The release
+The build job also runs the server SDK's coverage thresholds and packed-consumer check. The packed-consumer check installs a fresh dependency tree and runs it, so it runs only in PR CI, never in a job that can obtain npm credentials. The release
 helper additionally verifies the fixed-group invariant and the pnpm-packed manifests immediately
 before staging.
 

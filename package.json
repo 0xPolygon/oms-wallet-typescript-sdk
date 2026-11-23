@@ -46,7 +46,7 @@
     "deploy:privy-import-worker": "pnpm --filter privy-import-worker-example deploy",
     "dev:smart-session-example": "pnpm --filter smart-session-example dev",
     "build:smart-session-example": "pnpm --filter smart-session-example build",
-    "ci:stage-release": "pnpm lint && pnpm test && pnpm build && pnpm check:exports && pnpm --filter oms-wallet-protocol codegen-drift-check && pnpm --filter @polygonlabs/oms-server-wallet-sdk test:coverage && pnpm --filter @polygonlabs/oms-server-wallet-sdk test:package && node scripts/stage-npm-packages.mjs",
+    "ci:stage-release": "pnpm lint && pnpm test && pnpm build && pnpm check:exports && pnpm --filter oms-wallet-protocol codegen-drift-check && pnpm --filter @polygonlabs/oms-server-wallet-sdk test:coverage && node scripts/stage-npm-packages.mjs",
     "prepare": "husky"
   },
   "devDependencies": {
@@ -63,6 +63,7 @@
     "markdownlint-cli2": "^0.21.0",
     "prettier": "^3.0.0",
     "publint": "^0.3.0",
+    "semver": "7.8.6",
     "typescript": "^5.9.3"
   }
 }

@@ -4,6 +4,8 @@ import { readdir, readFile, unlink, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 
+import semver from 'semver';
+
 const repositoryRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const changesetDirectory = path.join(repositoryRoot, '.changeset');
 
@@ -17,8 +19,9 @@ export function validateSnapshotTag(tag) {
       !tag.split('.').some((part) => /^0\d+$/.test(part)),
     'The snapshot tag must start with a lowercase letter and contain only lowercase letters, numbers, hyphens, and non-empty dot-separated parts.'
   );
+  // npm refuses a dist-tag that is a valid semver range, such as `x` or `v1.x`.
   assert(
-    !/^v?\d+(?:\.\d+){0,2}(?:[-+].*)?$/.test(tag) && !/^[\^~<>=]/.test(tag),
+    semver.validRange(tag) === null,
     'The snapshot tag must not look like a release version or range.'
   );
 }

@@ -196,43 +196,49 @@ async function main() {
       );
 
   // One package at a time, in release order: each is looked up, packed and staged before the next
-  // is looked at, so a later package's failure never hides or prevents an earlier package's stage.
+  // is looked at, so a later package's failure never prevents an earlier package's stage.
   const outputDirectory = await mkdtemp(path.join(os.tmpdir(), 'oms-wallet-npm-stage-'));
-  const stagedPackages = [];
-  for (const releasePackage of candidates) {
-    const tag = `${releasePackage.name}@${releasePackage.version}`;
-    if (createGitTags && hasGitTag(tag)) {
-      console.log(`${tag} is already tagged; skipping.`);
-      continue;
+  // The job summary records each package as it is staged, so a later failure cannot hide it.
+  await writeSummary(['### npm staged publishing', '']);
+  let staged = 0;
+  try {
+    for (const releasePackage of candidates) {
+      const tag = `${releasePackage.name}@${releasePackage.version}`;
+      if (createGitTags && hasGitTag(tag)) {
+        console.log(`${tag} is already tagged; skipping.`);
+        continue;
+      }
+      if (isPublished(releasePackage)) {
+        console.log(`${tag} is already published; skipping.`);
+        continue;
+      }
+      const tarballPath = await packPackage(releasePackage, outputDirectory);
+      runChecked(
+        'npm',
+        ['stage', 'publish', tarballPath, '--tag', distTag, '--access', 'public', '--provenance'],
+        { stdio: 'inherit' }
+      );
+      staged += 1;
+      console.log(`Staged ${tag} under ${distTag}.`);
+      await writeSummary([`- \`${tag}\` is staged under \`${distTag}\`.`]);
+      // changesets/action v1 creates this package's tag and GitHub Release from this line. If a
+      // later package fails, the job still fails, but a rerun skips this package by its tag.
+      if (createGitTags) console.log(`New tag: ${tag}`);
     }
-    if (isPublished(releasePackage)) {
-      console.log(`${tag} is already published; skipping.`);
-      continue;
-    }
-    const tarballPath = await packPackage(releasePackage, outputDirectory);
-    runChecked(
-      'npm',
-      ['stage', 'publish', tarballPath, '--tag', distTag, '--access', 'public', '--provenance'],
-      { stdio: 'inherit' }
-    );
-    stagedPackages.push(releasePackage);
-    // changesets/action v1 creates this package's tag and GitHub Release from this line. If a later
-    // package fails, the job still fails, but a rerun skips this package by its tag.
-    if (createGitTags) console.log(`New tag: ${tag}`);
+  } catch (error) {
+    await writeSummary([
+      '',
+      `Staging stopped: ${error instanceof Error ? error.message.split('\n')[0] : String(error)}`
+    ]);
+    throw error;
   }
 
-  if (stagedPackages.length === 0) {
+  if (staged === 0) {
     console.log('No unstaged package versions were found.');
-    await writeSummary(['### npm staged publishing', '', 'No package versions needed staging.']);
+    await writeSummary(['No package versions needed staging.']);
     return;
   }
-
   await writeSummary([
-    '### npm staged publishing',
-    '',
-    ...stagedPackages.map(
-      ({ name, version }) => `- \`${name}@${version}\` is staged under \`${distTag}\`.`
-    ),
     '',
     'A maintainer must approve every staged package on npm with 2FA before it is installable.'
   ]);
