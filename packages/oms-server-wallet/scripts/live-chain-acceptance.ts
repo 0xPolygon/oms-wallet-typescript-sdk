@@ -143,13 +143,28 @@ const skip = (name: string, why: string) => {
   console.log(JSON.stringify(report.at(-1)));
 };
 const id = (name: string) => `${name}-${Date.now()}`;
-const poll = async <T extends { status: string }>(read: () => Promise<T | null>) => {
+/** Poll until the transfer executed with a hash; any other ending, or two minutes, fails. */
+const executed = async <T extends { status: string; txnHash?: string; error?: string }>(
+  read: () => Promise<T | null>
+) => {
   for (let i = 0; i < 30; i++) {
     const op = await read();
-    if (op && !['pending', 'submitting', 'unknown'].includes(op.status)) return op;
+    if (!op) throw new Error('Operation not found');
+    if (op.status === 'executed') {
+      if (!op.txnHash) throw new Error('Executed without a transaction hash');
+      return op;
+    }
+    if (!['pending', 'submitting', 'unknown'].includes(op.status))
+      throw new Error(`Transfer ended ${op.status}${op.error ? ` (${op.error})` : ''}`);
     await new Promise((resolve) => setTimeout(resolve, 4_000));
   }
-  return read();
+  throw new Error('Transfer did not execute within two minutes');
+};
+/** Balances, failing when the indexer reports an error for any requested network. */
+const balances = async <T extends { errors: unknown[] }>(result: Promise<T>) => {
+  const value = await result;
+  if (value.errors.length) throw new Error(`Balance errors: ${JSON.stringify(value.errors)}`);
+  return value;
 };
 
 const snapshot = await wallet.createOrRestore({ families: ['evm', 'solana', 'tron'] });
@@ -165,7 +180,9 @@ await check('create and restore one wallet per family', async () => {
 await check('Solana message signing, verified by WaaS', () =>
   wallet.solana.signMessage(id('live-sol-sign'), 'OMS server wallet acceptance')
 );
-await check('Solana devnet balances', () => indexer.getSolanaBalances(solana, ['solana:devnet']));
+await check('Solana devnet balances', () =>
+  balances(indexer.getSolanaBalances(solana, ['solana:devnet']))
+);
 const solanaRecipient = process.env.LIVE_SOLANA_RECIPIENT;
 if (!solanaRecipient) skip('Solana transfer quote', 'Set LIVE_SOLANA_RECIPIENT.');
 else {
@@ -189,13 +206,15 @@ else {
     const result = await wallet.solana.executeTransfer(op.id).catch((error) => error);
     if (!(result instanceof WalletError) || result.code !== 'TRANSACTION_EXPIRED')
       throw new Error('Expired quote was not refused');
-    return (await wallet.solana.getOperation(op.id))?.status;
+    const status = (await wallet.solana.getOperation(op.id))?.status;
+    if (status !== 'expired') throw new Error(`Expired quote left the operation ${status}`);
+    return status;
   });
   if (!execute) skip('Solana transfer execution', 'Set LIVE_EXECUTE=1 to send 1000 lamports.');
   else
     await check('Solana sponsored transfer executes', async () => {
       const op = await wallet.solana.sendTransfer(id('live-sol-send'), transfer);
-      return poll(() => wallet.solana.getOperation(op.id));
+      return executed(() => wallet.solana.getOperation(op.id));
     });
 }
 
@@ -215,7 +234,7 @@ await check('Tron TIP-712 signing, verified by WaaS', () =>
     message: { wallet: tron, note: 'OMS server wallet acceptance' }
   })
 );
-await check('Tron Nile balances', () => indexer.getTronBalances(tron, ['tron:nile']));
+await check('Tron Nile balances', () => balances(indexer.getTronBalances(tron, ['tron:nile'])));
 const tronRecipient = process.env.LIVE_TRON_RECIPIENT;
 if (!tronRecipient) skip('Tron transfer quote', 'Set LIVE_TRON_RECIPIENT.');
 else {
@@ -234,7 +253,7 @@ else {
   else
     await check('Tron transfer executes within maxFee', async () => {
       const op = await wallet.tron.sendTransaction(id('live-trx-send'), { ...transfer, maxFee });
-      return poll(() => wallet.tron.getOperation(op.id));
+      return executed(() => wallet.tron.getOperation(op.id));
     });
 }
 
