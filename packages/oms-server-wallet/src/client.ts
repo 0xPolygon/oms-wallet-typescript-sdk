@@ -627,8 +627,9 @@ export class ServerWallet {
     return this.options.store.write('openOperationIndex', JSON.stringify(index));
   }
   /**
-   * IDs of operations not yet settled. Entries of the full index past `synced` (all of them on
-   * first use, or those an older SDK version appended) are read and added before returning.
+   * IDs of operations that may not be settled. Entries of the full index past `synced` (all of
+   * them on first use, or those an older SDK version appended) are read and added before
+   * returning, including IDs whose record has not been written yet.
    */
   private async openOperationIds(): Promise<string[]> {
     const all: string[] = JSON.parse((await this.options.store.read('operationIndex')) ?? '[]');
@@ -639,7 +640,9 @@ export class ServerWallet {
     const ids = [...open.ids];
     for (const id of all.slice(open.synced)) {
       const op = await this.readOperation(id);
-      if (op && OPEN_STATUSES.includes(op.status) && !ids.includes(id)) ids.push(id);
+      // An ID with no record yet stays listed: a writer that crashed after appending it can still
+      // write the record later without appending again. Readers skip it until then.
+      if ((!op || OPEN_STATUSES.includes(op.status)) && !ids.includes(id)) ids.push(id);
     }
     await this.writeOpenIndex({ synced: all.length, ids });
     return ids;

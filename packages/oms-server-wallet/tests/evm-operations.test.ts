@@ -220,6 +220,29 @@ describe('open operation index with an older SDK writing', () => {
   });
 });
 
+describe('open operation index after an interrupted older writer', () => {
+  it('keeps an appended ID whose record was not written yet, and finds the record later', async () => {
+    const h = sdkHarness();
+    await h.client.prepareTransfer('before-crash-1', transfer);
+    await h.client.listOpenOperations();
+    const record = JSON.parse((await h.store.read('operation:before-crash-1'))!);
+    // An older SDK version appends an ID, then crashes before writing the record.
+    const ids = JSON.parse((await h.store.read('operationIndex'))!);
+    await h.store.write('operationIndex', JSON.stringify([...ids, 'crashed-old-1']));
+    // The index is scanned between the append and the record write.
+    expect((await h.client.listOpenOperations()).map((op) => op.id)).toEqual(['before-crash-1']);
+    // The older version retries: it writes the record without appending the ID again.
+    await h.store.write(
+      'operation:crashed-old-1',
+      JSON.stringify({ ...record, id: 'crashed-old-1', status: 'pending' })
+    );
+    expect((await h.client.listOpenOperations()).map((op) => op.id).sort()).toEqual([
+      'before-crash-1',
+      'crashed-old-1'
+    ]);
+  });
+});
+
 describe('WalletSwaps', () => {
   it("refuses the wallet's own executor, which would wait on itself", () => {
     const h = sdkHarness();
