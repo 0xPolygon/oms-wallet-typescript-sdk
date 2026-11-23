@@ -62,7 +62,7 @@ Repo-local agent skills live under `.agents/skills/` (agent-neutral); `.claude/s
   fixed group. Backend wallets with OIDC ID-token auth, encrypted durable state behind a caller-supplied `StateStore`
   and `ExclusiveExecutor`, EVM/Solana/Tron wallets, sponsored transfers and contract calls, and Trails swaps and
   recovery under the `./trails` entry point. Every WaaS response is attested. `scripts/check-package.ts`
-  (`test:package`) installs the packed archive into a clean consumer; `scripts/live-chain-acceptance.ts` (`test:live`)
+  (`test:package`) installs the packed archive into a clean consumer; `scripts/live-acceptance.ts` (`test:live`)
   is a manual funded run.
 - `packages/oms-wallet-protocol/`: private, never-published package holding WaaS wire-protocol code shared by both
   SDKs (attestation `Sequence/1` and `Sequence/2`, request signing and nonces, publishable-key routing with trusted

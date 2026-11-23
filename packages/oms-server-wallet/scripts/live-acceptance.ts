@@ -1,17 +1,23 @@
-// Live acceptance for Solana devnet and Tron Nile wallets against a WaaS v1.2.0 deployment.
+// Live acceptance for the server wallet SDK against a WaaS v1.2.0 deployment: sign-in, wallet
+// restore across restarts, credential rotation and disabling, EVM signing and quoting, Solana
+// devnet and Tron Nile wallets, and the attestation format WaaS sends.
 //
-//   node --import tsx --env-file=.env scripts/live-chain-acceptance.ts
+//   node --import tsx --env-file=.env scripts/live-acceptance.ts
 //
 // Reads the same variables as the demo dashboard's acceptance: OMS_PUBLISHABLE_KEY,
 // TRUSTED_PCR0S, ENCRYPTION_KEY, OIDC_PRIVATE_JWK, OIDC_ISSUER, OIDC_AUDIENCE and OMS_ORIGIN (the
-// Origin the project allows). Secrets are never printed. By default nothing is sent: transfers
-// are only quoted. Funds move only with LIVE_EXECUTE=1, to LIVE_SOLANA_RECIPIENT and
-// LIVE_TRON_RECIPIENT, and a Tron transfer pays TRX only up to LIVE_TRON_MAX_FEE sun.
+// Origin the project allows). Secrets are never printed. By default nothing is sent: EVM transfers
+// are only quoted (the SDK's EVM networks are mainnets), and Solana and Tron transfers are only
+// quoted unless LIVE_EXECUTE=1, which sends to LIVE_SOLANA_RECIPIENT and LIVE_TRON_RECIPIENT; a
+// Tron transfer pays TRX only up to LIVE_TRON_MAX_FEE sun. Credential rotation and disabling use a
+// separate identity, so they never touch the main acceptance wallets.
 //
-// The report goes to .data/live-chain-acceptance.json. Attested WaaS responses are recorded to
-// .data/live-chain-fixtures/ (never CommitVerifier or CompleteAuth, whose bodies hold the ID
-// token); copy them to tests/fixtures/live/ to replay their attestation offline.
+// The report goes to .data/live-acceptance.json. Attested WaaS responses are recorded to
+// .data/live-fixtures/ (never CommitVerifier or CompleteAuth, whose bodies hold the ID token);
+// copy them to tests/fixtures/live/ to replay their attestation offline.
 import { mkdirSync, readFileSync, existsSync, writeFileSync } from 'node:fs';
+
+import { Decoder, Tag } from 'cbor-x';
 
 import {
   EncryptedStore,
@@ -38,7 +44,7 @@ const subject = env('LIVE_SUBJECT', `acceptance-chains-${new Date().toISOString(
 const execute = process.env.LIVE_EXECUTE === '1';
 
 /** An ES256 ID token from the dashboard's registered issuer key, as its issuer mints them. */
-async function idToken() {
+async function idToken(identity: string) {
   const jwk = JSON.parse(env('OIDC_PRIVATE_JWK')) as JsonWebKey;
   const signer = await crypto.subtle.importKey(
     'jwk',
@@ -58,7 +64,7 @@ async function idToken() {
   const input = `${encode({ alg: 'ES256', kid, typ: 'JWT' })}.${encode({
     iss: issuer,
     aud: audience,
-    sub: subject,
+    sub: identity,
     iat: now,
     exp: expiresAt,
     jti: crypto.randomUUID()
@@ -71,27 +77,48 @@ async function idToken() {
   return { token: `${input}.${Buffer.from(signature).toString('base64url')}`, expiresAt };
 }
 
-mkdirSync('.data/live-chain-fixtures', { recursive: true });
-const statePath = '.data/live-chain-state.json';
+mkdirSync('.data/live-fixtures', { recursive: true });
+const statePath = '.data/live-state.json';
 const data: Record<string, string> = existsSync(statePath)
   ? JSON.parse(readFileSync(statePath, 'utf8'))
   : {};
-const disk: StateStore = {
+/** One local state file; each identity's keys get their own prefix. */
+const disk = (prefix = ''): StateStore => ({
   async read(name) {
-    return data[name] ?? null;
+    return data[prefix + name] ?? null;
   },
   async write(name, value) {
-    data[name] = value;
+    data[prefix + name] = value;
     writeFileSync(statePath, JSON.stringify(data), { mode: 0o600 });
   }
-};
+});
 
 let recorded = 0;
 const secretMethods = ['CommitVerifier', 'CompleteAuth'];
+/** WaaS requests sent, by method, to check that a step did or did not reach WaaS. */
+const calls: Record<string, number> = {};
+/** Attestation user-data versions seen (`Sequence/1`, `Sequence/2`). */
+const attestations: Record<string, number> = {};
+const cbor = new Decoder({ mapsAsObjects: false, copyBuffers: true });
+function attestationVersion(encoded: string): string {
+  try {
+    const signed = cbor.decode(Buffer.from(encoded, 'base64'));
+    const payload = cbor.decode((signed instanceof Tag ? signed.value : signed)[2]);
+    return new TextDecoder().decode(payload.get('user_data')).split(':')[0];
+  } catch {
+    return 'unreadable';
+  }
+}
 const recording: typeof fetch = async (input, init) => {
   const response = await omsFetch(origin)(input, init);
   const path = new URL(String(input)).pathname;
   const method = path.split('/').pop()!;
+  calls[method] = (calls[method] ?? 0) + 1;
+  const document = response.headers.get('X-Attestation-Document');
+  if (path.startsWith('/v1/Waas') && document) {
+    const version = attestationVersion(document);
+    attestations[version] = (attestations[version] ?? 0) + 1;
+  }
   if (path.startsWith('/v1/Waas') && !secretMethods.includes(method)) {
     const headers = new Headers(init?.headers);
     const fixture = {
@@ -111,22 +138,25 @@ const recording: typeof fetch = async (input, init) => {
       now: new Date().toISOString()
     };
     writeFileSync(
-      `.data/live-chain-fixtures/${String(++recorded).padStart(3, '0')}-${method}.json`,
+      `.data/live-fixtures/${String(++recorded).padStart(3, '0')}-${method}.json`,
       `${JSON.stringify(fixture, null, 2)}\n`
     );
   }
   return response;
 };
 
-const wallet = new ServerWallet({
-  subject,
-  issuer,
-  audience,
-  tokenProvider: idToken,
-  store: new EncryptedStore(disk, env('ENCRYPTION_KEY'), `live-chains:${subject}`),
-  executor: new SerialExecutor(),
-  transport: new WaasTransport(key, pcr0s, recording)
-});
+/** A wallet for `identity`, as a fresh process would build it: its own executor and transport. */
+const open = (identity: string, prefix = '') =>
+  new ServerWallet({
+    subject: identity,
+    issuer,
+    audience,
+    tokenProvider: () => idToken(identity),
+    store: new EncryptedStore(disk(prefix), env('ENCRYPTION_KEY'), `live-chains:${identity}`),
+    executor: new SerialExecutor(),
+    transport: new WaasTransport(key, pcr0s, recording)
+  });
+const wallet = open(subject);
 const indexer = new IndexerClient(key, omsFetch(origin));
 
 const report: { check: string; result: 'passed' | 'failed' | 'skipped'; detail?: unknown }[] = [];
@@ -180,6 +210,89 @@ await check('create and restore one wallet per family', async () => {
   if (JSON.stringify(again.wallets) !== JSON.stringify(snapshot.wallets))
     throw new Error('Restore returned different wallets');
   return { evm: snapshot.wallet?.address, solana, tron };
+});
+
+await check(
+  'restore after a restart reuses the wallets and credential without signing in',
+  async () => {
+    const before = (await wallet.inspect()).credentialId;
+    const signIns = calls.CommitVerifier ?? 0;
+    const restarted = open(subject);
+    const restored = await restarted.createOrRestore({ families: ['evm', 'solana', 'tron'] });
+    if (JSON.stringify(restored.wallets) !== JSON.stringify(snapshot.wallets))
+      throw new Error('Restart restored different wallets');
+    if (restored.credentialId !== before) throw new Error('Restart replaced the credential');
+    if ((calls.CommitVerifier ?? 0) !== signIns) throw new Error('Restart signed in again');
+    return { credentialId: restored.credentialId };
+  }
+);
+
+const evm = snapshot.wallet!.address;
+await check('EVM message signing on Polygon, verified by WaaS', async () => {
+  const op = await wallet.signMessage(id('live-evm-sign'), 137, 'OMS server wallet acceptance');
+  if (op.status !== 'signed' || !op.verified) throw new Error(`Signing ended ${op.status}`);
+  return { status: op.status, verified: op.verified };
+});
+await check('EVM EIP-712 signing on Polygon, verified by WaaS', async () => {
+  const op = await wallet.signTypedData(id('live-evm-712'), 137, {
+    domain: { name: 'Acceptance', version: '1', chainId: 137, verifyingContract: evm },
+    types: {
+      Check: [
+        { name: 'wallet', type: 'address' },
+        { name: 'note', type: 'string' }
+      ]
+    },
+    primaryType: 'Check',
+    message: { wallet: evm, note: 'OMS server wallet acceptance' }
+  });
+  if (op.status !== 'signed' || !op.verified) throw new Error(`Signing ended ${op.status}`);
+  return { status: op.status, verified: op.verified };
+});
+await check('EVM operation ID retry returns the stored result without calling WaaS', async () => {
+  const operationId = id('live-evm-retry');
+  const first = await wallet.signMessage(operationId, 137, 'OMS server wallet retry');
+  const signed = calls.SignMessage ?? 0;
+  const again = await wallet.signMessage(operationId, 137, 'OMS server wallet retry');
+  if (again.signature !== first.signature) throw new Error('Retry returned another signature');
+  if ((calls.SignMessage ?? 0) !== signed) throw new Error('Retry signed again');
+  return { signature: again.signature };
+});
+await check('EVM sponsored transfer quote on Polygon (never executed)', async () => {
+  const op = await wallet.prepareTransfer(id('live-evm-quote'), {
+    chainId: 137,
+    to: evm,
+    asset: 'native',
+    amount: '1'
+  });
+  if (op.status !== 'quoted' || !op.quote?.sponsored) throw new Error(`Quote ended ${op.status}`);
+  return { status: op.status, sponsored: op.quote.sponsored, expiresAt: op.quote.expiresAt };
+});
+
+// Rotation and disabling use their own identity and state, never the main acceptance wallets.
+const lifecycle = open(`${subject}-lifecycle`, 'lifecycle:');
+const lifecycleWallet = (await lifecycle.createOrRestore()).wallet!;
+await check('credential rotation keeps the wallet and replaces the credential', async () => {
+  const before = (await lifecycle.inspect()).credentialId;
+  const rotated = await lifecycle.rotate();
+  if (rotated.wallet?.address !== lifecycleWallet.address)
+    throw new Error('Rotation changed the wallet');
+  if (!rotated.credentialId || rotated.credentialId === before)
+    throw new Error('Rotation kept the credential');
+  return { wallet: rotated.wallet?.address };
+});
+await check('a disabled wallet refuses to sign; re-enabling restores the same wallet', async () => {
+  await lifecycle.setDisabled(true);
+  const refused = await lifecycle
+    .signMessage(id('live-disabled-sign'), 137, 'disabled')
+    .catch((error) => error);
+  if (!(refused instanceof WalletError) || refused.code !== 'WALLET_DISABLED')
+    throw new Error('A disabled wallet signed');
+  const enabled = await lifecycle.setDisabled(false);
+  if (enabled.wallet?.address !== lifecycleWallet.address)
+    throw new Error('Re-enabling returned another wallet');
+  const op = await lifecycle.signMessage(id('live-enabled-sign'), 137, 'enabled');
+  if (op.status !== 'signed') throw new Error(`Signing after re-enabling ended ${op.status}`);
+  return { wallet: enabled.wallet?.address };
 });
 
 await check('Solana message signing, verified by WaaS', () =>
@@ -262,8 +375,16 @@ else {
     });
 }
 
+await check('every WaaS response carried a known attestation format', async () => {
+  const unknown = Object.keys(attestations).filter(
+    (version) => version !== 'Sequence/1' && version !== 'Sequence/2'
+  );
+  if (unknown.length) throw new Error(`Unexpected attestation formats: ${unknown.join(', ')}`);
+  return attestations;
+});
+
 writeFileSync(
-  '.data/live-chain-acceptance.json',
+  '.data/live-acceptance.json',
   `${JSON.stringify({ subject, at: new Date().toISOString(), report }, null, 2)}\n`
 );
 const failed = report.filter((entry) => entry.result === 'failed').length;
