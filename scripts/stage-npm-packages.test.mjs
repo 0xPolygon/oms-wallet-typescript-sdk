@@ -4,7 +4,7 @@ import test from 'node:test';
 import {
   assertTrustedPublishingEnvironment,
   findWorkspaceReferences,
-  isSnapshotVersion,
+  selectSnapshotPackages,
   validateReleasePackages
 } from './stage-npm-packages.mjs';
 
@@ -59,9 +59,37 @@ test('rejects a fixed-group member that is not a publishable workspace package',
   );
 });
 
-test('stages only snapshot versions during a snapshot run', () => {
-  assert.equal(isSnapshotVersion('0.0.0-canary-20260909000000', 'canary'), true);
-  assert.equal(isSnapshotVersion('0.3.0', 'canary'), false);
+test('stages exactly the packages the snapshot preparation versioned, in release order', () => {
+  const ordered = [
+    ...releasePackages.map((item) => ({ ...item, version: '0.0.0-canary-20260909000000' })),
+    { ...serverPackage, version: '0.4.1-canary-20260909000000' }
+  ];
+  const listed = [...ordered].reverse().map(({ name, version }) => ({ name, version }));
+  assert.deepEqual(selectSnapshotPackages(ordered, listed), ordered);
+});
+
+test('never stages an unchanged package whose version merely contains the tag', () => {
+  const workspaces = [
+    ...releasePackages.map((item) => ({ ...item, version: '0.0.0-canary-20260909000000' })),
+    { ...serverPackage, version: '0.4.0-dev-canary-rc' }
+  ];
+  const listed = workspaces.slice(0, 2).map(({ name, version }) => ({ name, version }));
+  assert.deepEqual(selectSnapshotPackages(workspaces, listed), workspaces.slice(0, 2));
+});
+
+test('rejects a snapshot list that does not match the manifests', () => {
+  assert.throws(
+    () =>
+      selectSnapshotPackages(releasePackages, [
+        { name: releasePackages[0].name, version: '9.9.9' }
+      ]),
+    /not the prepared 9\.9\.9/
+  );
+  assert.throws(
+    () => selectSnapshotPackages(releasePackages, [{ name: 'missing', version: '1.0.0' }]),
+    /is not a publishable workspace package/
+  );
+  assert.throws(() => selectSnapshotPackages(releasePackages, []), /list is empty/);
 });
 
 test('finds nested workspace protocol references in packed manifests', () => {

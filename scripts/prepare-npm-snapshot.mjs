@@ -10,13 +10,16 @@ const changesetDirectory = path.join(repositoryRoot, '.changeset');
 export function validateSnapshotTag(tag) {
   assert(tag, 'SNAPSHOT_TAG is required.');
   assert.notEqual(tag, 'latest', "The snapshot tag must not be 'latest'.");
+  // The tag becomes a semver prerelease identifier (0.0.0-<tag>-<timestamp>): lowercase letters,
+  // digits and hyphens, dot-separated parts that are non-empty and not numbers with leading zeros.
   assert(
-    /^[a-z][a-z0-9._-]*$/.test(tag),
-    'The snapshot tag must start with a lowercase letter and contain only lowercase letters, numbers, dots, underscores, or hyphens.'
+    /^[a-z][a-z0-9-]*(?:\.[a-z0-9-]+)*$/.test(tag) &&
+      !tag.split('.').some((part) => /^0\d+$/.test(part)),
+    'The snapshot tag must start with a lowercase letter and contain only lowercase letters, numbers, hyphens, and non-empty dot-separated parts.'
   );
   assert(
-    !/^v?\d+(?:\.\d+){0,2}(?:[-+].*)?$/.test(tag),
-    'The snapshot tag must not look like a release version.'
+    !/^v?\d+(?:\.\d+){0,2}(?:[-+].*)?$/.test(tag) && !/^[\^~<>=]/.test(tag),
+    'The snapshot tag must not look like a release version or range.'
   );
 }
 
@@ -62,6 +65,13 @@ export function assertSnapshotVersions(before, after, tag, fixed = []) {
     const versions = new Set(members.map(({ version }) => version));
     assert.equal(versions.size, 1, 'Snapshot packages must have one fixed-group version.');
   }
+}
+
+/** The packages snapshot versioning changed, with their new versions. */
+export function snapshotPackages(before, after) {
+  return after
+    .filter(({ name, version }) => before.find((item) => item.name === name)?.version !== version)
+    .map(({ name, version }) => ({ name, version }));
 }
 
 function runChecked(command, args, options = {}) {
@@ -115,6 +125,8 @@ async function hasVersionedChangeset() {
 async function main() {
   const tag = process.env.SNAPSHOT_TAG;
   validateSnapshotTag(tag);
+  const snapshotPackagesFile = process.env.SNAPSHOT_PACKAGES_FILE;
+  assert(snapshotPackagesFile, 'SNAPSHOT_PACKAGES_FILE is required.');
 
   const before = await readReleasePackages();
   const fixed = await readFixedGroups();
@@ -141,9 +153,10 @@ async function main() {
 
   const after = await readReleasePackages();
   assertSnapshotVersions(before, after, tag, fixed);
-  for (const { name, version } of after) {
-    if (version.includes(`-${tag}-`)) console.log(`Prepared snapshot ${name}@${version}.`);
-  }
+  const prepared = snapshotPackages(before, after);
+  // The staging step stages exactly this list.
+  await writeFile(snapshotPackagesFile, `${JSON.stringify(prepared, null, 2)}\n`);
+  for (const { name, version } of prepared) console.log(`Prepared snapshot ${name}@${version}.`);
 }
 
 if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
