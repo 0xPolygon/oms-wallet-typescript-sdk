@@ -1,8 +1,12 @@
 import { getAddress } from 'viem';
 import { z } from 'zod';
 
+import type { SolanaNetwork } from './solana.js';
+
+import { isSolanaAddress, isTronAddress } from './addresses.js';
 import { CHAINS, environmentFromKey, requireChain } from './environment.js';
 import { WalletError } from './errors.js';
+import { SOLANA_NETWORKS } from './solana.js';
 import { boundedText } from './transport.js';
 
 const quantity = z.string().regex(/^[0-9]+$/);
@@ -52,6 +56,48 @@ export interface Balances {
   nextPage?: number;
   fetchedAt: string;
 }
+/** A Solana or Tron balance. `asset` is `native` or the token's mint or contract address. */
+export interface ChainBalance {
+  network: string;
+  asset: 'native' | string;
+  name: string;
+  symbol: string;
+  /** Base units: lamports or sun for the native asset. */
+  balance: string;
+  decimals: number;
+  balanceUSD?: string;
+  /** The Solana token program that owns the mint. */
+  tokenProgram?: 'spl-token' | 'token-2022';
+}
+export interface ChainBalances {
+  items: ChainBalance[];
+  errors: { network: string; message: string }[];
+  fetchedAt: string;
+}
+const nativeDecimals = { solana: 9, tron: 6 } as const;
+const gatewayRowSchema = z.object({
+  network: z.string(),
+  accountAddress: z.string(),
+  assetType: z.enum(['native', 'fungible-token']),
+  tokenProgram: z.string().nullish(),
+  tokenStandard: z.string().nullish(),
+  mintAddress: z.string().nullish(),
+  contractAddress: z.string().nullish(),
+  name: z.string(),
+  symbol: z.string(),
+  decimals: z.number().int().min(0).max(255),
+  balance: quantity,
+  balanceUSD: z.string().nullish()
+});
+const gatewaySchema = z.object({
+  balances: z.array(gatewayRowSchema),
+  errors: z.array(z.object({ network: z.string(), reason: z.string() }))
+});
+
+/**
+ * Balances come from the indexer and are not attested by the wallet enclave: use them for display
+ * and preflight checks only, never as proof of funds.
+ */
 export class IndexerClient {
   private readonly environment;
   constructor(
@@ -59,6 +105,115 @@ export class IndexerClient {
     private readonly fetcher: typeof fetch = fetch
   ) {
     this.environment = environmentFromKey(key);
+  }
+  /** SOL and SPL/Token-2022 balances on the requested networks (both by default). */
+  async getSolanaBalances(
+    walletAddress: string,
+    networks: readonly SolanaNetwork[] = SOLANA_NETWORKS
+  ): Promise<ChainBalances> {
+    if (!isSolanaAddress(walletAddress))
+      throw new WalletError('INVALID_ADDRESS', 'Provide a base58 Solana wallet address.');
+    return this.chainBalances(
+      'solana',
+      this.environment.solanaIndexerUrl,
+      'webrpc@v0.31.2;gen-typescript@v0.23.1;solana-indexer-gateway@v1',
+      walletAddress,
+      networks,
+      SOLANA_NETWORKS
+    );
+  }
+  private async chainBalances(
+    family: 'solana' | 'tron',
+    url: string,
+    webrpc: string,
+    address: string,
+    networks: readonly string[],
+    supported: readonly string[]
+  ): Promise<ChainBalances> {
+    if (
+      !Array.isArray(networks) ||
+      !networks.length ||
+      networks.some((network) => !supported.includes(network))
+    )
+      throw new WalletError(
+        'UNSUPPORTED_NETWORK',
+        `Select networks from: ${supported.join(', ')}.`
+      );
+    const requested = [...new Set(networks)];
+    const fetcher = this.fetcher;
+    const response = await fetcher(url, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'Api-Key': this.key, Webrpc: webrpc },
+      body: JSON.stringify({
+        networks: requested,
+        filter: { accountAddresses: [address], omitNativeBalances: false },
+        omitMetadata: false
+      }),
+      redirect: 'manual',
+      signal: AbortSignal.timeout(20_000)
+    });
+    const body = await boundedText(response);
+    if (!response.ok)
+      throw new WalletError(
+        'INDEXER_UNAVAILABLE',
+        `Balance service returned HTTP ${response.status}.`,
+        502
+      );
+    let parsed;
+    try {
+      parsed = gatewaySchema.safeParse(JSON.parse(body));
+    } catch {
+      throw new WalletError('INVALID_RESPONSE', 'Balance service returned invalid JSON.', 502);
+    }
+    if (!parsed.success)
+      throw new WalletError(
+        'INVALID_RESPONSE',
+        'Balance service returned an invalid response.',
+        502
+      );
+    const invalid = (message: string) => new WalletError('INVALID_RESPONSE', message, 502);
+    const items: ChainBalance[] = [];
+    for (const row of parsed.data.balances) {
+      if (!requested.includes(row.network) || row.accountAddress !== address)
+        throw invalid('Indexer returned balances for a different wallet or network.');
+      if (row.assetType === 'native') {
+        if (row.mintAddress || row.contractAddress || row.decimals !== nativeDecimals[family])
+          throw invalid('Incomplete native balance response.');
+        items.push({
+          network: row.network,
+          asset: 'native',
+          name: row.name,
+          symbol: row.symbol,
+          balance: row.balance,
+          decimals: row.decimals,
+          ...(row.balanceUSD ? { balanceUSD: row.balanceUSD } : {})
+        });
+        continue;
+      }
+      const token = family === 'solana' ? row.mintAddress : row.contractAddress;
+      const program = row.tokenProgram;
+      if (
+        family === 'solana'
+          ? !isSolanaAddress(token) || (program !== 'spl-token' && program !== 'token-2022')
+          : !isTronAddress(token) || row.tokenStandard !== 'trc20'
+      )
+        throw invalid('Incomplete token balance response.');
+      items.push({
+        network: row.network,
+        asset: token!,
+        name: row.name,
+        symbol: row.symbol,
+        balance: row.balance,
+        decimals: row.decimals,
+        ...(row.balanceUSD ? { balanceUSD: row.balanceUSD } : {}),
+        ...(family === 'solana' ? { tokenProgram: program as 'spl-token' | 'token-2022' } : {})
+      });
+    }
+    // Only the gateway's own errors: a missing row is not evidence of a failure.
+    const errors = parsed.data.errors
+      .filter((error) => requested.includes(error.network))
+      .map((error) => ({ network: error.network, message: error.reason }));
+    return { items, errors, fetchedAt: new Date().toISOString() };
   }
   async getBalances(walletAddress: string, page = 0): Promise<Balances> {
     const address = getAddress(walletAddress);

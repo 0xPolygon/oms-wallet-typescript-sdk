@@ -10,6 +10,7 @@ import { encodeFunctionData, getAddress, isAddress, isHex, parseUnits } from 'vi
 import { z } from 'zod';
 
 import type { RecoveryTransaction } from './authorization.js';
+import type { ChainFamily, ChainOperation, WalletContext } from './chains.js';
 import type { NetworkFamily, RemoteWallet, Quote } from './protocol.js';
 import type { State } from './state.js';
 import type { ExclusiveExecutor, StateStore } from './storage.js';
@@ -33,6 +34,7 @@ import {
   walletFamily,
   walletSchema
 } from './protocol.js';
+import { SolanaWallet } from './solana.js';
 import { readState, writeState } from './state.js';
 import { validateTypedData } from './typed-data.js';
 
@@ -243,12 +245,45 @@ export function normalizeUserOperation(input: unknown): {
 
 /** One instance represents one OIDC identity and one EVM wallet. */
 export class ServerWallet {
+  /** The identity's Solana wallet, sharing this instance's credential, store and executor. */
+  readonly solana: SolanaWallet;
   constructor(private readonly options: ServerWalletOptions) {
     if (!options.subject || options.subject.length > 128)
       throw new WalletError(
         'INVALID_IDENTITY',
         'Wallet identifiers must contain 1–128 characters.'
       );
+    this.solana = new SolanaWallet(this.context());
+  }
+  private context(): WalletContext {
+    const chainOperation = (op: Operation | ChainOperation | null) =>
+      op && 'family' in op ? op : null;
+    return {
+      run: (task) => this.options.executor.run(task),
+      open: async (family: ChainFamily) => {
+        const state = await this.load();
+        await this.ensure(state, [family]);
+        return { state, wallet: state.wallets[family]! };
+      },
+      load: () => this.load(),
+      call: (state, family, method, params) => this.activeCall(state, method, params, [family]),
+      verify: (method, params) => this.options.transport.request(method, params),
+      existing: async (id, family, kind, input) => {
+        const { operation, hash } = await this.existingAny(id, kind, input, family);
+        return { operation: chainOperation(operation), hash };
+      },
+      read: async (id) => chainOperation(await this.readOperation(id)),
+      write: (op) => this.writeOperation(op),
+      list: async () => {
+        const ids: string[] = JSON.parse((await this.options.store.read('operationIndex')) ?? '[]');
+        const operations: ChainOperation[] = [];
+        for (const id of ids) {
+          const op = chainOperation(await this.readOperation(id));
+          if (op) operations.push(op);
+        }
+        return operations;
+      }
+    };
   }
   private async load(): Promise<State> {
     const { state, migrated } = await readState(this.options.store);
@@ -527,11 +562,16 @@ export class ServerWallet {
     state.credential = undefined;
     await this.save(state);
   }
-  private async readOperation(id: string): Promise<Operation | null> {
+  /** EVM operations carry no `family`; Solana and Tron ones share the same store and index. */
+  private async readOperation(id: string): Promise<Operation | ChainOperation | null> {
     const value = await this.options.store.read(`operation:${id}`);
-    return value ? (JSON.parse(value) as Operation) : null;
+    return value ? (JSON.parse(value) as Operation | ChainOperation) : null;
   }
-  private async writeOperation(op: Operation) {
+  private async readEvmOperation(id: string): Promise<Operation | null> {
+    const op = await this.readOperation(id);
+    return op && !('family' in op) ? op : null;
+  }
+  private async writeOperation(op: Operation | ChainOperation) {
     const ids: string[] = JSON.parse((await this.options.store.read('operationIndex')) ?? '[]');
     if (!ids.includes(op.id))
       await this.options.store.write('operationIndex', JSON.stringify([...ids, op.id]));
@@ -543,7 +583,7 @@ export class ServerWallet {
       const ids: string[] = JSON.parse((await this.options.store.read('operationIndex')) ?? '[]');
       const operations: Operation[] = [];
       for (const id of new Set([...ids, ...legacyIds])) {
-        const op = await this.readOperation(id);
+        const op = await this.readEvmOperation(id);
         if (op) operations.push(op);
       }
       return operations;
@@ -554,6 +594,18 @@ export class ServerWallet {
     kind: Operation['kind'],
     input: unknown
   ): Promise<{ operation: Operation | null; hash: string }> {
+    // A matching family means a matching operation type.
+    return this.existingAny(id, kind, input, 'evm') as Promise<{
+      operation: Operation | null;
+      hash: string;
+    }>;
+  }
+  private async existingAny(
+    id: string,
+    kind: string,
+    input: unknown,
+    family: NetworkFamily
+  ): Promise<{ operation: Operation | ChainOperation | null; hash: string }> {
     if (!/^[A-Za-z0-9_-]{8,100}$/.test(id))
       throw new WalletError(
         'INVALID_IDEMPOTENCY_KEY',
@@ -561,7 +613,12 @@ export class ServerWallet {
       );
     const hash = await sha256(JSON.stringify(input));
     const operation = await this.readOperation(id);
-    if (operation && (operation.inputHash !== hash || operation.kind !== kind))
+    if (
+      operation &&
+      (operation.inputHash !== hash ||
+        operation.kind !== kind ||
+        ('family' in operation ? operation.family : 'evm') !== family)
+    )
       throw new WalletError(
         'IDEMPOTENCY_CONFLICT',
         'This operation ID was already used with different input.',
@@ -725,7 +782,7 @@ export class ServerWallet {
   }
   private executePrepared(id: string, kinds: Operation['kind'][]): Promise<Operation> {
     return this.options.executor.run(async () => {
-      const op = await this.readOperation(id);
+      const op = await this.readEvmOperation(id);
       if (!op || !kinds.includes(op.kind))
         throw new WalletError('NOT_FOUND', 'Prepared transaction not found.', 404);
       if (op.status !== 'quoted') return this.refresh(op);
@@ -768,9 +825,10 @@ export class ServerWallet {
     await this.writeOperation(op);
     return op;
   }
+  /** EVM operations only; see `solana.getOperation` for Solana ones. */
   getOperation(id: string): Promise<Operation | null> {
     return this.options.executor.run(async () => {
-      const op = await this.readOperation(id);
+      const op = await this.readEvmOperation(id);
       return op ? this.refresh(op) : null;
     });
   }

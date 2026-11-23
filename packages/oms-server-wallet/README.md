@@ -124,6 +124,36 @@ Idempotency IDs must contain 8–100 letters, digits, underscores, or hyphens. C
 
 `IndexerClient.getBalances(address, page?)` returns base-unit strings, metadata, a fetch timestamp, per-chain errors, and `nextPage`. Keep errors separate from zero balances and follow pagination. Unknown token decimals stay unknown.
 
+## Solana wallets
+
+`wallet.solana` is the identity's Solana wallet, an Ed25519 account on `solana:mainnet` or `solana:devnet`. It shares the `ServerWallet`'s credential, store and executor, and is created on first use. Transfers are sponsored by the project's Solana fee payer; a transfer that would not be sponsored fails with `SPONSORSHIP_REQUIRED`.
+
+```ts
+const transferId = crypto.randomUUID(); // persist and reuse on retries
+const sent = await wallet.solana.sendTransfer(transferId, {
+  network: 'solana:devnet',
+  to: '9WzDXwBbmkg8ZTbNMqUxvQRAyrZzDsGYdLVL9zYtAWWM',
+  asset: 'native', // or an SPL or Token-2022 mint address
+  amount: '1000000' // base units: 0.001 SOL in lamports
+});
+const settled = await wallet.solana.getOperation(transferId); // pending, executed or failed
+```
+
+| Method                              | Behavior                                                         |
+| ----------------------------------- | ---------------------------------------------------------------- |
+| `solana.prepareTransfer(id, input)` | Validate a SOL or token transfer and quote it; nothing is sent.  |
+| `solana.executeTransfer(id)`        | Submit the stored quote once.                                    |
+| `solana.sendTransfer(id, input)`    | Prepare and submit in one turn of the executor.                  |
+| `solana.signMessage(id, message)`   | Sign a Solana off-chain message and verify it with WaaS.         |
+| `solana.getOperation(id)`           | Return the persisted operation, polling a transfer in flight.    |
+| `solana.listOperations()`           | Persisted Solana operations, without authenticating or polling.  |
+
+**Quotes expire in about a minute**, with the blockhash they are built on. Review has to be quick or automated; `sendTransfer` prepares and submits without releasing the executor in between. Executing a quote that has expired fails with `TRANSACTION_EXPIRED` and marks the operation `expired`: nothing was sent, so prepare it again under a new ID. The SDK concludes `expired` only when WaaS proves the transaction was never claimed for broadcast: after an attested refusal, or, after a lost response, once WaaS reports the quote expired unclaimed and two minutes have passed since its expiry. Until then the operation stays `unknown`.
+
+Solana and Tron operations share the store and ID space with EVM ones, so an ID can't be reused across families. `listOperations()` and `getOperation(id)` on the `ServerWallet` still return EVM operations only.
+
+`IndexerClient.getSolanaBalances(address, networks?)` returns SOL (9 decimals) and SPL/Token-2022 balances in base units, with the token program, plus per-network errors. Balances come from the indexer, not the attested enclave: use them for display and preflight checks, not as proof of funds.
+
 ## Contract calls
 
 `sendUserOperation`, `prepareUserOperation` and `executeUserOperation` are not in 0.2.0; they ship in the next release. `sendUserOperation` calls any contract from the wallet with sponsored gas. Describe the call with an ABI, the name of a function in it and its arguments, which the SDK encodes with viem, or pass pre-encoded `data`. With a typed ABI (`as const`, or viem's `erc20Abi`), function names and arguments are type-checked:

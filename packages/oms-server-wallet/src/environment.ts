@@ -20,6 +20,7 @@ export function environmentFromKey(key: string) {
     projectId: route.projectId,
     origin: route.apiUrl,
     indexerUrl: `${route.apiUrl}/v1/IndexerGateway/GetTokenBalancesDetails`,
+    solanaIndexerUrl: `${route.apiUrl}/v1/SolanaIndexerGateway/GetTokenBalancesDetails`,
     stage: route.stage,
     mode: route.mode
   };

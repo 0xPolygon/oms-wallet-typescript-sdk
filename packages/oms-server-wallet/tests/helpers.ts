@@ -9,6 +9,17 @@ import type { Credential } from '../src/protocol.js';
 
 import { base58Encode, hexToTron } from '../src/addresses.js';
 
+/** A Solana or Tron transaction as WaaS v1.2.0 keeps it: claimed as pending before broadcast. */
+export interface FakeChainTxn {
+  family: 'solana' | 'tron';
+  status: 'quoted' | 'pending' | 'executed' | 'failed';
+  expiresAt: number;
+  sponsored: boolean;
+  feeOptions: unknown[];
+  hash: string;
+}
+export const SOLANA_SIGNATURE = base58Encode(new Uint8Array(64).fill(7));
+export const TRON_TXID = 'cd'.repeat(32);
 type FakeWallet = { id: string; address: string; networkFamily: string; type?: string };
 /** Deterministic addresses for the non-EVM families, valid for their encodings. */
 export const SOLANA_ADDRESS = base58Encode(new Uint8Array(32).fill(1));
@@ -44,6 +55,21 @@ export class FakeWaas implements RpcTransport {
   failRevoke = false;
   expiredOnce = false;
   txnStatus = 'quoted';
+  signaturesValid = true;
+  /** Solana and Tron transactions by ID, and how the next ones behave. */
+  chainTxns = new Map<string, FakeChainTxn>();
+  chainSponsored = true;
+  chainQuoteMs = 60_000;
+  /** Sun charged for an unsponsored Tron transaction. */
+  tronFee = '345000';
+  /** Send fee options as null, as servers before v1.2.0 do. */
+  nullFeeOptions = false;
+  /** Refuse the next Execute with this code before claiming the transaction. */
+  executeRefusal: number | undefined;
+  /** Claim the transaction, then lose the Execute response. */
+  chainLoseExecute = false;
+  /** Where a claimed transaction is when its status is read. */
+  chainOutcome: 'pending' | 'executed' | 'failed' = 'pending';
   inFlight = 0;
   maxInFlight = 0;
   async request(
@@ -89,6 +115,23 @@ export class FakeWaas implements RpcTransport {
     }
     if (method === 'UseWallet')
       return { wallet: this.all().find((wallet) => wallet.id === body.walletId) };
+    if (method === 'PrepareSolanaTransfer' || method.startsWith('PrepareTron'))
+      return this.prepareChain(method === 'PrepareSolanaTransfer' ? 'solana' : 'tron');
+    if (method === 'Execute' && this.chainTxns.has(body.txnId as string))
+      return this.executeChain(body);
+    if (method === 'TransactionStatus' && this.chainTxns.has(body.txnId as string)) {
+      const txn = this.chainTxns.get(body.txnId as string)!;
+      if (txn.status === 'quoted' && Date.now() > txn.expiresAt)
+        throw new UpstreamError(7309, method);
+      if (txn.status === 'pending') txn.status = this.chainOutcome;
+      return { status: txn.status, ...(txn.status === 'quoted' ? {} : { txnHash: txn.hash }) };
+    }
+    const signer = this.others.find((wallet) => wallet.id === body.walletId);
+    if (method === 'SignMessage' && signer)
+      return {
+        signature: signer.networkFamily === 'solana' ? SOLANA_SIGNATURE : `0x${'11'.repeat(65)}`
+      };
+    if (method === 'SignTypedData' && signer) return { signature: `0x${'22'.repeat(65)}` };
     if (method === 'SignMessage' || method === 'SignTypedData') {
       if (this.expiredOnce) {
         this.expiredOnce = false;
@@ -101,12 +144,14 @@ export class FakeWaas implements RpcTransport {
       return { signature: '0x1234' };
     }
     if (method === 'IsValidMessageSignature') {
-      if (body.networkFamily !== 'evm') throw new UpstreamError(7200, method);
-      return { isValid: true };
+      if (!['evm', 'solana', 'tron'].includes(body.networkFamily as string))
+        throw new UpstreamError(7200, method);
+      return { isValid: this.signaturesValid };
     }
     if (method === 'IsValidTypedDataSignature') {
-      if ('networkFamily' in body || !body.typedData) throw new UpstreamError(7200, method);
-      return { isValid: true };
+      if (!body.typedData || ('networkFamily' in body && body.networkFamily !== 'tron'))
+        throw new UpstreamError(7200, method);
+      return { isValid: this.signaturesValid };
     }
     if (method === 'PrepareEthereumTransaction')
       return {
@@ -132,6 +177,50 @@ export class FakeWaas implements RpcTransport {
       return { ok: true };
     }
     throw new Error(`Unhandled fake RPC: ${method}`);
+  }
+  private prepareChain(family: 'solana' | 'tron') {
+    const txnId = `${family === 'solana' ? 'sol' : 'trx'}-txn-${this.chainTxns.size + 1}`;
+    // Tron is sponsored when delegated resources cover it; otherwise it costs TRX.
+    const feeOptions =
+      this.chainSponsored || family === 'solana'
+        ? []
+        : [
+            {
+              token: { network: 'tron:nile', name: 'TRX', symbol: 'TRX', type: 'NATIVE' },
+              value: this.tronFee,
+              displayValue: (Number(this.tronFee) / 1e6).toString()
+            }
+          ];
+    const txn: FakeChainTxn = {
+      family,
+      status: 'quoted',
+      expiresAt: Date.now() + this.chainQuoteMs,
+      sponsored: this.chainSponsored,
+      feeOptions,
+      hash: family === 'solana' ? SOLANA_SIGNATURE : TRON_TXID
+    };
+    this.chainTxns.set(txnId, txn);
+    return {
+      txnId,
+      status: 'quoted',
+      sponsored: txn.sponsored,
+      feeOptions: this.nullFeeOptions ? null : feeOptions,
+      expiresAt: new Date(txn.expiresAt).toISOString()
+    };
+  }
+  private executeChain(body: Record<string, unknown>) {
+    const txn = this.chainTxns.get(body.txnId as string)!;
+    if (txn.status !== 'quoted' || Date.now() > txn.expiresAt)
+      throw new UpstreamError(7309, 'Execute');
+    if (!txn.sponsored && !body.feeOption) throw new UpstreamError(7310, 'Execute');
+    if (this.executeRefusal) {
+      const code = this.executeRefusal;
+      this.executeRefusal = undefined;
+      throw new UpstreamError(code, 'Execute');
+    }
+    txn.status = 'pending';
+    if (this.chainLoseExecute) throw new Error('Lost execute response');
+    return { status: 'pending' };
   }
   all(): FakeWallet[] {
     return [...(this.wallet ? [this.wallet] : []), ...this.others];
