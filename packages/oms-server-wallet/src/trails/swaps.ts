@@ -93,11 +93,14 @@ export class WalletSwaps {
   private reservedChain(record: SwapRecord): number | undefined {
     const recovery = record.recoveries.find((r) => r.id === record.activeRecoveryId);
     if (recovery) return recovery.chainId;
+    // The origin chain stays reserved while this swap's funding can still debit it: until the
+    // funding settles, or while a confirmed swap is still preparing or sending it. A funding that
+    // failed, reverted or expired debits nothing, so observing the intent afterwards reserves nothing.
     if (
       uncertain(record.funding) ||
       (record.confirmedAt &&
         !record.fundingConfirmed &&
-        record.action &&
+        ['prepare-funding', 'activate', 'fund'].includes(record.action ?? '') &&
         !['failed', 'expired'].includes(record.phase))
     )
       return record.request.originChainId;
@@ -412,7 +415,8 @@ export class WalletSwaps {
           break;
       }
       record.attempts = 0;
-      if (record.phase !== 'attention') record.error = undefined;
+      // Keep the reason a swap needs attention or ended without settling; clear progress notes.
+      if (!['attention', 'failed', 'expired'].includes(record.phase)) record.error = undefined;
       await this.save(
         record,
         record.action ? (record.phase === 'attention' ? 30_000 : 5000) : null
@@ -605,6 +609,11 @@ export class WalletSwaps {
       record.phase = 'attention';
       record.action = 'observe';
       record.error = 'FUNDING_FAILED';
+    } else if (record.funding.status === 'expired') {
+      // The funding quote expired before it was broadcast: nothing left the wallet.
+      record.phase = 'expired';
+      record.action = null;
+      record.error = 'QUOTE_EXPIRED';
     } else if (uncertain(record.funding)) {
       record.phase = 'funding';
       record.error = 'FUNDING_PENDING';
@@ -900,10 +909,10 @@ export class WalletSwaps {
     } else
       recovery.deployment =
         (await this.options.wallet.getOperation(recovery.deploymentId)) ?? recovery.deployment;
-    if (recovery.deployment.status === 'failed')
+    if (recovery.deployment.status === 'failed' || recovery.deployment.status === 'expired')
       throw new WalletError(
         'INVALID_RECOVERY',
-        'Owner deployment failed. Prepare a new recovery review.',
+        `Owner deployment ${recovery.deployment.status}. Prepare a new recovery review.`,
         409
       );
     if (recovery.deployment.status === 'executed' && recovery.deployment.txnHash) {
@@ -1018,9 +1027,11 @@ export class WalletSwaps {
     if (!(await this.options.wallet.inspect()).disabled)
       recovery.transaction =
         (await this.options.wallet.getOperation(recovery.transactionId)) ?? recovery.transaction;
-    if (recovery.transaction?.status === 'failed') {
-      recovery.status = 'failed';
-      recovery.error = 'RECOVERY_FAILED';
+    // Expired proves, like failed, that the recovery transaction was never broadcast.
+    if (recovery.transaction?.status === 'failed' || recovery.transaction?.status === 'expired') {
+      recovery.status = recovery.transaction.status;
+      recovery.error =
+        recovery.transaction.status === 'expired' ? 'RECOVERY_EXPIRED' : 'RECOVERY_FAILED';
       record.activeRecoveryId = undefined;
       record.phase = 'attention';
       record.action = 'observe';

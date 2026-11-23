@@ -37,6 +37,23 @@ describe('EVM execution settlement', () => {
     expect(await h.client.listOpenOperations()).toEqual([]);
   });
 
+  it.each([
+    [7201, 'invalid signature'],
+    [7205, 'usage limit'],
+    [7206, 'nonce replay']
+  ])(
+    'records a credential refusal (%i, %s) as failed: WaaS rejected it before Execute ran',
+    async (code) => {
+      const h = sdkHarness();
+      await h.client.prepareTransfer(`credential-refused-${code}`, transfer);
+      h.remote.evmExecuteRefusal = code;
+      expect(await h.client.executeTransfer(`credential-refused-${code}`)).toMatchObject({
+        status: 'failed',
+        error: 'EXECUTE_REFUSED'
+      });
+    }
+  );
+
   it('keeps an ambiguous refusal unknown, then expires it once no claim can still land', async () => {
     const h = sdkHarness();
     await h.client.prepareTransfer('ambiguous-1', transfer);
@@ -117,6 +134,27 @@ describe('EVM operation records', () => {
     expect(
       (await h.client.readOperations(['closed-op-1', 'missing-op-1'])).map((op) => op.id)
     ).toEqual(['closed-op-1']);
+  });
+});
+
+describe('open operation index', () => {
+  it('lists a new operation as open before its record is written', async () => {
+    const h = sdkHarness();
+    await h.client.prepareTransfer('open-op-a1', transfer);
+    expect(await h.client.listOpenOperations()).toHaveLength(1);
+    const write = h.store.write.bind(h.store);
+    h.store.write = async (key, value) => {
+      if (key === 'operation:open-op-b2') throw new Error('Store unavailable');
+      return write(key, value);
+    };
+    await expect(h.client.prepareTransfer('open-op-b2', transfer)).rejects.toThrow();
+    // A crash here must not leave the operation missing from the index; readers check records.
+    expect(JSON.parse((await h.store.read('openOperationIndex'))!)).toEqual([
+      'open-op-a1',
+      'open-op-b2'
+    ]);
+    h.store.write = write;
+    expect((await h.client.listOpenOperations()).map((op) => op.id)).toEqual(['open-op-a1']);
   });
 });
 

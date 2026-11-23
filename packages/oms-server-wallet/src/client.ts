@@ -598,16 +598,20 @@ export class ServerWallet {
     const ids: string[] = JSON.parse((await this.options.store.read('operationIndex')) ?? '[]');
     if (!ids.includes(op.id))
       await this.options.store.write('operationIndex', JSON.stringify([...ids, op.id]));
-    await this.options.store.write(`operation:${op.id}`, JSON.stringify(op));
-    // Kept only once built from the full index (see openOperationIds), so it never misses one.
+    // The open index is kept only once built from the full index (see openOperationIds). It may
+    // list a settled operation, never miss an open one: an ID is added before the record says it
+    // is open and removed after the record says it settled, so a crash between leaves it listed,
+    // and readers check each record's status.
     const open = await this.options.store.read('openOperationIndex');
-    if (open === null) return;
-    const openIds: string[] = JSON.parse(open);
+    const openIds: string[] | null = open === null ? null : JSON.parse(open);
     const isOpen = OPEN_STATUSES.includes(op.status);
-    if (isOpen !== openIds.includes(op.id))
+    if (openIds && isOpen && !openIds.includes(op.id))
+      await this.options.store.write('openOperationIndex', JSON.stringify([...openIds, op.id]));
+    await this.options.store.write(`operation:${op.id}`, JSON.stringify(op));
+    if (openIds && !isOpen && openIds.includes(op.id))
       await this.options.store.write(
         'openOperationIndex',
-        JSON.stringify(isOpen ? [...openIds, op.id] : openIds.filter((entry) => entry !== op.id))
+        JSON.stringify(openIds.filter((entry) => entry !== op.id))
       );
   }
   /** IDs of operations not yet settled, building the index from all operations on first use. */

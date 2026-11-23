@@ -16,8 +16,18 @@ export const TRANSACTION_EXPIRED = WaasErrorCode.TransactionExpired;
  * Execute refusals WaaS v1.2.0 returns only before it claims the transaction, for EVM (relayer
  * mode), Solana and Tron alike, so the request sent nothing. Any other error, such as a failed
  * broadcast, can follow the claim.
+ *
+ * The credential middleware rejects a request before Execute runs (invalid signature, missing or
+ * expired key, usage limit, nonce replay). TransactionFailed and WalletProviderError are raised
+ * only while building, pricing or signing, before the claim; after it, WaaS answers only
+ * TransactionBroadcastFailed or TransactionSimulationFailed, which polling settles.
  */
 export const PRE_CLAIM_REFUSALS: ReadonlySet<number> = new Set([
+  WaasErrorCode.InvalidSignature,
+  WaasErrorCode.KeyNotFound,
+  WaasErrorCode.KeyExpired,
+  WaasErrorCode.UsageLimitExceeded,
+  WaasErrorCode.PreconditionFailed,
   WaasErrorCode.DataIntegrityError,
   WaasErrorCode.InvalidRequest,
   WaasErrorCode.Unauthorized,
