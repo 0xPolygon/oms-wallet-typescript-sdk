@@ -1,4 +1,5 @@
 import { WalletError } from './errors.js';
+import { routePublishableKey } from './internal/protocol/publishableKey.js';
 export const CHAINS = [
   { id: 137, name: 'Polygon', symbol: 'POL', explorer: 'https://polygonscan.com' },
   { id: 42161, name: 'Arbitrum', symbol: 'ETH', explorer: 'https://arbiscan.io' },
@@ -13,18 +14,13 @@ export function requireChain(id: number) {
   return chain;
 }
 export function environmentFromKey(key: string) {
-  const match = /^pk_(?:(local|dev|stg)_)?(sdbx|live)_([A-Za-z0-9]+)_([A-Za-z0-9-]+)$/.exec(key);
-  if (!match) throw new WalletError('CONFIGURATION', 'Configure a valid OMS publishable key.', 503);
-  const [, stage, mode, project] = match;
-  const prefix = mode === 'sdbx' ? 'sandbox-api' : 'api';
-  const origin = stage
-    ? `https://${prefix}.${stage}.polygon-dev.technology`
-    : `https://${prefix}.polygon.technology`;
+  const route = routePublishableKey(key);
+  if (!route) throw new WalletError('CONFIGURATION', 'Configure a valid OMS publishable key.', 503);
   return {
-    projectId: `prj_${project}`,
-    origin,
-    indexerUrl: `${origin}/v1/IndexerGateway/GetTokenBalancesDetails`,
-    stage: stage ?? 'production',
-    mode
+    projectId: route.projectId,
+    origin: route.apiUrl,
+    indexerUrl: `${route.apiUrl}/v1/IndexerGateway/GetTokenBalancesDetails`,
+    stage: route.stage,
+    mode: route.mode
   };
 }

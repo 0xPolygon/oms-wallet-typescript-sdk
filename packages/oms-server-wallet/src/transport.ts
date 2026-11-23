@@ -2,10 +2,17 @@ import { z } from 'zod';
 
 import type { Credential } from './protocol.js';
 
-import { verifyAttestationDocument } from './attestation.js';
-import { base64EncodeBytes } from './encoding.js';
 import { environmentFromKey } from './environment.js';
 import { UpstreamError, WalletError } from './errors.js';
+import {
+  ATTESTATION_BOUND_HEADER,
+  ATTESTATION_DOCUMENT_HEADER,
+  ATTESTATION_NONCE_HEADER,
+  normalizeTrustedPcr0s,
+  randomAttestationNonce,
+  trustsDebugEnclave,
+  verifyAttestationDocument
+} from './internal/protocol/attestation.js';
 import { signatureHeader } from './protocol.js';
 
 export interface RpcTransport {
@@ -17,17 +24,19 @@ import { boundedText } from './http.js';
 /** Every WaaS response is verified. There is deliberately no skip-attestation switch. */
 export class WaasTransport implements RpcTransport {
   private readonly environment;
-  private readonly pcrs: Set<string>;
+  private readonly pcrs: ReadonlySet<string>;
   constructor(
     private readonly key: string,
     trustedPcr0s: readonly string[],
     private readonly fetcher: typeof fetch = fetch
   ) {
     this.environment = environmentFromKey(key);
-    this.pcrs = new Set(trustedPcr0s.map((v) => v.trim().toLowerCase().replace(/^0x/, '')));
-    if (!this.pcrs.size || [...this.pcrs].some((v) => !/^[0-9a-f]{96}$/.test(v)))
+    try {
+      this.pcrs = normalizeTrustedPcr0s(trustedPcr0s);
+    } catch {
       throw new WalletError('CONFIGURATION', 'Configure approved enclave PCR0 measurements.', 503);
-    if (this.environment.stage === 'production' && this.pcrs.has('0'.repeat(96)))
+    }
+    if (this.environment.stage === 'production' && trustsDebugEnclave(this.pcrs))
       throw new WalletError(
         'CONFIGURATION',
         'Debug enclaves are not permitted in production.',
@@ -42,14 +51,14 @@ export class WaasTransport implements RpcTransport {
     if (!/^[A-Za-z]+$/.test(method)) throw new WalletError('INVALID_METHOD', 'Invalid RPC method.');
     const path = `/v1/${credential ? 'Waas' : 'WaasPublic'}/${method}`;
     const body = JSON.stringify(params);
-    const nonce = base64EncodeBytes(crypto.getRandomValues(new Uint8Array(18)));
+    const nonce = randomAttestationNonce();
     const headers: Record<string, string> = {
       'Content-Type': 'application/json',
       'Api-Key': this.key,
-      'X-Attestation-Nonce': nonce
+      [ATTESTATION_NONCE_HEADER]: nonce
     };
     if (credential)
-      headers['OMS-Wallet-Signature'] = await signatureHeader(
+      headers[ATTESTATION_BOUND_HEADER] = await signatureHeader(
         credential,
         path,
         this.environment.projectId,
@@ -67,13 +76,14 @@ export class WaasTransport implements RpcTransport {
       throw new WalletError('UPSTREAM_REDIRECT', 'WaaS redirects are not permitted.', 502);
     const responseBody = await boundedText(response);
     try {
-      const encodedDocument = response.headers.get('X-Attestation-Document');
+      const encodedDocument = response.headers.get(ATTESTATION_DOCUMENT_HEADER);
       if (!encodedDocument || encodedDocument.length > 64_000)
         throw new Error('Missing or oversized attestation');
       await verifyAttestationDocument({
         encodedDocument,
         method: 'POST',
         path,
+        boundHeader: headers[ATTESTATION_BOUND_HEADER] ?? '',
         requestBody: body,
         responseBody,
         nonce,

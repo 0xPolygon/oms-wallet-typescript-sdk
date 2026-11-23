@@ -75,6 +75,7 @@
     "@hpke/core": "^1.9.0",
     "@peculiar/x509": "^1.14.3",
     "cbor-x": "^1.6.5",
+    "reflect-metadata": "^0.2.2",
     "viem": "^2.55.0"
   },
   "devDependencies": {

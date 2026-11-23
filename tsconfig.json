@@ -5,6 +5,7 @@
     { "path": "packages/oms-wallet" },
     { "path": "packages/oms-wallet-wagmi-connector" },
     { "path": "packages/oms-wallet-privacy" },
-    { "path": "packages/oms-server-wallet" }
+    { "path": "packages/oms-server-wallet" },
+    { "path": "packages/oms-wallet-protocol" }
   ]
 }

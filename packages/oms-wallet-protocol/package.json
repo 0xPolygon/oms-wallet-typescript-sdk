@@ -1,0 +1,23 @@
+{
+  "name": "oms-wallet-protocol",
+  "version": "0.0.0",
+  "private": true,
+  "description": "WaaS wire-protocol code shared by the OMS wallet SDKs. Never published: its source is copied into each SDK.",
+  "license": "Apache-2.0",
+  "type": "module",
+  "scripts": {
+    "typecheck": "tsc -b",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "sync": "node scripts/sync.mjs",
+    "codegen-drift-check": "node scripts/sync.mjs --check"
+  },
+  "devDependencies": {
+    "@peculiar/x509": "2.0.0",
+    "cbor-x": "1.6.6",
+    "prettier": "^3.0.0",
+    "reflect-metadata": "0.2.2",
+    "typescript": "^5.9.3",
+    "vitest": "^4.1.5"
+  }
+}

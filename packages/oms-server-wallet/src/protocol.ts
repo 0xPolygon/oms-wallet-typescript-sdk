@@ -1,6 +1,10 @@
 import { z } from 'zod';
 
 import { bytesToHex, utf8 } from './encoding.js';
+import {
+  walletRequestPreimage,
+  walletSignatureHeader
+} from './internal/protocol/requestSigning.js';
 
 export const walletSchema = z.object({
   id: z.string().min(1),
@@ -83,11 +87,17 @@ export async function signatureHeader(
     false,
     ['sign']
   );
-  const preimage = `POST ${path}\nnonce: ${credential.nonce}\nscope: ${scope}\n\n${body}`;
+  const preimage = walletRequestPreimage(path, credential.nonce, scope, body);
   const signature = await crypto.subtle.sign(
     { name: 'ECDSA', hash: 'SHA-256' },
     key,
     utf8(preimage)
   );
-  return `alg="ecdsa-p256-sha256", scope="${scope}", cred="${credential.id}", nonce=${credential.nonce}, sig="0x${bytesToHex(new Uint8Array(signature))}"`;
+  return walletSignatureHeader({
+    algorithm: 'ecdsa-p256-sha256',
+    scope,
+    credential: credential.id,
+    nonce: credential.nonce,
+    signature: `0x${bytesToHex(new Uint8Array(signature))}`
+  });
 }

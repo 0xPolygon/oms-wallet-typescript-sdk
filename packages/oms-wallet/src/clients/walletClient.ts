@@ -570,10 +570,29 @@ export class WalletClientImpl implements WalletClient {
       params.environment.walletApiUrl,
       createDeadlineFetch(this.credentialReadFetch(signedFetch))
     );
+    // Wallet import verifies each response's attestation where the request is sent, after signing,
+    // so a `Sequence/2` attestation is checked against the signature header WaaS received.
     this.walletImportClient = params.walletImportTrustedPcr0s
       ? new WaasClient(
           params.environment.walletApiUrl,
-          createDeadlineFetch(createAttestedFetch(sessionFetch, params.walletImportTrustedPcr0s))
+          createDeadlineFetch(
+            this.sessionActivityFetch(
+              this.sessionRequestFetch(
+                createSerialFetch(
+                  createSignedFetch(
+                    publishableKey,
+                    this.credentialSigner,
+                    this.projectId,
+                    createAttestedFetch(
+                      (input, init) => globalThis.fetch(input, init),
+                      params.walletImportTrustedPcr0s
+                    )
+                  ),
+                  this.credentialSigner
+                )
+              )
+            )
+          )
         )
       : undefined;
     this.publicClient = new WaasPublicClient(

@@ -1,4 +1,4 @@
-import { base64UrlDecodeBytes, base64UrlEncodeBytes } from './base64.js';
+import { base64UrlDecodeBytes, base64UrlEncodeBytes } from '../internal/protocol/encoding.js';
 
 export interface OidcStatePayload {
   nonce: string;

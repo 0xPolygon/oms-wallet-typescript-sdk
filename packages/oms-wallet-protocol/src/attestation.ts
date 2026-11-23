@@ -1,5 +1,4 @@
-// Adapted from @polygonlabs/oms-wallet; see ../NOTICE and ../LICENSE-APACHE-2.0.
-import 'reflect-metadata';
+import type * as X509 from '@peculiar/x509';
 import type { X509Certificate } from '@peculiar/x509';
 import type { Decoder, Tag as CborTag } from 'cbor-x';
 
@@ -8,8 +7,35 @@ import {
   base64EncodeBytes,
   bytesToHex,
   equalBytes,
-  toArrayBuffer
+  toArrayBuffer,
+  utf8
 } from './encoding.js';
+import { DEBUG_PCR0 } from './publishableKey.js';
+import { WALLET_SIGNATURE_HEADER } from './requestSigning.js';
+
+/** Request header carrying the nonce the enclave must sign into its attestation. */
+export const ATTESTATION_NONCE_HEADER = 'X-Attestation-Nonce';
+/** Response header carrying the base64 COSE_Sign1 attestation document. */
+export const ATTESTATION_DOCUMENT_HEADER = 'X-Attestation-Document';
+/**
+ * The request header a `Sequence/2` attestation binds. Its raw value as sent, or an empty string
+ * when the request had none, is part of the attested hash, so an attestation proves which credential
+ * signed the request the enclave answered.
+ */
+export const ATTESTATION_BOUND_HEADER = WALLET_SIGNATURE_HEADER;
+
+/** Attestation formats the verifier accepts. Anything else is rejected. */
+export type AttestationVersion = 1 | 2;
+
+/** The request and response an attestation must bind. */
+export interface AttestationBinding {
+  method: string;
+  path: string;
+  /** Value of `ATTESTATION_BOUND_HEADER` as sent; omit or `''` when the request had none. */
+  boundHeader?: string;
+  requestBody: string;
+  responseBody: string;
+}
 
 // SHA-256 fingerprint of the DER-encoded AWS Nitro Enclaves root certificate.
 const awsNitroRootSha256 = '641a0321a3e244efe456463195d606317ed7cdcc3c1756e09893f3c68f79bb5b';
@@ -26,16 +52,19 @@ interface AttestationDocument {
   nonce: Uint8Array;
 }
 
-export async function verifyAttestationDocument(params: {
-  encodedDocument: string;
-  method: string;
-  path: string;
-  requestBody: string;
-  responseBody: string;
-  nonce: string;
-  trustedPcr0s: ReadonlySet<string>;
-  now?: Date;
-}): Promise<void> {
+/**
+ * Verifies a WaaS response's attestation document: the AWS Nitro certificate chain and COSE
+ * signature, a trusted PCR0, the request nonce, its age, and that it binds this exact request and
+ * response. Throws an `Error` naming the failed check.
+ */
+export async function verifyAttestationDocument(
+  params: AttestationBinding & {
+    encodedDocument: string;
+    nonce: string;
+    trustedPcr0s: ReadonlySet<string>;
+    now?: Date;
+  }
+): Promise<void> {
   const { Decoder, Encoder, Tag } = await import('cbor-x');
   const decoder = new Decoder({ mapsAsObjects: false, copyBuffers: true });
   const encoder = new Encoder({ mapsAsObjects: false, tagUint8Array: false, useRecords: false });
@@ -56,7 +85,10 @@ export async function verifyAttestationDocument(params: {
     throw new Error('WaaS attestation nonce does not match the request');
   }
 
-  const expectedUserData = await attestationUserData(params);
+  const expectedUserData = await attestationUserData(
+    attestationVersionOf(document.userData),
+    params
+  );
   if (!equalBytes(document.userData, expectedUserData)) {
     throw new Error('WaaS attestation is not bound to the request and response');
   }
@@ -176,7 +208,7 @@ async function verifyCertificateChain(
     KeyUsagesExtension,
     X509Certificate,
     X509ChainBuilder
-  } = await import('@peculiar/x509');
+  } = await loadX509();
   const target = new X509Certificate(toArrayBuffer(document.certificate));
   const authorities = document.cabundle.map((raw) => new X509Certificate(toArrayBuffer(raw)));
   const root = authorities[0];
@@ -226,17 +258,57 @@ async function verifyCertificateChain(
   return target;
 }
 
-async function attestationUserData(params: {
-  method: string;
-  path: string;
-  requestBody: string;
-  responseBody: string;
-}): Promise<Uint8Array> {
-  const preimage = `${params.method.toUpperCase()} ${params.path}\n${params.requestBody}\n${params.responseBody}`;
-  const hash = new Uint8Array(
-    await crypto.subtle.digest('SHA-256', new TextEncoder().encode(preimage))
-  );
-  return new TextEncoder().encode(`Sequence/1:${base64EncodeBytes(hash)}`);
+/**
+ * The `user_data` an enclave writes for this request and response:
+ *
+ * - `Sequence/1:<base64(SHA-256(METHOD + " " + PATH + "\n" + reqBody + "\n" + resBody))>`
+ * - `Sequence/2:<base64(SHA-256(METHOD + " " + PATH + "\n" + boundHeader + "\n" + reqBody + "\n" + resBody))>`
+ */
+export async function attestationUserData(
+  version: AttestationVersion,
+  binding: AttestationBinding
+): Promise<Uint8Array> {
+  const request = `${binding.method.toUpperCase()} ${binding.path}`;
+  const preimage =
+    version === 2
+      ? `${request}\n${binding.boundHeader ?? ''}\n${binding.requestBody}\n${binding.responseBody}`
+      : `${request}\n${binding.requestBody}\n${binding.responseBody}`;
+  const hash = new Uint8Array(await crypto.subtle.digest('SHA-256', utf8(preimage)));
+  return utf8(`Sequence/${version}:${base64EncodeBytes(hash)}`);
+}
+
+function attestationVersionOf(userData: Uint8Array): AttestationVersion {
+  const text = new TextDecoder().decode(userData);
+  if (text.startsWith('Sequence/1:')) return 1;
+  if (text.startsWith('Sequence/2:')) return 2;
+  throw new Error('WaaS attestation uses an unsupported user data version');
+}
+
+/** Lowercase hex PCR0s without `0x`. Throws when the list is empty or holds a malformed value. */
+export function normalizeTrustedPcr0s(pcr0s: ReadonlyArray<string>): ReadonlySet<string> {
+  const normalized = pcr0s.map((value) => value.trim().toLowerCase().replace(/^0x/, ''));
+  if (normalized.length === 0 || normalized.some((value) => !/^[0-9a-f]{96}$/.test(value))) {
+    throw new Error('trustedPcr0s must contain at least one 48-byte hex PCR0');
+  }
+  return new Set(normalized);
+}
+
+/** Whether a normalized PCR0 set trusts a debug enclave, which production must never do. */
+export function trustsDebugEnclave(trustedPcr0s: ReadonlySet<string>): boolean {
+  return trustedPcr0s.has(DEBUG_PCR0);
+}
+
+export function randomAttestationNonce(): string {
+  const bytes = new Uint8Array(18);
+  crypto.getRandomValues(bytes);
+  return base64EncodeBytes(bytes);
+}
+
+// Loaded on first use, so a browser bundle fetches the certificate code only when it verifies.
+// @peculiar/x509 2.x expects the Reflect metadata polyfill to be loaded first; 1.x loads it itself.
+async function loadX509(): Promise<typeof X509> {
+  await import('reflect-metadata');
+  return import('@peculiar/x509');
 }
 
 function rawCertificate(certificate: X509Certificate): Uint8Array {

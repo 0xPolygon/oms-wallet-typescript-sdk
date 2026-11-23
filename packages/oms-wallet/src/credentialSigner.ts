@@ -3,7 +3,8 @@ import type { Hex } from 'viem';
 import { keccak256, toBytes } from 'viem';
 import { privateKeyToAccount } from 'viem/accounts';
 
-import { bytesToHex } from './utils/base64.js';
+import { bytesToHex } from './internal/protocol/encoding.js';
+import { nextWalletNonce } from './internal/protocol/requestSigning.js';
 
 export type CredentialSigningAlgorithm = 'ecdsa-p256-sha256' | 'ecdsa-p256k-eip191';
 
@@ -52,7 +53,7 @@ export class WebCryptoP256CredentialSigner implements CredentialSigner {
 
     const db = await openCredentialDb();
     if (!db) {
-      this.nonce = nextNonceValue(this.nonce);
+      this.nonce = nextWalletNonce(this.nonce);
       return this.nonce.toString();
     }
 
@@ -70,7 +71,7 @@ export class WebCryptoP256CredentialSigner implements CredentialSigner {
         throw new Error('WebCrypto credential signer was cleared');
       }
 
-      const nonce = nextNonceValue(parseNonce(stored.nonce));
+      const nonce = nextWalletNonce(parseNonce(stored.nonce));
       const nextRecord = { ...stored, nonce: nonce.toString() };
       this.nonce = nonce;
       this.keyPair = stored.keyPair;
@@ -232,7 +233,7 @@ export class EthereumPrivateKeyCredentialSigner implements CredentialSigner {
   }
 
   async nextNonce(): Promise<string> {
-    this.nonce = nextNonceValue(this.nonce);
+    this.nonce = nextWalletNonce(this.nonce);
     return this.nonce.toString();
   }
 
@@ -296,11 +297,6 @@ function isUsableStoredCredential(
     stored.keyPair?.privateKey &&
     stored.keyPair.privateKey.extractable === false
   );
-}
-
-function nextNonceValue(previous: bigint): bigint {
-  const now = BigInt(Date.now());
-  return now > previous ? now : previous + 1n;
 }
 
 function parseNonce(value: string): bigint {

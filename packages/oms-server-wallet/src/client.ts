@@ -18,6 +18,8 @@ import { requireRecoveryPermit } from './authorization.js';
 import { sha256 } from './encoding.js';
 import { requireChain } from './environment.js';
 import { UpstreamError, WalletError } from './errors.js';
+import { nextWalletNonce } from './internal/protocol/requestSigning.js';
+import { WaasErrorCode } from './internal/protocol/waasErrors.js';
 import {
   authSchema,
   credentialId,
@@ -119,6 +121,13 @@ const transferSchema = z
       .max(78)
   })
   .strict();
+
+/** Authentication failures WaaS reports before running a method: a missing, expired or revoked key. */
+const credentialRejectedCodes: ReadonlySet<number> = new Set([
+  WaasErrorCode.KeyNotFound,
+  WaasErrorCode.KeyExpired,
+  WaasErrorCode.Unauthorized
+]);
 
 export function parseAmount(value: string, decimals: number): string {
   if (
@@ -274,8 +283,7 @@ export class ServerWallet {
     params: Record<string, unknown>
   ): Promise<unknown> {
     if (!state.credential) throw new WalletError('NO_CREDENTIAL', 'Credential unavailable.');
-    const next = BigInt(state.credential.nonce) + 1n;
-    state.credential.nonce = (next > BigInt(Date.now()) ? next : BigInt(Date.now())).toString();
+    state.credential.nonce = nextWalletNonce(BigInt(state.credential.nonce)).toString();
     await this.save(state);
     return this.options.transport.request(method, params, state.credential);
   }
@@ -290,7 +298,7 @@ export class ServerWallet {
     } catch (error) {
       // Verified authentication failures precede execution. Revoked keys return 7207.
       // Retry once with a new credential; a persistent authorization failure still propagates.
-      if (!(error instanceof UpstreamError) || ![7202, 7203, 7207].includes(error.upstreamCode))
+      if (!(error instanceof UpstreamError) || !credentialRejectedCodes.has(error.upstreamCode))
         throw error;
       state.credential = undefined;
       await this.save(state);
@@ -453,7 +461,7 @@ export class ServerWallet {
           })
         );
       } catch (error) {
-        if (!(error instanceof UpstreamError) || ![7202, 7203, 7207].includes(error.upstreamCode))
+        if (!(error instanceof UpstreamError) || !credentialRejectedCodes.has(error.upstreamCode))
           throw error;
       }
     }

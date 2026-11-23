@@ -61,6 +61,7 @@ export default defineConfig([
       'scripts/**',
       'packages/oms-wallet/scripts/**',
       'packages/oms-server-wallet/scripts/**',
+      'packages/oms-wallet-protocol/scripts/**',
       'packages/oms-wallet/src/generated/**'
     ]
   }

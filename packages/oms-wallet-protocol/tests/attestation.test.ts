@@ -3,8 +3,13 @@ import { readFileSync } from 'node:fs';
 import { Decoder, Encoder, Tag } from 'cbor-x';
 import { describe, expect, it } from 'vitest';
 
-import { verifyAttestationDocument } from '../src/attestation';
-import { base64DecodeBytes, base64EncodeBytes } from '../src/utils/base64';
+import {
+  attestationUserData,
+  normalizeTrustedPcr0s,
+  trustsDebugEnclave,
+  verifyAttestationDocument
+} from '../src/attestation.js';
+import { base64DecodeBytes, base64EncodeBytes } from '../src/encoding.js';
 
 interface AttestationFixture {
   encodedDocument: string;
@@ -91,7 +96,7 @@ describe('AWS Nitro attestation verification', () => {
     );
   });
 
-  it('rejects untrusted PCR0, wrong nonce, mismatched response body and tampered signature', async () => {
+  it('rejects untrusted measurements and mismatched request bindings', async () => {
     await expect(verifyFixture({ trustedPcr0s: new Set(['1'.repeat(96)]) })).rejects.toThrow(
       'PCR0 is not trusted'
     );
@@ -105,6 +110,80 @@ describe('AWS Nitro attestation verification', () => {
     await expect(verifyFixture({ encodedDocument: tamperedDocument })).rejects.toThrow(
       'signature is invalid'
     );
+  });
+
+  it('rejects user data of an unsupported version', async () => {
+    const encodedDocument = mutateAttestationPayload((payload) => {
+      const userData = new TextDecoder().decode(payload.get('user_data') as Uint8Array);
+      payload.set(
+        'user_data',
+        new TextEncoder().encode(userData.replace('Sequence/1', 'Sequence/3'))
+      );
+    });
+
+    await expect(verifyFixture({ encodedDocument })).rejects.toThrow(
+      'unsupported user data version'
+    );
+  });
+});
+
+// The same cases as nitrocontrol's attestation/middleware_test.go (TestMiddlewareUserData): a POST
+// to /rpc with body "request" answered by "response".
+describe('attestation user data', () => {
+  const binding = {
+    method: 'POST',
+    path: '/rpc',
+    requestBody: 'request',
+    responseBody: 'response'
+  };
+
+  it.each([
+    {
+      name: 'Sequence/1 ignores the header',
+      version: 1 as const,
+      boundHeader: 'sig',
+      preimage: 'POST /rpc\nrequest\nresponse'
+    },
+    {
+      name: 'Sequence/2 with the header',
+      version: 2 as const,
+      boundHeader: 'sig',
+      preimage: 'POST /rpc\nsig\nrequest\nresponse'
+    },
+    {
+      name: 'Sequence/2 without the header',
+      version: 2 as const,
+      boundHeader: undefined,
+      preimage: 'POST /rpc\n\nrequest\nresponse'
+    }
+  ])('$name', async ({ version, boundHeader, preimage }) => {
+    const hash = new Uint8Array(
+      await crypto.subtle.digest('SHA-256', new TextEncoder().encode(preimage))
+    );
+    expect(
+      new TextDecoder().decode(await attestationUserData(version, { ...binding, boundHeader }))
+    ).toBe(`Sequence/${version}:${base64EncodeBytes(hash)}`);
+  });
+
+  it('a Sequence/2 hash changes with the bound header', async () => {
+    const signed = await attestationUserData(2, { ...binding, boundHeader: 'sig' });
+    const swapped = await attestationUserData(2, { ...binding, boundHeader: 'attacker' });
+    expect(new TextDecoder().decode(signed)).not.toBe(new TextDecoder().decode(swapped));
+  });
+});
+
+describe('trusted PCR0s', () => {
+  it('normalizes case, whitespace and a 0x prefix', () => {
+    expect(normalizeTrustedPcr0s([` 0x${'AB'.repeat(48)} `])).toEqual(new Set(['ab'.repeat(48)]));
+  });
+
+  it.each([[[]], [['00']], [['zz'.repeat(48)]]])('rejects %j', (pcr0s) => {
+    expect(() => normalizeTrustedPcr0s(pcr0s)).toThrow('at least one 48-byte hex PCR0');
+  });
+
+  it('recognises a trusted debug enclave', () => {
+    expect(trustsDebugEnclave(normalizeTrustedPcr0s(['0'.repeat(96)]))).toBe(true);
+    expect(trustsDebugEnclave(normalizeTrustedPcr0s(['1'.repeat(96)]))).toBe(false);
   });
 });
 

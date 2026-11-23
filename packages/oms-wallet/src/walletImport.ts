@@ -1,7 +1,11 @@
 import type { ImportWalletParams } from './wallet.js';
 
+import {
+  base64DecodeBytes,
+  base64EncodeBytes,
+  toArrayBuffer
+} from './internal/protocol/encoding.js';
 import { decodeBase58 } from './utils/base58.js';
-import { base64DecodeBytes, base64EncodeBytes, toArrayBuffer } from './utils/base64.js';
 
 const secp256k1Order = 0xfffffffffffffffffffffffffffffffebaaedce6af48a03bbfd25e8cd0364141n;
 
