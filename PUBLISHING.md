@@ -2,7 +2,7 @@
 
 > **Publishing is CI-only. Never publish or stage from a local machine.** Do not run
 > `changeset version`, `changeset publish`, `npm publish`, `npm stage publish`, `pnpm publish`, or
-> the internal `ci:stage-release` script yourself. A local release bypasses the signed release
+> the internal release scripts (`scripts/pack-npm-packages.mjs`, `scripts/stage-npm-packages.mjs`) yourself. A local release bypasses the signed release
 > commit and npm OIDC trusted publishing. Your job as a contributor is to land a changeset (see
 > "Day-to-day") and let CI prepare the release; an npm maintainer performs the final 2FA approval.
 
@@ -50,15 +50,19 @@ touches a package without one.
    package versions in lockstep (and the server SDK's version when a changeset names it), and updates
    each `CHANGELOG.md`.
 2. Review and merge that Release PR.
-3. On merge, the same workflow uses npm `11.15.0` and runs the full release gates. It then packs
-   each package with pnpm, which rewrites the connector's `workspace:^` SDK peer range to the fixed
-   release version. The workflow inspects every packed manifest and fails if any `workspace:` range
-   remains.
-4. The workflow sends the pnpm-created tarballs to `npm stage publish` via **OIDC trusted
-   publishing** (no `NPM_TOKEN`). Packages are handled one at a time, fixed-group packages first:
-   each is looked up, packed and staged before the next, and only versions that are neither tagged
-   nor published are staged. A failure stops the job; a rerun skips what is already tagged. After all packages stage successfully, Changesets pushes a
-   package tag and creates a GitHub Release from each package's `CHANGELOG.md` entry.
+3. On merge, the workflow's `verify` job runs with no npm or GitHub write credentials. It runs the
+   release gates (`pnpm run ci:verify-release`: lint, tests, build, publint, the protocol drift check
+   and the server SDK's coverage), packs every publishable package with pnpm (which rewrites
+   `workspace:` ranges), fails if any `workspace:` range remains, and installs the packed server SDK
+   into a clean consumer. It uploads the tarballs with a manifest of their names, versions and
+   SHA-512 digests.
+4. The `release` job downloads those tarballs, checks each one's SHA-512 and packed `package.json`
+   against the manifest and the commit it was packed from, and stages exactly those files with
+   `npm stage publish` via **OIDC trusted publishing** (no `NPM_TOKEN`). Nothing is built or packed
+   there. Packages are handled one at a time, fixed-group packages first, and only versions that
+   are neither tagged nor published are staged. A failure stops the job; a rerun skips what is
+   already tagged. Changesets pushes a package tag and creates a GitHub Release from each staged
+   package's `CHANGELOG.md` entry.
 5. An npm maintainer inspects and approves the staged packages with 2FA. Approve
    `@polygonlabs/oms-wallet` first, then `@polygonlabs/oms-wallet-wagmi-connector` and
    `@polygonlabs/oms-wallet-privacy`, and `@polygonlabs/oms-server-wallet-sdk` when it was staged;
@@ -108,9 +112,8 @@ shared `ci` composite runs lint/typecheck/test, a build job runs `build` + `chec
 drift-check job runs the `codegen-drift-check` script, which `@polygonlabs/oms-wallet` and
 `@polygonlabs/oms-wallet-privacy` define (each rebuilds, then checks its public API and `API.md`), and
 `oms-wallet-protocol` defines (it fails when a copy in either SDK differs from the protocol source).
-The build job also runs the server SDK's coverage thresholds and packed-consumer check. The release
-helper additionally verifies the fixed-group invariant and the pnpm-packed manifests immediately
-before staging.
+The build job also runs the server SDK's coverage thresholds and packed-consumer check. The packed-consumer check installs a fresh dependency tree and runs it, so in release runs it runs only in the
+credential-free `verify` job, on the exact tarball that is staged.
 
 ## Prerelease / snapshot builds
 
@@ -119,15 +122,21 @@ to consume ahead of a real release), manually dispatch the repo's **Release** wo
 still CI, not a local release:
 
 1. GitHub → **Actions** → **Release** → **Run workflow**.
-2. Set the **`snapshot_tag`** input to a non-semver dist-tag (e.g. `canary`, `pre-0.3.0`).
+2. Set **`mode`** to `snapshot`, and **`snapshot_tag`** to a non-semver dist-tag (e.g. `canary`,
+   `pre-0.3.0`).
+
+`mode` also offers `snapshot-dry-run` and `stable-dry-run`: they run the `verify` job and check the
+artifact and npm state in a job with no environment and no OIDC, and stage nothing. Use them to
+check release changes from a branch.
 
 The workflow versions the packages that have changesets with `changeset version --snapshot <tag>`
 on the runner (never committed): the whole fixed group together, and the server SDK when a changeset
-names it. It writes the exact names and versions it created to a file, and staging stages only
-those. If the branch has no versioned changeset, the workflow creates a temporary patch changeset for
+names it, in the `verify` job. It writes the exact names and versions it created to a file, packs
+only those, and the `snapshot` job stages exactly those tarballs. If the branch has no versioned changeset, the workflow creates a temporary patch changeset for
 the fixed group only, so a snapshot of the server SDK needs a changeset that names it. The snapshot path skips git tags and GitHub Releases, so
 **`snapshot_tag` must be a lowercase, non-version tag other than `latest`**. The workflow validates
 the input and aborts before versioning if the tag is unsafe: lowercase letters, digits and hyphens,
-in non-empty dot-separated parts, because it becomes part of a semver prerelease version. An npm maintainer must approve every
+in non-empty dot-separated parts, because it becomes part of a semver prerelease version, and not a
+semver range such as `x` or `v1.x`, which npm refuses as a dist-tag. An npm maintainer must approve every
 stage before consumers can install the result with
 `pnpm add @polygonlabs/oms-wallet@<tag>`.

@@ -26,7 +26,11 @@ test('rejects latest, version-like, and malformed snapshot tags', () => {
     'canary..1',
     'canary.',
     'canary.01',
-    '^1.2.0'
+    '^1.2.0',
+    'x',
+    'v1.x',
+    '1.x',
+    'v1'
   ]) {
     assert.throws(() => validateSnapshotTag(tag));
   }

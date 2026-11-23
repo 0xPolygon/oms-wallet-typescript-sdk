@@ -91,7 +91,9 @@ Repo-local agent skills live under `.agents/skills/` (agent-neutral); `.claude/s
 - `packages/oms-wallet/scripts/api-docs.config.json`: Symbol groups and ordering for the generated `API.md`.
 - `packages/oms-wallet/scripts/public-api-baseline.txt`: Committed public declaration baseline compared by `check-public-api.cjs`.
 - `scripts/prepare-npm-snapshot.mjs`: CI-only helper that validates the snapshot dist-tag and prepares the fixed package group for snapshot (prerelease) versioning; tested by `scripts/prepare-npm-snapshot.test.mjs`.
-- `scripts/stage-npm-packages.mjs`: CI-only staged-publishing helper that validates the fixed group and independent packages, packs with pnpm, checks packed manifests, and stages tarballs with npm OIDC.
+- `scripts/pack-npm-packages.mjs`: CI-only; in the credential-free `verify` job, packs the release (or snapshot) packages, checks their packed manifests, and writes a manifest with each tarball's SHA-512.
+- `scripts/stage-npm-packages.mjs`: CI-only; verifies those tarballs against the manifest and the commit, then stages exactly those files with npm OIDC (`NPM_STAGE_DRY_RUN=true` stages nothing).
+- `scripts/release-common.mjs`: shared release helpers (fixed-group validation, snapshot selection, artifact verification); tested by `scripts/release-common.test.mjs`.
 - `.changeset/`: changesets config. The `fixed` group keeps `@polygonlabs/oms-wallet`, `@polygonlabs/oms-wallet-wagmi-connector` and `@polygonlabs/oms-wallet-privacy` on the same version; `@polygonlabs/oms-server-wallet-sdk` versions independently and `oms-wallet-protocol` is ignored. Releases are automated by the changesets release workflow.
 
 ## Commands

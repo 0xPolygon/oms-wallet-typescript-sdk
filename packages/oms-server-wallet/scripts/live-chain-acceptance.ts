@@ -101,8 +101,10 @@ const recording: typeof fetch = async (input, init) => {
       responseBody: await response.clone().text(),
       status: response.status,
       nonce: headers.get('X-Attestation-Nonce'),
-      // A Sequence/2 attestation binds the signature header that was sent. It is a spent, nonce-bound
-      // signature and the credential's public key; no secret.
+      // A Sequence/2 attestation binds the signature header that was sent, so a fixture must keep it
+      // to verify. It is a signature over one request and the credential's public key, not a secret,
+      // but WaaS may not have consumed its nonce (a gateway can refuse first): keep raw captures
+      // private, and record fixtures to share with a disposable credential.
       boundHeader: headers.get('OMS-Wallet-Signature') ?? '',
       encodedDocument: response.headers.get('X-Attestation-Document'),
       trustedPcr0s: pcr0s,
