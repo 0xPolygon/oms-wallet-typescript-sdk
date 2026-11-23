@@ -8,7 +8,7 @@ import { credentialId, isWalletAddress, NETWORK_FAMILIES, walletSchema } from '.
 
 /**
  * Persisted under the `wallet` key. Version 2 keeps one wallet per network family; records from
- * 0.2.x and 0.3.x (one EVM wallet, no version) are migrated when first loaded.
+ * 0.2.x (one EVM wallet, no version) is migrated when first loaded.
  */
 export interface State {
   version: 2;
@@ -31,7 +31,7 @@ const credentialSchema = z.object({
   nonce: z.string().regex(/^[0-9]{1,30}$/),
   expiresAt: z.string().optional()
 });
-/** 0.2.x and 0.3.x always wrote both flags, so a record without them is not theirs. */
+/** 0.2.x always wrote both flags, so a record without them is not theirs. */
 const legacySchema = z.strictObject({
   wallet: storedWallet('evm').optional(),
   credential: credentialSchema.optional(),
@@ -53,7 +53,7 @@ const stateSchema = z.strictObject({
 const invalid = () =>
   new WalletError('INVALID_STATE', 'Stored wallet state is not in a recognised format.', 500);
 
-/** Read and validate the state, migrating a 0.2.x/0.3.x record. `migrated` means it must be saved. */
+/** Read and validate the state, migrating a 0.2.x record. `migrated` means it must be saved. */
 export async function readState(store: StateStore): Promise<{ state: State; migrated: boolean }> {
   const value = await store.read('wallet');
   if (value === null)

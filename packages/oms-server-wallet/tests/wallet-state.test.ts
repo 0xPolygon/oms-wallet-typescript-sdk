@@ -45,7 +45,7 @@ const read = async (store: StateStore) => JSON.parse((await store.read('wallet')
 const calls = (remote: FakeWaas, method: string) =>
   remote.calls.filter((call) => call.method === method);
 
-describe('state migration from 0.2.x and 0.3.x', () => {
+describe('state migration from 0.2.x', () => {
   it('migrates encrypted 0.2.0 state on first load and keeps the same credential', async () => {
     const h = legacyHarness();
     const before = await read(h.store);
