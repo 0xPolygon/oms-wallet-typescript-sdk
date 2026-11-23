@@ -1,5 +1,12 @@
 # @polygonlabs/oms-wallet-wagmi-connector
 
+## 0.5.1
+
+### Patch Changes
+
+- Updated dependencies [[`b91320a`](https://github.com/0xPolygon/oms-wallet-typescript-sdk/commit/b91320a98cda58dc3eb09644ab74c9c0d8c099b0), [`b91320a`](https://github.com/0xPolygon/oms-wallet-typescript-sdk/commit/b91320a98cda58dc3eb09644ab74c9c0d8c099b0), [`b91320a`](https://github.com/0xPolygon/oms-wallet-typescript-sdk/commit/b91320a98cda58dc3eb09644ab74c9c0d8c099b0)]:
+  - @polygonlabs/oms-wallet@0.5.1
+
 ## 0.5.0
 
 ### Patch Changes
