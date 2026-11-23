@@ -206,18 +206,16 @@ For explicit live discovery checks, set `TRAILS_API_KEY` and run `pnpm test:trai
 
 Version `0.2.0` adds swap/recovery capabilities; the API is not yet declared stable. Pin the version and review changes before upgrading. Licensed under [Apache-2.0](LICENSE-APACHE-2.0); see [NOTICE](NOTICE) for verifier provenance. Both files are included in the npm package.
 
-For local SDK development in the repository, run `pnpm --filter @polygonlabs/oms-server-wallet-sdk build`. Packaging runs the build automatically through `prepack`.
-
 ## Development
 
-Use Node 24 (`.nvmrc`) and the pnpm version pinned in `package.json`.
+This package lives in the [`oms-wallet-typescript-sdk`](https://github.com/0xPolygon/oms-wallet-typescript-sdk) workspace. Use the Node and pnpm versions pinned at the repository root, and run commands from the root:
 
 ```sh
 pnpm install --frozen-lockfile
 pnpm lint
-pnpm typecheck
-pnpm test:coverage
-pnpm test:package # pack, then install into a clean consumer with install scripts disabled
+pnpm --filter @polygonlabs/oms-server-wallet-sdk typecheck
+pnpm --filter @polygonlabs/oms-server-wallet-sdk test:coverage
+pnpm --filter @polygonlabs/oms-server-wallet-sdk test:package # pack, then install into a clean consumer with install scripts disabled
 ```
 
-Every pull request needs a changeset (`pnpm exec changeset`, or `pnpm exec changeset add --empty` for CI, docs and tooling changes). Releases are CI-only; see [PUBLISHING.md](PUBLISHING.md).
+Every pull request needs a changeset (`pnpm exec changeset`, or `pnpm exec changeset add --empty` for CI, docs and tooling changes). Releases are CI-only; see the repository's [PUBLISHING.md](../../PUBLISHING.md).
