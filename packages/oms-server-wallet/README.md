@@ -97,7 +97,7 @@ Each RPC nonce is durably advanced before dispatch. All WaaS responses must pass
 
 An identity holds at most one wallet per network family: `evm`, `solana` and `tron`. `createOrRestore()` creates or restores the EVM wallet, as before; `createOrRestore({ families: ['evm', 'solana', 'tron'] })` does so for each family listed. `WalletSnapshot.wallet` is still the EVM wallet, and `WalletSnapshot.wallets` holds every family's. Before creating a family's first wallet, the SDK lists the identity's wallets and adopts one it finds, so no family ever gets a second wallet. An identity that already has two wallets of a family in use fails with `WALLET_MISMATCH`; families it doesn't use are ignored. `rotate()` and `setDisabled(false)` restore every family held.
 
-Wallet state written by 0.2.x and 0.3.x is migrated the first time it is loaded, keeping its credential, nonce and operations, and rewritten in the new format through the same store. Stored state that matches neither format fails with `INVALID_STATE` before any request is made. Once migrated, state can't be read by an earlier version, so roll back only from a backup taken before upgrading.
+Wallet state written by 0.2.x is migrated the first time it is loaded, keeping its credential, nonce and operations, and rewritten in the new format through the same store. Stored state that matches neither format fails with `INVALID_STATE` before any request is made. Once migrated, state can't be read by an earlier version, so roll back only from a backup taken before upgrading.
 
 ## Operations and recovery
 
