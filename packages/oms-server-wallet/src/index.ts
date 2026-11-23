@@ -7,6 +7,8 @@ export type {
   UserOperation,
   Operation
 } from './client.js';
+export { NETWORK_FAMILIES } from './protocol.js';
+export type { NetworkFamily, RemoteWallet } from './protocol.js';
 export { WaasTransport } from './transport.js';
 export type { RpcTransport } from './transport.js';
 export { EncryptedStore, SerialExecutor } from './storage.js';

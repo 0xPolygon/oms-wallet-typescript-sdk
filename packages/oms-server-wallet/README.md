@@ -93,12 +93,18 @@ Verified unknown, expired, or revoked/unauthorized credential responses trigger 
 
 Each RPC nonce is durably advanced before dispatch. All WaaS responses must pass Nitro root/certificate/COSE/PCR0/freshness/nonce/body-binding checks. There is no attestation bypass. Transport uses bounded responses, 20-second request timeouts, and refuses redirects. An all-zero debug PCR0 can be explicitly configured for a nonproduction environment; production keys reject it.
 
+## Wallet families and state migration
+
+An identity holds at most one wallet per network family: `evm`, `solana` and `tron`. `createOrRestore()` creates or restores the EVM wallet, as before; `createOrRestore({ families: ['evm', 'solana', 'tron'] })` does so for each family listed. `WalletSnapshot.wallet` is still the EVM wallet, and `WalletSnapshot.wallets` holds every family's. Before creating a family's first wallet, the SDK lists the identity's wallets and adopts one it finds, so no family ever gets a second wallet. An identity that already has two wallets of a family in use fails with `WALLET_MISMATCH`; families it doesn't use are ignored. `rotate()` and `setDisabled(false)` restore every family held.
+
+Wallet state written by 0.2.x and 0.3.x is migrated the first time it is loaded, keeping its credential, nonce and operations, and rewritten in the new format through the same store. Stored state that matches neither format fails with `INVALID_STATE` before any request is made. Once migrated, state can't be read by an earlier version, so roll back only from a backup taken before upgrading.
+
 ## Operations and recovery
 
 | Method                                  | Behavior                                                            |
 | --------------------------------------- | ------------------------------------------------------------------- |
 | `inspect()`                             | Public snapshot; does not authenticate or return private material.  |
-| `createOrRestore()`                     | Recover one wallet for the configured identity; reauth when needed. |
+| `createOrRestore({ families? })`        | Recover one wallet per requested family (default EVM); reauth.      |
 | `rotate()`                              | Self-revoke the current credential, then authenticate a fresh one.  |
 | `setDisabled(boolean)`                  | Disable before revocation; block auth until explicitly re-enabled.  |
 | `signMessage(id, chainId, message)`     | Sign plain text and verify with WaaS wallet-aware verification.     |

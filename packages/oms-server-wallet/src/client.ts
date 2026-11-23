@@ -10,7 +10,8 @@ import { encodeFunctionData, getAddress, isAddress, isHex, parseUnits } from 'vi
 import { z } from 'zod';
 
 import type { RecoveryTransaction } from './authorization.js';
-import type { Credential, RemoteWallet, Quote } from './protocol.js';
+import type { NetworkFamily, RemoteWallet, Quote } from './protocol.js';
+import type { State } from './state.js';
 import type { ExclusiveExecutor, StateStore } from './storage.js';
 import type { RpcTransport } from './transport.js';
 
@@ -22,27 +23,28 @@ import { nextWalletNonce } from './internal/protocol/requestSigning.js';
 import { WaasErrorCode } from './internal/protocol/waasErrors.js';
 import {
   authSchema,
-  credentialId,
   generateCredential,
+  isWalletAddress,
   listSchema,
+  NETWORK_FAMILIES,
   quoteSchema,
   statusSchema,
+  walletFamily,
   walletSchema
 } from './protocol.js';
+import { readState, writeState } from './state.js';
 import { validateTypedData } from './typed-data.js';
 
 export interface WalletSnapshot {
+  /** The EVM wallet. */
   wallet?: RemoteWallet;
+  /** One wallet per network family that has been created or restored. */
+  wallets: Partial<Record<NetworkFamily, RemoteWallet>>;
   disabled: boolean;
   expiresAt?: string;
   credentialId?: string;
+  /** A create request for some family has an unknown outcome; restore again to settle it. */
   creationUncertain: boolean;
-}
-interface State {
-  wallet?: RemoteWallet;
-  credential?: Credential;
-  disabled: boolean;
-  creating: boolean;
 }
 export interface Transfer {
   chainId: number;
@@ -248,32 +250,40 @@ export class ServerWallet {
       );
   }
   private async load(): Promise<State> {
-    const value = await this.options.store.read('wallet');
-    const state: State = value ? JSON.parse(value) : { disabled: false, creating: false };
-    // Upgrade encrypted records created before RPC identifiers were stored separately.
-    if (state.credential && !state.credential.credentialId)
-      state.credential.credentialId = await credentialId(state.credential.id);
+    const { state, migrated } = await readState(this.options.store);
+    if (migrated) await this.save(state);
     return state;
   }
   private save(state: State) {
-    return this.options.store.write('wallet', JSON.stringify(state));
+    return writeState(this.options.store, state);
   }
   private snapshot(state: State): WalletSnapshot {
     return {
-      wallet: state.wallet,
+      wallet: state.wallets.evm,
+      wallets: { ...state.wallets },
       disabled: state.disabled,
       expiresAt: state.credential?.expiresAt,
       credentialId: state.credential?.credentialId,
-      creationUncertain: state.creating
+      creationUncertain: state.creating.length > 0
     };
   }
   inspect(): Promise<WalletSnapshot> {
     return this.options.executor.run(async () => this.snapshot(await this.load()));
   }
-  createOrRestore(): Promise<WalletSnapshot> {
+  /** Creates or restores the wallet of each family requested: the EVM wallet by default. */
+  async createOrRestore(
+    options: { families?: readonly NetworkFamily[] } = {}
+  ): Promise<WalletSnapshot> {
+    const families = options.families ?? ['evm'];
+    if (
+      !Array.isArray(families) ||
+      !families.length ||
+      families.some((family) => !NETWORK_FAMILIES.includes(family))
+    )
+      throw new WalletError('INVALID_FAMILY', 'Request one or more of: evm, solana, tron.');
     return this.options.executor.run(async () => {
       const state = await this.load();
-      await this.ensure(state);
+      await this.ensure(state, [...new Set(families)]);
       return this.snapshot(state);
     });
   }
@@ -290,9 +300,10 @@ export class ServerWallet {
   private async activeCall(
     state: State,
     method: string,
-    params: Record<string, unknown>
+    params: Record<string, unknown>,
+    families: readonly NetworkFamily[] = ['evm']
   ): Promise<unknown> {
-    await this.ensure(state);
+    await this.ensure(state, families);
     try {
       return await this.call(state, method, params);
     } catch (error) {
@@ -302,16 +313,26 @@ export class ServerWallet {
         throw error;
       state.credential = undefined;
       await this.save(state);
-      await this.ensure(state);
+      await this.ensure(state, families);
       return this.call(state, method, params);
     }
   }
-  private async ensure(state: State): Promise<void> {
+  /** The families to restore when no particular one is asked for. */
+  private held(state: State): NetworkFamily[] {
+    const families = NETWORK_FAMILIES.filter((family) => state.wallets[family]);
+    return families.length ? families : ['evm'];
+  }
+  /**
+   * Make sure the credential is current and each requested family has its one wallet, bound to
+   * the credential. Never creates a second wallet for a family that already has one.
+   */
+  private async ensure(state: State, families: readonly NetworkFamily[]): Promise<void> {
     if (state.disabled) throw new WalletError('WALLET_DISABLED', 'This wallet is disabled.', 409);
+    let discovered = false;
     if (
       !state.credential?.expiresAt ||
       Date.parse(state.credential.expiresAt) <= Date.now() + 60_000 ||
-      (state.creating && !state.wallet)
+      state.creating.some((family) => !state.wallets[family])
     ) {
       state.credential = await generateCredential();
       await this.save(state);
@@ -348,29 +369,94 @@ export class ServerWallet {
           'WaaS returned a different identity or credential.',
           502
         );
-      const wallets = [...authenticated.wallets];
-      let cursor = authenticated.page?.cursor;
-      const seen = new Set<string>();
-      while (cursor) {
-        if (seen.has(cursor) || seen.size >= 100)
-          throw new WalletError('INVALID_RESPONSE', 'Wallet pagination did not terminate.', 502);
-        seen.add(cursor);
-        const page = listSchema.parse(
-          await this.call(state, 'ListWallets', { page: { cursor, limit: 100 } })
-        );
-        wallets.push(...page.wallets);
-        cursor = page.page?.cursor;
-      }
-      const evm = wallets.filter(
-        (wallet) => wallet.networkFamily === 'evm' || wallet.type === 'ethereum'
+      await this.discover(
+        state,
+        families,
+        authenticated.wallets,
+        authenticated.page?.cursor || undefined
       );
+      discovered = true;
+      state.credential.expiresAt = authenticated.credential.expiresAt;
+      await this.save(state);
+    }
+    for (const family of families) {
+      if (state.wallets[family]) continue;
+      // A credential from an earlier call has not listed this family's wallets yet.
+      if (!discovered) {
+        await this.discover(state, families, [], '');
+        discovered = true;
+        await this.save(state);
+        if (state.wallets[family]) continue;
+      }
+      if (state.creating.includes(family))
+        throw new WalletError(
+          'CREATION_UNCERTAIN',
+          'A previous create request has an unknown outcome. Restore again after upstream recovery; no duplicate wallet will be created.',
+          409
+        );
+      state.creating.push(family);
+      await this.save(state);
+      try {
+        const { wallet } = z.object({ wallet: walletSchema }).parse(
+          await this.call(state, 'CreateWallet', {
+            networkFamily: family,
+            reference: this.options.subject
+          })
+        );
+        if (walletFamily(wallet) !== family || !isWalletAddress(family, wallet.address))
+          throw new WalletError(
+            'INVALID_RESPONSE',
+            'WaaS created a different kind of wallet.',
+            502
+          );
+        state.wallets[family] = wallet;
+        state.creating = state.creating.filter((entry) => entry !== family);
+        await this.save(state);
+      } catch (error) {
+        // Force discovery next time, even when the create response was lost.
+        state.credential!.expiresAt = undefined;
+        await this.save(state);
+        throw error;
+      }
+    }
+  }
+  /**
+   * Match the identity's wallets with the stored ones and bind each to the credential. Pass
+   * `cursor: ''` to list from the start; `undefined` means `wallets` is already complete.
+   */
+  private async discover(
+    state: State,
+    families: readonly NetworkFamily[],
+    wallets: RemoteWallet[],
+    from: string | undefined
+  ): Promise<void> {
+    const all = [...wallets];
+    const seen = new Set<string>();
+    let cursor = from;
+    while (cursor !== undefined) {
+      if (seen.has(cursor) || seen.size >= 100)
+        throw new WalletError('INVALID_RESPONSE', 'Wallet pagination did not terminate.', 502);
+      seen.add(cursor);
+      const page = listSchema.parse(
+        await this.call(state, 'ListWallets', {
+          page: cursor ? { cursor, limit: 100 } : { limit: 100 }
+        })
+      );
+      all.push(...page.wallets);
+      cursor = page.page?.cursor || undefined;
+    }
+    // Only families in use are checked, so an unrelated wallet never blocks this one.
+    for (const family of NETWORK_FAMILIES) {
+      const stored = state.wallets[family];
+      if (!stored && !families.includes(family) && !state.creating.includes(family)) continue;
+      const found = all.filter((wallet) => walletFamily(wallet) === family);
       if (
-        evm.length > 1 ||
-        (state.wallet &&
-          !evm.some(
+        found.length > 1 ||
+        (stored &&
+          !found.some(
             (wallet) =>
-              wallet.id === state.wallet?.id &&
-              wallet.address.toLowerCase() === state.wallet.address.toLowerCase()
+              wallet.id === stored.id &&
+              wallet.address.toLowerCase() === stored.address.toLowerCase()
           ))
       )
         throw new WalletError(
@@ -378,51 +464,24 @@ export class ServerWallet {
           'Identity does not map to the expected single wallet.',
           409
         );
-      if (evm.length === 1) {
-        state.wallet = walletSchema.parse(
-          z
-            .object({ wallet: walletSchema })
-            .parse(await this.call(state, 'UseWallet', { walletId: evm[0].id })).wallet
-        );
-        if (
-          state.wallet.id !== evm[0].id ||
-          state.wallet.address.toLowerCase() !== evm[0].address.toLowerCase()
-        )
-          throw new WalletError(
-            'WALLET_MISMATCH',
-            'Wallet binding returned a different wallet.',
-            502
-          );
-        state.creating = false;
-      }
-      state.credential.expiresAt = authenticated.credential.expiresAt;
-      await this.save(state);
-    }
-    if (!state.wallet) {
-      if (state.creating)
+      if (found.length !== 1) continue;
+      const bound = walletSchema.parse(
+        z
+          .object({ wallet: walletSchema })
+          .parse(await this.call(state, 'UseWallet', { walletId: found[0].id })).wallet
+      );
+      if (
+        bound.id !== found[0].id ||
+        bound.address.toLowerCase() !== found[0].address.toLowerCase() ||
+        !isWalletAddress(family, bound.address)
+      )
         throw new WalletError(
-          'CREATION_UNCERTAIN',
-          'A previous create request has an unknown outcome. Restore again after upstream recovery; no duplicate wallet will be created.',
-          409
+          'WALLET_MISMATCH',
+          'Wallet binding returned a different wallet.',
+          502
         );
-      state.creating = true;
-      await this.save(state);
-      try {
-        const result = z.object({ wallet: walletSchema }).parse(
-          await this.call(state, 'CreateWallet', {
-            networkFamily: 'evm',
-            reference: this.options.subject
-          })
-        );
-        state.wallet = result.wallet;
-        state.creating = false;
-        await this.save(state);
-      } catch (error) {
-        // Force discovery next time, even when the create response was lost.
-        state.credential.expiresAt = undefined;
-        await this.save(state);
-        throw error;
-      }
+      state.wallets[family] = bound;
+      state.creating = state.creating.filter((entry) => entry !== family);
     }
   }
   rotate(): Promise<WalletSnapshot> {
@@ -431,7 +490,7 @@ export class ServerWallet {
       if (state.disabled)
         throw new WalletError('WALLET_DISABLED', 'Enable the wallet before rotating.', 409);
       await this.revoke(state);
-      await this.ensure(state);
+      await this.ensure(state, this.held(state));
       return this.snapshot(state);
     });
   }
@@ -447,7 +506,7 @@ export class ServerWallet {
       if (!disabled) {
         state.disabled = false;
         await this.save(state);
-        await this.ensure(state);
+        await this.ensure(state, this.held(state));
       }
       return this.snapshot(state);
     });
@@ -532,7 +591,7 @@ export class ServerWallet {
       const { operation, hash } = await this.existing(id, 'transfer', transfer);
       if (operation) return operation;
       const state = await this.load();
-      await this.ensure(state);
+      await this.ensure(state, ['evm']);
       const op: Operation = {
         id,
         kind: 'transfer',
@@ -563,7 +622,7 @@ export class ServerWallet {
         op.quote = quoteSchema.parse(
           await this.activeCall(state, 'PrepareEthereumTransaction', {
             network: String(transfer.chainId),
-            walletId: state.wallet!.id,
+            walletId: state.wallets.evm!.id,
             to: native ? transfer.to : transfer.asset,
             value: native ? transfer.amount : '0',
             ...(data ? { data } : {}),
@@ -603,9 +662,9 @@ export class ServerWallet {
       });
       if (operation) return operation;
       const state = await this.load();
-      await this.ensure(state);
+      await this.ensure(state, ['evm']);
       // A self-call can reconfigure the wallet; deployment uses its own narrow path.
-      if (transaction.to.toLowerCase() === state.wallet!.address.toLowerCase())
+      if (transaction.to.toLowerCase() === state.wallets.evm!.address.toLowerCase())
         throw new WalletError('INVALID_CALL', 'Calls to the wallet itself are not allowed.');
       const op: Operation = {
         id,
@@ -621,7 +680,7 @@ export class ServerWallet {
         op.quote = quoteSchema.parse(
           await this.activeCall(state, 'PrepareEthereumTransaction', {
             network: String(chainId),
-            walletId: state.wallet!.id,
+            walletId: state.wallets.evm!.id,
             ...transaction,
             mode: 'relayer'
           })
@@ -675,7 +734,7 @@ export class ServerWallet {
       if (Date.parse(op.quote.expiresAt) <= Date.now())
         throw new WalletError('QUOTE_EXPIRED', 'The quote expired. Prepare a new transfer.', 409);
       const state = await this.load();
-      await this.ensure(state);
+      await this.ensure(state, ['evm']);
       op.status = 'submitting';
       await this.writeOperation(op);
       try {
@@ -732,12 +791,12 @@ export class ServerWallet {
     return this.options.executor.run(async () => {
       requireChain(chainId);
       const state = await this.load();
-      await this.ensure(state);
-      if (transaction && transaction.owner !== state.wallet!.address.toLowerCase())
+      await this.ensure(state, ['evm']);
+      if (transaction && transaction.owner !== state.wallets.evm!.address.toLowerCase())
         throw new WalletError('INVALID_RECOVERY', 'Recovery belongs to a different wallet.');
       const call = transaction
         ? { to: transaction.to, data: transaction.data, value: transaction.value }
-        : { to: state.wallet!.address, data: '0x', value: '0' };
+        : { to: state.wallets.evm!.address, data: '0x', value: '0' };
       const { operation, hash } = await this.existing(id, kind, { chainId, ...call });
       if (operation) return operation;
       const op: Operation = {
@@ -754,7 +813,7 @@ export class ServerWallet {
         op.quote = quoteSchema.parse(
           await this.activeCall(state, 'PrepareEthereumTransaction', {
             network: String(chainId),
-            walletId: state.wallet!.id,
+            walletId: state.wallets.evm!.id,
             ...call,
             mode: 'relayer'
           })
@@ -784,7 +843,7 @@ export class ServerWallet {
       const { operation, hash } = await this.existing(id, 'sign', { chainId, message });
       if (operation) return operation;
       const state = await this.load();
-      await this.ensure(state);
+      await this.ensure(state, ['evm']);
       const op: Operation = {
         id,
         kind: 'sign',
@@ -797,7 +856,7 @@ export class ServerWallet {
       const result = signatureSchema.parse(
         await this.activeCall(state, 'SignMessage', {
           network: String(chainId),
-          walletId: state.wallet!.id,
+          walletId: state.wallets.evm!.id,
           message
         })
       );
@@ -805,7 +864,7 @@ export class ServerWallet {
         await this.options.transport.request('IsValidMessageSignature', {
           network: String(chainId),
           networkFamily: 'evm',
-          walletAddress: state.wallet!.address,
+          walletAddress: state.wallets.evm!.address,
           message,
           signature: result.signature
         })
@@ -831,7 +890,7 @@ export class ServerWallet {
       const { operation, hash } = await this.existing(id, 'signTypedData', { chainId, digest });
       if (operation) return operation;
       const state = await this.load();
-      await this.ensure(state);
+      await this.ensure(state, ['evm']);
       const op: Operation = {
         id,
         kind: 'signTypedData',
@@ -844,14 +903,14 @@ export class ServerWallet {
       const { signature } = signatureSchema.parse(
         await this.activeCall(state, 'SignTypedData', {
           network: String(chainId),
-          walletId: state.wallet!.id,
+          walletId: state.wallets.evm!.id,
           typedData
         })
       );
       const { isValid } = validSchema.parse(
         await this.options.transport.request('IsValidTypedDataSignature', {
           network: String(chainId),
-          walletAddress: state.wallet!.address,
+          walletAddress: state.wallets.evm!.address,
           typedData,
           signature
         })
