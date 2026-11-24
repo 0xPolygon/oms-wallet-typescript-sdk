@@ -1,9 +1,13 @@
 import { describe, expect, it } from 'vitest';
 
 import { Networks, SolanaNetworks, TronNetworks, findNetworkById, findNetworkByName } from '../src';
-import { SOLANA_NETWORKS, TRON_NETWORKS } from '../src/internal/protocol/networks';
+import { EVM_NETWORKS, SOLANA_NETWORKS, TRON_NETWORKS } from '../src/internal/protocol/networks';
 
 describe('Networks', () => {
+  it('matches the EVM networks shared with the server SDK', () => {
+    expect(Object.values(Networks)).toEqual(EVM_NETWORKS);
+  });
+
   it('exposes the supported network registry', () => {
     expect(Object.values(Networks)).toEqual([
       {

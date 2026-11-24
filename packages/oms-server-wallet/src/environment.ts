@@ -1,18 +1,24 @@
+import type { EvmChainId } from './internal/protocol/networks.js';
 import type { WaasMode, WaasStage } from './internal/protocol/publishableKey.js';
 
 import { WalletError } from './errors.js';
 import { normalizeTrustedPcr0s, trustsDebugEnclave } from './internal/protocol/attestation.js';
+import { EVM_NETWORKS } from './internal/protocol/networks.js';
 import { routePublishableKey } from './internal/protocol/publishableKey.js';
 
-export const CHAINS = [
-  { id: 137, name: 'Polygon', symbol: 'POL', explorer: 'https://polygonscan.com' },
-  { id: 42161, name: 'Arbitrum', symbol: 'ETH', explorer: 'https://arbiscan.io' },
-  { id: 8453, name: 'Base', symbol: 'ETH', explorer: 'https://basescan.org' },
-  { id: 56, name: 'BNB Chain', symbol: 'BNB', explorer: 'https://bscscan.com' },
-  { id: 1, name: 'Ethereum', symbol: 'ETH', explorer: 'https://etherscan.io' }
-] as const;
+/**
+ * EVM networks the SDK accepts: every network WaaS serves, shared with the client SDK through
+ * `oms-wallet-protocol`, mainnets and testnets alike.
+ */
+export const CHAINS = EVM_NETWORKS.map((network) => ({
+  id: network.id,
+  name: network.displayName,
+  symbol: network.nativeTokenSymbol,
+  explorer: network.explorerUrl
+}));
 
-export type SupportedEvmChainId = (typeof CHAINS)[number]['id'];
+/** Chain ID of an EVM network the SDK accepts. */
+export type SupportedEvmChainId = EvmChainId;
 
 export interface AttestationOptions {
   /**

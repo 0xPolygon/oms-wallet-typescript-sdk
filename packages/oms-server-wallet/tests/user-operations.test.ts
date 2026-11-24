@@ -96,7 +96,7 @@ describe('EVM contract calls', () => {
     const h = sdkHarness();
     const cases: [unknown, string][] = [
       [{ idempotencyKey: 'invalid-1', ...transferCall, value: null }, 'INVALID_AMOUNT'],
-      [{ idempotencyKey: 'invalid-1', ...transferCall, chainId: 10 }, 'UNSUPPORTED_CHAIN'],
+      [{ idempotencyKey: 'invalid-1', ...transferCall, chainId: 999_999 }, 'UNSUPPORTED_CHAIN'],
       [{ idempotencyKey: 'invalid-1', ...transferCall, to: 'usdc' }, 'INVALID_ADDRESS'],
       [{ idempotencyKey: 'invalid-1', ...transferCall, value: '-1' }, 'INVALID_AMOUNT'],
       [{ idempotencyKey: 'invalid-1', ...transferCall, value: '0.5' }, 'INVALID_AMOUNT'],

@@ -274,8 +274,10 @@ export interface RemoteWallet {
 
 ### `SupportedEvmChainId`
 
+Chain ID of an EVM network the SDK accepts.
+
 ```typescript
-export type SupportedEvmChainId = (typeof CHAINS)[number]["id"];
+export type SupportedEvmChainId = (typeof EVM_NETWORKS)[number]["id"];
 ```
 
 ## Storage and concurrency

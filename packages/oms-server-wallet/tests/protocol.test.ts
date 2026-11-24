@@ -3,6 +3,7 @@ import { credentialId, generateCredential, signatureHeader } from '../src/protoc
 import { WaasTransport, boundedText } from '../src/transport.js';
 import { IndexerClient } from '../src/indexer.js';
 import { omsFetch } from '../src/http.js';
+import { EVM_NETWORKS } from '../src/internal/protocol/networks.js';
 
 const requestOrigin = 'https://app.example';
 
@@ -148,7 +149,7 @@ describe('indexer gateway', () => {
     expect(result.items[1].decimals).toBe(6);
     expect(result.errors.find((e) => e.chainId === 1)?.message).toBe('Indexer unavailable');
     expect(result.nextPage).toBe(1);
-    expect(sent.chainIds).toEqual([137, 42161, 8453, 56, 1]);
+    expect(sent.chainIds).toEqual(EVM_NETWORKS.map((network) => network.id));
   });
   it('rejects balances belonging to another wallet', async () => {
     const client = new IndexerClient('pk_dev_live_test_key', async () =>
