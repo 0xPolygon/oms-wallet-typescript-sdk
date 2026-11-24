@@ -1,6 +1,6 @@
 export { trails } from './coordinator.js';
 export { TrailsError } from './client.js';
-export type { SwapsConfig, SwapsConfigScope } from '../internal/swapsBridge.js';
+export type { SwapsConfig } from '../internal/swapsBridge.js';
 export type { SwapAsset, SwapRequest } from './quote.js';
 export type {
   ConfirmRecoveryInput,

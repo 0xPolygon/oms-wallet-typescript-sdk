@@ -7,7 +7,7 @@ import { WalletError } from '../errors.js';
 declare const swapsConfigScope: unique symbol;
 declare const swapsConfigFacet: unique symbol;
 
-/** Scope of a `trails(...)` swaps configuration: `'wallet'` for `createServerWallet`, `'service'` for `createServerWalletService`. */
+/** Internal: scope of a `trails(...)` configuration (`'wallet'` or `'service'`). Inlined in `SwapsConfig`. */
 export type SwapsConfigScope = 'wallet' | 'service';
 
 /**
@@ -15,7 +15,10 @@ export type SwapsConfigScope = 'wallet' | 'service';
  * `@polygonlabs/oms-server-wallet-sdk/trails`. Pass to `createServerWallet({ ..., swaps })`
  * or `createServerWalletService({ ..., swaps })`.
  */
-export interface SwapsConfig<TScope extends SwapsConfigScope = SwapsConfigScope, TFacet = unknown> {
+export interface SwapsConfig<
+  TScope extends 'wallet' | 'service' = 'wallet' | 'service',
+  TFacet = unknown
+> {
   readonly [swapsConfigScope]: TScope;
   readonly [swapsConfigFacet]: TFacet;
 }

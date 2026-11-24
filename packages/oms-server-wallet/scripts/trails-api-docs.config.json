@@ -2,14 +2,7 @@
   "groups": [
     {
       "label": "Setup",
-      "symbols": [
-        "trails",
-        "TrailsOptions",
-        "TrailsStoreOption",
-        "SwapAsset",
-        "SwapsConfig",
-        "SwapsConfigScope"
-      ]
+      "symbols": ["trails", "TrailsOptions", "TrailsStoreOption", "SwapAsset", "SwapsConfig"]
     },
     {
       "label": "Swaps facet",

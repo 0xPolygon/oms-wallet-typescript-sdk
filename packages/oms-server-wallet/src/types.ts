@@ -527,8 +527,17 @@ export interface EvmImmediateFacet {
   ): Promise<EvmOperation>;
 }
 
-export type EvmFacet<TApproval extends ApprovalMode = 'two-phase'> =
-  TApproval extends 'allow-immediate' ? EvmFacetBase & EvmImmediateFacet : EvmFacetBase;
+/**
+ * EVM operations. `sendTransfer` and `sendCall` exist only with `approval: 'allow-immediate'`.
+ * Flattened so declaration emit never needs the internal building-block interfaces.
+ */
+export type EvmFacet<TApproval extends ApprovalMode = 'two-phase'> = {
+  [
+    K in keyof (TApproval extends 'allow-immediate'
+      ? EvmFacetBase & EvmImmediateFacet
+      : EvmFacetBase)
+  ]: (TApproval extends 'allow-immediate' ? EvmFacetBase & EvmImmediateFacet : EvmFacetBase)[K];
+};
 
 /** Base Solana operations available in both two-phase and immediate approval modes. */
 export interface SolanaFacetBase {
@@ -551,8 +560,16 @@ export interface SolanaImmediateFacet {
   sendTransfer(input: SolanaTransferInput): Promise<SolanaOperation>;
 }
 
-export type SolanaFacet<TApproval extends ApprovalMode = 'two-phase'> =
-  TApproval extends 'allow-immediate' ? SolanaFacetBase & SolanaImmediateFacet : SolanaFacetBase;
+/** Solana operations. `sendTransfer` exists only with `approval: 'allow-immediate'`. */
+export type SolanaFacet<TApproval extends ApprovalMode = 'two-phase'> = {
+  [
+    K in keyof (TApproval extends 'allow-immediate'
+      ? SolanaFacetBase & SolanaImmediateFacet
+      : SolanaFacetBase)
+  ]: (TApproval extends 'allow-immediate'
+    ? SolanaFacetBase & SolanaImmediateFacet
+    : SolanaFacetBase)[K];
+};
 
 /** Base Tron operations available in both two-phase and immediate approval modes. */
 export interface TronFacetBase {
@@ -578,8 +595,14 @@ export interface TronImmediateFacet {
   sendContractCall(input: TronContractCallInput): Promise<TronOperation>;
 }
 
-export type TronFacet<TApproval extends ApprovalMode = 'two-phase'> =
-  TApproval extends 'allow-immediate' ? TronFacetBase & TronImmediateFacet : TronFacetBase;
+/** Tron operations. `sendTransaction` and `sendContractCall` exist only with `approval: 'allow-immediate'`. */
+export type TronFacet<TApproval extends ApprovalMode = 'two-phase'> = {
+  [
+    K in keyof (TApproval extends 'allow-immediate'
+      ? TronFacetBase & TronImmediateFacet
+      : TronFacetBase)
+  ]: (TApproval extends 'allow-immediate' ? TronFacetBase & TronImmediateFacet : TronFacetBase)[K];
+};
 
 /** Base handle for a single OIDC identity's attested server wallet. */
 export interface ServerWalletBase<TApproval extends ApprovalMode = 'two-phase'> {

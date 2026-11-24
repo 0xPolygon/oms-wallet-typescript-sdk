@@ -14,7 +14,6 @@
         "AttestationOptions",
         "ApprovalMode",
         "SwapsConfig",
-        "SwapsConfigScope",
         "ServerWallet",
         "ServerWalletBase",
         "ServerWalletService",
@@ -42,8 +41,6 @@
       "label": "EVM",
       "symbols": [
         "EvmFacet",
-        "EvmFacetBase",
-        "EvmImmediateFacet",
         "EvmTransferInput",
         "EvmTransfer",
         "EvmCallInput",
@@ -58,8 +55,6 @@
       "label": "Solana",
       "symbols": [
         "SolanaFacet",
-        "SolanaFacetBase",
-        "SolanaImmediateFacet",
         "SolanaNetwork",
         "SolanaTransferInput",
         "SolanaTransfer",
@@ -71,8 +66,6 @@
       "label": "Tron",
       "symbols": [
         "TronFacet",
-        "TronFacetBase",
-        "TronImmediateFacet",
         "TronNetwork",
         "TronTransactionInput",
         "TronContractCallInput",

@@ -245,6 +245,19 @@ const wrongArgs = () => wTwoPhase.evm.prepareCall({ idempotencyKey: 'consumer-ar
 const selector = () => wTwoPhase.evm.prepareCall({ idempotencyKey: 'consumer-hex', chainId: 137, to: '0x3c499c542cEF5E3811e1192ce70d8cC03d5c3359', abi: erc20, functionName: '0x123', args: ['0x2222222222222222222222222222222222222222', 1n] });
 void pay; void misspelled; void wrongArgs; void selector;
 void parseAmount; void describeOperation; void isWalletError; void isUpstreamError; void TrailsError;
+
+// Declaration emit: inferred public types must be nameable from the package entry points (TS4023).
+export const declTwoPhase = wTwoPhase;
+export const declImmediate = wImmediate;
+export const declServiceWallet = wSvc;
+export const declService = svcImmediateSwaps;
+export const declEvmTwoPhase = wTwoPhase.evm;
+export const declEvmImmediate = wImmediate.evm;
+export const declSolanaImmediate = wImmediate.solana;
+export const declTronTwoPhase = wTwoPhase.tron;
+export const declSwapsFacet = wTwoPhaseSwaps.swaps;
+export const declWalletSwaps = walletSwaps;
+export const declServiceSwaps = serviceSwaps;
 `
 );
 
@@ -258,6 +271,7 @@ writeFileSync(
       moduleResolution: 'NodeNext',
       strict: true,
       skipLibCheck: true,
+      declaration: true,
       outDir: 'dist'
     },
     include: ['consumer.ts']

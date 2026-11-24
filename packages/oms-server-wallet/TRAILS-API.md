@@ -75,16 +75,8 @@ Opaque swaps provider configuration returned by `trails(...)` from
 or `createServerWalletService({ ..., swaps })`.
 
 ```typescript
-export interface SwapsConfig<TScope extends SwapsConfigScope = SwapsConfigScope, TFacet = unknown> {
+export interface SwapsConfig<TScope extends "wallet" | "service" = "wallet" | "service", TFacet = unknown> {
 }
-```
-
-### `SwapsConfigScope`
-
-Scope of a `trails(...)` swaps configuration: `'wallet'` for `createServerWallet`, `'service'` for `createServerWalletService`.
-
-```typescript
-export type SwapsConfigScope = "wallet" | "service";
 ```
 
 ## Swaps facet

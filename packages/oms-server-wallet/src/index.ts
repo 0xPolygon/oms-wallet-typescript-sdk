@@ -15,8 +15,6 @@ export type {
   EvmBalances,
   EvmCallInput,
   EvmFacet,
-  EvmFacetBase,
-  EvmImmediateFacet,
   EvmOperation,
   EvmSignMessageInput,
   EvmSignTypedDataInput,
@@ -51,8 +49,6 @@ export type {
   ServiceOidcOptions,
   ServiceStorageOption,
   SolanaFacet,
-  SolanaFacetBase,
-  SolanaImmediateFacet,
   SolanaNetwork,
   SolanaOperation,
   SolanaSignMessageInput,
@@ -64,8 +60,6 @@ export type {
   TronAbiArg,
   TronContractCallInput,
   TronFacet,
-  TronFacetBase,
-  TronImmediateFacet,
   TronNetwork,
   TronOperation,
   TronSignMessageInput,
@@ -83,4 +77,3 @@ export type {
 } from './types.js';
 export type { TypedDataDomain, TypedDataField } from './typed-data.js';
 export type { SupportedEvmChainId } from './environment.js';
-export type { SwapsConfigScope } from './internal/swapsBridge.js';

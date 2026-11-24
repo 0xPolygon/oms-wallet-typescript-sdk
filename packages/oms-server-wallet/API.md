@@ -182,16 +182,8 @@ Opaque swaps provider configuration returned by `trails(...)` from
 or `createServerWalletService({ ..., swaps })`.
 
 ```typescript
-export interface SwapsConfig<TScope extends SwapsConfigScope = SwapsConfigScope, TFacet = unknown> {
+export interface SwapsConfig<TScope extends "wallet" | "service" = "wallet" | "service", TFacet = unknown> {
 }
-```
-
-### `SwapsConfigScope`
-
-Scope of a `trails(...)` swaps configuration: `'wallet'` for `createServerWallet`, `'service'` for `createServerWalletService`.
-
-```typescript
-export type SwapsConfigScope = "wallet" | "service";
 ```
 
 ### `ServerWallet`
@@ -392,38 +384,63 @@ export type ServiceStorageOption = {
 
 ### `EvmFacet`
 
-```typescript
-export type EvmFacet<TApproval extends ApprovalMode = "two-phase"> = TApproval extends "allow-immediate" ? EvmFacetBase & EvmImmediateFacet : EvmFacetBase;
-```
-
-### `EvmFacetBase`
-
-Base EVM operations available in both two-phase and immediate approval modes.
+EVM operations. `sendTransfer` and `sendCall` exist only with `approval: 'allow-immediate'`.
+Flattened so declaration emit never needs the internal building-block interfaces.
 
 ```typescript
-export interface EvmFacetBase {
-    prepareTransfer(input: EvmTransferInput): Promise<EvmOperation>;
-    prepareCall<const abi extends Abi | readonly unknown[] = Abi, functionName extends ContractFunctionName<abi> = ContractFunctionName<abi>>(input: EvmCallInput<abi, functionName>): Promise<EvmOperation>;
-    execute(input: ExecuteInput): Promise<EvmOperation>;
-    signMessage(input: EvmSignMessageInput): Promise<EvmOperation>;
-    signTypedData(input: EvmSignTypedDataInput): Promise<EvmOperation>;
-    getOperation(id: string): Promise<EvmOperation | null>;
-    refreshOperation(id: string): Promise<EvmOperation | null>;
-    waitForOperation(id: string, options: WaitForOperationOptions): Promise<WaitResult<EvmOperation>>;
-    resolveReconciliation(input: ResolveReconciliationInput): Promise<EvmOperation>;
-    listOperations(options?: ListOperationsOptions): Promise<OperationPage<EvmOperation>>;
-}
-```
-
-### `EvmImmediateFacet`
-
-Immediate one-shot EVM shortcuts, present only when `approval: 'allow-immediate'` is enabled.
-
-```typescript
-export interface EvmImmediateFacet {
-    sendTransfer(input: EvmTransferInput): Promise<EvmOperation>;
-    sendCall<const abi extends Abi | readonly unknown[] = Abi, functionName extends ContractFunctionName<abi> = ContractFunctionName<abi>>(input: EvmCallInput<abi, functionName>): Promise<EvmOperation>;
-}
+export type EvmFacet<TApproval extends ApprovalMode = "two-phase"> = {
+    [K in keyof (TApproval extends "allow-immediate" ? {
+        prepareTransfer(input: EvmTransferInput): Promise<EvmOperation>;
+        prepareCall<const abi extends Abi | readonly unknown[] = Abi, functionName extends ContractFunctionName<abi> = ContractFunctionName<abi>>(input: EvmCallInput<abi, functionName>): Promise<EvmOperation>;
+        execute(input: ExecuteInput): Promise<EvmOperation>;
+        signMessage(input: EvmSignMessageInput): Promise<EvmOperation>;
+        signTypedData(input: EvmSignTypedDataInput): Promise<EvmOperation>;
+        getOperation(id: string): Promise<EvmOperation | null>;
+        refreshOperation(id: string): Promise<EvmOperation | null>;
+        waitForOperation(id: string, options: WaitForOperationOptions): Promise<WaitResult<EvmOperation>>;
+        resolveReconciliation(input: ResolveReconciliationInput): Promise<EvmOperation>;
+        listOperations(options?: ListOperationsOptions): Promise<OperationPage<EvmOperation>>;
+    } & {
+        sendTransfer(input: EvmTransferInput): Promise<EvmOperation>;
+        sendCall<const abi extends Abi | readonly unknown[] = Abi, functionName extends ContractFunctionName<abi> = ContractFunctionName<abi>>(input: EvmCallInput<abi, functionName>): Promise<EvmOperation>;
+    } : {
+        prepareTransfer(input: EvmTransferInput): Promise<EvmOperation>;
+        prepareCall<const abi extends Abi | readonly unknown[] = Abi, functionName extends ContractFunctionName<abi> = ContractFunctionName<abi>>(input: EvmCallInput<abi, functionName>): Promise<EvmOperation>;
+        execute(input: ExecuteInput): Promise<EvmOperation>;
+        signMessage(input: EvmSignMessageInput): Promise<EvmOperation>;
+        signTypedData(input: EvmSignTypedDataInput): Promise<EvmOperation>;
+        getOperation(id: string): Promise<EvmOperation | null>;
+        refreshOperation(id: string): Promise<EvmOperation | null>;
+        waitForOperation(id: string, options: WaitForOperationOptions): Promise<WaitResult<EvmOperation>>;
+        resolveReconciliation(input: ResolveReconciliationInput): Promise<EvmOperation>;
+        listOperations(options?: ListOperationsOptions): Promise<OperationPage<EvmOperation>>;
+    })]: (TApproval extends "allow-immediate" ? {
+        prepareTransfer(input: EvmTransferInput): Promise<EvmOperation>;
+        prepareCall<const abi extends Abi | readonly unknown[] = Abi, functionName extends ContractFunctionName<abi> = ContractFunctionName<abi>>(input: EvmCallInput<abi, functionName>): Promise<EvmOperation>;
+        execute(input: ExecuteInput): Promise<EvmOperation>;
+        signMessage(input: EvmSignMessageInput): Promise<EvmOperation>;
+        signTypedData(input: EvmSignTypedDataInput): Promise<EvmOperation>;
+        getOperation(id: string): Promise<EvmOperation | null>;
+        refreshOperation(id: string): Promise<EvmOperation | null>;
+        waitForOperation(id: string, options: WaitForOperationOptions): Promise<WaitResult<EvmOperation>>;
+        resolveReconciliation(input: ResolveReconciliationInput): Promise<EvmOperation>;
+        listOperations(options?: ListOperationsOptions): Promise<OperationPage<EvmOperation>>;
+    } & {
+        sendTransfer(input: EvmTransferInput): Promise<EvmOperation>;
+        sendCall<const abi extends Abi | readonly unknown[] = Abi, functionName extends ContractFunctionName<abi> = ContractFunctionName<abi>>(input: EvmCallInput<abi, functionName>): Promise<EvmOperation>;
+    } : {
+        prepareTransfer(input: EvmTransferInput): Promise<EvmOperation>;
+        prepareCall<const abi extends Abi | readonly unknown[] = Abi, functionName extends ContractFunctionName<abi> = ContractFunctionName<abi>>(input: EvmCallInput<abi, functionName>): Promise<EvmOperation>;
+        execute(input: ExecuteInput): Promise<EvmOperation>;
+        signMessage(input: EvmSignMessageInput): Promise<EvmOperation>;
+        signTypedData(input: EvmSignTypedDataInput): Promise<EvmOperation>;
+        getOperation(id: string): Promise<EvmOperation | null>;
+        refreshOperation(id: string): Promise<EvmOperation | null>;
+        waitForOperation(id: string, options: WaitForOperationOptions): Promise<WaitResult<EvmOperation>>;
+        resolveReconciliation(input: ResolveReconciliationInput): Promise<EvmOperation>;
+        listOperations(options?: ListOperationsOptions): Promise<OperationPage<EvmOperation>>;
+    })[K];
+};
 ```
 
 ### `EvmTransferInput`
@@ -549,35 +566,52 @@ export declare function parseAmount(value: string, decimals: number): string;
 
 ### `SolanaFacet`
 
-```typescript
-export type SolanaFacet<TApproval extends ApprovalMode = "two-phase"> = TApproval extends "allow-immediate" ? SolanaFacetBase & SolanaImmediateFacet : SolanaFacetBase;
-```
-
-### `SolanaFacetBase`
-
-Base Solana operations available in both two-phase and immediate approval modes.
+Solana operations. `sendTransfer` exists only with `approval: 'allow-immediate'`.
 
 ```typescript
-export interface SolanaFacetBase {
-    prepareTransfer(input: SolanaTransferInput): Promise<SolanaOperation>;
-    execute(input: ExecuteInput): Promise<SolanaOperation>;
-    signMessage(input: SolanaSignMessageInput): Promise<SolanaOperation>;
-    getOperation(id: string): Promise<SolanaOperation | null>;
-    refreshOperation(id: string): Promise<SolanaOperation | null>;
-    waitForOperation(id: string, options: WaitForOperationOptions): Promise<WaitResult<SolanaOperation>>;
-    resolveReconciliation(input: ResolveReconciliationInput): Promise<SolanaOperation>;
-    listOperations(options?: ListOperationsOptions): Promise<OperationPage<SolanaOperation>>;
-}
-```
-
-### `SolanaImmediateFacet`
-
-Immediate one-shot Solana shortcut, present only when `approval: 'allow-immediate'` is enabled.
-
-```typescript
-export interface SolanaImmediateFacet {
-    sendTransfer(input: SolanaTransferInput): Promise<SolanaOperation>;
-}
+export type SolanaFacet<TApproval extends ApprovalMode = "two-phase"> = {
+    [K in keyof (TApproval extends "allow-immediate" ? {
+        prepareTransfer(input: SolanaTransferInput): Promise<SolanaOperation>;
+        execute(input: ExecuteInput): Promise<SolanaOperation>;
+        signMessage(input: SolanaSignMessageInput): Promise<SolanaOperation>;
+        getOperation(id: string): Promise<SolanaOperation | null>;
+        refreshOperation(id: string): Promise<SolanaOperation | null>;
+        waitForOperation(id: string, options: WaitForOperationOptions): Promise<WaitResult<SolanaOperation>>;
+        resolveReconciliation(input: ResolveReconciliationInput): Promise<SolanaOperation>;
+        listOperations(options?: ListOperationsOptions): Promise<OperationPage<SolanaOperation>>;
+    } & {
+        sendTransfer(input: SolanaTransferInput): Promise<SolanaOperation>;
+    } : {
+        prepareTransfer(input: SolanaTransferInput): Promise<SolanaOperation>;
+        execute(input: ExecuteInput): Promise<SolanaOperation>;
+        signMessage(input: SolanaSignMessageInput): Promise<SolanaOperation>;
+        getOperation(id: string): Promise<SolanaOperation | null>;
+        refreshOperation(id: string): Promise<SolanaOperation | null>;
+        waitForOperation(id: string, options: WaitForOperationOptions): Promise<WaitResult<SolanaOperation>>;
+        resolveReconciliation(input: ResolveReconciliationInput): Promise<SolanaOperation>;
+        listOperations(options?: ListOperationsOptions): Promise<OperationPage<SolanaOperation>>;
+    })]: (TApproval extends "allow-immediate" ? {
+        prepareTransfer(input: SolanaTransferInput): Promise<SolanaOperation>;
+        execute(input: ExecuteInput): Promise<SolanaOperation>;
+        signMessage(input: SolanaSignMessageInput): Promise<SolanaOperation>;
+        getOperation(id: string): Promise<SolanaOperation | null>;
+        refreshOperation(id: string): Promise<SolanaOperation | null>;
+        waitForOperation(id: string, options: WaitForOperationOptions): Promise<WaitResult<SolanaOperation>>;
+        resolveReconciliation(input: ResolveReconciliationInput): Promise<SolanaOperation>;
+        listOperations(options?: ListOperationsOptions): Promise<OperationPage<SolanaOperation>>;
+    } & {
+        sendTransfer(input: SolanaTransferInput): Promise<SolanaOperation>;
+    } : {
+        prepareTransfer(input: SolanaTransferInput): Promise<SolanaOperation>;
+        execute(input: ExecuteInput): Promise<SolanaOperation>;
+        signMessage(input: SolanaSignMessageInput): Promise<SolanaOperation>;
+        getOperation(id: string): Promise<SolanaOperation | null>;
+        refreshOperation(id: string): Promise<SolanaOperation | null>;
+        waitForOperation(id: string, options: WaitForOperationOptions): Promise<WaitResult<SolanaOperation>>;
+        resolveReconciliation(input: ResolveReconciliationInput): Promise<SolanaOperation>;
+        listOperations(options?: ListOperationsOptions): Promise<OperationPage<SolanaOperation>>;
+    })[K];
+};
 ```
 
 ### `SolanaNetwork`
@@ -642,38 +676,62 @@ export interface SolanaOperation extends OperationBase {
 
 ### `TronFacet`
 
-```typescript
-export type TronFacet<TApproval extends ApprovalMode = "two-phase"> = TApproval extends "allow-immediate" ? TronFacetBase & TronImmediateFacet : TronFacetBase;
-```
-
-### `TronFacetBase`
-
-Base Tron operations available in both two-phase and immediate approval modes.
+Tron operations. `sendTransaction` and `sendContractCall` exist only with `approval: 'allow-immediate'`.
 
 ```typescript
-export interface TronFacetBase {
-    prepareTransaction(input: TronTransactionInput): Promise<TronOperation>;
-    prepareContractCall(input: TronContractCallInput): Promise<TronOperation>;
-    execute(input: ExecuteInput): Promise<TronOperation>;
-    signMessage(input: TronSignMessageInput): Promise<TronOperation>;
-    signTypedData(input: TronSignTypedDataInput): Promise<TronOperation>;
-    getOperation(id: string): Promise<TronOperation | null>;
-    refreshOperation(id: string): Promise<TronOperation | null>;
-    waitForOperation(id: string, options: WaitForOperationOptions): Promise<WaitResult<TronOperation>>;
-    resolveReconciliation(input: ResolveReconciliationInput): Promise<TronOperation>;
-    listOperations(options?: ListOperationsOptions): Promise<OperationPage<TronOperation>>;
-}
-```
-
-### `TronImmediateFacet`
-
-Immediate one-shot Tron shortcuts, present only when `approval: 'allow-immediate'` is enabled.
-
-```typescript
-export interface TronImmediateFacet {
-    sendTransaction(input: TronTransactionInput): Promise<TronOperation>;
-    sendContractCall(input: TronContractCallInput): Promise<TronOperation>;
-}
+export type TronFacet<TApproval extends ApprovalMode = "two-phase"> = {
+    [K in keyof (TApproval extends "allow-immediate" ? {
+        prepareTransaction(input: TronTransactionInput): Promise<TronOperation>;
+        prepareContractCall(input: TronContractCallInput): Promise<TronOperation>;
+        execute(input: ExecuteInput): Promise<TronOperation>;
+        signMessage(input: TronSignMessageInput): Promise<TronOperation>;
+        signTypedData(input: TronSignTypedDataInput): Promise<TronOperation>;
+        getOperation(id: string): Promise<TronOperation | null>;
+        refreshOperation(id: string): Promise<TronOperation | null>;
+        waitForOperation(id: string, options: WaitForOperationOptions): Promise<WaitResult<TronOperation>>;
+        resolveReconciliation(input: ResolveReconciliationInput): Promise<TronOperation>;
+        listOperations(options?: ListOperationsOptions): Promise<OperationPage<TronOperation>>;
+    } & {
+        sendTransaction(input: TronTransactionInput): Promise<TronOperation>;
+        sendContractCall(input: TronContractCallInput): Promise<TronOperation>;
+    } : {
+        prepareTransaction(input: TronTransactionInput): Promise<TronOperation>;
+        prepareContractCall(input: TronContractCallInput): Promise<TronOperation>;
+        execute(input: ExecuteInput): Promise<TronOperation>;
+        signMessage(input: TronSignMessageInput): Promise<TronOperation>;
+        signTypedData(input: TronSignTypedDataInput): Promise<TronOperation>;
+        getOperation(id: string): Promise<TronOperation | null>;
+        refreshOperation(id: string): Promise<TronOperation | null>;
+        waitForOperation(id: string, options: WaitForOperationOptions): Promise<WaitResult<TronOperation>>;
+        resolveReconciliation(input: ResolveReconciliationInput): Promise<TronOperation>;
+        listOperations(options?: ListOperationsOptions): Promise<OperationPage<TronOperation>>;
+    })]: (TApproval extends "allow-immediate" ? {
+        prepareTransaction(input: TronTransactionInput): Promise<TronOperation>;
+        prepareContractCall(input: TronContractCallInput): Promise<TronOperation>;
+        execute(input: ExecuteInput): Promise<TronOperation>;
+        signMessage(input: TronSignMessageInput): Promise<TronOperation>;
+        signTypedData(input: TronSignTypedDataInput): Promise<TronOperation>;
+        getOperation(id: string): Promise<TronOperation | null>;
+        refreshOperation(id: string): Promise<TronOperation | null>;
+        waitForOperation(id: string, options: WaitForOperationOptions): Promise<WaitResult<TronOperation>>;
+        resolveReconciliation(input: ResolveReconciliationInput): Promise<TronOperation>;
+        listOperations(options?: ListOperationsOptions): Promise<OperationPage<TronOperation>>;
+    } & {
+        sendTransaction(input: TronTransactionInput): Promise<TronOperation>;
+        sendContractCall(input: TronContractCallInput): Promise<TronOperation>;
+    } : {
+        prepareTransaction(input: TronTransactionInput): Promise<TronOperation>;
+        prepareContractCall(input: TronContractCallInput): Promise<TronOperation>;
+        execute(input: ExecuteInput): Promise<TronOperation>;
+        signMessage(input: TronSignMessageInput): Promise<TronOperation>;
+        signTypedData(input: TronSignTypedDataInput): Promise<TronOperation>;
+        getOperation(id: string): Promise<TronOperation | null>;
+        refreshOperation(id: string): Promise<TronOperation | null>;
+        waitForOperation(id: string, options: WaitForOperationOptions): Promise<WaitResult<TronOperation>>;
+        resolveReconciliation(input: ResolveReconciliationInput): Promise<TronOperation>;
+        listOperations(options?: ListOperationsOptions): Promise<OperationPage<TronOperation>>;
+    })[K];
+};
 ```
 
 ### `TronNetwork`
