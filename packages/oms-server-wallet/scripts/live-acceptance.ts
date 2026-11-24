@@ -233,25 +233,45 @@ await check('EVM message signing on Polygon, verified by WaaS', async () => {
   if (op.status !== 'signed' || !op.verified) throw new Error(`Signing ended ${op.status}`);
   return { status: op.status, verified: op.verified };
 });
+/** EIP-712 acceptance payload; the verifying contract is any address other than the wallet. */
+const acceptanceTypedData = (verifyingContract: string) => ({
+  domain: { name: 'Acceptance', version: '1', chainId: 137, verifyingContract },
+  types: {
+    Check: [
+      { name: 'wallet', type: 'address' },
+      { name: 'note', type: 'string' }
+    ]
+  },
+  primaryType: 'Check',
+  message: { wallet: evm, note: 'OMS server wallet acceptance' }
+});
 await check('EVM EIP-712 signing on Polygon, verified by WaaS', async () => {
   const op = await wallet.evm.signTypedData({
     idempotencyKey: id('live-evm-712'),
     chainId: 137,
-    typedData: {
-      domain: { name: 'Acceptance', version: '1', chainId: 137, verifyingContract: evm },
-      types: {
-        Check: [
-          { name: 'wallet', type: 'address' },
-          { name: 'note', type: 'string' }
-        ]
-      },
-      primaryType: 'Check',
-      message: { wallet: evm, note: 'OMS server wallet acceptance' }
-    }
+    typedData: acceptanceTypedData('0x000000000000000000000000000000000000dEaD')
   });
   if (op.status !== 'signed' || !op.verified) throw new Error(`Signing ended ${op.status}`);
   return { status: op.status, verified: op.verified };
 });
+await check(
+  'EVM EIP-712 with the wallet as verifyingContract is refused without signing',
+  async () => {
+    const signed = calls.SignTypedData ?? 0;
+    try {
+      await wallet.evm.signTypedData({
+        idempotencyKey: id('live-evm-712-self'),
+        chainId: 137,
+        typedData: acceptanceTypedData(evm)
+      });
+    } catch (error) {
+      if (!(error instanceof WalletError) || error.code !== 'INVALID_TYPED_DATA') throw error;
+      if ((calls.SignTypedData ?? 0) !== signed) throw new Error('SignTypedData was called.');
+      return { code: error.code };
+    }
+    throw new Error('Self-domain typed data was signed.');
+  }
+);
 await check('EVM operation ID retry returns the stored result without calling WaaS', async () => {
   const idempotencyKey = id('live-evm-retry');
   const first = await wallet.evm.signMessage({
