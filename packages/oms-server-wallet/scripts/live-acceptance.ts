@@ -11,7 +11,8 @@
 // keep funded testnet wallets across runs (the default subject changes daily).
 //
 // By default nothing is sent: transfers are only quoted. LIVE_EXECUTE=1 sends small testnet
-// transfers only: LIVE_EVM_AMOUNT wei of POL on Polygon Amoy (default 0.0001 POL),
+// transactions only: a sponsored zero-value call on Polygon Amoy (plus LIVE_EVM_AMOUNT wei of POL
+// when set),
 // LIVE_SOLANA_AMOUNT lamports on Solana devnet (default 0.001 SOL, enough to open a new account)
 // and LIVE_TRON_AMOUNT sun on Tron Nile (default 1 sun, paying TRX only up to LIVE_TRON_MAX_FEE).
 // Recipients default to the separate lifecycle identity's wallets, so funds stay in test wallets;
@@ -355,44 +356,63 @@ await check('EVM message signing on Polygon Amoy, verified by WaaS', async () =>
 await check('Polygon Amoy balances', () =>
   balances(wallet.indexer.getEvmBalances({ chainIds: [amoy] }))
 );
-const amoyTransfer = {
-  chainId: amoy,
-  to: process.env.LIVE_EVM_RECIPIENT ?? lifecycleWallet.address,
-  asset: 'native',
-  amount: process.env.LIVE_EVM_AMOUNT ?? '100000000000000'
-} as const;
+const amoyRecipient = process.env.LIVE_EVM_RECIPIENT ?? lifecycleWallet.address;
+const amoyAmount = process.env.LIVE_EVM_AMOUNT;
 await check('EVM sponsored transfer quote on Polygon Amoy', async () => {
   const op = await wallet.evm.prepareTransfer({
     idempotencyKey: id('live-amoy-quote'),
-    ...amoyTransfer
+    chainId: amoy,
+    to: amoyRecipient,
+    asset: 'native',
+    amount: amoyAmount ?? '1'
   });
   if (op.status !== 'quoted' || !op.quote?.sponsored) throw new Error(`Quote ended ${op.status}`);
   return { status: op.status, sponsored: op.quote.sponsored, expiresAt: op.quote.expiresAt };
 });
 if (!execute)
-  skip('EVM transfer execution on Polygon Amoy', 'Set LIVE_EXECUTE=1 to send testnet POL.');
+  skip('EVM zero-value call on Polygon Amoy', 'Set LIVE_EXECUTE=1 to send a sponsored call.');
 else
   await check(
-    'EVM sponsored transfer executes on Polygon Amoy; getTransactionStatus agrees',
+    'EVM sponsored zero-value call executes on Polygon Amoy (prepare, review, execute); getTransactionStatus agrees',
     async () => {
-      const op = await wallet.evm.sendTransfer({
-        idempotencyKey: id('live-amoy-send'),
-        ...amoyTransfer
+      const prepared = await wallet.evm.prepareCall({
+        idempotencyKey: id('live-amoy-call'),
+        chainId: amoy,
+        to: amoyRecipient,
+        value: '0',
+        data: '0x'
       });
-      const done = await executed(() => wallet.evm.refreshOperation(op.id));
-      const status = await wallet.evm.getTransactionStatus(op.quote!.txnId);
+      if (prepared.status !== 'quoted' || !prepared.reviewId)
+        throw new Error(`Prepare ended ${prepared.status}`);
+      await wallet.evm.execute({ idempotencyKey: prepared.id, reviewId: prepared.reviewId });
+      const done = await executed(() => wallet.evm.refreshOperation(prepared.id));
+      const status = await wallet.evm.getTransactionStatus(prepared.quote!.txnId);
       if (
         status.status !== 'executed' ||
         status.txnHash?.toLowerCase() !== done.txnHash?.toLowerCase()
       )
         throw new Error(`getTransactionStatus returned ${JSON.stringify(status)}`);
       return {
-        to: amoyTransfer.to,
+        to: amoyRecipient,
         txnHash: done.txnHash,
         explorer: `https://amoy.polygonscan.com/tx/${done.txnHash}`
       };
     }
   );
+if (!execute || !amoyAmount)
+  skip('EVM native transfer on Polygon Amoy', 'Set LIVE_EXECUTE=1 and LIVE_EVM_AMOUNT (wei).');
+else
+  await check('EVM sponsored native transfer executes on Polygon Amoy', async () => {
+    const op = await wallet.evm.sendTransfer({
+      idempotencyKey: id('live-amoy-send'),
+      chainId: amoy,
+      to: amoyRecipient,
+      asset: 'native',
+      amount: amoyAmount
+    });
+    const done = await executed(() => wallet.evm.refreshOperation(op.id));
+    return { to: amoyRecipient, txnHash: done.txnHash };
+  });
 
 await check('Solana message signing, verified by WaaS', () =>
   wallet.solana.signMessage({
