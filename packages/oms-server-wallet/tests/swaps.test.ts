@@ -642,6 +642,25 @@ it('coordinates EVM calls with swap debits in both directions on the same wallet
   });
 });
 
+it('keeps an uncertain EVM debit blocking while its status read is stale inside the grace window', async () => {
+  const h = await swapHarness();
+  const call = { chainId: 137, to: token, data: '0xd0e30db0' as const };
+  h.waas.remote.failExecute = true;
+  await h.wallet.evm.sendCall({ idempotencyKey: 'stale-call-1', ...call });
+  h.waas.remote.failExecute = false;
+  h.waas.remote.evmStatusError = 7309;
+  const stored = JSON.parse((await h.waas.store.read('operation:stale-call-1'))!);
+  stored.quote.expiresAt = new Date(Date.now() - 10_000).toISOString();
+  await h.waas.store.write('operation:stale-call-1', JSON.stringify(stored));
+  await expect(
+    h.wallet.evm.sendCall({ idempotencyKey: 'stale-call-2', ...call })
+  ).rejects.toMatchObject({ code: 'DEBIT_PENDING' });
+  const quote = await h.quote();
+  await expect(
+    h.swaps.confirm({ swapId: quote.id, reviewId: quote.quote.reviewId })
+  ).rejects.toMatchObject({ code: 'DEBIT_PENDING' });
+});
+
 it('returns a finished EVM call while a swap holds its chain', async () => {
   const h = await swapHarness();
   const call = { chainId: 137, to: token, data: '0xd0e30db0' as const };

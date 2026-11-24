@@ -441,7 +441,7 @@ function computeProvenUnsent(op: StoredOperationRecord): boolean {
   if (op.status === 'expired') return op.preSubmitExpired === true;
   if (op.status === 'failed') {
     if (op.kind === 'sign' || op.kind === 'signTypedData') return false;
-    // Require affirmative evidence that Execute never claimed/broadcast (legacy 0.2.x rows omit both).
+    // Require affirmative evidence that Execute never claimed or broadcast the transaction.
     return op.preClaimRefused === true || op.submitted === false;
   }
   return false;
@@ -456,8 +456,9 @@ export function projectEvmOperation(op: StoredEvmOperation): EvmOperation {
     inputHash: op.inputHash,
     createdAt: op.createdAt,
     status: op.status,
-    submissionMode: op.submissionMode ?? 'review',
+    submissionMode: op.submissionMode,
     provenUnsent: computeProvenUnsent(op),
+    ...(op.operatorResolved === true ? { operatorResolved: true as const } : {}),
     ...(op.reviewId ? { reviewId: op.reviewId } : {}),
     ...(op.transfer ? { transfer: { ...op.transfer } } : {}),
     ...(op.transaction ? { transaction: { ...op.transaction } } : {}),
@@ -477,8 +478,9 @@ export function projectSolanaOperation(op: StoredChainOperation): SolanaOperatio
     inputHash: op.inputHash,
     createdAt: op.createdAt,
     status: op.status,
-    submissionMode: op.submissionMode ?? 'review',
+    submissionMode: op.submissionMode,
     provenUnsent: computeProvenUnsent(op),
+    ...(op.operatorResolved === true ? { operatorResolved: true as const } : {}),
     ...(op.network ? { network: op.network as SolanaNetwork } : {}),
     ...(op.reviewId ? { reviewId: op.reviewId } : {}),
     ...(op.transfer
@@ -507,8 +509,9 @@ export function projectTronOperation(op: StoredChainOperation): TronOperation {
     inputHash: op.inputHash,
     createdAt: op.createdAt,
     status: op.status,
-    submissionMode: op.submissionMode ?? 'review',
+    submissionMode: op.submissionMode,
     provenUnsent: computeProvenUnsent(op),
+    ...(op.operatorResolved === true ? { operatorResolved: true as const } : {}),
     ...(op.network ? { network: op.network as TronNetwork } : {}),
     ...(op.reviewId ? { reviewId: op.reviewId } : {}),
     ...(op.transaction
@@ -1488,14 +1491,14 @@ export class WalletEngine {
   } {
     if (!input || typeof input !== 'object')
       throw new WalletError(
-        'INVALID_STATE',
+        'INVALID_INPUT',
         'Provide idempotencyKey, txnId, and resolution: "not-broadcast".'
       );
     const idempotencyKey = validateIdempotencyKey(input.idempotencyKey);
     if (typeof input.txnId !== 'string' || !input.txnId.trim())
-      throw new WalletError('INVALID_STATE', 'Provide the operation quote txnId to resolve.');
+      throw new WalletError('INVALID_INPUT', 'Provide the operation quote txnId to resolve.');
     if (input.resolution !== 'not-broadcast')
-      throw new WalletError('INVALID_STATE', 'Only resolution: "not-broadcast" is supported.');
+      throw new WalletError('INVALID_INPUT', 'Only resolution: "not-broadcast" is supported.');
     return { idempotencyKey, txnId: input.txnId };
   }
 
@@ -2359,10 +2362,8 @@ export class WalletEngine {
           'This operation ID was already used with different input.',
           409
         );
-      // Compare persisted submission mode BEFORE allowing interrupted-preparing resume or quote reuse!
-      // Missing mode on legacy 0.2.x records defaults strictly to 'review' (never 'immediate').
-      const storedMode: SubmissionMode = stored.submissionMode ?? 'review';
-      if (storedMode !== submissionMode) {
+      // Compare the persisted submission mode before resuming an interrupted prepare or reusing a quote.
+      if (stored.submissionMode !== submissionMode) {
         if (submissionMode === 'immediate')
           throw new WalletError(
             'APPROVAL_REQUIRED',

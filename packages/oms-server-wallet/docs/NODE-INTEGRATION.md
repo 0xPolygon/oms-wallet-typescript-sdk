@@ -226,6 +226,7 @@ try {
 | `unknown` (`RECONCILIATION_REQUIRED`) | Unconfirmed past the 2-minute post-expiry grace window | Stays open; reconcile the original operation and WaaS `txnId` before authorizing any replacement. |
 | `executed` | WaaS reported execution | Record `txnHash` and verify on-chain receipt/confirmations before treating payment as settled. |
 | `expired` (`QUOTE_EXPIRED`, `provenUnsent: true`) | Quote expired locally before submission | Nothing was sent; prepare and review again under a new `idempotencyKey`. |
+| `expired` (`QUOTE_EXPIRED`, `operatorResolved: true`) | An operator resolved it with `resolveReconciliation` | Treated as not sent on the operator's word; prepare and review again under a new `idempotencyKey`. |
 | `failed` (`EXECUTE_REFUSED`, `provenUnsent: true`) | WaaS refused before claiming | Nothing was sent; inspect error and prepare under a new `idempotencyKey` if desired. |
 | `STALE_REVIEW` | `reviewId` does not match the prepared operation | Re-read and review the current operation before executing. |
 | `APPROVAL_REQUIRED` | Immediate `send*` called on an ID prepared for review | Review and call `execute({ idempotencyKey, reviewId })` instead. |

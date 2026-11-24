@@ -39,7 +39,7 @@ export function describeOperation(operation: WalletOperation): OperationGuidance
           ...base,
           action: 'safe-to-reprepare',
           reason:
-            'Legacy quoted operation predates reviewId binding and cannot be executed. Prepare and review a new operation under a fresh idempotencyKey.'
+            'Quoted operation has no reviewId and cannot be executed. Prepare and review a new operation under a fresh idempotencyKey.'
         };
       return {
         ...base,
@@ -95,6 +95,13 @@ export function describeOperation(operation: WalletOperation): OperationGuidance
       };
 
     case 'expired':
+      if (operation.operatorResolved)
+        return {
+          ...base,
+          action: 'safe-to-reprepare',
+          reason:
+            'An operator resolved this submission as not broadcast. Prepare and review again under a new idempotencyKey.'
+        };
       if (operation.provenUnsent)
         return {
           ...base,

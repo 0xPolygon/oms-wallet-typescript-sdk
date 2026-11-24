@@ -53,6 +53,7 @@ import { WalletError } from './errors.js';
 import { omsFetch } from './http.js';
 import { IndexerClient } from './indexer.js';
 import { resolveSwapsBinder } from './internal/swapsBridge.js';
+import { isStaleExpiryRead } from './settlement.js';
 import { computeIdentityNamespace, EncryptedStore, scopeNamespacedStore } from './storage.js';
 import { WaasTransport } from './transport.js';
 
@@ -173,9 +174,8 @@ async function waitFor<TOperation extends WalletOperation>(
     options.timeoutMs > 300_000
   )
     throw new WalletError(
-      'CONFIGURATION',
-      'waitForOperation requires timeoutMs as an integer between 1 and 300,000.',
-      400
+      'INVALID_INPUT',
+      'waitForOperation requires timeoutMs as an integer between 1 and 300,000.'
     );
   const pollMs = Math.max(250, Math.min(options.pollIntervalMs ?? 2_000, 30_000));
   const deadline = now() + options.timeoutMs;
@@ -197,7 +197,14 @@ async function waitFor<TOperation extends WalletOperation>(
   for (;;) {
     if (options.signal?.aborted) return { outcome: 'cancelled', operation: last };
     if (now() >= deadline) return { outcome: 'timed-out', operation: last };
-    const current = await refresh(id);
+    let current: TOperation | null;
+    try {
+      current = await refresh(id);
+    } catch (error) {
+      // A stale TransactionExpired read inside the grace window: keep the last view and poll again.
+      if (!isStaleExpiryRead(error)) throw error;
+      current = last;
+    }
     if (!current) throw new WalletError('NOT_FOUND', 'Operation not found.', 404);
     last = current;
     if (SETTLED_STATUSES.has(current.status)) return { outcome: 'settled', operation: current };

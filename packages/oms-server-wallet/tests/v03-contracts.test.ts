@@ -436,6 +436,15 @@ describe('swaps: trails(...) binding, scope isolation, and coordination marker',
     ).toBe(true);
     expect((await w1.swaps.list()).items).toEqual([]);
     expect((await w2.swaps.list()).items).toEqual([]);
+    const identity = {
+      waasOrigin: env.origin,
+      projectId: env.projectId,
+      audience: 'oms',
+      subject: 'alice'
+    };
+    expect(computeIdentityNamespace({ ...identity, issuer: 'https://issuer.example/' })).toBe(
+      computeIdentityNamespace({ ...identity, issuer: 'https://issuer.example' })
+    );
   });
 });
 
@@ -506,6 +515,70 @@ describe('observation, waitForOperation, describeOperation, indexer facet, and e
     expect(settled.operation.status).toBe('executed');
   });
 
+  it('keeps waiting through a stale TransactionExpired read and guides re-prepare after operator resolution', async () => {
+    const h = sdkHarness();
+    const prep = await h.client.evm.prepareTransfer({
+      idempotencyKey: 'grace-op-1',
+      chainId: 137,
+      to: '0x2222222222222222222222222222222222222222',
+      asset: 'native',
+      amount: '1000'
+    });
+    h.remote.failExecute = true;
+    await h.client.evm.execute({ idempotencyKey: 'grace-op-1', reviewId: prep.reviewId! });
+    h.remote.evmStatusError = 7309;
+    const stored = JSON.parse((await h.store.read('operation:grace-op-1'))!);
+    const txnId = stored.quote.txnId as string;
+
+    // Inside the post-expiry grace window the TransactionExpired read may predate the claim.
+    stored.quote.expiresAt = new Date(Date.now() - 10_000).toISOString();
+    await h.store.write('operation:grace-op-1', JSON.stringify(stored));
+    const waited = await h.client.evm.waitForOperation('grace-op-1', {
+      timeoutMs: 300,
+      pollIntervalMs: 250
+    });
+    expect(waited.outcome).toBe('timed-out');
+    expect(waited.operation).toMatchObject({ status: 'unknown', error: 'SUBMISSION_UNCERTAIN' });
+
+    // Past the grace window the operation escalates; an operator resolution ends in re-prepare.
+    stored.quote.expiresAt = new Date(Date.now() - 121_000).toISOString();
+    await h.store.write('operation:grace-op-1', JSON.stringify(stored));
+    await h.client.evm.refreshOperation('grace-op-1');
+    const resolved = await h.client.evm.resolveReconciliation({
+      idempotencyKey: 'grace-op-1',
+      txnId,
+      resolution: 'not-broadcast'
+    });
+    expect(resolved).toMatchObject({
+      status: 'expired',
+      provenUnsent: false,
+      operatorResolved: true
+    });
+    expect((await h.client.evm.getOperation('grace-op-1'))?.operatorResolved).toBe(true);
+    expect(describeOperation(resolved)).toMatchObject({ action: 'safe-to-reprepare' });
+  });
+
+  it('rejects malformed waitForOperation and resolveReconciliation input with INVALID_INPUT', async () => {
+    const h = sdkHarness();
+    await expect(
+      h.client.evm.waitForOperation('missing-op-1', { timeoutMs: 0 })
+    ).rejects.toMatchObject({ code: 'INVALID_INPUT', status: 400 });
+    await expect(
+      h.client.evm.resolveReconciliation({
+        idempotencyKey: 'missing-op-1',
+        txnId: '',
+        resolution: 'not-broadcast'
+      })
+    ).rejects.toMatchObject({ code: 'INVALID_INPUT' });
+    await expect(
+      h.client.evm.resolveReconciliation({
+        idempotencyKey: 'missing-op-1',
+        txnId: 'txn-1',
+        resolution: 'broadcast' as 'not-broadcast'
+      })
+    ).rejects.toMatchObject({ code: 'INVALID_INPUT' });
+  });
+
   it('derives safe next actions from operation evidence in describeOperation', () => {
     const base = {
       id: 'op-12345678',
@@ -523,10 +596,18 @@ describe('observation, waitForOperation, describeOperation, indexer facet, and e
     expect(
       describeOperation({ ...base, status: 'expired', provenUnsent: true } as WalletOperation)
     ).toMatchObject({ action: 'safe-to-reprepare' });
-    // Legacy expired record without proof it was unsent MUST NOT advise re-preparing!
+    // An expired record without proof it was unsent MUST NOT advise re-preparing!
     expect(
       describeOperation({ ...base, status: 'expired', provenUnsent: false } as WalletOperation)
     ).toMatchObject({ action: 'reconcile-original' });
+    expect(
+      describeOperation({
+        ...base,
+        status: 'expired',
+        provenUnsent: false,
+        operatorResolved: true
+      } as WalletOperation)
+    ).toMatchObject({ action: 'safe-to-reprepare' });
     expect(
       describeOperation({
         ...base,

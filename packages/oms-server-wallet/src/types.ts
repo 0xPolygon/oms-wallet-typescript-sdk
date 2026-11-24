@@ -357,6 +357,11 @@ export interface OperationBase {
   readonly reviewId?: string;
   /** True only when the SDK has durable proof that no broadcast/claim occurred. */
   readonly provenUnsent: boolean;
+  /**
+   * Set when an operator resolved an unconfirmed submission as not broadcast through
+   * `resolveReconciliation`. An operator assertion, not SDK proof, so `provenUnsent` stays false.
+   */
+  readonly operatorResolved?: true;
   readonly signature?: string;
   readonly verified?: true;
   readonly txnHash?: string;

@@ -91,6 +91,15 @@ export async function settleExecuteError(
   }
 }
 
+/**
+ * Whether a status refresh failed only because WaaS answered `TransactionExpired` inside the
+ * post-expiry grace window. That read can predate the claim, so the operation stays as stored and
+ * callers poll again later.
+ */
+export function isStaleExpiryRead(error: unknown): boolean {
+  return error instanceof UpstreamError && error.upstreamCode === TRANSACTION_EXPIRED;
+}
+
 /** Whether WaaS has already shown that it claimed the transaction for broadcast. */
 function claimed(op: Settleable): boolean {
   return op.status === 'pending' || !!op.txnHash;

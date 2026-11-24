@@ -37,6 +37,7 @@ import { sha256 } from '../encoding.js';
 import { WalletError } from '../errors.js';
 import { registerSwapsBinder } from '../internal/swapsBridge.js';
 import { canonicalJson } from '../json.js';
+import { isStaleExpiryRead } from '../settlement.js';
 import { EvmChainReader } from './chain.js';
 import { TrailsClient, TrailsError } from './client.js';
 import { recoveryTokenSchema } from './protocol.js';
@@ -282,9 +283,15 @@ export class TrailsCoordinator {
         !['transfer', 'call', 'deployment', 'recovery'].includes(operation.kind)
       )
         continue;
-      if (!disabled)
-        operation =
-          (await this.config.primitives.refreshEvmOperationLocked(operation.id)) ?? operation;
+      if (!disabled) {
+        try {
+          operation =
+            (await this.config.primitives.refreshEvmOperationLocked(operation.id)) ?? operation;
+        } catch (error) {
+          // A stale TransactionExpired read inside the grace window leaves the debit uncertain.
+          if (!isStaleExpiryRead(error)) throw error;
+        }
+      }
       if (uncertain(operation))
         throw new WalletError(
           'DEBIT_PENDING',
@@ -392,7 +399,12 @@ export class TrailsCoordinator {
     });
   }
 
-  /** Re-verify stored quote digest and funding transfer against the stored intent to detect payload tampering. */
+  /**
+   * Check that the stored quote digest and funding transfer agree with the stored request and
+   * intent. A consistency check against corrupted or partially written records: the digest is an
+   * unkeyed hash, so it does not authenticate records that a writer to the SwapStore rewrites
+   * consistently. The caller's `reviewId` is bound to the digest only at `confirm`.
+   */
   private async verifyStoredQuoteIntegrity(record: SwapRecord): Promise<void> {
     const request = buildSwapRequest(record.owner, record.request, this.config.assets);
     const expectedDigest = await sha256(canonicalJson({ request, intent: record.quote.intent }));
@@ -524,7 +536,7 @@ export class TrailsCoordinator {
   private resolveReconciliation(input: ResolveSwapReconciliationInput): Promise<SwapView> {
     if (!input || typeof input !== 'object')
       throw new WalletError(
-        'INVALID_STATE',
+        'INVALID_INPUT',
         'Provide swapId, txnId, and resolution: "not-broadcast".'
       );
     const swapId = validateId(input.swapId);
@@ -532,7 +544,7 @@ export class TrailsCoordinator {
     const resolution = input.resolution;
     if (typeof txnId !== 'string' || !txnId.trim() || resolution !== 'not-broadcast')
       throw new WalletError(
-        'INVALID_STATE',
+        'INVALID_INPUT',
         'Provide a valid txnId and resolution: "not-broadcast".'
       );
     return this.config.primitives.runLocked(async () => {

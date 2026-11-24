@@ -75,7 +75,9 @@ export function createSingleProcessExecutorPool(): ExecutorProvider {
 
 /**
  * Compute the canonical storage namespace and AES-GCM encryption context.
- * Uses the routed WaaS API origin (never the application's HTTP Origin header).
+ * Uses the routed WaaS API origin (never the application's HTTP Origin header). A trailing slash on
+ * the issuer is ignored, as when WaaS-authenticated identities are compared, so one identity always
+ * maps to one namespace, executor and set of swap reservations.
  */
 export function computeIdentityNamespace(params: {
   waasOrigin: string;
@@ -87,7 +89,7 @@ export function computeIdentityNamespace(params: {
   return JSON.stringify([
     params.waasOrigin,
     params.projectId,
-    params.issuer,
+    params.issuer.replace(/\/$/, ''),
     params.audience,
     params.subject
   ]);
