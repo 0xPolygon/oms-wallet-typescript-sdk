@@ -207,7 +207,15 @@ export class FakeWaas implements RpcTransport {
         ? []
         : [
             {
-              token: { network: 'tron:nile', name: 'TRX', symbol: 'TRX', type: 'NATIVE' },
+              // Live WaaS shape: null for values the token does not have.
+              token: {
+                network: 'tron:nile',
+                name: 'TRX',
+                symbol: 'TRX',
+                type: 'NATIVE',
+                decimals: null,
+                contractAddress: null
+              },
               value: this.tronFee,
               displayValue: (Number(this.tronFee) / 1e6).toString()
             }

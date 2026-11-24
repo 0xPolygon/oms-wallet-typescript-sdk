@@ -1,5 +1,11 @@
 import { describe, expect, it } from 'vitest';
-import { credentialId, generateCredential, signatureHeader } from '../src/protocol.js';
+import { canonicalJson } from '../src/json.js';
+import {
+  chainQuoteSchema,
+  credentialId,
+  generateCredential,
+  signatureHeader
+} from '../src/protocol.js';
 import { WaasTransport, boundedText } from '../src/transport.js';
 import { IndexerClient } from '../src/indexer.js';
 import { omsFetch } from '../src/http.js';
@@ -8,6 +14,35 @@ import { EVM_NETWORKS } from '../src/internal/protocol/networks.js';
 const requestOrigin = 'https://app.example';
 
 describe('WaaS request protocol', () => {
+  it('accepts null token fields in fee options, as live WaaS sends them for TRX', () => {
+    const quote = chainQuoteSchema.parse({
+      txnId: 'trx-txn-1',
+      status: 'quoted',
+      sponsored: false,
+      expiresAt: new Date().toISOString(),
+      feeOptions: [
+        {
+          token: {
+            network: 'tron:nile',
+            name: 'TRX',
+            symbol: 'TRX',
+            type: 'NATIVE',
+            decimals: null
+          },
+          value: '1100000',
+          displayValue: '1.1'
+        }
+      ]
+    });
+    expect(quote.feeOptions[0].token.decimals).toBeUndefined();
+    // The fee feeds the reviewId digest, which must accept the parsed shape.
+    expect(canonicalJson({ fee: quote.feeOptions[0] })).toContain('"value":"1100000"');
+  });
+
+  it('omits undefined properties from canonical JSON, like JSON.stringify', () => {
+    expect(canonicalJson({ b: 1, a: undefined })).toBe('{"b":1}');
+  });
+
   it('derives the WaaS credential hash from the typed compressed P-256 key', async () => {
     // P-256 generator point; expected hash independently computed with Node/OpenSSL.
     const publicKey =

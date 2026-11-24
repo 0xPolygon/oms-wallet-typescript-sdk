@@ -10,3 +10,4 @@ Tighten transaction settlement, open-operation indexing, and swap debit coordina
 - **Signatures:** `signMessage` and `signTypedData` record a failed or unverified signature as `failed` with its error code; retrying under the same ID returns that record without signing again.
 - **Interrupted preparations:** an operation whose preparation was interrupted before its quote was stored is quoted again under the same ID and matching submission mode instead of staying stuck in `preparing`.
 - **Open operation index:** `listOperations({ status: 'open' })` reads unsettled operations from a maintained open index without scanning settled history.
+- **Tron fee options:** WaaS fee options with `null` token fields (as it sends for TRX) are accepted, so a Tron transaction can pay its quoted TRX fee within `maxFee`.

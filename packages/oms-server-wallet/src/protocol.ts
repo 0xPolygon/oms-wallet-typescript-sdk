@@ -105,15 +105,18 @@ export interface FeeOption {
   readonly displayValue: string;
 }
 
+const nullAsMissing = (value: unknown) => (value === null ? undefined : value);
+
 export const feeOptionSchema = z.object({
   token: z.object({
     network: z.string(),
     name: z.string(),
     symbol: z.string().min(1).max(32),
     type: z.string(),
-    decimals: z.number().int().min(0).max(255).optional(),
-    contractAddress: z.string().optional(),
-    tokenID: z.string().optional()
+    // WaaS sends null, not an omitted field, for values a token does not have (TRX decimals).
+    decimals: z.preprocess(nullAsMissing, z.number().int().min(0).max(255).optional()),
+    contractAddress: z.preprocess(nullAsMissing, z.string().optional()),
+    tokenID: z.preprocess(nullAsMissing, z.string().optional())
   }),
   value: z.string().regex(/^(0|[1-9][0-9]{0,77})$/),
   displayValue: z.string()
