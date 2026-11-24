@@ -1,26 +1,83 @@
-export { ServerWallet, parseAmount } from './client.js';
+export { createServerWallet, createServerWalletService } from './wallet.js';
+export { parseAmount } from './engine.js';
+export { createSingleProcessExecutor, createSingleProcessExecutorPool } from './storage.js';
+export { WalletError, UpstreamError, isWalletError, isUpstreamError } from './errors.js';
+export { describeOperation } from './guidance.js';
+
 export type {
+  ApprovalMode,
+  AttestationOptions,
+  ChainBalance,
+  ChainBalances,
+  ChainQuote,
+  CreateOrRestoreOptions,
+  EvmBalance,
+  EvmBalances,
+  EvmCallInput,
+  EvmFacet,
+  EvmFacetBase,
+  EvmImmediateFacet,
+  EvmOperation,
+  EvmSignMessageInput,
+  EvmSignTypedDataInput,
+  EvmTransfer,
+  EvmTransferInput,
+  ExclusiveExecutor,
+  ExecuteInput,
+  ExecutorProvider,
+  FeeOption,
+  GetEvmBalancesOptions,
+  GetSolanaBalancesOptions,
+  GetTronBalancesOptions,
+  ListOperationsOptions,
+  NamespacedStateStore,
+  NetworkFamily,
+  OperationBase,
+  OperationGuidance,
+  OperationNextAction,
+  OperationPage,
+  OperationStatus,
+  Quote,
+  RemoteWallet,
+  ServerWallet,
+  ServerWalletBase,
   ServerWalletOptions,
+  ServerWalletService,
+  ServerWalletServiceOptions,
+  ServiceIndexerFacet,
+  ServiceOidcOptions,
+  ServiceStorageOption,
+  SolanaFacet,
+  SolanaFacetBase,
+  SolanaImmediateFacet,
+  SolanaNetwork,
+  SolanaOperation,
+  SolanaSignMessageInput,
+  SolanaTransfer,
+  SolanaTransferInput,
+  StateStore,
+  SubmissionMode,
+  SwapsConfig,
+  TronAbiArg,
+  TronContractCallInput,
+  TronFacet,
+  TronFacetBase,
+  TronImmediateFacet,
+  TronNetwork,
+  TronOperation,
+  TronSignMessageInput,
+  TronSignTypedDataInput,
+  TronTransactionInput,
+  TypedDataInput,
+  WaitForOperationOptions,
+  WaitResult,
+  WalletErrorCode,
+  WalletIndexerFacet,
+  WalletOidcOptions,
+  WalletOperation,
   WalletSnapshot,
-  Transfer,
-  Call,
-  UserOperation,
-  Operation
-} from './client.js';
-export { NETWORK_FAMILIES } from './protocol.js';
-export type { FeeOption, NetworkFamily, RemoteWallet } from './protocol.js';
-export { WaasTransport } from './transport.js';
-export type { RpcTransport } from './transport.js';
-export { EncryptedStore, SerialExecutor } from './storage.js';
-export type { StateStore, ExclusiveExecutor } from './storage.js';
-export { SOLANA_NETWORKS, SolanaWallet } from './solana.js';
-export type { SolanaNetwork, SolanaOperation, SolanaTransfer } from './solana.js';
-export { TRON_CHAIN_IDS, TRON_NETWORKS, TronWallet } from './tron.js';
-export type { TronContractCall, TronNetwork, TronOperation, TronTransaction } from './tron.js';
-export type { ChainOperation, ChainOperationStatus } from './chains.js';
-export { IndexerClient } from './indexer.js';
-export type { Balance, Balances, ChainBalance, ChainBalances } from './indexer.js';
-export { CHAINS, environmentFromKey } from './environment.js';
-export { WalletError, UpstreamError } from './errors.js';
-export { sha256 } from './encoding.js';
-export { omsFetch } from './http.js';
+  WalletStoreOption
+} from './types.js';
+export type { TypedDataDomain, TypedDataField } from './typed-data.js';
+export type { SupportedEvmChainId } from './environment.js';
+export type { SwapsConfigScope } from './internal/swapsBridge.js';

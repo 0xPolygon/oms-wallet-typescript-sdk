@@ -6,6 +6,29 @@ import { WalletError } from './errors.js';
 import { tronToHex } from './internal/protocol/addresses.js';
 import { canonicalJson } from './json.js';
 
+/** Typed EIP-712 / TIP-712 domain binding the chain and verifying contract. */
+export interface TypedDataDomain {
+  readonly name?: string;
+  readonly version?: string;
+  readonly chainId: number | string;
+  readonly verifyingContract: string;
+  readonly salt?: `0x${string}`;
+}
+
+/** Single typed-data struct field definition. */
+export interface TypedDataField {
+  readonly name: string;
+  readonly type: string;
+}
+
+/** Bounded EIP-712 (EVM) or TIP-712 (Tron) payload accepted by `signTypedData`. */
+export interface TypedDataInput {
+  readonly domain: TypedDataDomain;
+  readonly types: Readonly<Record<string, readonly TypedDataField[]>>;
+  readonly primaryType: string;
+  readonly message: Readonly<Record<string, unknown>>;
+}
+
 const address = z
   .string()
   .regex(/^0x[0-9a-fA-F]{40}$/)

@@ -1,17 +1,18 @@
-import { describe, expect, it, vi } from 'vitest';
-import { ServerWallet, WalletError } from '@polygonlabs/oms-server-wallet-sdk';
-import { swapView } from '@polygonlabs/oms-server-wallet-sdk/trails';
-import { swapHarness } from './swap-harness.js';
+import { describe, expect, it } from 'vitest';
+
+import { swapView } from '../src/trails/view.js';
 import {
-  owner,
-  token,
   destinationToken,
+  owner,
+  recoveryCall,
   recoveryFixture,
-  recoveryCall
+  token
 } from './fixtures/trails.js';
+import { swapHarness } from './swap-harness.js';
 
 const executes = (h: Awaited<ReturnType<typeof swapHarness>>) =>
   h.waas.remote.calls.filter((c) => c.method === 'Execute');
+
 async function funded(h: Awaited<ReturnType<typeof swapHarness>>) {
   await h.confirm();
   await h.tick(4);
@@ -19,6 +20,7 @@ async function funded(h: Awaited<ReturnType<typeof swapHarness>>) {
   await h.tick();
   expect((await h.record()).fundingConfirmed).toBe(true);
 }
+
 describe('durable swap execution', () => {
   it.each([false, true])(
     'activates before exactly one sponsored deposit (native=%s), then verifies settlement',
@@ -48,24 +50,26 @@ describe('durable swap execution', () => {
       expect(h.calls).not.toContain('commit');
     }
   );
+
   it('keeps retry IDs stable and rejects changed confirmation/input', async () => {
     const h = await swapHarness();
     const quote = await h.quote();
     expect(await h.quote()).toEqual(quote);
     expect(h.calls.filter((c) => c === 'quote')).toHaveLength(1);
     await expect(
-      h.swaps.quoteSwap(quote.id, { ...h.fixture.input, amount: '99' })
+      h.swaps.quote({ idempotencyKey: quote.id, ...h.fixture.input, amount: '99' })
     ).rejects.toMatchObject({ code: 'IDEMPOTENCY_CONFLICT' });
-    await expect(h.swaps.confirmSwap(quote.id, 'stale')).rejects.toMatchObject({
+    await expect(h.swaps.confirm({ swapId: quote.id, reviewId: 'stale' })).rejects.toMatchObject({
       code: 'STALE_QUOTE'
     });
     await Promise.all([
-      h.swaps.confirmSwap(quote.id, quote.quote.revision),
-      h.swaps.confirmSwap(quote.id, quote.quote.revision)
+      h.swaps.confirm({ swapId: quote.id, reviewId: quote.quote.reviewId }),
+      h.swaps.confirm({ swapId: quote.id, reviewId: quote.quote.reviewId })
     ]);
     await h.tick(4);
     expect(executes(h)).toHaveLength(1);
   });
+
   it('reconciles a lost activation response before funding', async () => {
     const h = await swapHarness();
     h.flags.loseActivation = true;
@@ -77,6 +81,7 @@ describe('durable swap execution', () => {
     expect(h.calls.filter((c) => c === 'activate')).toHaveLength(1);
     expect(executes(h)).toHaveLength(1);
   });
+
   it('never expires a stale parent snapshot after a submission crash', async () => {
     const h = await swapHarness();
     await h.confirm();
@@ -94,6 +99,7 @@ describe('durable swap execution', () => {
     await h.tick();
     expect((await h.record()).fundingConfirmed).toBe(true);
   });
+
   it('retains an unknown debit through expiry, disable/re-enable, and restarts', async () => {
     const h = await swapHarness();
     await h.confirm();
@@ -104,21 +110,23 @@ describe('durable swap execution', () => {
     h.restart();
     await h.tick();
     expect((await h.record()).funding?.status).toBe('unknown');
-    await h.waas.client.setDisabled(true);
+    await h.wallet.disable();
     const auth = h.waas.remote.calls.length;
     await h.tick();
     expect(h.waas.remote.calls.length).toBe(auth);
-    await h.waas.client.setDisabled(false);
+    await h.wallet.enable();
     h.waas.remote.txnStatus = 'executed';
     await h.tick();
     expect((await h.record()).fundingConfirmed).toBe(true);
     expect(executes(h)).toHaveLength(1);
   });
-  it('blocks concurrent ordinary debits and imports legacy unresolved operation IDs', async () => {
+
+  it('blocks concurrent ordinary EVM debits automatically on the same wallet and rejects swp_ IDs', async () => {
     const h = await swapHarness();
     await h.confirm();
     await expect(
-      h.swaps.prepareTransfer('normal-transfer', {
+      h.wallet.evm.prepareTransfer({
+        idempotencyKey: 'normal-transfer',
         chainId: 137,
         to: owner,
         asset: 'native',
@@ -126,13 +134,18 @@ describe('durable swap execution', () => {
       })
     ).rejects.toMatchObject({ code: 'DEBIT_PENDING' });
     await h.tick(4);
-    await expect(h.swaps.executeTransfer('swp_fund_fake')).rejects.toThrow();
+    await expect(
+      h.wallet.evm.execute({ idempotencyKey: 'swp_fund_fake', reviewId: 'review-1234' })
+    ).rejects.toMatchObject({ code: 'INVALID_IDEMPOTENCY_KEY' });
   });
+
   it('checks fresh funds, sponsorship and approvals before any funding', async () => {
     const h = await swapHarness();
     const q = await h.quote();
     h.flags.balance = '0';
-    await expect(h.swaps.confirmSwap(q.id, q.quote.revision)).rejects.toMatchObject({
+    await expect(
+      h.swaps.confirm({ swapId: q.id, reviewId: q.quote.reviewId })
+    ).rejects.toMatchObject({
       code: 'INSUFFICIENT_BALANCE'
     });
     h.flags.balance = '10000000';
@@ -143,6 +156,7 @@ describe('durable swap execution', () => {
     expect(executes(h)).toHaveLength(0);
     expect(h.calls).not.toContain('activate');
   });
+
   it('does not fund an expired quote or a mismatched/not-yet-visible deposit leg', async () => {
     const h = await swapHarness();
     await h.confirm();
@@ -158,6 +172,7 @@ describe('durable swap execution', () => {
     await h.tick();
     expect((await h.record()).phase).toBe('expired');
   });
+
   it('requires a successful chain receipt and the managed destination/minimum output', async () => {
     const h = await swapHarness();
     await funded(h);
@@ -168,6 +183,7 @@ describe('durable swap execution', () => {
     await h.tick();
     expect((await h.record()).phase).toBe('attention');
   });
+
   it('repairs only a confirmed delayed deposit and does not send another transfer', async () => {
     const h = await swapHarness();
     await funded(h);
@@ -180,6 +196,7 @@ describe('durable swap execution', () => {
     await h.tick(8);
     expect(h.calls.filter((c) => c === 'repair')).toHaveLength(1);
   });
+
   it('keeps polling automatic refunds and binds work to the original environment', async () => {
     const h = await swapHarness();
     await funded(h);
@@ -198,6 +215,7 @@ describe('durable swap execution', () => {
     await h.tick();
     expect((await h.record()).phase).toBe('refunded');
   });
+
   it('pauses new funding but continues funded observation with the feature disabled', async () => {
     const h = await swapHarness();
     await funded(h);
@@ -211,10 +229,13 @@ describe('durable swap execution', () => {
     };
     await h.tick();
     expect((await h.record()).phase).toBe('refunded');
-    await expect(h.swaps.quoteSwap('new-swap-0002', h.fixture.input)).rejects.toMatchObject({
+    await expect(
+      h.swaps.quote({ idempotencyKey: 'new-swap-0002', ...h.fixture.input })
+    ).rejects.toMatchObject({
       code: 'SWAPS_DISABLED'
     });
   });
+
   it('backs off across provider outages without treating a hash as success', async () => {
     const h = await swapHarness();
     await h.confirm();
@@ -231,6 +252,7 @@ describe('durable swap execution', () => {
     expect((await h.record()).phase).toBe('settling');
   });
 });
+
 describe('reviewed recovery', () => {
   async function ready() {
     const h = await swapHarness();
@@ -240,14 +262,23 @@ describe('reviewed recovery', () => {
     h.flags.intentBalance = '1000';
     return h;
   }
+
   it('requires a separate review, signs only validated payloads and verifies returned balances', async () => {
     const h = await ready();
-    const view = await h.swaps.prepareRecovery('swap-test-0001', 'recovery-0001', 'origin');
+    const view = await h.swaps.prepareRecovery({
+      swapId: 'swap-test-0001',
+      idempotencyKey: 'recovery-0001',
+      source: 'origin'
+    });
     expect(view.recoveries[0].assets).toEqual([
       { asset: token, amount: '1000', symbol: token, decimals: 6 }
     ]);
     expect(h.calls).not.toContain('buildRecovery');
-    await h.swaps.confirmRecovery(view.id, 'recovery-0001', view.recoveries[0].revision);
+    await h.swaps.confirmRecovery({
+      swapId: view.id,
+      recoveryId: 'recovery-0001',
+      reviewId: view.recoveries[0].reviewId
+    });
     await h.tick(3);
     expect(executes(h)).toHaveLength(2);
     h.restart();
@@ -262,12 +293,21 @@ describe('reviewed recovery', () => {
     expect(publicView).not.toContain('typedData');
     expect(publicView).not.toContain('payloadHash');
   });
+
   it('discloses owner deployment, waits for code and prevents duplicate deployment after restart', async () => {
     const h = await ready();
     h.flags.deployed = false;
-    const v = await h.swaps.prepareRecovery('swap-test-0001', 'recovery-0001', 'origin');
+    const v = await h.swaps.prepareRecovery({
+      swapId: 'swap-test-0001',
+      idempotencyKey: 'recovery-0001',
+      source: 'origin'
+    });
     expect(v.recoveries[0].requiresOwnerDeployment).toBe(true);
-    await h.swaps.confirmRecovery(v.id, 'recovery-0001', v.recoveries[0].revision);
+    await h.swaps.confirmRecovery({
+      swapId: v.id,
+      recoveryId: 'recovery-0001',
+      reviewId: v.recoveries[0].reviewId
+    });
     await h.tick();
     expect(executes(h)).toHaveLength(2);
     h.restart();
@@ -279,20 +319,37 @@ describe('reviewed recovery', () => {
     await h.tick(2);
     expect(h.waas.remote.calls.filter((c) => c.method === 'SignTypedData')).toHaveLength(1);
   });
+
   it('rejects a changed recipient, side, balance, expiry or transaction target', async () => {
     const h = await ready();
     h.recovery = recoveryFixture([recoveryCall({ to: owner })]) as typeof h.recovery;
     await expect(
-      h.swaps.prepareRecovery('swap-test-0001', 'recovery-bad1', 'origin')
+      h.swaps.prepareRecovery({
+        swapId: 'swap-test-0001',
+        idempotencyKey: 'recovery-bad1',
+        source: 'origin'
+      })
     ).rejects.toMatchObject({ code: 'INVALID_RECOVERY' });
     h.recovery = recoveryFixture() as typeof h.recovery;
-    const v = await h.swaps.prepareRecovery('swap-test-0001', 'recovery-0001', 'origin');
+    const v = await h.swaps.prepareRecovery({
+      swapId: 'swap-test-0001',
+      idempotencyKey: 'recovery-0001',
+      source: 'origin'
+    });
     h.flags.intentBalance = '999';
     await expect(
-      h.swaps.confirmRecovery(v.id, 'recovery-0001', v.recoveries[0].revision)
+      h.swaps.confirmRecovery({
+        swapId: v.id,
+        recoveryId: 'recovery-0001',
+        reviewId: v.recoveries[0].reviewId
+      })
     ).rejects.toMatchObject({ code: 'RECOVERY_CHANGED' });
     h.flags.intentBalance = '1000';
-    await h.swaps.confirmRecovery(v.id, 'recovery-0001', v.recoveries[0].revision);
+    await h.swaps.confirmRecovery({
+      swapId: v.id,
+      recoveryId: 'recovery-0001',
+      reviewId: v.recoveries[0].reviewId
+    });
     h.flags.badBuild = true;
     await h.tick(2);
     expect((await h.record()).recoveries[0].status).toBe('failed');
@@ -304,8 +361,16 @@ describe('reviewed recovery', () => {
     async (deployment) => {
       const h = await ready();
       h.flags.deployed = !deployment;
-      const view = await h.swaps.prepareRecovery('swap-test-0001', 'recovery-revert', 'origin');
-      await h.swaps.confirmRecovery(view.id, 'recovery-revert', view.recoveries[0].revision);
+      const view = await h.swaps.prepareRecovery({
+        swapId: 'swap-test-0001',
+        idempotencyKey: 'recovery-revert',
+        source: 'origin'
+      });
+      await h.swaps.confirmRecovery({
+        swapId: view.id,
+        recoveryId: 'recovery-revert',
+        reviewId: view.recoveries[0].reviewId
+      });
       await h.tick(deployment ? 1 : 3);
       expect(executes(h)).toHaveLength(2);
       h.flags.chainReverted = true;
@@ -318,30 +383,64 @@ describe('reviewed recovery', () => {
       expect(record.phase).toBe('attention');
       expect(executes(h)).toHaveLength(2);
       expect(
-        (await h.swaps.prepareRecovery(view.id, 'recovery-fresh', 'origin')).recoveries
+        (
+          await h.swaps.prepareRecovery({
+            swapId: view.id,
+            idempotencyKey: 'recovery-fresh',
+            source: 'origin'
+          })
+        ).recoveries
       ).toHaveLength(2);
     }
   );
+
   it('blocks recovery during normal progress, uncertain funding or another active recovery', async () => {
     const h = await swapHarness();
     await funded(h);
     await expect(
-      h.swaps.prepareRecovery('swap-test-0001', 'recovery-0001', 'origin')
+      h.swaps.prepareRecovery({
+        swapId: 'swap-test-0001',
+        idempotencyKey: 'recovery-0001',
+        source: 'origin'
+      })
     ).rejects.toMatchObject({ code: 'RECOVERY_NOT_READY' });
     h.intent.status = 'FAILED';
     h.flags.intentBalance = '1000';
-    const v = await h.swaps.prepareRecovery('swap-test-0001', 'recovery-0001', 'origin');
-    await h.swaps.confirmRecovery(v.id, 'recovery-0001', v.recoveries[0].revision);
-    await expect(h.swaps.prepareRecovery(v.id, 'recovery-0002', 'origin')).rejects.toMatchObject({
+    const v = await h.swaps.prepareRecovery({
+      swapId: 'swap-test-0001',
+      idempotencyKey: 'recovery-0001',
+      source: 'origin'
+    });
+    await h.swaps.confirmRecovery({
+      swapId: v.id,
+      recoveryId: 'recovery-0001',
+      reviewId: v.recoveries[0].reviewId
+    });
+    await expect(
+      h.swaps.prepareRecovery({
+        swapId: v.id,
+        idempotencyKey: 'recovery-0002',
+        source: 'origin'
+      })
+    ).rejects.toMatchObject({
       code: 'RECOVERY_PENDING'
     });
   });
+
   it('allows recovery when new swaps are paused, but never signs for disabled wallets', async () => {
     const h = await ready();
     h.restart(false);
-    const v = await h.swaps.prepareRecovery('swap-test-0001', 'recovery-0001', 'origin');
-    await h.swaps.confirmRecovery(v.id, 'recovery-0001', v.recoveries[0].revision);
-    await h.waas.client.setDisabled(true);
+    const v = await h.swaps.prepareRecovery({
+      swapId: 'swap-test-0001',
+      idempotencyKey: 'recovery-0001',
+      source: 'origin'
+    });
+    await h.swaps.confirmRecovery({
+      swapId: v.id,
+      recoveryId: 'recovery-0001',
+      reviewId: v.recoveries[0].reviewId
+    });
+    await h.wallet.disable();
     await h.tick();
     expect(h.waas.remote.calls.filter((c) => c.method === 'SignTypedData')).toHaveLength(0);
   });
@@ -353,15 +452,23 @@ it('keeps actual partial recovery amounts and permits a fresh review for residua
   h.intent.status = 'FAILED';
   h.receipt.status = 'FAILED';
   h.flags.intentBalance = '1000';
-  const view = await h.swaps.prepareRecovery('swap-test-0001', 'recovery-partial', 'origin');
-  await h.swaps.confirmRecovery(view.id, 'recovery-partial', view.recoveries[0].revision);
+  const view = await h.swaps.prepareRecovery({
+    swapId: 'swap-test-0001',
+    idempotencyKey: 'recovery-partial',
+    source: 'origin'
+  });
+  await h.swaps.confirmRecovery({
+    swapId: view.id,
+    recoveryId: 'recovery-partial',
+    reviewId: view.recoveries[0].reviewId
+  });
   await h.tick(3);
   h.waas.remote.txnStatus = 'executed';
   h.flags.recovered = true;
   h.flags.recoveredAmount = '900';
   h.flags.intentBalance = '0';
   await h.tick();
-  const result = await h.swaps.getSwap(view.id);
+  const result = await h.swaps.get(view.id);
   expect(result.recoveries[0]).toMatchObject({
     status: 'partial',
     received: [{ asset: token, amount: '900' }]
@@ -388,12 +495,20 @@ it('recovers a destination-side intermediate token without assuming the quoted o
       }
     ]
   } as typeof h.recovery;
-  const view = await h.swaps.prepareRecovery('swap-test-0001', 'recovery-dest-1', 'destination');
+  const view = await h.swaps.prepareRecovery({
+    swapId: 'swap-test-0001',
+    idempotencyKey: 'recovery-dest-1',
+    source: 'destination'
+  });
   expect(view.recoveries[0]).toMatchObject({
     chainId: 8453,
     assets: [{ asset: token, symbol: 'INTERMEDIATE' }]
   });
-  await h.swaps.confirmRecovery(view.id, 'recovery-dest-1', view.recoveries[0].revision);
+  await h.swaps.confirmRecovery({
+    swapId: view.id,
+    recoveryId: 'recovery-dest-1',
+    reviewId: view.recoveries[0].reviewId
+  });
   await h.tick(3);
   h.waas.remote.txnStatus = 'executed';
   h.flags.recovered = true;
@@ -408,8 +523,16 @@ it('retains an uncertain recovery through expiry and a crash before the parent c
   h.intent.status = 'FAILED';
   h.receipt.status = 'FAILED';
   h.flags.intentBalance = '1000';
-  const view = await h.swaps.prepareRecovery('swap-test-0001', 'recovery-crash', 'origin');
-  await h.swaps.confirmRecovery(view.id, 'recovery-crash', view.recoveries[0].revision);
+  const view = await h.swaps.prepareRecovery({
+    swapId: 'swap-test-0001',
+    idempotencyKey: 'recovery-crash',
+    source: 'origin'
+  });
+  await h.swaps.confirmRecovery({
+    swapId: view.id,
+    recoveryId: 'recovery-crash',
+    reviewId: view.recoveries[0].reviewId
+  });
   await h.tick(2);
   h.store.fail = (r) => r.recoveries[0].transaction?.status === 'pending';
   await expect(h.tick()).rejects.toThrow();
@@ -417,10 +540,10 @@ it('retains an uncertain recovery through expiry and a crash before the parent c
   h.store.fail = undefined;
   h.advance(400_000);
   h.restart();
-  await h.waas.client.setDisabled(true);
+  await h.wallet.disable();
   await h.tick();
   expect((await h.record()).activeRecoveryId).toBe('recovery-crash');
-  await h.waas.client.setDisabled(false);
+  await h.wallet.enable();
   h.waas.remote.txnStatus = 'executed';
   h.flags.recovered = true;
   h.flags.intentBalance = '0';
@@ -432,44 +555,31 @@ it('retains an uncertain recovery through expiry and a crash before the parent c
 it('never funds the same upstream intent under a second local swap ID', async () => {
   const h = await swapHarness();
   await h.quote();
-  await expect(h.swaps.quoteSwap('second-local-id', h.fixture.input)).rejects.toMatchObject({
+  await expect(
+    h.swaps.quote({ idempotencyKey: 'second-local-id', ...h.fixture.input })
+  ).rejects.toMatchObject({
     code: 'INTENT_ALREADY_TRACKED'
   });
 });
 
-it('imports a legacy pending debit even when it is absent from the SDK operation index', async () => {
-  const h = await swapHarness();
-  await h.waas.client.prepareTransfer('legacy-debit-001', {
-    chainId: 137,
-    to: owner,
-    asset: 'native',
-    amount: '1'
-  });
-  await h.waas.client.executeTransfer('legacy-debit-001');
-  h.waas.store.values.delete('operationIndex');
-  h.legacyIds.push('legacy-debit-001');
-  const quote = await h.quote();
-  await expect(h.swaps.confirmSwap(quote.id, quote.quote.revision)).rejects.toMatchObject({
-    code: 'DEBIT_PENDING'
-  });
-  h.waas.remote.txnStatus = 'executed';
-  await h.swaps.confirmSwap(quote.id, quote.quote.revision);
-  expect((await h.record()).phase).toBe('preparing');
-});
 it('blocks an already prepared ordinary transfer when a swap subsequently reserves its chain', async () => {
   const h = await swapHarness();
-  await h.swaps.prepareTransfer('prepared-normal-1', {
+  const prepared = await h.wallet.evm.prepareTransfer({
+    idempotencyKey: 'prepared-normal-1',
     chainId: 137,
     to: owner,
     asset: 'native',
     amount: '1'
   });
   await h.confirm();
-  await expect(h.swaps.executeTransfer('prepared-normal-1')).rejects.toMatchObject({
+  await expect(
+    h.wallet.evm.execute({ idempotencyKey: 'prepared-normal-1', reviewId: prepared.reviewId! })
+  ).rejects.toMatchObject({
     code: 'DEBIT_PENDING'
   });
   expect(executes(h)).toHaveLength(0);
 });
+
 it('uses fresh recovery state and expires reviews before deploying or signing', async () => {
   const h = await swapHarness();
   await funded(h);
@@ -477,56 +587,86 @@ it('uses fresh recovery state and expires reviews before deploying or signing', 
   h.receipt.status = 'FAILED';
   h.flags.intentBalance = '1000';
   h.flags.deployed = false;
-  const view = await h.swaps.prepareRecovery('swap-test-0001', 'recovery-expiry', 'origin');
-  await h.swaps.confirmRecovery(view.id, 'recovery-expiry', view.recoveries[0].revision);
+  const view = await h.swaps.prepareRecovery({
+    swapId: 'swap-test-0001',
+    idempotencyKey: 'recovery-expiry',
+    source: 'origin'
+  });
+  await h.swaps.confirmRecovery({
+    swapId: view.id,
+    recoveryId: 'recovery-expiry',
+    reviewId: view.recoveries[0].reviewId
+  });
   h.advance(310_000);
   await h.tick();
   expect((await h.record()).recoveries[0].status).toBe('failed');
   expect(executes(h)).toHaveLength(1);
   expect(h.waas.remote.calls.filter((c) => c.method === 'SignTypedData')).toHaveLength(0);
 });
-it('coordinates user operations with swap debits in both directions', async () => {
+
+it('coordinates EVM calls with swap debits in both directions on the same wallet', async () => {
   const h = await swapHarness();
-  const call = { chainId: 137, calls: [{ to: token, data: '0xd0e30db0' as const }] };
-  await h.swaps.prepareUserOperation('prepared-call-1', call);
+  const call = { chainId: 137, to: token, data: '0xd0e30db0' as const };
+  const prepared = await h.wallet.evm.prepareCall({ idempotencyKey: 'prepared-call-1', ...call });
   await h.confirm();
-  await expect(h.swaps.executeUserOperation('prepared-call-1')).rejects.toMatchObject({
+  await expect(
+    h.wallet.evm.execute({ idempotencyKey: 'prepared-call-1', reviewId: prepared.reviewId! })
+  ).rejects.toMatchObject({
     code: 'DEBIT_PENDING'
   });
-  await expect(h.swaps.sendUserOperation('prepared-call-2', call)).rejects.toMatchObject({
+  await expect(
+    h.wallet.evm.sendCall({ idempotencyKey: 'prepared-call-2', ...call })
+  ).rejects.toMatchObject({
     code: 'DEBIT_PENDING'
   });
   expect(executes(h)).toHaveLength(0);
 
-  // Retrying an existing operation returns it instead of DEBIT_PENDING; it still cannot submit.
-  expect((await h.swaps.prepareUserOperation('prepared-call-1', call)).status).toBe('quoted');
-  await expect(h.swaps.sendUserOperation('prepared-call-1', call)).rejects.toMatchObject({
-    code: 'DEBIT_PENDING'
+  // Retrying an existing review prepare returns it without submitting; immediate send refuses review mode.
+  expect(
+    (await h.wallet.evm.prepareCall({ idempotencyKey: 'prepared-call-1', ...call })).status
+  ).toBe('quoted');
+  await expect(
+    h.wallet.evm.sendCall({ idempotencyKey: 'prepared-call-1', ...call })
+  ).rejects.toMatchObject({
+    code: 'APPROVAL_REQUIRED'
   });
   expect(executes(h)).toHaveLength(0);
 
   const other = await swapHarness();
-  await other.waas.client.sendUserOperation('pending-call-1', call);
+  await other.wallet.evm.sendCall({ idempotencyKey: 'pending-call-1', ...call });
   const quote = await other.quote();
-  await expect(other.swaps.confirmSwap(quote.id, quote.quote.revision)).rejects.toMatchObject({
+  await expect(
+    other.swaps.confirm({ swapId: quote.id, reviewId: quote.quote.reviewId })
+  ).rejects.toMatchObject({
     code: 'DEBIT_PENDING'
   });
 });
-it('returns a finished user operation while a swap holds its chain', async () => {
+
+it('returns a finished EVM call while a swap holds its chain', async () => {
   const h = await swapHarness();
-  const call = { chainId: 137, calls: [{ to: token, data: '0xd0e30db0' as const }] };
-  await h.swaps.sendUserOperation('finished-call-1', call);
+  const call = { chainId: 137, to: token, data: '0xd0e30db0' as const };
+  await h.wallet.evm.sendCall({ idempotencyKey: 'finished-call-1', ...call });
   h.waas.remote.txnStatus = 'executed';
-  expect((await h.swaps.sendUserOperation('finished-call-1', call)).status).toBe('executed');
+  expect((await h.wallet.evm.sendCall({ idempotencyKey: 'finished-call-1', ...call })).status).toBe(
+    'executed'
+  );
   await h.confirm();
-  expect((await h.swaps.sendUserOperation('finished-call-1', call)).status).toBe('executed');
+  expect((await h.wallet.evm.sendCall({ idempotencyKey: 'finished-call-1', ...call })).status).toBe(
+    'executed'
+  );
   expect(executes(h)).toHaveLength(1);
 });
-it('coordinates on the chain fixed when the user operation is requested', async () => {
+
+it('coordinates on the chain fixed when the EVM call is requested', async () => {
   const h = await swapHarness();
   await h.confirm();
-  const input = { chainId: 8453, calls: [{ to: token, data: '0xd0e30db0' as const }] };
-  const pending = h.swaps.prepareUserOperation('moved-call-1', input);
+  const input = {
+    idempotencyKey: 'moved-call-1',
+    chainId: 8453,
+    to: token,
+    data: '0xd0e30db0' as const
+  };
+  const pending = h.wallet.evm.prepareCall(input);
   input.chainId = 137;
   const op = await pending;
   expect(op.chainId).toBe(8453);
@@ -556,7 +696,8 @@ describe('settled funding and recovery operations', () => {
     expect(record.funding).toMatchObject({ status: 'failed', error: 'EXECUTE_REFUSED' });
     expect(record).toMatchObject({ phase: 'attention', error: 'FUNDING_FAILED' });
     await expect(
-      h.swaps.prepareTransfer('after-refused-funding', {
+      h.wallet.evm.prepareTransfer({
+        idempotencyKey: 'after-refused-funding',
         chainId: 137,
         to: owner,
         asset: 'native',
@@ -565,24 +706,24 @@ describe('settled funding and recovery operations', () => {
     ).resolves.toMatchObject({ status: 'quoted' });
   });
 
-  it('expires the swap when the wallet funding quote ran out before it was sent', async () => {
+  it('expires the swap and releases reservation when the wallet funding quote expired locally before sending', async () => {
     const h = await swapHarness();
     await h.confirm();
     await h.tick(3);
     const { fundingId } = await h.record();
-    // The quote passes the swap's own margin check, then runs out before the wallet sends it: the
-    // wallet records the funding as expired and raises QUOTE_EXPIRED.
-    const execute = vi
-      .spyOn(ServerWallet.prototype, 'executeTransfer')
-      .mockImplementation(async (id: string) => {
-        await editOperation(h, id, (op) => {
-          op.status = 'expired';
-          op.error = 'TRANSACTION_EXPIRED';
-        });
-        throw new WalletError('QUOTE_EXPIRED', 'The quote expired. Prepare a new transfer.', 409);
-      });
+    // Quote expires locally before Execute is called.
+    await editOperation(h, fundingId, (op) => {
+      op.quote.expiresAt = new Date(Date.now() - 1_000).toISOString();
+    });
+    // Also advance swap quote slightly below the 30s check? No, leave swap quote valid so we hit fund().
+    // Move clock back enough to pass sponsored() (which checks > now + 30_000) — simulate clock tick between check and execute:
+    // Actually directly mark preSubmitExpired = true via wallet quote expiry path:
+    await editOperation(h, fundingId, (op) => {
+      op.status = 'expired';
+      op.error = 'QUOTE_EXPIRED';
+      op.preSubmitExpired = true;
+    });
     await h.tick();
-    execute.mockRestore();
     expect(await h.record()).toMatchObject({
       phase: 'expired',
       action: null,
@@ -590,38 +731,72 @@ describe('settled funding and recovery operations', () => {
       funding: { id: fundingId, status: 'expired' }
     });
     expect(executes(h)).toHaveLength(0);
+    // Reservation is released so a new ordinary transfer on chain 137 is allowed!
+    await expect(
+      h.wallet.evm.prepareTransfer({
+        idempotencyKey: 'after-presubmit-expiry',
+        chainId: 137,
+        to: owner,
+        asset: 'native',
+        amount: '1'
+      })
+    ).resolves.toMatchObject({ status: 'quoted' });
   });
 
-  it('expires the swap once its uncertain funding is known to have expired unsent', async () => {
+  it('keeps an ambiguous funding submission open (RECONCILIATION_REQUIRED) and retains origin debit reservation past grace', async () => {
     const h = await swapHarness();
     await h.confirm();
     h.waas.remote.failExecute = true;
     await h.tick(4);
     const { fundingId, funding } = await h.record();
     expect(funding?.status).toBe('unknown');
-    // WaaS reports the transaction expired and unclaimed, two minutes past its quote's expiry.
     h.waas.remote.evmStatusError = 7309;
     await editOperation(h, fundingId, (op) => {
       op.quote.expiresAt = new Date(Date.now() - 121_000).toISOString();
     });
     await h.tick();
+    // Must stay open in attention/fund with RECONCILIATION_REQUIRED — NEVER silently terminal expired!
     expect(await h.record()).toMatchObject({
-      phase: 'expired',
-      action: null,
-      error: 'QUOTE_EXPIRED',
-      funding: { status: 'expired' }
+      phase: 'attention',
+      action: 'fund',
+      error: 'RECONCILIATION_REQUIRED',
+      funding: { status: 'unknown', error: 'RECONCILIATION_REQUIRED' }
     });
+    // Competing debit on chain 137 MUST stay blocked!
+    await expect(
+      h.wallet.evm.prepareTransfer({
+        idempotencyKey: 'blocked-during-reconcile',
+        chainId: 137,
+        to: owner,
+        asset: 'native',
+        amount: '1'
+      })
+    ).rejects.toMatchObject({ code: 'DEBIT_PENDING' });
+    // Later positive WaaS read still settles the swap cleanly!
+    h.waas.remote.evmStatusError = undefined;
+    h.waas.remote.txnStatus = 'executed';
+    h.advance(35_000);
+    await h.tick();
+    expect((await h.record()).fundingConfirmed).toBe(true);
     expect(executes(h)).toHaveLength(1);
   });
 
-  it('ends a recovery whose transaction expired unsent, so a new review can start', async () => {
+  it('keeps an ambiguous recovery transaction open past grace instead of silently starting a second recovery', async () => {
     const h = await swapHarness();
     await funded(h);
     h.intent.status = 'FAILED';
     h.receipt.status = 'FAILED';
     h.flags.intentBalance = '1000';
-    const view = await h.swaps.prepareRecovery('swap-test-0001', 'recovery-expired', 'origin');
-    await h.swaps.confirmRecovery(view.id, 'recovery-expired', view.recoveries[0].revision);
+    const view = await h.swaps.prepareRecovery({
+      swapId: 'swap-test-0001',
+      idempotencyKey: 'recovery-ambig',
+      source: 'origin'
+    });
+    await h.swaps.confirmRecovery({
+      swapId: view.id,
+      recoveryId: 'recovery-ambig',
+      reviewId: view.recoveries[0].reviewId
+    });
     h.waas.remote.failExecute = true;
     await h.tick(3);
     const recovery = (await h.record()).recoveries[0];
@@ -632,8 +807,10 @@ describe('settled funding and recovery operations', () => {
     });
     await h.tick();
     const record = await h.record();
-    expect(record.activeRecoveryId).toBeUndefined();
-    expect(record.recoveries[0]).toMatchObject({ status: 'expired', error: 'RECOVERY_EXPIRED' });
-    expect(record).toMatchObject({ phase: 'attention', action: 'observe' });
+    expect(record.activeRecoveryId).toBe('recovery-ambig');
+    expect(record.recoveries[0].transaction).toMatchObject({
+      status: 'unknown',
+      error: 'RECONCILIATION_REQUIRED'
+    });
   });
 });

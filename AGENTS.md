@@ -118,6 +118,7 @@ Repo-local agent skills live under `.agents/skills/` (agent-neutral); `.claude/s
 - `pnpm --filter @polygonlabs/oms-wallet-privacy test`: Run the privacy package tests (fake backend; no network).
 - `pnpm --filter @polygonlabs/oms-server-wallet-sdk test`: Run the server SDK tests (`test:coverage` enforces its
   thresholds; `test:package` packs it and installs it into a clean consumer; CI runs both).
+- `pnpm --filter @polygonlabs/oms-server-wallet-sdk generate:api`: Rebuild the server SDK and regenerate its `API.md` and `TRAILS-API.md` (`check:api` / `codegen-drift-check` verify both are current).
 - `pnpm --filter oms-wallet-protocol test`: Run the shared protocol tests.
 - `pnpm --filter oms-wallet-protocol sync`: Copy the protocol source into both SDKs after changing it
   (`codegen-drift-check` runs it in check mode and fails on any difference).
@@ -257,7 +258,7 @@ execution commands.
 | When this changes… | Also update… |
 |---|---|
 | `packages/oms-wallet-protocol/src/` | Run `pnpm --filter oms-wallet-protocol sync` and commit both SDK copies; a changeset naming each SDK whose behaviour changes |
-| Public API exported through `packages/oms-server-wallet/src/index.ts` or `./trails` | `packages/oms-server-wallet/README.md`, `packages/oms-server-wallet/docs/` |
+| Public API exported through `packages/oms-server-wallet/src/index.ts` or `./trails` | `packages/oms-server-wallet/API.md` and `TRAILS-API.md` (generated: `pnpm --filter @polygonlabs/oms-server-wallet-sdk generate:api`), `scripts/api-docs.config.json` / `scripts/trails-api-docs.config.json`, `packages/oms-server-wallet/README.md`, `packages/oms-server-wallet/docs/` |
 | Public API exported through `packages/oms-wallet-privacy/src/index.ts` | `packages/oms-wallet-privacy/API.md` (generated: `pnpm --filter @polygonlabs/oms-wallet-privacy generate:api`), its `scripts/api-docs.config.json` when the surface changes, `packages/oms-wallet-privacy/README.md` |
 | Public API exported through `packages/oms-wallet/src/index.ts` or exported public types | `packages/oms-wallet/API.md` (generated: run `pnpm --filter @polygonlabs/oms-wallet generate:api`, do not hand-edit), `packages/oms-wallet/scripts/public-api-baseline.txt` and `api-docs.config.json` when the surface or grouping changes, `packages/oms-wallet/README.md`, `packages/oms-wallet/type-tests/oidcProviderTypes.ts` |
 | Test commands (`package.json` scripts) | `TESTING.md`, `.github/workflows/ci-trigger.yml`, `AGENTS.md` Commands section |

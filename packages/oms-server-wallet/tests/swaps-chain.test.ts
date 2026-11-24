@@ -1,6 +1,7 @@
 import { expect, it, vi } from 'vitest';
 import { toEventSelector, encodeFunctionData, erc20Abi } from 'viem';
-import { EvmChainReader, TrailsClient } from '@polygonlabs/oms-server-wallet-sdk/trails';
+import { EvmChainReader } from '../src/trails/chain.js';
+import { TrailsClient } from '../src/trails/client.js';
 import { owner, token, intentId, recoveryFixture, word } from './fixtures/trails.js';
 import { swapHarness, executeData } from './swap-harness.js';
 

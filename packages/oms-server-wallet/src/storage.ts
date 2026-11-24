@@ -1,17 +1,36 @@
 import { base64DecodeBytes, base64EncodeBytes, utf8 } from './encoding.js';
 import { WalletError } from './errors.js';
 
-/** Each wallet gets its own namespace. Implementations must make writes durable before returning. */
+/**
+ * Durable key-value storage scoped to a single wallet identity.
+ * Implementations must complete durable persistence before `write` resolves.
+ */
 export interface StateStore {
   read(key: string): Promise<string | null>;
   write(key: string, value: string): Promise<void>;
 }
-/** The SDK invokes all stateful operations inside this cross-instance exclusive executor. */
+
+/**
+ * Durable key-value storage partitioned by an SDK-computed identity namespace.
+ * Implementations must isolate records by `namespace` and finish persistence before `write` resolves.
+ */
+export interface NamespacedStateStore {
+  read(namespace: string, key: string): Promise<string | null>;
+  write(namespace: string, key: string, value: string): Promise<void>;
+}
+
+/**
+ * Cross-instance exclusive ownership boundary for one wallet identity.
+ * `run` must hold exclusive ownership for the entire async task, including remote I/O.
+ */
 export interface ExclusiveExecutor {
   run<T>(task: () => Promise<T>): Promise<T>;
 }
 
-/** Suitable for a single Node process or one Durable Object instance, not a Worker global. */
+/** Provider that returns the `ExclusiveExecutor` for an SDK-computed identity namespace. */
+export type ExecutorProvider = (namespace: string) => ExclusiveExecutor;
+
+/** Suitable for a single Node process or one Durable Object instance, not a clustered deployment. */
 export class SerialExecutor implements ExclusiveExecutor {
   private tail: Promise<unknown> = Promise.resolve();
   run<T>(task: () => Promise<T>): Promise<T> {
@@ -21,6 +40,68 @@ export class SerialExecutor implements ExclusiveExecutor {
   }
 }
 
+/**
+ * Create an in-process `ExclusiveExecutor` for a single Node process or one per-wallet Durable
+ * Object instance. Clustered multi-process deployments must supply a distributed coordinator.
+ */
+export function createSingleProcessExecutor(): ExclusiveExecutor {
+  return new SerialExecutor();
+}
+
+/**
+ * Create an in-process per-namespace `ExecutorProvider` for a single Node process.
+ * Reuses one queue per active namespace and reclaims an entry only once no owner or queued work
+ * remains for that namespace. Clustered deployments must supply a distributed coordinator.
+ */
+export function createSingleProcessExecutorPool(): ExecutorProvider {
+  const active = new Map<string, { executor: SerialExecutor; pending: number }>();
+  return (namespace: string): ExclusiveExecutor => ({
+    async run<T>(task: () => Promise<T>): Promise<T> {
+      let entry = active.get(namespace);
+      if (!entry) {
+        entry = { executor: new SerialExecutor(), pending: 0 };
+        active.set(namespace, entry);
+      }
+      entry.pending++;
+      try {
+        return await entry.executor.run(task);
+      } finally {
+        entry.pending--;
+        if (entry.pending === 0 && active.get(namespace) === entry) active.delete(namespace);
+      }
+    }
+  });
+}
+
+/**
+ * Compute the canonical, 0.2.x-compatible storage namespace and AES-GCM encryption context.
+ * Uses the routed WaaS API origin (never the application's HTTP Origin header).
+ */
+export function computeIdentityNamespace(params: {
+  waasOrigin: string;
+  projectId: string;
+  issuer: string;
+  audience: string;
+  subject: string;
+}): string {
+  return JSON.stringify([
+    params.waasOrigin,
+    params.projectId,
+    params.issuer,
+    params.audience,
+    params.subject
+  ]);
+}
+
+/** Bind a `NamespacedStateStore` to one SDK-computed namespace. */
+export function scopeNamespacedStore(store: NamespacedStateStore, namespace: string): StateStore {
+  return {
+    read: (key) => store.read(namespace, key),
+    write: (key, value) => store.write(namespace, key, value)
+  };
+}
+
+/** Authenticated AES-256-GCM encryption bound to the identity namespace and record key. */
 export class EncryptedStore implements StateStore {
   private readonly key: Promise<CryptoKey>;
   constructor(

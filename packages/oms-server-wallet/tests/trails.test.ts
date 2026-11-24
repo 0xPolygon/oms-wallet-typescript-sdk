@@ -1,5 +1,6 @@
 import { describe, expect, it, vi } from 'vitest';
-import { TrailsClient, TrailsError } from '@polygonlabs/oms-server-wallet-sdk/trails';
+import { TrailsError } from '@polygonlabs/oms-server-wallet-sdk/trails';
+import { TrailsClient } from '../src/trails/client.js';
 import { buildSwapRequest, tokenAddress, validateSwapQuote } from '../src/trails/quote.js';
 import { contractsSchema } from '../src/trails/protocol.js';
 import {

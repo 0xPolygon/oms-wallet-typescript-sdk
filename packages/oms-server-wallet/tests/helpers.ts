@@ -1,13 +1,14 @@
 import {
-  ServerWallet,
-  SerialExecutor,
+  createSingleProcessExecutor,
   UpstreamError,
-  type StateStore,
-  type RpcTransport
+  type ApprovalMode,
+  type StateStore
 } from '@polygonlabs/oms-server-wallet-sdk';
 import type { Credential } from '../src/protocol.js';
+import type { RpcTransport } from '../src/transport.js';
 
 import { base58Encode, hexToTron } from '../src/internal/protocol/addresses.js';
+import { createServerWalletInternal } from '../src/wallet.js';
 
 /** A Solana or Tron transaction as WaaS v1.2.0 keeps it: claimed as pending before broadcast. */
 export interface FakeChainTxn {
@@ -26,6 +27,8 @@ export const SOLANA_ADDRESS = base58Encode(new Uint8Array(32).fill(1));
 export const SOLANA_RECIPIENT = base58Encode(new Uint8Array(32).fill(2));
 export const TRON_ADDRESS = hexToTron('0x3333333333333333333333333333333333333333');
 export const TRON_RECIPIENT = hexToTron('0x4444444444444444444444444444444444444444');
+export const TEST_PUBLISHABLE_KEY = 'pk_dev_live_test_key';
+
 const created: Record<string, FakeWallet> = {
   solana: { id: 'wallet-sol', address: SOLANA_ADDRESS, networkFamily: 'solana', type: 'solana' },
   tron: { id: 'wallet-trx', address: TRON_ADDRESS, networkFamily: 'tron', type: 'tron' }
@@ -40,6 +43,7 @@ export class MemoryStore implements StateStore {
     this.values.set(key, value);
   }
 }
+
 export class FakeWaas implements RpcTransport {
   wallet: FakeWallet | undefined;
   /** Solana, Tron and any extra wallets the identity holds besides the EVM one. */
@@ -198,7 +202,6 @@ export class FakeWaas implements RpcTransport {
   }
   private prepareChain(family: 'solana' | 'tron') {
     const txnId = `${family === 'solana' ? 'sol' : 'trx'}-txn-${this.chainTxns.size + 1}`;
-    // Tron is sponsored when delegated resources cover it; otherwise it costs TRX.
     const feeOptions =
       this.chainSponsored || family === 'solana'
         ? []
@@ -252,22 +255,32 @@ export class FakeWaas implements RpcTransport {
     };
   }
 }
-export function sdkHarness() {
+
+export function sdkHarness<TApproval extends ApprovalMode = 'allow-immediate'>(
+  options: { approval?: TApproval; clock?: () => number } = {}
+) {
   const store = new MemoryStore();
   const remote = new FakeWaas();
-  const executor = new SerialExecutor();
-  const create = () =>
-    new ServerWallet({
-      subject: 'customer-1',
-      issuer: 'https://issuer.example',
-      audience: 'oms-server-wallet',
-      store,
-      executor,
-      transport: remote,
-      tokenProvider: async () => ({
-        token: `fixture-${crypto.randomUUID()}`,
-        expiresAt: Math.floor(Date.now() / 1000) + 300
-      })
-    });
-  return { store, remote, create, client: create() };
+  const executor = createSingleProcessExecutor();
+  const approval = (options.approval ?? 'allow-immediate') as TApproval;
+  const create = <M extends ApprovalMode = TApproval>(overrideApproval?: M) =>
+    createServerWalletInternal(
+      {
+        publishableKey: TEST_PUBLISHABLE_KEY,
+        oidc: {
+          subject: 'customer-1',
+          issuer: 'https://issuer.example',
+          audience: 'oms-server-wallet',
+          getIdToken: async () => ({
+            token: `fixture-${crypto.randomUUID()}`,
+            expiresAt: Math.floor(Date.now() / 1000) + 300
+          })
+        },
+        store: { encryptedStore: store },
+        executor,
+        approval: (overrideApproval ?? approval) as M
+      },
+      { transport: remote, clock: options.clock }
+    );
+  return { store, remote, executor, create, client: create() };
 }

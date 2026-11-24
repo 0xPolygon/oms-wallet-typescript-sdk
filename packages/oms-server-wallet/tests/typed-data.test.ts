@@ -57,16 +57,24 @@ describe('WaaS typed-data signing', () => {
   it('signs via the credential executor, verifies wallet-aware signatures and persists idempotent results', async () => {
     const h = sdkHarness();
     const { typedData } = recoveryFixture();
-    const operation = await h.client.signTypedData('typed-sign-1', 137, typedData);
+    const operation = await h.client.evm.signTypedData({
+      idempotencyKey: 'typed-sign-1',
+      chainId: 137,
+      typedData
+    });
     expect(operation).toMatchObject({
       kind: 'signTypedData',
       status: 'signed',
       verified: true,
       signature: '0x1234'
     });
-    expect(await h.create().signTypedData('typed-sign-1', 137, { ...typedData })).toEqual(
-      operation
-    );
+    expect(
+      await h.create().evm.signTypedData({
+        idempotencyKey: 'typed-sign-1',
+        chainId: 137,
+        typedData: { ...typedData }
+      })
+    ).toEqual(operation);
     const calls = h.remote.calls.filter((c) => c.method.includes('TypedData'));
     expect(calls.map((c) => c.method)).toEqual(['SignTypedData', 'IsValidTypedDataSignature']);
     expect(calls[0].body).toMatchObject({ network: '137', walletId: 'wallet-1' });
@@ -74,10 +82,18 @@ describe('WaaS typed-data signing', () => {
     expect(calls[1].credential).toBeUndefined();
     const changed = structuredClone(typedData);
     changed.message.space = '123456790';
-    await expect(h.client.signTypedData('typed-sign-1', 137, changed)).rejects.toMatchObject({
+    await expect(
+      h.client.evm.signTypedData({
+        idempotencyKey: 'typed-sign-1',
+        chainId: 137,
+        typedData: changed
+      })
+    ).rejects.toMatchObject({
       code: 'IDEMPOTENCY_CONFLICT'
     });
-    await expect(h.client.signMessage('typed-sign-1', 137, 'message')).rejects.toMatchObject({
+    await expect(
+      h.client.evm.signMessage({ idempotencyKey: 'typed-sign-1', chainId: 137, message: 'message' })
+    ).rejects.toMatchObject({
       code: 'IDEMPOTENCY_CONFLICT'
     });
   });
@@ -87,9 +103,16 @@ describe('WaaS typed-data signing', () => {
     await h.client.createOrRestore();
     h.remote.expiredOnce = true;
     const expectedSpace = typedData.message.space;
-    const pending = h.client.signTypedData('typed-queued', 137, typedData);
+    const pending = h.client.evm.signTypedData({
+      idempotencyKey: 'typed-queued',
+      chainId: 137,
+      typedData
+    });
     typedData.message.space = '987654321';
-    await Promise.all([pending, h.create().signTypedData('typed-concurrent', 137, typedData)]);
+    await Promise.all([
+      pending,
+      h.create().evm.signTypedData({ idempotencyKey: 'typed-concurrent', chainId: 137, typedData })
+    ]);
     expect(h.remote.maxInFlight).toBe(1);
     expect(h.remote.calls.filter((c) => c.method === 'CompleteAuth')).toHaveLength(2);
     expect(h.remote.calls.find((c) => c.method === 'SignTypedData')!.body.typedData).toMatchObject({
@@ -99,12 +122,16 @@ describe('WaaS typed-data signing', () => {
   it('rejects invalid data before authentication and blocks disabled wallets', async () => {
     const h = sdkHarness();
     const { typedData } = recoveryFixture();
-    await expect(h.client.signTypedData('typed-bad-chain', 1, typedData)).rejects.toMatchObject({
+    await expect(
+      h.client.evm.signTypedData({ idempotencyKey: 'typed-bad-chain', chainId: 1, typedData })
+    ).rejects.toMatchObject({
       code: 'INVALID_TYPED_DATA'
     });
     expect(h.remote.calls).toHaveLength(0);
-    await h.client.setDisabled(true);
-    await expect(h.client.signTypedData('typed-disabled', 137, typedData)).rejects.toMatchObject({
+    await h.client.disable();
+    await expect(
+      h.client.evm.signTypedData({ idempotencyKey: 'typed-disabled', chainId: 137, typedData })
+    ).rejects.toMatchObject({
       code: 'WALLET_DISABLED'
     });
     expect(h.remote.calls).toHaveLength(0);
@@ -117,14 +144,20 @@ describe('WaaS typed-data signing', () => {
       method === 'IsValidTypedDataSignature'
         ? { isValid: false }
         : request(method, body, credential);
-    await expect(h.client.signTypedData('typed-invalid', 137, typedData)).rejects.toMatchObject({
+    await expect(
+      h.client.evm.signTypedData({ idempotencyKey: 'typed-invalid', chainId: 137, typedData })
+    ).rejects.toMatchObject({
       code: 'SIGNATURE_INVALID'
     });
-    expect(await h.create().signTypedData('typed-invalid', 137, typedData)).toMatchObject({
+    expect(
+      await h
+        .create()
+        .evm.signTypedData({ idempotencyKey: 'typed-invalid', chainId: 137, typedData })
+    ).toMatchObject({
       status: 'failed',
       error: 'SIGNATURE_INVALID'
     });
-    expect(await h.client.getOperation('typed-invalid')).not.toHaveProperty('signature');
+    expect(await h.client.evm.getOperation('typed-invalid')).not.toHaveProperty('signature');
     expect(h.remote.calls.filter((c) => c.method === 'SignTypedData')).toHaveLength(1);
   });
 });

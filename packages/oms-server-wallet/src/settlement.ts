@@ -1,3 +1,5 @@
+import type { WalletErrorCode } from './errors.js';
+
 import { UpstreamError } from './errors.js';
 import { WaasErrorCode } from './internal/protocol/waasErrors.js';
 
@@ -12,15 +14,11 @@ import { WaasErrorCode } from './internal/protocol/waasErrors.js';
  * claimed, so it never proves on its own that nothing was sent.
  */
 export const TRANSACTION_EXPIRED = WaasErrorCode.TransactionExpired;
+
 /**
  * Execute refusals WaaS v1.2.0 returns only before it claims the transaction, for EVM (relayer
  * mode), Solana and Tron alike, so the request sent nothing. Any other error, such as a failed
  * broadcast, can follow the claim.
- *
- * The credential middleware rejects a request before Execute runs (invalid signature, missing or
- * expired key, usage limit, nonce replay). TransactionFailed and WalletProviderError are raised
- * only while building, pricing or signing, before the claim; after it, WaaS answers only
- * TransactionBroadcastFailed or TransactionSimulationFailed, which polling settles.
  */
 export const PRE_CLAIM_REFUSALS: ReadonlySet<number> = new Set([
   WaasErrorCode.InvalidSignature,
@@ -38,10 +36,13 @@ export const PRE_CLAIM_REFUSALS: ReadonlySet<number> = new Set([
   WaasErrorCode.TransactionNotFound,
   WaasErrorCode.InvalidFeeOption
 ]);
+
 const FEE_REFUSED = WaasErrorCode.InvalidFeeOption;
+
 /**
- * How long after a quote's expiry an unconfirmed submission can still be claimed by an Execute
- * that started in time; until then an expired quote does not prove nothing was sent.
+ * Grace window after quote expiry before an unconfirmed submission still returning
+ * `TransactionExpired` escalates to `RECONCILIATION_REQUIRED` (remaining open, never silently
+ * releasing debit reservations or claiming proof that nothing was broadcast).
  */
 export const CLAIM_GRACE_MS = 120_000;
 
@@ -53,16 +54,17 @@ export interface TransactionStatus {
 /** The fields settlement reads and writes on an EVM, Solana or Tron operation. */
 export interface Settleable {
   status: string;
-  error?: string;
+  error?: WalletErrorCode | string;
   txnHash?: string;
   quote?: { expiresAt: string };
+  preClaimRefused?: boolean;
 }
 
 /**
  * Settle a failed Execute. A refusal WaaS returns only before claiming means this request sent
- * nothing, and it is the only Execute for the operation. Anything else stays unknown unless the
- * status shows the claim: WaaS reads transaction status without strong consistency, so a
- * `quoted` or expired answer just after the request may predate the claim.
+ * nothing, and it is the only Execute for the operation. Anything else stays `unknown` unless the
+ * status shows the claim: WaaS reads transaction status without strong consistency, so a `quoted`
+ * or expired answer just after the request may predate the claim.
  */
 export async function settleExecuteError(
   op: Settleable,
@@ -72,6 +74,7 @@ export async function settleExecuteError(
   if (error instanceof UpstreamError && PRE_CLAIM_REFUSALS.has(error.upstreamCode)) {
     op.status = 'failed';
     op.error = error.upstreamCode === FEE_REFUSED ? 'FEE_ABOVE_QUOTE' : 'EXECUTE_REFUSED';
+    op.preClaimRefused = true;
     return;
   }
   op.status = 'unknown';
@@ -96,9 +99,10 @@ function claimed(op: Settleable): boolean {
 /**
  * Poll an operation in flight. Evidence of a claim is kept: WaaS reads transaction status without
  * strong consistency, so a later read can still show the row from before the claim (`quoted`, or
- * TransactionExpired). An ambiguous Execute is never retried, even when status still says quoted.
- * TransactionStatus answers TransactionExpired only while the row still reads as quoted; past the
- * grace period an operation with no evidence of a claim is treated as expired.
+ * `TransactionExpired`). An ambiguous Execute is never retried, even when status still says
+ * `quoted`. Past the grace window, a stale `TransactionExpired` escalates the still-open
+ * operation to `RECONCILIATION_REQUIRED` rather than marking it terminally `expired` or releasing
+ * debit reservations.
  */
 export async function refreshStatus(
   op: Settleable,
@@ -114,8 +118,9 @@ export async function refreshStatus(
     // A stale read of a claimed transaction: keep the claim and poll again.
     if (claimed(op)) return;
     if (!op.quote || now < Date.parse(op.quote.expiresAt) + CLAIM_GRACE_MS) throw error;
-    op.status = 'expired';
-    op.error = 'TRANSACTION_EXPIRED';
+    // Heuristic grace elapsed without authoritative proof nothing was broadcast: keep open!
+    op.status = 'unknown';
+    op.error = 'RECONCILIATION_REQUIRED';
     return;
   }
   if (result.status === 'quoted') {

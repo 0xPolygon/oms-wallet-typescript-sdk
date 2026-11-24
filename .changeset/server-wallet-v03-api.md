@@ -1,0 +1,11 @@
+---
+'@polygonlabs/oms-server-wallet-sdk': minor
+---
+
+Replace the pre-release class assembly surface with a unified `0.3.0` public API across `.` and `/trails`, and add generated `API.md` / `TRAILS-API.md` reference docs:
+
+- **Factories:** `createServerWallet` (single identity / Cloudflare Durable Object) and `createServerWalletService` (multi-tenant `forSubject(subject)` + `service.indexer`), with explicit `createSingleProcessExecutor` / `createSingleProcessExecutorPool` helpers and automatic `0.2.x`-compatible namespace/AES-GCM wiring.
+- **Uniform chain facets:** lifecycle on the wallet handle (`inspect`, `createOrRestore`, `rotateCredential`, `disable`, `enable`), symmetric named-object methods on `wallet.evm`, `wallet.solana`, and `wallet.tron` with explicit `idempotencyKey`, required `reviewId` on `execute`, local `getOperation` vs remote `refreshOperation` vs `waitForOperation`, paginated `listOperations`, `describeOperation`, and explicitly unattested `wallet.indexer` reads.
+- **Approval & attestation safety:** review-only default (`approval: 'two-phase'` omits one-shot `send*` at both type and runtime level; `approval: 'allow-immediate'` persists `submissionMode` so `send*` never consumes a review-only quote). Stage-pinned PCR0 defaults for `stg`/`production` with explicit `allowDebugEnclave: true` required for debug enclaves on `local`/`dev`.
+- **Unified Trails swaps (`@polygonlabs/oms-server-wallet-sdk/trails`):** enable swaps directly via `createServerWallet({ ..., swaps: trails(...) })` or `createServerWalletService({ ..., swaps: trails(...) })` with explicit `store.scope` (`'wallet'` | `'service'`), opaque `StoredSwapEntry` persistence, one shared executor/debit gate, and zero Trails imports in the root bundle.
+- **Typed errors & generated API docs:** closed `WalletErrorCode` union, `isWalletError`, `isUpstreamError`, `UpstreamError.name === 'UpstreamError'`, explicit declaration types, and CI-checked `API.md` and `TRAILS-API.md`.

@@ -15,18 +15,14 @@
 // The report goes to .data/live-acceptance.json. Attested WaaS responses are recorded to
 // .data/live-fixtures/ (never CommitVerifier or CompleteAuth, whose bodies hold the ID token);
 // copy them to tests/fixtures/live/ to replay their attestation offline.
-import { mkdirSync, readFileSync, existsSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 
 import { Decoder, Tag } from 'cbor-x';
 
 import {
-  EncryptedStore,
-  IndexerClient,
-  SerialExecutor,
-  ServerWallet,
-  WaasTransport,
+  createServerWallet,
+  createSingleProcessExecutor,
   WalletError,
-  omsFetch,
   type StateStore
 } from '../src/index.js';
 
@@ -36,14 +32,18 @@ const env = (name: string, fallback?: string) => {
   return value;
 };
 const key = env('OMS_PUBLISHABLE_KEY');
-const pcr0s = env('TRUSTED_PCR0S').split(',');
+const pcr0s = env('TRUSTED_PCR0S')
+  .split(',')
+  .map((value) => value.trim())
+  .filter(Boolean);
+const allowDebugEnclave = pcr0s.includes('0'.repeat(96));
 const issuer = env('OIDC_ISSUER').replace(/\/$/, '');
 const audience = env('OIDC_AUDIENCE');
 const origin = env('OMS_ORIGIN');
 const subject = env('LIVE_SUBJECT', `acceptance-chains-${new Date().toISOString().slice(0, 10)}`);
 const execute = process.env.LIVE_EXECUTE === '1';
 
-/** An ES256 ID token from the dashboard's registered issuer key, as its issuer mints them. */
+/** An ES256 ID token from the registered issuer key. */
 async function idToken(identity: string) {
   const jwk = JSON.parse(env('OIDC_PRIVATE_JWK')) as JsonWebKey;
   const signer = await crypto.subtle.importKey(
@@ -95,9 +95,7 @@ const disk = (prefix = ''): StateStore => ({
 
 let recorded = 0;
 const secretMethods = ['CommitVerifier', 'CompleteAuth'];
-/** WaaS requests sent, by method, to check that a step did or did not reach WaaS. */
 const calls: Record<string, number> = {};
-/** Attestation user-data versions seen (`Sequence/1`, `Sequence/2`). */
 const attestations: Record<string, number> = {};
 const cbor = new Decoder({ mapsAsObjects: false, copyBuffers: true });
 function attestationVersion(encoded: string): string {
@@ -110,7 +108,7 @@ function attestationVersion(encoded: string): string {
   }
 }
 const recording: typeof fetch = async (input, init) => {
-  const response = await omsFetch(origin)(input, init);
+  const response = await fetch(input, init);
   const path = new URL(String(input)).pathname;
   const method = path.split('/').pop()!;
   calls[method] = (calls[method] ?? 0) + 1;
@@ -128,10 +126,6 @@ const recording: typeof fetch = async (input, init) => {
       responseBody: await response.clone().text(),
       status: response.status,
       nonce: headers.get('X-Attestation-Nonce'),
-      // A Sequence/2 attestation binds the signature header that was sent, so a fixture must keep it
-      // to verify. It is a signature over one request and the credential's public key, not a secret,
-      // but WaaS may not have consumed its nonce (a gateway can refuse first): keep raw captures
-      // private, and record fixtures to share with a disposable credential.
       boundHeader: headers.get('OMS-Wallet-Signature') ?? '',
       encodedDocument: response.headers.get('X-Attestation-Document'),
       trustedPcr0s: pcr0s,
@@ -145,19 +139,23 @@ const recording: typeof fetch = async (input, init) => {
   return response;
 };
 
-/** A wallet for `identity`, as a fresh process would build it: its own executor and transport. */
 const open = (identity: string, prefix = '') =>
-  new ServerWallet({
-    subject: identity,
-    issuer,
-    audience,
-    tokenProvider: () => idToken(identity),
-    store: new EncryptedStore(disk(prefix), env('ENCRYPTION_KEY'), `live-chains:${identity}`),
-    executor: new SerialExecutor(),
-    transport: new WaasTransport(key, pcr0s, recording)
+  createServerWallet({
+    publishableKey: key,
+    origin,
+    oidc: {
+      subject: identity,
+      issuer,
+      audience,
+      getIdToken: () => idToken(identity)
+    },
+    store: { adapter: disk(prefix), encryptionKey: env('ENCRYPTION_KEY') },
+    executor: createSingleProcessExecutor(),
+    attestation: { trustedPcr0s: pcr0s, allowDebugEnclave },
+    approval: 'allow-immediate',
+    fetch: recording
   });
 const wallet = open(subject);
-const indexer = new IndexerClient(key, omsFetch(origin));
 
 const report: { check: string; result: 'passed' | 'failed' | 'skipped'; detail?: unknown }[] = [];
 async function check(name: string, run: () => Promise<unknown>) {
@@ -178,7 +176,6 @@ const skip = (name: string, why: string) => {
   console.log(JSON.stringify(report.at(-1)));
 };
 const id = (name: string) => `${name}-${Date.now()}`;
-/** Poll until the transfer executed with a hash; any other ending, or two minutes, fails. */
 const executed = async <T extends { status: string; txnHash?: string; error?: string }>(
   read: () => Promise<T | null>
 ) => {
@@ -195,8 +192,7 @@ const executed = async <T extends { status: string; txnHash?: string; error?: st
   }
   throw new Error('Transfer did not execute within two minutes');
 };
-/** Balances, failing when the indexer reports an error for any requested network. */
-const balances = async <T extends { errors: unknown[] }>(result: Promise<T>) => {
+const balances = async <T extends { readonly errors: readonly unknown[] }>(result: Promise<T>) => {
   const value = await result;
   if (value.errors.length) throw new Error(`Balance errors: ${JSON.stringify(value.errors)}`);
   return value;
@@ -229,36 +225,53 @@ await check(
 
 const evm = snapshot.wallet!.address;
 await check('EVM message signing on Polygon, verified by WaaS', async () => {
-  const op = await wallet.signMessage(id('live-evm-sign'), 137, 'OMS server wallet acceptance');
+  const op = await wallet.evm.signMessage({
+    idempotencyKey: id('live-evm-sign'),
+    chainId: 137,
+    message: 'OMS server wallet acceptance'
+  });
   if (op.status !== 'signed' || !op.verified) throw new Error(`Signing ended ${op.status}`);
   return { status: op.status, verified: op.verified };
 });
 await check('EVM EIP-712 signing on Polygon, verified by WaaS', async () => {
-  const op = await wallet.signTypedData(id('live-evm-712'), 137, {
-    domain: { name: 'Acceptance', version: '1', chainId: 137, verifyingContract: evm },
-    types: {
-      Check: [
-        { name: 'wallet', type: 'address' },
-        { name: 'note', type: 'string' }
-      ]
-    },
-    primaryType: 'Check',
-    message: { wallet: evm, note: 'OMS server wallet acceptance' }
+  const op = await wallet.evm.signTypedData({
+    idempotencyKey: id('live-evm-712'),
+    chainId: 137,
+    typedData: {
+      domain: { name: 'Acceptance', version: '1', chainId: 137, verifyingContract: evm },
+      types: {
+        Check: [
+          { name: 'wallet', type: 'address' },
+          { name: 'note', type: 'string' }
+        ]
+      },
+      primaryType: 'Check',
+      message: { wallet: evm, note: 'OMS server wallet acceptance' }
+    }
   });
   if (op.status !== 'signed' || !op.verified) throw new Error(`Signing ended ${op.status}`);
   return { status: op.status, verified: op.verified };
 });
 await check('EVM operation ID retry returns the stored result without calling WaaS', async () => {
-  const operationId = id('live-evm-retry');
-  const first = await wallet.signMessage(operationId, 137, 'OMS server wallet retry');
+  const idempotencyKey = id('live-evm-retry');
+  const first = await wallet.evm.signMessage({
+    idempotencyKey,
+    chainId: 137,
+    message: 'OMS server wallet retry'
+  });
   const signed = calls.SignMessage ?? 0;
-  const again = await wallet.signMessage(operationId, 137, 'OMS server wallet retry');
+  const again = await wallet.evm.signMessage({
+    idempotencyKey,
+    chainId: 137,
+    message: 'OMS server wallet retry'
+  });
   if (again.signature !== first.signature) throw new Error('Retry returned another signature');
   if ((calls.SignMessage ?? 0) !== signed) throw new Error('Retry signed again');
   return { signature: again.signature };
 });
 await check('EVM sponsored transfer quote on Polygon (never executed)', async () => {
-  const op = await wallet.prepareTransfer(id('live-evm-quote'), {
+  const op = await wallet.evm.prepareTransfer({
+    idempotencyKey: id('live-evm-quote'),
     chainId: 137,
     to: evm,
     asset: 'native',
@@ -268,12 +281,11 @@ await check('EVM sponsored transfer quote on Polygon (never executed)', async ()
   return { status: op.status, sponsored: op.quote.sponsored, expiresAt: op.quote.expiresAt };
 });
 
-// Rotation and disabling use their own identity and state, never the main acceptance wallets.
 const lifecycle = open(`${subject}-lifecycle`, 'lifecycle:');
 const lifecycleWallet = (await lifecycle.createOrRestore()).wallet!;
 await check('credential rotation keeps the wallet and replaces the credential', async () => {
   const before = (await lifecycle.inspect()).credentialId;
-  const rotated = await lifecycle.rotate();
+  const rotated = await lifecycle.rotateCredential();
   if (rotated.wallet?.address !== lifecycleWallet.address)
     throw new Error('Rotation changed the wallet');
   if (!rotated.credentialId || rotated.credentialId === before)
@@ -281,25 +293,32 @@ await check('credential rotation keeps the wallet and replaces the credential', 
   return { wallet: rotated.wallet?.address };
 });
 await check('a disabled wallet refuses to sign; re-enabling restores the same wallet', async () => {
-  await lifecycle.setDisabled(true);
-  const refused = await lifecycle
-    .signMessage(id('live-disabled-sign'), 137, 'disabled')
+  await lifecycle.disable();
+  const refused = await lifecycle.evm
+    .signMessage({ idempotencyKey: id('live-disabled-sign'), chainId: 137, message: 'disabled' })
     .catch((error) => error);
   if (!(refused instanceof WalletError) || refused.code !== 'WALLET_DISABLED')
     throw new Error('A disabled wallet signed');
-  const enabled = await lifecycle.setDisabled(false);
+  const enabled = await lifecycle.enable();
   if (enabled.wallet?.address !== lifecycleWallet.address)
     throw new Error('Re-enabling returned another wallet');
-  const op = await lifecycle.signMessage(id('live-enabled-sign'), 137, 'enabled');
+  const op = await lifecycle.evm.signMessage({
+    idempotencyKey: id('live-enabled-sign'),
+    chainId: 137,
+    message: 'enabled'
+  });
   if (op.status !== 'signed') throw new Error(`Signing after re-enabling ended ${op.status}`);
   return { wallet: enabled.wallet?.address };
 });
 
 await check('Solana message signing, verified by WaaS', () =>
-  wallet.solana.signMessage(id('live-sol-sign'), 'OMS server wallet acceptance')
+  wallet.solana.signMessage({
+    idempotencyKey: id('live-sol-sign'),
+    message: 'OMS server wallet acceptance'
+  })
 );
 await check('Solana devnet balances', () =>
-  balances(indexer.getSolanaBalances(solana, ['solana:devnet']))
+  balances(wallet.indexer.getSolanaBalances({ networks: ['solana:devnet'] }))
 );
 const solanaRecipient = process.env.LIVE_SOLANA_RECIPIENT;
 if (!solanaRecipient) skip('Solana transfer quote', 'Set LIVE_SOLANA_RECIPIENT.');
@@ -311,18 +330,26 @@ else {
     amount: '1000'
   } as const;
   await check('Solana sponsored transfer quote expires within about a minute', async () => {
-    const op = await wallet.solana.prepareTransfer(id('live-sol-quote'), transfer);
+    const op = await wallet.solana.prepareTransfer({
+      idempotencyKey: id('live-sol-quote'),
+      ...transfer
+    });
     const lifetime = Date.parse(op.quote!.expiresAt) - Date.now();
     if (!op.quote!.sponsored || lifetime > 65_000) throw new Error('Unexpected quote');
     return { sponsored: op.quote!.sponsored, lifetimeMs: lifetime };
   });
   await check('Solana expired quote is refused with nothing sent', async () => {
-    const op = await wallet.solana.prepareTransfer(id('live-sol-expiry'), transfer);
+    const op = await wallet.solana.prepareTransfer({
+      idempotencyKey: id('live-sol-expiry'),
+      ...transfer
+    });
     await new Promise((resolve) =>
       setTimeout(resolve, Date.parse(op.quote!.expiresAt) - Date.now() + 2_000)
     );
-    const result = await wallet.solana.executeTransfer(op.id).catch((error) => error);
-    if (!(result instanceof WalletError) || result.code !== 'TRANSACTION_EXPIRED')
+    const result = await wallet.solana
+      .execute({ idempotencyKey: op.id, reviewId: op.reviewId! })
+      .catch((error) => error);
+    if (!(result instanceof WalletError) || result.code !== 'QUOTE_EXPIRED')
       throw new Error('Expired quote was not refused');
     const status = (await wallet.solana.getOperation(op.id))?.status;
     if (status !== 'expired') throw new Error(`Expired quote left the operation ${status}`);
@@ -331,47 +358,63 @@ else {
   if (!execute) skip('Solana transfer execution', 'Set LIVE_EXECUTE=1 to send 1000 lamports.');
   else
     await check('Solana sponsored transfer executes', async () => {
-      const op = await wallet.solana.sendTransfer(id('live-sol-send'), transfer);
-      return executed(() => wallet.solana.getOperation(op.id));
+      const op = await wallet.solana.sendTransfer({
+        idempotencyKey: id('live-sol-send'),
+        ...transfer
+      });
+      return executed(() => wallet.solana.refreshOperation(op.id));
     });
 }
 
 await check('Tron message signing, verified by WaaS', () =>
-  wallet.tron.signMessage(id('live-trx-sign'), 'OMS server wallet acceptance')
-);
-await check('Tron TIP-712 signing, verified by WaaS', () =>
-  wallet.tron.signTypedData(id('live-trx-712'), 'tron:nile', {
-    domain: { name: 'Acceptance', version: '1', chainId: 3448148188, verifyingContract: tron },
-    types: {
-      Check: [
-        { name: 'wallet', type: 'address' },
-        { name: 'note', type: 'string' }
-      ]
-    },
-    primaryType: 'Check',
-    message: { wallet: tron, note: 'OMS server wallet acceptance' }
+  wallet.tron.signMessage({
+    idempotencyKey: id('live-trx-sign'),
+    message: 'OMS server wallet acceptance'
   })
 );
-await check('Tron Nile balances', () => balances(indexer.getTronBalances(tron, ['tron:nile'])));
+await check('Tron TIP-712 signing, verified by WaaS', () =>
+  wallet.tron.signTypedData({
+    idempotencyKey: id('live-trx-712'),
+    network: 'tron:nile',
+    typedData: {
+      domain: { name: 'Acceptance', version: '1', chainId: 3448148188, verifyingContract: tron },
+      types: {
+        Check: [
+          { name: 'wallet', type: 'address' },
+          { name: 'note', type: 'string' }
+        ]
+      },
+      primaryType: 'Check',
+      message: { wallet: tron, note: 'OMS server wallet acceptance' }
+    }
+  })
+);
+await check('Tron Nile balances', () =>
+  balances(wallet.indexer.getTronBalances({ networks: ['tron:nile'] }))
+);
 const tronRecipient = process.env.LIVE_TRON_RECIPIENT;
 if (!tronRecipient) skip('Tron transfer quote', 'Set LIVE_TRON_RECIPIENT.');
 else {
   const transfer = { network: 'tron:nile', to: tronRecipient, value: '1' } as const;
   await check('Tron quote without maxFee is sent only when sponsored', async () => {
     const result = await wallet.tron
-      .prepareTransaction(id('live-trx-quote'), transfer)
+      .prepareTransaction({ idempotencyKey: id('live-trx-quote'), ...transfer })
       .catch((error) => error);
     if (result instanceof WalletError && result.code === 'SPONSORSHIP_REQUIRED')
       return 'not covered by delegated resources: refused as expected';
     if (result instanceof Error) throw result;
-    return { sponsored: result.quote.sponsored };
+    return { sponsored: result.quote?.sponsored };
   });
   const maxFee = process.env.LIVE_TRON_MAX_FEE;
   if (!execute) skip('Tron transfer execution', 'Set LIVE_EXECUTE=1 to send 1 sun.');
   else
     await check('Tron transfer executes within maxFee', async () => {
-      const op = await wallet.tron.sendTransaction(id('live-trx-send'), { ...transfer, maxFee });
-      return executed(() => wallet.tron.getOperation(op.id));
+      const op = await wallet.tron.sendTransaction({
+        idempotencyKey: id('live-trx-send'),
+        ...transfer,
+        maxFee
+      });
+      return executed(() => wallet.tron.refreshOperation(op.id));
     });
 }
 

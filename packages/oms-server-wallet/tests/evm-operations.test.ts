@@ -1,8 +1,6 @@
 import { describe, expect, it } from 'vitest';
 
-import { SerialExecutor } from '@polygonlabs/oms-server-wallet-sdk';
-import { WalletSwaps } from '@polygonlabs/oms-server-wallet-sdk/trails';
-import type { WalletSwapsOptions } from '@polygonlabs/oms-server-wallet-sdk/trails';
+import { describeOperation } from '@polygonlabs/oms-server-wallet-sdk';
 
 import { sdkHarness } from './helpers.js';
 
@@ -24,17 +22,26 @@ async function editStored(
 }
 
 describe('EVM execution settlement', () => {
-  it('records a refusal WaaS returns before claiming as failed, without polling forever', async () => {
+  it('records a refusal WaaS returns before claiming as failed (provenUnsent), without polling forever', async () => {
     const h = sdkHarness();
-    await h.client.prepareTransfer('refused-1', transfer);
-    h.remote.evmExecuteRefusal = 7306;
-    expect(await h.client.executeTransfer('refused-1')).toMatchObject({
-      status: 'failed',
-      error: 'EXECUTE_REFUSED'
+    const prepared = await h.client.evm.prepareTransfer({
+      idempotencyKey: 'refused-1',
+      ...transfer
     });
-    expect(await h.client.getOperation('refused-1')).toMatchObject({ status: 'failed' });
+    h.remote.evmExecuteRefusal = 7306;
+    const failed = await h.client.evm.execute({
+      idempotencyKey: 'refused-1',
+      reviewId: prepared.reviewId!
+    });
+    expect(failed).toMatchObject({
+      status: 'failed',
+      error: 'EXECUTE_REFUSED',
+      provenUnsent: true
+    });
+    expect(describeOperation(failed).action).toBe('safe-to-reprepare');
+    expect(await h.client.evm.getOperation('refused-1')).toMatchObject({ status: 'failed' });
     expect(h.remote.calls.filter((c) => c.method === 'Execute')).toHaveLength(1);
-    expect(await h.client.listOpenOperations()).toEqual([]);
+    expect((await h.client.evm.listOperations({ status: 'open' })).items).toEqual([]);
   });
 
   it.each([
@@ -45,64 +52,106 @@ describe('EVM execution settlement', () => {
     'records a credential refusal (%i, %s) as failed: WaaS rejected it before Execute ran',
     async (code) => {
       const h = sdkHarness();
-      await h.client.prepareTransfer(`credential-refused-${code}`, transfer);
+      const prepared = await h.client.evm.prepareTransfer({
+        idempotencyKey: `credential-refused-${code}`,
+        ...transfer
+      });
       h.remote.evmExecuteRefusal = code;
-      expect(await h.client.executeTransfer(`credential-refused-${code}`)).toMatchObject({
+      expect(
+        await h.client.evm.execute({
+          idempotencyKey: `credential-refused-${code}`,
+          reviewId: prepared.reviewId!
+        })
+      ).toMatchObject({
         status: 'failed',
-        error: 'EXECUTE_REFUSED'
+        error: 'EXECUTE_REFUSED',
+        provenUnsent: true
       });
     }
   );
 
-  it('keeps an ambiguous refusal unknown, then expires it once no claim can still land', async () => {
+  it('keeps an ambiguous refusal open and escalates to RECONCILIATION_REQUIRED past grace without falsely expiring it', async () => {
     const h = sdkHarness();
-    await h.client.prepareTransfer('ambiguous-1', transfer);
+    const prepared = await h.client.evm.prepareTransfer({
+      idempotencyKey: 'ambiguous-1',
+      ...transfer
+    });
     h.remote.evmExecuteRefusal = 7309;
-    expect(await h.client.executeTransfer('ambiguous-1')).toMatchObject({
+    expect(
+      await h.client.evm.execute({
+        idempotencyKey: 'ambiguous-1',
+        reviewId: prepared.reviewId!
+      })
+    ).toMatchObject({
       status: 'unknown',
-      error: 'SUBMISSION_UNCERTAIN'
+      error: 'SUBMISSION_UNCERTAIN',
+      provenUnsent: false
     });
     h.remote.evmStatusError = 7309;
-    // Within the grace period after the quote's expiry, an Execute that started in time may still
-    // claim it, so polling keeps failing rather than settling.
-    await expect(h.client.getOperation('ambiguous-1')).rejects.toMatchObject({
+    // Within grace period: still raises 7309 while staying open.
+    await expect(h.client.evm.refreshOperation('ambiguous-1')).rejects.toMatchObject({
       upstreamCode: 7309
     });
     await editStored(h.store, 'ambiguous-1', (op) => {
       op.quote.expiresAt = new Date(Date.now() - 121_000).toISOString();
     });
-    expect(await h.client.getOperation('ambiguous-1')).toMatchObject({
-      status: 'expired',
-      error: 'TRANSACTION_EXPIRED'
+    // Past grace: stays open (`unknown`) with RECONCILIATION_REQUIRED — never silently terminal `expired`!
+    const escalated = await h.client.evm.refreshOperation('ambiguous-1');
+    expect(escalated).toMatchObject({
+      status: 'unknown',
+      error: 'RECONCILIATION_REQUIRED',
+      provenUnsent: false
     });
+    expect(describeOperation(escalated!).action).toBe('reconcile-original');
+    expect((await h.client.evm.listOperations({ status: 'open' })).items.map((o) => o.id)).toEqual([
+      'ambiguous-1'
+    ]);
+    // Because it stays open, a later positive WaaS read still settles it cleanly!
+    h.remote.evmStatusError = undefined;
+    h.remote.txnStatus = 'executed';
+    const settled = await h.create().evm.refreshOperation('ambiguous-1');
+    expect(settled).toMatchObject({ status: 'executed', txnHash: `0x${'ab'.repeat(32)}` });
+    expect((await h.client.evm.listOperations({ status: 'open' })).items).toEqual([]);
     expect(h.remote.calls.filter((c) => c.method === 'Execute')).toHaveLength(1);
   });
 
   it('keeps a known claim when a later status read is stale', async () => {
     const h = sdkHarness();
-    await h.client.prepareTransfer('claimed-1', transfer);
-    expect((await h.client.executeTransfer('claimed-1')).status).toBe('pending');
-    // A read still showing the row from before the claim: quoted, then TransactionExpired.
+    const prepared = await h.client.evm.prepareTransfer({
+      idempotencyKey: 'claimed-1',
+      ...transfer
+    });
+    expect(
+      (await h.client.evm.execute({ idempotencyKey: 'claimed-1', reviewId: prepared.reviewId! }))
+        .status
+    ).toBe('pending');
     h.remote.txnStatus = 'quoted';
-    expect((await h.client.getOperation('claimed-1'))?.status).toBe('pending');
+    expect((await h.client.evm.refreshOperation('claimed-1'))?.status).toBe('pending');
     h.remote.evmStatusError = 7309;
     await editStored(h.store, 'claimed-1', (op) => {
       op.quote.expiresAt = new Date(Date.now() - 600_000).toISOString();
     });
-    expect((await h.client.getOperation('claimed-1'))?.status).toBe('pending');
-    expect(await h.client.listOpenOperations()).toHaveLength(1);
+    expect((await h.client.evm.refreshOperation('claimed-1'))?.status).toBe('pending');
+    expect((await h.client.evm.listOperations({ status: 'open' })).items).toHaveLength(1);
   });
 
-  it('records a quote that expired before submission', async () => {
+  it('records a quote that expired locally before submission as terminal expired (provenUnsent)', async () => {
     const h = sdkHarness();
-    await h.client.prepareTransfer('expired-1', transfer);
+    const prepared = await h.client.evm.prepareTransfer({
+      idempotencyKey: 'expired-1',
+      ...transfer
+    });
     await editStored(h.store, 'expired-1', (op) => {
       op.quote.expiresAt = new Date(0).toISOString();
     });
-    await expect(h.client.executeTransfer('expired-1')).rejects.toMatchObject({
+    await expect(
+      h.client.evm.execute({ idempotencyKey: 'expired-1', reviewId: prepared.reviewId! })
+    ).rejects.toMatchObject({
       code: 'QUOTE_EXPIRED'
     });
-    expect(await h.client.getOperation('expired-1')).toMatchObject({ status: 'expired' });
+    const op = await h.client.evm.getOperation('expired-1');
+    expect(op).toMatchObject({ status: 'expired', error: 'QUOTE_EXPIRED', provenUnsent: true });
+    expect(describeOperation(op!).action).toBe('safe-to-reprepare');
     expect(h.remote.calls.filter((c) => c.method === 'Execute')).toHaveLength(0);
   });
 });
@@ -110,12 +159,15 @@ describe('EVM execution settlement', () => {
 describe('EVM operation records', () => {
   it('quotes again under the same ID when a preparation was interrupted', async () => {
     const h = sdkHarness();
-    await h.client.prepareTransfer('interrupted-1', transfer);
+    await h.client.evm.prepareTransfer({ idempotencyKey: 'interrupted-1', ...transfer });
     await editStored(h.store, 'interrupted-1', (op) => {
       op.status = 'preparing';
       delete op.quote;
+      delete op.reviewId;
     });
-    expect(await h.create().prepareTransfer('interrupted-1', transfer)).toMatchObject({
+    expect(
+      await h.create().evm.prepareTransfer({ idempotencyKey: 'interrupted-1', ...transfer })
+    ).toMatchObject({
       status: 'quoted'
     });
     expect(h.remote.calls.filter((c) => c.method === 'PrepareEthereumTransaction')).toHaveLength(2);
@@ -124,62 +176,82 @@ describe('EVM operation records', () => {
   it('records a signature that fails verification, and never signs it again', async () => {
     const h = sdkHarness();
     h.remote.signaturesValid = false;
-    await expect(h.client.signMessage('sign-invalid', 137, 'hello')).rejects.toMatchObject({
+    await expect(
+      h.client.evm.signMessage({ idempotencyKey: 'sign-invalid', chainId: 137, message: 'hello' })
+    ).rejects.toMatchObject({
       code: 'SIGNATURE_INVALID'
     });
-    expect(await h.create().signMessage('sign-invalid', 137, 'hello')).toMatchObject({
+    expect(
+      await h
+        .create()
+        .evm.signMessage({ idempotencyKey: 'sign-invalid', chainId: 137, message: 'hello' })
+    ).toMatchObject({
       status: 'failed',
       error: 'SIGNATURE_INVALID'
     });
     expect(h.remote.calls.filter((c) => c.method === 'SignMessage')).toHaveLength(1);
   });
 
-  it('lists only open operations, building the index from existing records once', async () => {
+  it('lists only open operations with pagination, building the index from existing records once', async () => {
     const h = sdkHarness();
-    await h.client.prepareTransfer('open-op-1', transfer);
-    await h.client.signMessage('closed-op-1', 137, 'hello');
-    // Records written before the open index existed.
+    const prepared = await h.client.evm.prepareTransfer({
+      idempotencyKey: 'open-op-1',
+      ...transfer
+    });
+    await h.client.evm.signMessage({
+      idempotencyKey: 'closed-op-1',
+      chainId: 137,
+      message: 'hello'
+    });
     h.store.values.delete('openOperationIndex');
-    expect((await h.client.listOpenOperations()).map((op) => op.id)).toEqual(['open-op-1']);
-    expect(JSON.parse((await h.store.read('openOperationIndex'))!).ids).toEqual(['open-op-1']);
-    await h.client.executeTransfer('open-op-1');
-    h.remote.txnStatus = 'executed';
-    await h.client.getOperation('open-op-1');
-    expect(await h.client.listOpenOperations()).toEqual([]);
     expect(
-      (await h.client.readOperations(['closed-op-1', 'missing-op-1'])).map((op) => op.id)
-    ).toEqual(['closed-op-1']);
+      (await h.client.evm.listOperations({ status: 'open' })).items.map((op) => op.id)
+    ).toEqual(['open-op-1']);
+    expect(JSON.parse((await h.store.read('openOperationIndex'))!).ids).toEqual(['open-op-1']);
+    await h.client.evm.execute({ idempotencyKey: 'open-op-1', reviewId: prepared.reviewId! });
+    h.remote.txnStatus = 'executed';
+    await h.client.evm.refreshOperation('open-op-1');
+    expect((await h.client.evm.listOperations({ status: 'open' })).items).toEqual([]);
+    const page1 = await h.client.evm.listOperations({ limit: 1 });
+    expect(page1.items.map((o) => o.id)).toEqual(['open-op-1']);
+    expect(page1.nextCursor).toBe('1');
+    const page2 = await h.client.evm.listOperations({ limit: 1, cursor: page1.nextCursor });
+    expect(page2.items.map((o) => o.id)).toEqual(['closed-op-1']);
+    expect(page2.nextCursor).toBeUndefined();
   });
 });
 
 describe('open operation index', () => {
   it('lists a new operation as open before its record is written', async () => {
     const h = sdkHarness();
-    await h.client.prepareTransfer('open-op-a1', transfer);
-    expect(await h.client.listOpenOperations()).toHaveLength(1);
+    await h.client.evm.prepareTransfer({ idempotencyKey: 'open-op-a1', ...transfer });
+    expect((await h.client.evm.listOperations({ status: 'open' })).items).toHaveLength(1);
     const write = h.store.write.bind(h.store);
     h.store.write = async (key, value) => {
       if (key === 'operation:open-op-b2') throw new Error('Store unavailable');
       return write(key, value);
     };
-    await expect(h.client.prepareTransfer('open-op-b2', transfer)).rejects.toThrow();
-    // A crash here must not leave the operation missing from the index; readers check records.
+    await expect(
+      h.client.evm.prepareTransfer({ idempotencyKey: 'open-op-b2', ...transfer })
+    ).rejects.toThrow();
     expect(JSON.parse((await h.store.read('openOperationIndex'))!).ids).toEqual([
       'open-op-a1',
       'open-op-b2'
     ]);
     h.store.write = write;
-    expect((await h.client.listOpenOperations()).map((op) => op.id)).toEqual(['open-op-a1']);
+    expect(
+      (await h.client.evm.listOperations({ status: 'open' })).items.map((op) => op.id)
+    ).toEqual(['open-op-a1']);
   });
 });
 
 describe('open operation index with an older SDK writing', () => {
   it('finds an operation an older version appended without updating the open index', async () => {
     const h = sdkHarness();
-    await h.client.prepareTransfer('new-writer-1', transfer);
-    expect((await h.client.listOpenOperations()).map((op) => op.id)).toEqual(['new-writer-1']);
-    // An older SDK version, sharing the store and executor, submits a transfer: it appends to the
-    // full index and writes the record, but knows nothing of the open index.
+    await h.client.evm.prepareTransfer({ idempotencyKey: 'new-writer-1', ...transfer });
+    expect(
+      (await h.client.evm.listOperations({ status: 'open' })).items.map((op) => op.id)
+    ).toEqual(['new-writer-1']);
     const legacy = JSON.parse((await h.store.read('operation:new-writer-1'))!);
     const ids = JSON.parse((await h.store.read('operationIndex'))!);
     await h.store.write('operationIndex', JSON.stringify([...ids, 'old-writer-1']));
@@ -187,23 +259,19 @@ describe('open operation index with an older SDK writing', () => {
       'operation:old-writer-1',
       JSON.stringify({ ...legacy, id: 'old-writer-1', status: 'pending' })
     );
-    expect((await h.client.listOpenOperations()).map((op) => op.id).sort()).toEqual([
-      'new-writer-1',
-      'old-writer-1'
-    ]);
-    // A new operation written after the older one does not hide it either.
-    await h.client.prepareTransfer('new-writer-2', transfer);
-    expect((await h.client.listOpenOperations()).map((op) => op.id).sort()).toEqual([
-      'new-writer-1',
-      'new-writer-2',
-      'old-writer-1'
-    ]);
+    expect(
+      (await h.client.evm.listOperations({ status: 'open' })).items.map((op) => op.id).sort()
+    ).toEqual(['new-writer-1', 'old-writer-1']);
+    await h.client.evm.prepareTransfer({ idempotencyKey: 'new-writer-2', ...transfer });
+    expect(
+      (await h.client.evm.listOperations({ status: 'open' })).items.map((op) => op.id).sort()
+    ).toEqual(['new-writer-1', 'new-writer-2', 'old-writer-1']);
   });
 
   it('scans entries an older version appended even when a newer write came after them', async () => {
     const h = sdkHarness();
-    await h.client.prepareTransfer('first-new-1', transfer);
-    await h.client.listOpenOperations();
+    await h.client.evm.prepareTransfer({ idempotencyKey: 'first-new-1', ...transfer });
+    await h.client.evm.listOperations({ status: 'open' });
     const record = JSON.parse((await h.store.read('operation:first-new-1'))!);
     const ids = JSON.parse((await h.store.read('operationIndex'))!);
     await h.store.write('operationIndex', JSON.stringify([...ids, 'old-between-1']));
@@ -211,52 +279,30 @@ describe('open operation index with an older SDK writing', () => {
       'operation:old-between-1',
       JSON.stringify({ ...record, id: 'old-between-1', status: 'unknown' })
     );
-    await h.client.prepareTransfer('second-new-1', transfer);
-    expect((await h.client.listOpenOperations()).map((op) => op.id).sort()).toEqual([
-      'first-new-1',
-      'old-between-1',
-      'second-new-1'
-    ]);
+    await h.client.evm.prepareTransfer({ idempotencyKey: 'second-new-1', ...transfer });
+    expect(
+      (await h.client.evm.listOperations({ status: 'open' })).items.map((op) => op.id).sort()
+    ).toEqual(['first-new-1', 'old-between-1', 'second-new-1']);
   });
 });
 
 describe('open operation index after an interrupted older writer', () => {
   it('keeps an appended ID whose record was not written yet, and finds the record later', async () => {
     const h = sdkHarness();
-    await h.client.prepareTransfer('before-crash-1', transfer);
-    await h.client.listOpenOperations();
+    await h.client.evm.prepareTransfer({ idempotencyKey: 'before-crash-1', ...transfer });
+    await h.client.evm.listOperations({ status: 'open' });
     const record = JSON.parse((await h.store.read('operation:before-crash-1'))!);
-    // An older SDK version appends an ID, then crashes before writing the record.
     const ids = JSON.parse((await h.store.read('operationIndex'))!);
     await h.store.write('operationIndex', JSON.stringify([...ids, 'crashed-old-1']));
-    // The index is scanned between the append and the record write.
-    expect((await h.client.listOpenOperations()).map((op) => op.id)).toEqual(['before-crash-1']);
-    // The older version retries: it writes the record without appending the ID again.
+    expect(
+      (await h.client.evm.listOperations({ status: 'open' })).items.map((op) => op.id)
+    ).toEqual(['before-crash-1']);
     await h.store.write(
       'operation:crashed-old-1',
       JSON.stringify({ ...record, id: 'crashed-old-1', status: 'pending' })
     );
-    expect((await h.client.listOpenOperations()).map((op) => op.id).sort()).toEqual([
-      'before-crash-1',
-      'crashed-old-1'
-    ]);
-  });
-});
-
-describe('WalletSwaps', () => {
-  it("refuses the wallet's own executor, which would wait on itself", () => {
-    const h = sdkHarness();
-    const executor = (h.client as unknown as { options: { executor: SerialExecutor } }).options
-      .executor;
     expect(
-      () => new WalletSwaps({ wallet: h.client, executor } as unknown as WalletSwapsOptions)
-    ).toThrow(/own executor/);
-    expect(
-      () =>
-        new WalletSwaps({
-          wallet: h.client,
-          executor: new SerialExecutor()
-        } as unknown as WalletSwapsOptions)
-    ).not.toThrow();
+      (await h.client.evm.listOperations({ status: 'open' })).items.map((op) => op.id).sort()
+    ).toEqual(['before-crash-1', 'crashed-old-1']);
   });
 });

@@ -1,8 +1,7 @@
-import type { ServerWallet, Operation } from '../client.js';
-import type { ExclusiveExecutor } from '../storage.js';
+import type { StoredEvmOperation } from '../state.js';
 import type { ChainReader } from './chain.js';
 import type { TrailsClient } from './client.js';
-import type { PreparedRecovery, BuiltRecovery, TrailsReceipt } from './protocol.js';
+import type { BuiltRecovery, PreparedRecovery, TrailsReceipt } from './protocol.js';
 import type { SwapAsset, SwapQuote, SwapRequest } from './quote.js';
 
 export type SwapPhase =
@@ -17,6 +16,7 @@ export type SwapPhase =
   | 'attention'
   | 'recovering'
   | 'refunded';
+
 export type SwapAction =
   | 'prepare-funding'
   | 'activate'
@@ -28,12 +28,27 @@ export type SwapAction =
   | 'submit-recovery'
   | 'observe-recovery'
   | null;
+
 export interface RecoveryAsset {
-  asset: string;
-  amount: string;
-  decimals: number;
-  symbol: string;
+  readonly asset: string;
+  readonly amount: string;
+  readonly decimals: number;
+  readonly symbol: string;
 }
+
+export type RecoveryStatus =
+  | 'quoted'
+  | 'confirmed'
+  | 'deploying'
+  | 'signing'
+  | 'submitting'
+  | 'pending'
+  | 'recovered'
+  | 'partial'
+  | 'failed'
+  | 'expired';
+
+/** Internal authoritative recovery record (serialized inside `StoredSwapEntry.payload`). */
 export interface RecoveryRecord {
   id: string;
   source: 'origin' | 'destination';
@@ -43,31 +58,22 @@ export interface RecoveryRecord {
   expiresAt: string;
   assets: RecoveryAsset[];
   requiresOwnerDeployment: boolean;
-  status:
-    | 'quoted'
-    | 'confirmed'
-    | 'deploying'
-    | 'signing'
-    | 'submitting'
-    | 'pending'
-    | 'recovered'
-    | 'partial'
-    | 'failed'
-    | 'expired';
+  status: RecoveryStatus;
   prepared: PreparedRecovery;
   originalPrepared?: PreparedRecovery;
-  signed?: Operation;
+  signed?: StoredEvmOperation;
   built?: BuiltRecovery;
   deploymentId: string;
   signingId: string;
   transactionId: string;
-  deployment?: Operation;
-  transaction?: Operation;
+  deployment?: StoredEvmOperation;
+  transaction?: StoredEvmOperation;
   ownerBalances?: { asset: string; amount: string }[];
   error?: string;
   received?: RecoveryAsset[];
 }
-/** Private authoritative record. Persist encrypted; never send this shape to a browser. */
+
+/** Internal authoritative swap record (never exposed publicly; serialized inside `StoredSwapEntry.payload`). */
 export interface SwapRecord {
   id: string;
   version: number;
@@ -89,7 +95,7 @@ export interface SwapRecord {
   attempts: number;
   error?: string;
   fundingId: string;
-  funding?: Operation;
+  funding?: StoredEvmOperation;
   fundingConfirmed: boolean;
   upstreamStatus?: string;
   receipt?: TrailsReceipt;
@@ -97,13 +103,73 @@ export interface SwapRecord {
   recoveries: RecoveryRecord[];
   activeRecoveryId?: string;
 }
-/** Every save atomically replaces one record including its action and wake-up time. */
-export interface SwapStore {
-  get(id: string): Promise<SwapRecord | null>;
-  findIntent(intentId: string): Promise<string | null>;
-  save(record: SwapRecord): Promise<void>;
-  list(options: { active?: boolean; offset?: number; limit: number }): Promise<SwapRecord[]>;
+
+/**
+ * Opaque durable swap entry persisted by `SwapStore` / `NamespacedSwapStore`.
+ * Hosts index the metadata fields for queries and wake-up alarms; encrypt `payload` at rest and
+ * never return `payload` to browsers.
+ */
+export interface StoredSwapEntry {
+  readonly id: string;
+  readonly intentId: string;
+  readonly version: number;
+  readonly active: boolean;
+  readonly nextAt: number | null;
+  readonly createdAt: string;
+  readonly payload: string;
 }
+
+/** Durable swap persistence scoped to one wallet identity. */
+export interface SwapStore {
+  get(id: string): Promise<StoredSwapEntry | null>;
+  findIntent(intentId: string): Promise<string | null>;
+  save(entry: StoredSwapEntry): Promise<void>;
+  list(options: {
+    readonly active?: boolean;
+    readonly offset?: number;
+    readonly limit: number;
+  }): Promise<readonly StoredSwapEntry[]>;
+}
+
+/** Durable swap persistence partitioned by the SDK-computed wallet namespace. */
+export interface NamespacedSwapStore {
+  get(namespace: string, id: string): Promise<StoredSwapEntry | null>;
+  findIntent(namespace: string, intentId: string): Promise<string | null>;
+  save(namespace: string, entry: StoredSwapEntry): Promise<void>;
+  list(
+    namespace: string,
+    options: { readonly active?: boolean; readonly offset?: number; readonly limit: number }
+  ): Promise<readonly StoredSwapEntry[]>;
+}
+
+/** Explicit store scope passed to `trails(...)`. */
+export type TrailsStoreOption =
+  | { readonly scope: 'wallet'; readonly adapter: SwapStore }
+  | { readonly scope: 'service'; readonly adapter: NamespacedSwapStore };
+
+/** Options for `trails(...)` from `@polygonlabs/oms-server-wallet-sdk/trails`. */
+export interface TrailsOptions<TStore extends TrailsStoreOption = TrailsStoreOption> {
+  readonly apiKey: string;
+  /** HTTPS JSON-RPC URLs keyed by EVM chain ID (used to verify balances, code, and receipts). */
+  readonly chains: Readonly<Record<number, string>>;
+  /** Host-approved swap asset allowlist (never supplied by an untrusted caller). */
+  readonly assets: readonly SwapAsset[];
+  readonly store: TStore;
+  /** Stable endpoint/project identity (never an API key). A mismatch blocks replay. */
+  readonly environment?: string;
+  /** Set `false` to pause new swaps/funding while still allowing observation and recovery. Default `true`. */
+  readonly enabled?: boolean;
+  /** Optional Trails API HTTPS base origin override. */
+  readonly baseUrl?: string;
+  /** Optional HTTP Origin override (defaults to the wallet's `origin`). */
+  readonly origin?: string;
+  /** Request timeout in milliseconds (1–60,000; default 20,000). */
+  readonly timeoutMs?: number;
+  /** Optional `fetch` override for instrumentation/testing. */
+  readonly fetch?: typeof fetch;
+}
+
+/** Internal gateway contract used by `TrailsCoordinator` and tests. */
 export type SwapGateway = Pick<
   TrailsClient,
   | 'readiness'
@@ -115,71 +181,141 @@ export type SwapGateway = Pick<
   | 'prepareIntentRecovery'
   | 'buildIntentRecoveryTransaction'
 >;
-export interface WalletSwapsOptions {
-  wallet: ServerWallet;
-  trails?: SwapGateway;
-  chains: ChainReader;
-  store: SwapStore;
-  /** Shared by every swap and ordinary debit for this wallet; distinct from credential executor. */
-  executor: ExclusiveExecutor;
-  assets: readonly SwapAsset[];
-  enabled?: boolean;
-  clock?: () => number;
-  /** Stable endpoint/project identity, never an API key. A mismatch blocks replay. */
-  environment?: string;
-  /** Import operation IDs from applications that predate the SDK's operation index. */
-  legacyOperationIds?: () => Promise<string[]>;
-}
+
 export interface TransactionView {
-  status: string;
-  hash?: string;
-  chainId: number;
-  sponsored: boolean;
+  readonly status: string;
+  readonly hash?: string;
+  readonly chainId: number;
+  readonly sponsored: boolean;
 }
+
 export interface RecoveryView {
-  id: string;
-  source: 'origin' | 'destination';
-  chainId: number;
-  intentAddress: string;
-  revision: string;
-  expiresAt: string;
-  assets: RecoveryAsset[];
-  requiresOwnerDeployment: boolean;
-  status: RecoveryRecord['status'];
-  deployment?: TransactionView;
-  transaction?: TransactionView;
-  error?: string;
-  received?: RecoveryAsset[];
+  readonly id: string;
+  readonly source: 'origin' | 'destination';
+  readonly chainId: number;
+  readonly intentAddress: string;
+  /** Opaque review ID required by `swaps.confirmRecovery`. */
+  readonly reviewId: string;
+  readonly expiresAt: string;
+  readonly assets: readonly RecoveryAsset[];
+  readonly requiresOwnerDeployment: boolean;
+  readonly status: RecoveryStatus;
+  readonly deployment?: TransactionView;
+  readonly transaction?: TransactionView;
+  readonly error?: string;
+  readonly received?: readonly RecoveryAsset[];
 }
+
+/** Sanitized public projection of a swap safe to expose to UIs and API responses. */
 export interface SwapView {
-  id: string;
-  version: number;
-  request: SwapRequest;
-  owner: string;
-  assetMetadata?: SwapRecord['assetMetadata'];
-  phase: SwapPhase;
-  createdAt: string;
-  updatedAt: string;
-  confirmedAt?: string;
-  error?: string;
-  nextAt: number | null;
-  quote: {
-    revision: string;
-    expiresAt: string;
-    intentId: string;
-    expectedOutput: string;
-    minimumOutput: string;
-    inputAmount: string;
-    providers: string[];
-    estimatedDuration?: number | null;
-    priceImpact: number;
-    fees: { totalUsd: number; gasUsd: number; trailsUsd: number; providerUsd: number };
+  readonly id: string;
+  readonly version: number;
+  readonly request: SwapRequest;
+  readonly owner: string;
+  readonly assetMetadata?: {
+    readonly origin: { readonly decimals: number; readonly symbol?: string };
+    readonly destination: { readonly decimals: number; readonly symbol?: string };
   };
-  funding?: TransactionView;
-  upstreamStatus?: string;
-  transactions: { chainId: number; type: string; status: string; hash?: string }[];
-  outputAmount?: string;
-  recoveries: RecoveryView[];
-  canRecover: boolean;
-  refund?: { chainId: number; asset: string; amount: string; hash?: string; status: string };
+  readonly phase: SwapPhase;
+  readonly createdAt: string;
+  readonly updatedAt: string;
+  readonly confirmedAt?: string;
+  readonly error?: string;
+  readonly nextAt: number | null;
+  readonly quote: {
+    /** Opaque review ID required by `swaps.confirm`. */
+    readonly reviewId: string;
+    readonly expiresAt: string;
+    readonly intentId: string;
+    readonly expectedOutput: string;
+    readonly minimumOutput: string;
+    readonly inputAmount: string;
+    readonly providers: readonly string[];
+    readonly estimatedDuration?: number | null;
+    readonly priceImpact: number;
+    readonly fees: {
+      readonly totalUsd: number;
+      readonly gasUsd: number;
+      readonly trailsUsd: number;
+      readonly providerUsd: number;
+    };
+  };
+  readonly funding?: TransactionView;
+  readonly upstreamStatus?: string;
+  readonly transactions: readonly {
+    readonly chainId: number;
+    readonly type: string;
+    readonly status: string;
+    readonly hash?: string;
+  }[];
+  readonly outputAmount?: string;
+  readonly recoveries: readonly RecoveryView[];
+  readonly canRecover: boolean;
+  readonly refund?: {
+    readonly chainId: number;
+    readonly asset: string;
+    readonly amount: string;
+    readonly hash?: string;
+    readonly status: string;
+  };
 }
+
+export interface QuoteSwapInput extends SwapRequest {
+  readonly idempotencyKey: string;
+}
+
+export interface ConfirmSwapInput {
+  readonly swapId: string;
+  /** Review ID from `quoted.quote.reviewId`. */
+  readonly reviewId: string;
+}
+
+export interface ListSwapsOptions {
+  readonly limit?: number;
+  readonly cursor?: string;
+}
+
+export interface SwapListPage {
+  readonly items: readonly SwapView[];
+  readonly nextCursor?: string;
+}
+
+export interface TickSwapsOptions {
+  /** Maximum due swaps to advance in one bounded batch (1–10; default 3). */
+  readonly limit?: number;
+}
+
+export interface PrepareRecoveryInput {
+  readonly swapId: string;
+  readonly idempotencyKey: string;
+  readonly source: 'origin' | 'destination';
+}
+
+export interface ConfirmRecoveryInput {
+  readonly swapId: string;
+  readonly recoveryId: string;
+  /** Review ID from `recovery.reviewId`. */
+  readonly reviewId: string;
+}
+
+/** Public swaps capability attached at `wallet.swaps` when `swaps: trails(...)` is configured. */
+export interface SwapsFacet {
+  /** Request and validate an exact-input swap quote without activating or funding it. */
+  quote(input: QuoteSwapInput): Promise<SwapView>;
+  /** Authorize a reviewed swap quote bound to its exact `reviewId`. */
+  confirm(input: ConfirmSwapInput): Promise<SwapView>;
+  /** Return the current sanitized view of a swap. */
+  get(swapId: string): Promise<SwapView>;
+  /** Paginated list of persisted swaps. */
+  list(options?: ListSwapsOptions): Promise<SwapListPage>;
+  /** Advance one due swap if eligible and return its updated view. */
+  reconcile(swapId: string): Promise<SwapView>;
+  /** Advance one bounded batch of due swaps; host reschedules using persisted `nextAt`. */
+  tick(options?: TickSwapsOptions): Promise<void>;
+  /** Inspect on-chain intent balances and prepare a reviewable recovery plan. */
+  prepareRecovery(input: PrepareRecoveryInput): Promise<SwapView>;
+  /** Authorize a reviewed recovery bound to its exact `reviewId`. */
+  confirmRecovery(input: ConfirmRecoveryInput): Promise<SwapView>;
+}
+
+export type { ChainReader };

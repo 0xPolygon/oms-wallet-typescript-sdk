@@ -1,18 +1,42 @@
-import type { Abi, ContractFunctionName } from 'viem';
-
 import { zeroAddress } from 'viem';
 import { z } from 'zod';
 
-import type { Operation, Transfer, UserOperation } from '../client.js';
+import type {
+  BoundSwaps,
+  CoordinatorGate,
+  LockedEnginePrimitives,
+  SwapsConfig
+} from '../internal/swapsBridge.js';
+import type { StoredEvmOperation } from '../state.js';
+import type { ChainReader } from './chain.js';
 import type { TrailsIntent, TrailsReceipt } from './protocol.js';
-import type { SwapRequest } from './quote.js';
-import type { RecoveryRecord, SwapRecord, SwapView, WalletSwapsOptions } from './types.js';
+import type { SwapAsset } from './quote.js';
+import type {
+  ConfirmRecoveryInput,
+  ConfirmSwapInput,
+  ListSwapsOptions,
+  NamespacedSwapStore,
+  PrepareRecoveryInput,
+  QuoteSwapInput,
+  RecoveryRecord,
+  StoredSwapEntry,
+  SwapGateway,
+  SwapListPage,
+  SwapRecord,
+  SwapsFacet,
+  SwapStore,
+  SwapView,
+  TickSwapsOptions,
+  TrailsOptions,
+  TrailsStoreOption
+} from './types.js';
 
-import { normalizeUserOperation, walletExecutors } from '../client.js';
 import { sha256 } from '../encoding.js';
 import { WalletError } from '../errors.js';
+import { registerSwapsBinder } from '../internal/swapsBridge.js';
 import { canonicalJson } from '../json.js';
-import { TrailsError } from './client.js';
+import { EvmChainReader } from './chain.js';
+import { TrailsClient, TrailsError } from './client.js';
 import { recoveryTokenSchema } from './protocol.js';
 import { buildSwapRequest, tokenAddress, validateSwapQuote } from './quote.js';
 import { recoveryAuthorization } from './recovery-authorization.js';
@@ -24,78 +48,160 @@ const idSchema = z
   .string()
   .regex(/^[A-Za-z0-9_-]{8,100}$/)
   .refine((id) => !id.startsWith('swp_'));
-const uncertain = (op?: Operation) =>
+const uncertain = (op?: StoredEvmOperation) =>
   !!op && ['submitting', 'pending', 'unknown'].includes(op.status);
 const terminalUpstream = new Set(['FAILED', 'ABORTED', 'INVALID', 'REFUNDED', 'SUCCEEDED']);
 const emptyCode = (code: string) => /^0x0*$/.test(code);
 const errorCode = (error: unknown) =>
   error instanceof WalletError ? error.code : 'SWAP_UNAVAILABLE';
 
-/** Durable backend workflow. The host schedules nextAt and supplies an exclusive wallet coordinator. */
-export class WalletSwaps {
+function validateId(id: unknown): string {
+  const parsed = idSchema.safeParse(id);
+  if (!parsed.success)
+    throw new WalletError(
+      'INVALID_IDEMPOTENCY_KEY',
+      'An operation ID of 8–100 letters, digits, underscores or hyphens is required (and must not start with "swp_").'
+    );
+  return parsed.data;
+}
+
+function serializeSwapRecord(record: SwapRecord): StoredSwapEntry {
+  return {
+    id: record.id,
+    intentId: record.quote.intent.intentId,
+    version: record.version,
+    active: record.action !== null,
+    nextAt: record.nextAt,
+    createdAt: record.createdAt,
+    payload: JSON.stringify(record)
+  };
+}
+
+function deserializeSwapRecord(entry: StoredSwapEntry): SwapRecord {
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(entry.payload);
+  } catch {
+    throw new WalletError('INVALID_STATE', 'Stored swap entry payload is not valid JSON.', 500);
+  }
+  if (
+    !parsed ||
+    typeof parsed !== 'object' ||
+    (parsed as { id?: unknown }).id !== entry.id ||
+    typeof (parsed as { owner?: unknown }).owner !== 'string' ||
+    typeof (parsed as { requestHash?: unknown }).requestHash !== 'string'
+  )
+    throw new WalletError(
+      'INVALID_STATE',
+      'Stored swap entry payload is not in a recognised format.',
+      500
+    );
+  return parsed as SwapRecord;
+}
+
+function scopeSwapStore(store: NamespacedSwapStore, namespace: string): SwapStore {
+  return {
+    get: (id) => store.get(namespace, id),
+    findIntent: (intentId) => store.findIntent(namespace, intentId),
+    save: (entry) => store.save(namespace, entry),
+    list: (options) => store.list(namespace, options)
+  };
+}
+
+export interface CoordinatorConfig {
+  readonly primitives: LockedEnginePrimitives;
+  readonly trails: SwapGateway;
+  readonly chains: ChainReader;
+  readonly store: SwapStore;
+  readonly assets: readonly SwapAsset[];
+  readonly enabled: boolean;
+  readonly environment: string;
+  readonly clock: () => number;
+}
+
+/**
+ * Internal durable Trails coordinator bound to ONE identity executor and ONE submission gate.
+ * Never reacquires the executor or invokes public wallet facade methods.
+ */
+export class TrailsCoordinator {
   private readonly now: () => number;
-  constructor(private readonly options: WalletSwapsOptions) {
-    // Swap methods call the wallet from inside this executor; the wallet's own executor would wait
-    // on itself forever.
-    if (walletExecutors.get(options.wallet) === options.executor)
-      throw new WalletError(
-        'CONFIGURATION',
-        "Give WalletSwaps its own executor, not the wallet's.",
-        503
-      );
-    this.now = options.clock ?? Date.now;
+  constructor(private readonly config: CoordinatorConfig) {
+    this.now = config.clock;
   }
-  private remote() {
-    if (!this.options.trails)
-      throw new WalletError('SWAPS_UNAVAILABLE', 'Trails is not configured.', 503);
-    return this.options.trails;
+
+  gate(): CoordinatorGate {
+    return {
+      assertChainAvailableLocked: (chainId, options) =>
+        this.availableLocked(
+          chainId,
+          undefined,
+          options?.exceptOperationId ? [options.exceptOperationId] : []
+        )
+    };
   }
-  private async enabled(recovery = false) {
-    if (!recovery && !this.options.enabled)
+
+  facet(): SwapsFacet {
+    return Object.freeze({
+      quote: (input: QuoteSwapInput) => this.quoteSwap(input),
+      confirm: (input: ConfirmSwapInput) => this.confirmSwap(input),
+      get: (swapId: string) => this.getSwap(swapId),
+      list: (options?: ListSwapsOptions) => this.listSwaps(options),
+      reconcile: (swapId: string) => this.reconcileSwap(swapId),
+      tick: (options?: TickSwapsOptions) => this.tick(options?.limit),
+      prepareRecovery: (input: PrepareRecoveryInput) => this.prepareRecovery(input),
+      confirmRecovery: (input: ConfirmRecoveryInput) => this.confirmRecovery(input)
+    });
+  }
+
+  private async enabledLocked(recovery = false): Promise<string> {
+    if (!recovery && !this.config.enabled)
       throw new WalletError('SWAPS_DISABLED', 'New swap transactions are disabled.', 409);
-    const snapshot = await this.options.wallet.inspect();
+    const snapshot = await this.config.primitives.inspectLocked();
     if (snapshot.disabled)
       throw new WalletError('WALLET_DISABLED', 'This wallet is disabled.', 409);
     if (!snapshot.wallet)
       throw new WalletError('WALLET_PENDING', 'Restore this wallet first.', 409);
     return snapshot.wallet.address.toLowerCase();
   }
-  private async record(id: string) {
-    idSchema.parse(id);
-    const record = await this.options.store.get(id);
-    if (!record) throw new WalletError('NOT_FOUND', 'Swap not found.', 404);
-    this.environment(record);
-    const snapshot = await this.options.wallet.inspect();
+
+  private async loadRecordLocked(id: string): Promise<SwapRecord> {
+    validateId(id);
+    const entry = await this.config.store.get(id);
+    if (!entry) throw new WalletError('NOT_FOUND', 'Swap not found.', 404);
+    const record = deserializeSwapRecord(entry);
+    this.checkEnvironment(record);
+    const snapshot = await this.config.primitives.inspectLocked();
     if (!snapshot.wallet || snapshot.wallet.address.toLowerCase() !== record.owner)
       throw new WalletError('WALLET_MISMATCH', 'Swap belongs to another wallet.', 409);
     return record;
   }
-  private environment(record: SwapRecord) {
-    if (record.environment !== (this.options.environment ?? 'default'))
+
+  private checkEnvironment(record: SwapRecord) {
+    if (record.environment !== this.config.environment)
       throw new WalletError(
         'SWAP_ENVIRONMENT_CHANGED',
         'Restore the original Trails endpoint/project before reconciling this swap.',
         409
       );
   }
-  private async save(record: SwapRecord, delay: number | null = record.action ? 5000 : null) {
+
+  private async saveLocked(record: SwapRecord, delay: number | null = record.action ? 5000 : null) {
     record.version++;
     record.updatedAt = new Date(this.now()).toISOString();
     record.nextAt = delay === null ? null : this.now() + delay;
-    await this.options.store.save(record);
+    await this.config.store.save(serializeSwapRecord(record));
   }
-  private async active() {
-    const records = await this.options.store.list({ active: true, limit: 1001 });
-    if (records.length > 1000)
+
+  private async activeRecordsLocked(): Promise<SwapRecord[]> {
+    const entries = await this.config.store.list({ active: true, limit: 1001 });
+    if (entries.length > 1000)
       throw new WalletError('WALLET_BUSY', 'Too many unresolved wallet operations.', 409);
-    return records;
+    return entries.map(deserializeSwapRecord);
   }
+
   private reservedChain(record: SwapRecord): number | undefined {
     const recovery = record.recoveries.find((r) => r.id === record.activeRecoveryId);
     if (recovery) return recovery.chainId;
-    // The origin chain stays reserved while this swap's funding can still debit it: until the
-    // funding settles, or while a confirmed swap is still preparing or sending it. A funding that
-    // failed, reverted or expired debits nothing, so observing the intent afterwards reserves nothing.
     if (
       uncertain(record.funding) ||
       (record.confirmedAt &&
@@ -104,9 +210,15 @@ export class WalletSwaps {
         !['failed', 'expired'].includes(record.phase))
     )
       return record.request.originChainId;
+    return undefined;
   }
-  private async available(chainId: number, exceptSwap?: string, exceptOperations: string[] = []) {
-    for (const record of await this.active()) {
+
+  private async availableLocked(
+    chainId: number,
+    exceptSwap?: string,
+    exceptOperations: readonly string[] = []
+  ): Promise<void> {
+    for (const record of await this.activeRecordsLocked()) {
       if (record.id !== exceptSwap && this.reservedChain(record) === chainId)
         throw new WalletError(
           'DEBIT_PENDING',
@@ -114,20 +226,19 @@ export class WalletSwaps {
           409
         );
     }
-    const disabled = (await this.options.wallet.inspect()).disabled;
-    const operations = await this.options.wallet.listOpenOperations(
-      await this.options.legacyOperationIds?.()
-    );
+    const disabled = (await this.config.primitives.inspectLocked()).disabled;
+    const operations = await this.config.primitives.listOpenEvmOperationsLocked();
     for (let operation of operations) {
       if (
         operation.chainId !== chainId ||
         exceptOperations.includes(operation.id) ||
         !uncertain(operation) ||
-        !['transfer', 'userOperation', 'deployment', 'recovery'].includes(operation.kind)
+        !['transfer', 'call', 'userOperation', 'deployment', 'recovery'].includes(operation.kind)
       )
         continue;
       if (!disabled)
-        operation = (await this.options.wallet.getOperation(operation.id)) ?? operation;
+        operation =
+          (await this.config.primitives.refreshEvmOperationLocked(operation.id)) ?? operation;
       if (uncertain(operation))
         throw new WalletError(
           'DEBIT_PENDING',
@@ -136,67 +247,17 @@ export class WalletSwaps {
         );
     }
   }
-  /** Lifecycle and ordinary signing share the workflow lock with swap mutations. */
-  walletCommand<T>(task: () => Promise<T>): Promise<T> {
-    return this.options.executor.run(task);
-  }
-  prepareTransfer(id: string, transfer: Transfer) {
-    return this.options.executor.run(async () => {
-      idSchema.parse(id);
-      await this.available(transfer.chainId, undefined, [id]);
-      return this.options.wallet.prepareTransfer(id, transfer);
-    });
-  }
-  executeTransfer(id: string) {
-    return this.options.executor.run(async () => {
-      idSchema.parse(id);
-      const op = (await this.options.wallet.readOperations([id])).find((o) => o.id === id);
-      if (!op || op.kind !== 'transfer')
-        throw new WalletError('NOT_FOUND', 'Transfer not found.', 404);
-      if (op.status === 'quoted') await this.available(op.chainId, undefined, [id]);
-      return this.options.wallet.executeTransfer(id);
-    });
-  }
-  async prepareUserOperation<
-    const abi extends Abi | readonly unknown[] = Abi,
-    functionName extends ContractFunctionName<abi> = ContractFunctionName<abi>
-  >(id: string, operation: UserOperation<abi, functionName>) {
-    // Coordinate on the same chain and call that the wallet hashes, stores and quotes.
-    const { chainId, transaction } = normalizeUserOperation(operation);
-    return this.options.executor.run(async () => {
-      idSchema.parse(id);
-      // A retry of an existing operation returns it, or raises a conflict, without submitting;
-      // executeUserOperation checks the chain again while it is still quoted.
-      const existing = (await this.options.wallet.readOperations([id])).some((o) => o.id === id);
-      if (!existing) await this.available(chainId, undefined, [id]);
-      return this.options.wallet.prepareUserOperation(id, { chainId, calls: [transaction] });
-    });
-  }
-  executeUserOperation(id: string) {
-    return this.options.executor.run(async () => {
-      idSchema.parse(id);
-      const op = (await this.options.wallet.readOperations([id])).find((o) => o.id === id);
-      if (!op || op.kind !== 'userOperation')
-        throw new WalletError('NOT_FOUND', 'User operation not found.', 404);
-      if (op.status === 'quoted') await this.available(op.chainId, undefined, [id]);
-      return this.options.wallet.executeUserOperation(id);
-    });
-  }
-  async sendUserOperation<
-    const abi extends Abi | readonly unknown[] = Abi,
-    functionName extends ContractFunctionName<abi> = ContractFunctionName<abi>
-  >(id: string, operation: UserOperation<abi, functionName>) {
-    await this.prepareUserOperation(id, operation);
-    return this.executeUserOperation(id);
-  }
-  quoteSwap(id: string, input: SwapRequest): Promise<SwapView> {
-    return this.options.executor.run(async () => {
-      idSchema.parse(id);
-      const owner = await this.enabled();
-      const request = buildSwapRequest(owner, input, this.options.assets);
+
+  private async quoteSwap(input: QuoteSwapInput): Promise<SwapView> {
+    const id = validateId(input?.idempotencyKey);
+    const { idempotencyKey: _id, ...swapInput } = input;
+    return this.config.primitives.runLocked(async () => {
+      const owner = await this.enabledLocked();
+      const request = buildSwapRequest(owner, swapInput, this.config.assets);
       const requestHash = await sha256(canonicalJson(request));
-      const existing = await this.options.store.get(id);
-      if (existing) {
+      const existingEntry = await this.config.store.get(id);
+      if (existingEntry) {
+        const existing = deserializeSwapRecord(existingEntry);
         if (existing.requestHash !== requestHash || existing.owner !== owner)
           throw new WalletError(
             'IDEMPOTENCY_CONFLICT',
@@ -205,10 +266,12 @@ export class WalletSwaps {
           );
         return swapView(existing);
       }
-      const { TrailsContracts } = await this.remote().readiness();
-      const { intent } = await this.remote().quoteIntent(request);
+      const { TrailsContracts } = await this.config.trails.readiness();
+      const { intent } = await this.config.trails.quoteIntent(
+        request as unknown as Record<string, unknown>
+      );
       const quote = await validateSwapQuote(intent, request, TrailsContracts, this.now());
-      const previous = await this.options.store.findIntent(intent.intentId);
+      const previous = await this.config.store.findIntent(intent.intentId);
       if (previous && previous !== id)
         throw new WalletError(
           'INTENT_ALREADY_TRACKED',
@@ -217,7 +280,7 @@ export class WalletSwaps {
         );
       const timestamp = new Date(this.now()).toISOString();
       const metadata = (chainId: number, token: string) => {
-        const asset = this.options.assets.find(
+        const asset = this.config.assets.find(
           (a) => a.chainId === chainId && tokenAddress(a.asset) === token
         )!;
         return {
@@ -230,7 +293,7 @@ export class WalletSwaps {
         version: 0,
         requestHash,
         owner,
-        environment: this.options.environment ?? 'default',
+        environment: this.config.environment,
         assetMetadata: {
           origin: metadata(request.originChainId, request.originTokenAddress),
           destination: metadata(request.destinationChainId, request.destinationTokenAddress)
@@ -258,70 +321,90 @@ export class WalletSwaps {
         fundingConfirmed: false,
         recoveries: []
       };
-      await this.save(record);
+      await this.saveLocked(record);
       return swapView(record);
     });
   }
-  confirmSwap(id: string, quoteRevision: string): Promise<SwapView> {
-    return this.options.executor.run(async () => {
-      const record = await this.record(id);
-      if (record.quote.digest !== quoteRevision)
+
+  private async confirmSwap(input: ConfirmSwapInput): Promise<SwapView> {
+    if (!input || typeof input !== 'object')
+      throw new WalletError('STALE_QUOTE', 'Provide swapId and reviewId to confirm.', 409);
+    return this.config.primitives.runLocked(async () => {
+      const record = await this.loadRecordLocked(input.swapId);
+      if (record.quote.digest !== input.reviewId)
         throw new WalletError('STALE_QUOTE', 'Review the current quote before confirming.', 409);
       if (record.confirmedAt) return swapView(record);
-      await this.enabled();
+      await this.enabledLocked();
       if (record.phase !== 'quoted' || this.expired(record))
         throw new WalletError('QUOTE_EXPIRED', 'Request and review a new quote.', 409);
-      await this.available(record.request.originChainId, record.id);
+      await this.availableLocked(record.request.originChainId, record.id);
       await this.funds(record);
+      // Persist coordination marker in wallet state before authorizing the first swap debit.
+      await this.config.primitives.markSwapsCoordinatedLocked();
       record.confirmedAt = new Date(this.now()).toISOString();
       record.phase = 'preparing';
       record.action = 'prepare-funding';
-      await this.save(record, 0);
+      await this.saveLocked(record, 0);
       return swapView(record);
     });
   }
-  getSwap(id: string): Promise<SwapView> {
-    return this.options.executor.run(async () => {
-      const record = await this.record(id);
+
+  private getSwap(swapId: string): Promise<SwapView> {
+    return this.config.primitives.runLocked(async () => {
+      const record = await this.loadRecordLocked(swapId);
       if (record.phase === 'quoted' && this.expired(record)) {
         record.phase = 'expired';
-        await this.save(record);
+        await this.saveLocked(record);
       }
       return swapView(record);
     });
   }
-  async listSwaps(offset = 0): Promise<SwapView[]> {
-    return this.options.executor.run(async () =>
-      (
-        await this.options.store.list({
-          offset: z.number().int().min(0).max(100000).parse(offset),
-          limit: 50
-        })
-      ).map(swapView)
-    );
+
+  private listSwaps(options: ListSwapsOptions = {}): Promise<SwapListPage> {
+    const limit = options.limit ?? 50;
+    if (!Number.isInteger(limit) || limit < 1 || limit > 100)
+      throw new WalletError('INVALID_PAGE', 'limit must be an integer between 1 and 100.');
+    let offset = 0;
+    if (options.cursor !== undefined) {
+      if (typeof options.cursor !== 'string' || !/^[0-9]{1,6}$/.test(options.cursor))
+        throw new WalletError('INVALID_PAGE', 'Invalid pagination cursor.');
+      offset = Number(options.cursor);
+    }
+    return this.config.primitives.runLocked(async () => {
+      const entries = await this.config.store.list({ offset, limit: limit + 1 });
+      const hasMore = entries.length > limit;
+      const items = entries.slice(0, limit).map((e) => swapView(deserializeSwapRecord(e)));
+      return {
+        items,
+        ...(hasMore ? { nextCursor: String(offset + limit) } : {})
+      };
+    });
   }
-  reconcileSwap(id: string): Promise<SwapView> {
-    return this.options.executor.run(async () => {
-      const record = await this.record(id);
-      if (record.action && (record.nextAt ?? 0) <= this.now()) await this.advance(record);
+
+  private reconcileSwap(swapId: string): Promise<SwapView> {
+    return this.config.primitives.runLocked(async () => {
+      const record = await this.loadRecordLocked(swapId);
+      if (record.action && (record.nextAt ?? 0) <= this.now()) await this.advanceLocked(record);
       return swapView(record);
     });
   }
-  /** One bounded batch. Alarms/Node runners reschedule from persisted nextAt. */
-  tick(limit = 3): Promise<void> {
-    return this.options.executor.run(async () => {
-      const due = (await this.active())
+
+  private tick(limit = 3): Promise<void> {
+    return this.config.primitives.runLocked(async () => {
+      const due = (await this.activeRecordsLocked())
         .filter((r) => r.action && (r.nextAt ?? 0) <= this.now())
         .sort((a, b) => (a.nextAt ?? 0) - (b.nextAt ?? 0));
       for (const record of due.slice(0, Math.max(1, Math.min(limit, 10))))
-        await this.advance(record);
+        await this.advanceLocked(record);
     });
   }
-  private expired(record: SwapRecord) {
+
+  private expired(record: SwapRecord): boolean {
     return Date.parse(record.quote.expiresAt) <= this.now() + 30_000;
   }
-  private async funds(record: SwapRecord) {
-    const amount = await this.options.chains.balance(
+
+  private async funds(record: SwapRecord): Promise<void> {
+    const amount = await this.config.chains.balance(
       record.request.originChainId,
       record.owner,
       record.request.originAsset
@@ -333,14 +416,13 @@ export class WalletSwaps {
         409
       );
   }
-  private async advance(record: SwapRecord) {
+
+  private async advanceLocked(record: SwapRecord): Promise<void> {
     try {
-      this.environment(record);
-      // The child journal may be newer than the parent after a crash during submission.
-      // Never expire or release a debit using a cached, pre-submission child snapshot.
+      this.checkEnvironment(record);
       if (['prepare-funding', 'activate', 'fund'].includes(record.action ?? '')) {
         record.funding =
-          (await this.options.wallet.readOperations([record.fundingId])).find(
+          (await this.config.primitives.readEvmOperationsLocked([record.fundingId])).find(
             (op) => op.id === record.fundingId
           ) ?? record.funding;
         if (uncertain(record.funding) || record.funding?.status === 'executed')
@@ -348,7 +430,7 @@ export class WalletSwaps {
       }
       const recovery = this.currentRecovery(record, false);
       if (recovery) {
-        const children = await this.options.wallet.readOperations([
+        const children = await this.config.primitives.readEvmOperationsLocked([
           recovery.deploymentId,
           recovery.transactionId
         ]);
@@ -356,9 +438,13 @@ export class WalletSwaps {
           children.find((op) => op.id === recovery.deploymentId) ?? recovery.deployment;
         recovery.transaction =
           children.find((op) => op.id === recovery.transactionId) ?? recovery.transaction;
-        if (uncertain(recovery.deployment) && !(await this.options.wallet.inspect()).disabled)
+        if (
+          uncertain(recovery.deployment) &&
+          !(await this.config.primitives.inspectLocked()).disabled
+        )
           recovery.deployment =
-            (await this.options.wallet.getOperation(recovery.deploymentId)) ?? recovery.deployment;
+            (await this.config.primitives.refreshEvmOperationLocked(recovery.deploymentId)) ??
+            recovery.deployment;
         if (uncertain(recovery.transaction) || recovery.transaction?.status === 'executed')
           record.action = 'observe-recovery';
       }
@@ -371,18 +457,19 @@ export class WalletSwaps {
         record.phase = 'expired';
         record.action = null;
         record.error = 'QUOTE_EXPIRED';
-        await this.save(record);
+        await this.saveLocked(record);
         return;
       }
       switch (record.action) {
         case 'prepare-funding': {
-          await this.enabled();
-          await this.available(record.request.originChainId, record.id, [record.fundingId]);
+          await this.enabledLocked();
+          await this.availableLocked(record.request.originChainId, record.id, [record.fundingId]);
           await this.funds(record);
-          await this.save(record);
-          record.funding = await this.options.wallet.prepareTransfer(
+          await this.saveLocked(record);
+          record.funding = await this.config.primitives.prepareEvmTransferLocked(
             record.fundingId,
-            record.quote.funding
+            record.quote.funding,
+            { allowSwapsPrefix: true, skipGate: true }
           );
           this.sponsored(record.funding);
           record.phase = 'activating';
@@ -390,34 +477,33 @@ export class WalletSwaps {
           break;
         }
         case 'activate':
-          await this.activate(record);
+          await this.activateLocked(record);
           break;
         case 'fund':
-          await this.fund(record);
+          await this.fundLocked(record);
           break;
         case 'observe':
-          await this.observe(record);
+          await this.observeLocked(record);
           break;
         case 'deploy-owner':
-          await this.deployOwner(record);
+          await this.deployOwnerLocked(record);
           break;
         case 'sign-recovery':
-          await this.signRecovery(record);
+          await this.signRecoveryLocked(record);
           break;
         case 'build-recovery':
-          await this.buildRecovery(record);
+          await this.buildRecoveryLocked(record);
           break;
         case 'submit-recovery':
-          await this.submitRecovery(record);
+          await this.submitRecoveryLocked(record);
           break;
         case 'observe-recovery':
-          await this.observeRecovery(record);
+          await this.observeRecoveryLocked(record);
           break;
       }
       record.attempts = 0;
-      // Keep the reason a swap needs attention or ended without settling; clear progress notes.
       if (!['attention', 'failed', 'expired'].includes(record.phase)) record.error = undefined;
-      await this.save(
+      await this.saveLocked(
         record,
         record.action ? (record.phase === 'attention' ? 30_000 : 5000) : null
       );
@@ -446,13 +532,14 @@ export class WalletSwaps {
           record.action = null;
         }
       }
-      await this.save(
+      await this.saveLocked(
         record,
         record.action ? Math.min(300_000, 5000 * 2 ** Math.min(record.attempts, 6)) : null
       );
     }
   }
-  private sponsored(op: Operation) {
+
+  private sponsored(op: StoredEvmOperation) {
     if (op.status !== 'quoted' || !op.quote?.sponsored)
       throw new WalletError(
         'SPONSORSHIP_REQUIRED',
@@ -462,6 +549,7 @@ export class WalletSwaps {
     if (Date.parse(op.quote.expiresAt) <= this.now() + 30_000)
       throw new WalletError('QUOTE_EXPIRED', 'Prepared transaction expires too soon.', 409);
   }
+
   private identity(record: SwapRecord, intent: TrailsIntent) {
     const original = record.quote.intent;
     for (const key of [
@@ -482,9 +570,12 @@ export class WalletSwaps {
         );
     }
   }
+
   private async receipt(record: SwapRecord): Promise<TrailsReceipt | undefined> {
     try {
-      const { intentReceipt } = await this.remote().getIntentReceipt(record.quote.intent.intentId);
+      const { intentReceipt } = await this.config.trails.getIntentReceipt(
+        record.quote.intent.intentId
+      );
       const original = record.quote.intent;
       if (
         intentReceipt.intentId !== original.intentId ||
@@ -508,6 +599,7 @@ export class WalletSwaps {
       throw error;
     }
   }
+
   private acceptsFunding(record: SwapRecord, receipt?: TrailsReceipt) {
     const deposit = receipt?.depositTransaction;
     return (
@@ -522,16 +614,17 @@ export class WalletSwaps {
       deposit.tokenAmount === record.quote.funding.amount
     );
   }
-  private async activate(record: SwapRecord) {
-    await this.enabled();
+
+  private async activateLocked(record: SwapRecord) {
+    await this.enabledLocked();
     this.sponsored(record.funding!);
-    const { intent } = await this.remote().getIntent(record.quote.intent.intentId);
+    const { intent } = await this.config.trails.getIntent(record.quote.intent.intentId);
     this.identity(record, intent);
     record.upstreamStatus = intent.status;
     if (intent.status === 'QUOTED') {
-      await this.save(record);
-      await this.remote().executeIntent(intent.intentId);
-      return; // Confirm activation with an independent status/receipt read on the next step.
+      await this.saveLocked(record);
+      await this.config.trails.executeIntent(intent.intentId);
+      return;
     }
     const receipt = await this.receipt(record);
     if (this.acceptsFunding(record, receipt)) {
@@ -545,13 +638,15 @@ export class WalletSwaps {
       record.error = 'INTENT_NOT_FUNDABLE';
     }
   }
-  private async fund(record: SwapRecord) {
-    const disabled = (await this.options.wallet.inspect()).disabled;
+
+  private async fundLocked(record: SwapRecord) {
+    const disabled = (await this.config.primitives.inspectLocked()).disabled;
     record.funding = disabled
-      ? (await this.options.wallet.readOperations([record.fundingId])).find(
+      ? (await this.config.primitives.readEvmOperationsLocked([record.fundingId])).find(
           (op) => op.id === record.fundingId
         )
-      : ((await this.options.wallet.getOperation(record.fundingId)) ?? record.funding);
+      : ((await this.config.primitives.refreshEvmOperationLocked(record.fundingId)) ??
+        record.funding);
     if (!record.funding)
       throw new WalletError(
         'FUNDING_UNKNOWN',
@@ -559,9 +654,9 @@ export class WalletSwaps {
         409
       );
     if (record.funding.status === 'quoted') {
-      await this.enabled();
+      await this.enabledLocked();
       this.sponsored(record.funding);
-      await this.available(record.request.originChainId, record.id, [record.fundingId]);
+      await this.availableLocked(record.request.originChainId, record.id, [record.fundingId]);
       await this.funds(record);
       const receipt = await this.receipt(record);
       if (!this.acceptsFunding(record, receipt)) {
@@ -572,20 +667,23 @@ export class WalletSwaps {
         }
         return;
       }
-      await this.save(record);
+      await this.saveLocked(record);
       try {
-        record.funding = await this.options.wallet.executeTransfer(record.fundingId);
+        record.funding = await this.config.primitives.executeEvmOperationLocked(
+          record.fundingId,
+          ['transfer'],
+          { skipGate: true, bypassReviewId: true }
+        );
       } catch (error) {
-        // The wallet's quote ran out before it was sent: it recorded the funding as expired.
         if (!(error instanceof WalletError) || error.code !== 'QUOTE_EXPIRED') throw error;
         record.funding =
-          (await this.options.wallet.readOperations([record.fundingId])).find(
+          (await this.config.primitives.readEvmOperationsLocked([record.fundingId])).find(
             (op) => op.id === record.fundingId
           ) ?? record.funding;
       }
     }
     if (record.funding.status === 'executed' && record.funding.txnHash) {
-      const receipt = await this.options.chains.receipt(
+      const receipt = await this.config.chains.receipt(
         record.request.originChainId,
         record.funding.txnHash
       );
@@ -618,24 +716,30 @@ export class WalletSwaps {
       record.phase = 'attention';
       record.action = 'observe';
       record.error = 'FUNDING_FAILED';
-    } else if (record.funding.status === 'expired') {
-      // The funding quote expired before it was broadcast: nothing left the wallet.
+    } else if (record.funding.status === 'expired' && record.funding.preSubmitExpired === true) {
+      // Only a proven pre-submit local quote expiry releases the swap & origin reservation.
       record.phase = 'expired';
       record.action = null;
       record.error = 'QUOTE_EXPIRED';
     } else if (uncertain(record.funding)) {
-      record.phase = 'funding';
-      record.error = 'FUNDING_PENDING';
+      if (record.funding.error === 'RECONCILIATION_REQUIRED') {
+        record.phase = 'attention';
+        record.action = 'fund';
+        record.error = 'RECONCILIATION_REQUIRED';
+      } else {
+        record.phase = 'funding';
+        record.error = 'FUNDING_PENDING';
+      }
     }
-    // Disabled wallets retain uncertain debits; public observations do not trigger reauth.
   }
-  private async observe(record: SwapRecord) {
-    const { intent } = await this.remote().getIntent(record.quote.intent.intentId);
+
+  private async observeLocked(record: SwapRecord) {
+    const { intent } = await this.config.trails.getIntent(record.quote.intent.intentId);
     this.identity(record, intent);
     record.upstreamStatus = intent.status;
     const receipt = await this.receipt(record);
     if (!receipt) return;
-    await this.repairDeposit(record, intent, receipt);
+    await this.repairDepositLocked(record, intent, receipt);
     if (receipt.status === 'SUCCEEDED') {
       if (
         !record.fundingConfirmed ||
@@ -670,14 +774,19 @@ export class WalletSwaps {
       record.error = `TRAILS_${receipt.status}`;
     } else if (record.fundingConfirmed) record.phase = 'settling';
   }
-  private async repairDeposit(record: SwapRecord, intent: TrailsIntent, receipt: TrailsReceipt) {
+
+  private async repairDepositLocked(
+    record: SwapRecord,
+    intent: TrailsIntent,
+    receipt: TrailsReceipt
+  ) {
     const failed = ['FAILED', 'ABORTED', 'REVERTED'];
     const deposit = receipt.depositTransaction;
     if (
       !record.fundingConfirmed ||
       !record.funding?.txnHash ||
       record.activeRecoveryId ||
-      !this.options.enabled ||
+      !this.config.enabled ||
       !['EXECUTING', 'INVALID', 'ABORTED'].includes(intent.status) ||
       !deposit ||
       !failed.includes(deposit.status) ||
@@ -695,17 +804,17 @@ export class WalletSwaps {
         return;
     }
     if (receipt.refundTransaction && !failed.includes(receipt.refundTransaction.status)) return;
-    if ((await this.options.wallet.inspect()).disabled) return;
-    const proof = await this.options.chains.receipt(
+    if ((await this.config.primitives.inspectLocked()).disabled) return;
+    const proof = await this.config.chains.receipt(
       record.request.originChainId,
       record.funding.txnHash
     );
     if (proof?.status !== 'success') return;
     record.repairAttemptedAt = new Date(this.now()).toISOString();
-    await this.save(record);
-    await this.remote().retryIntent(intent.intentId, record.funding.txnHash);
-    // Always re-read the same intent on the next tick. This never sends another deposit.
+    await this.saveLocked(record);
+    await this.config.trails.retryIntent(intent.intentId, record.funding.txnHash);
   }
+
   private currentRecovery(record: SwapRecord, required: true): RecoveryRecord;
   private currentRecovery(record: SwapRecord, required?: false): RecoveryRecord | undefined;
   private currentRecovery(record: SwapRecord, required = false) {
@@ -714,14 +823,15 @@ export class WalletSwaps {
       throw new WalletError('INVALID_RECOVERY', 'No authorized recovery is active.', 409);
     return recovery;
   }
-  private async recoveryAllowed(record: SwapRecord) {
+
+  private async recoveryAllowedLocked(record: SwapRecord) {
     record.funding =
-      (await this.options.wallet.readOperations([record.fundingId])).find(
+      (await this.config.primitives.readEvmOperationsLocked([record.fundingId])).find(
         (op) => op.id === record.fundingId
       ) ?? record.funding;
     if (uncertain(record.funding))
       throw new WalletError('DEBIT_PENDING', 'Reconcile funding before starting recovery.', 409);
-    const { intent } = await this.remote().getIntent(record.quote.intent.intentId);
+    const { intent } = await this.config.trails.getIntent(record.quote.intent.intentId);
     this.identity(record, intent);
     const receipt = await this.receipt(record);
     const lastProgress =
@@ -739,16 +849,13 @@ export class WalletSwaps {
         409
       );
   }
-  prepareRecovery(
-    id: string,
-    recoveryId: string,
-    source: 'origin' | 'destination'
-  ): Promise<SwapView> {
-    return this.options.executor.run(async () => {
-      idSchema.parse(recoveryId);
-      z.enum(['origin', 'destination']).parse(source);
-      await this.enabled(true);
-      const record = await this.record(id);
+
+  private prepareRecovery(input: PrepareRecoveryInput): Promise<SwapView> {
+    const recoveryId = validateId(input?.idempotencyKey);
+    const source = z.enum(['origin', 'destination']).parse(input?.source);
+    return this.config.primitives.runLocked(async () => {
+      await this.enabledLocked(true);
+      const record = await this.loadRecordLocked(input.swapId);
       const existing = record.recoveries.find((r) => r.id === recoveryId);
       if (existing) {
         if (existing.source !== source)
@@ -757,7 +864,7 @@ export class WalletSwaps {
       }
       if (record.activeRecoveryId)
         throw new WalletError('RECOVERY_PENDING', 'Reconcile the active recovery first.', 409);
-      await this.recoveryAllowed(record);
+      await this.recoveryAllowedLocked(record);
       const intent = record.quote.intent;
       const target =
         source === 'origin' ? intent.originIntentAddress : intent.destinationIntentAddress;
@@ -767,8 +874,8 @@ export class WalletSwaps {
           'INVALID_RECOVERY',
           'This intent has no separate destination wallet.'
         );
-      await this.available(chainId, record.id, [record.fundingId]);
-      const originalPrepared = await this.remote().prepareIntentRecovery(
+      await this.availableLocked(chainId, record.id, [record.fundingId]);
+      const originalPrepared = await this.config.trails.prepareIntentRecovery(
         intent.intentId,
         target,
         record.owner
@@ -800,7 +907,7 @@ export class WalletSwaps {
         candidates.set(tokenAddress(t.contractAddress), { symbol: t.symbol, decimals: t.decimals });
       }
       if (!candidates.size) {
-        for (const a of this.options.assets.filter((a) => a.chainId === chainId))
+        for (const a of this.config.assets.filter((a) => a.chainId === chainId))
           candidates.set(tokenAddress(a.asset), {
             symbol: a.asset === 'native' ? 'Native' : a.asset,
             decimals: a.decimals
@@ -808,7 +915,7 @@ export class WalletSwaps {
       }
       const assets: RecoveryRecord['assets'] = [];
       for (const [asset, metadata] of candidates) {
-        const amount = await this.options.chains.balance(chainId, target, asset);
+        const amount = await this.config.chains.balance(chainId, target, asset);
         if (BigInt(amount) > 0n)
           assets.push({ asset: asset === zeroAddress ? 'native' : asset, amount, ...metadata });
       }
@@ -820,13 +927,13 @@ export class WalletSwaps {
         );
       const prepared = recoveryAuthorization(originalPrepared, intent, record.owner, assets);
       const requiresOwnerDeployment = emptyCode(
-        await this.options.chains.code(chainId, record.owner)
+        await this.config.chains.code(chainId, record.owner)
       );
       const expiresAt = new Date(this.now() + 300_000).toISOString();
       const revision = await sha256(
         canonicalJson({ prepared, assets, requiresOwnerDeployment, expiresAt })
       );
-      const prefix = `swp_${await sha256(`${id}:${recoveryId}`)}`;
+      const prefix = `swp_${await sha256(`${input.swapId}:${recoveryId}`)}`;
       record.recoveries.push({
         id: recoveryId,
         source,
@@ -843,41 +950,46 @@ export class WalletSwaps {
         signingId: `${prefix}_sign`,
         transactionId: `${prefix}_recover`
       });
-      await this.save(record);
+      await this.saveLocked(record);
       return swapView(record);
     });
   }
-  confirmRecovery(id: string, recoveryId: string, revision: string): Promise<SwapView> {
-    return this.options.executor.run(async () => {
-      const record = await this.record(id);
-      const recovery = record.recoveries.find((r) => r.id === recoveryId);
-      if (!recovery || recovery.revision !== revision)
+
+  private confirmRecovery(input: ConfirmRecoveryInput): Promise<SwapView> {
+    if (!input || typeof input !== 'object')
+      throw new WalletError('STALE_RECOVERY', 'Provide swapId, recoveryId, and reviewId.', 409);
+    return this.config.primitives.runLocked(async () => {
+      const record = await this.loadRecordLocked(input.swapId);
+      const recovery = record.recoveries.find((r) => r.id === input.recoveryId);
+      if (!recovery || recovery.revision !== input.reviewId)
         throw new WalletError(
           'STALE_RECOVERY',
           'Review the current recovery before confirming.',
           409
         );
       if (recovery.status !== 'quoted') return swapView(record);
-      await this.enabled(true);
-      await this.recoveryAllowed(record);
+      await this.enabledLocked(true);
+      await this.recoveryAllowedLocked(record);
       if (record.activeRecoveryId)
         throw new WalletError('RECOVERY_PENDING', 'Another recovery is active.', 409);
-      await this.available(recovery.chainId, record.id, [record.fundingId]);
+      await this.availableLocked(recovery.chainId, record.id, [record.fundingId]);
       await this.recheckRecovery(record, recovery);
+      await this.config.primitives.markSwapsCoordinatedLocked();
       recovery.status = 'confirmed';
       record.activeRecoveryId = recovery.id;
       record.phase = 'recovering';
       record.action = recovery.requiresOwnerDeployment ? 'deploy-owner' : 'sign-recovery';
-      await this.save(record, 0);
+      await this.saveLocked(record, 0);
       return swapView(record);
     });
   }
+
   private async recheckRecovery(record: SwapRecord, recovery: RecoveryRecord) {
     if (Date.parse(recovery.expiresAt) <= this.now())
       throw new WalletError('QUOTE_EXPIRED', 'Recovery review expired. Prepare a new review.', 409);
     for (const asset of recovery.assets) {
       if (
-        (await this.options.chains.balance(
+        (await this.config.chains.balance(
           recovery.chainId,
           recovery.intentAddress,
           asset.asset
@@ -891,41 +1003,50 @@ export class WalletSwaps {
     }
     validateRecoveryPayload(recovery.prepared, record.quote.intent, record.owner, recovery.assets);
   }
-  private async deployOwner(record: SwapRecord) {
+
+  private async deployOwnerLocked(record: SwapRecord) {
     const recovery = this.currentRecovery(record, true);
-    if (!emptyCode(await this.options.chains.code(recovery.chainId, record.owner))) {
+    if (!emptyCode(await this.config.chains.code(recovery.chainId, record.owner))) {
       record.action = 'sign-recovery';
       return;
     }
-    await this.enabled(true);
+    await this.enabledLocked(true);
     recovery.deployment =
-      (await this.options.wallet.readOperations([recovery.deploymentId])).find(
+      (await this.config.primitives.readEvmOperationsLocked([recovery.deploymentId])).find(
         (op) => op.id === recovery.deploymentId
       ) ?? recovery.deployment;
     if (!uncertain(recovery.deployment) && recovery.deployment?.status !== 'executed') {
-      await this.recoveryAllowed(record);
+      await this.recoveryAllowedLocked(record);
       await this.recheckRecovery(record, recovery);
     }
     recovery.status = 'deploying';
-    await this.save(record);
-    recovery.deployment = await this.options.wallet.prepareDeployment(
+    await this.saveLocked(record);
+    recovery.deployment = await this.config.primitives.prepareDeploymentLocked(
       recovery.deploymentId,
       recovery.chainId
     );
     if (recovery.deployment.status === 'quoted') {
       this.sponsored(recovery.deployment);
-      recovery.deployment = await this.options.wallet.executeOperation(recovery.deploymentId);
+      recovery.deployment = await this.config.primitives.executeEvmOperationLocked(
+        recovery.deploymentId,
+        ['deployment'],
+        { skipGate: true, bypassReviewId: true }
+      );
     } else
       recovery.deployment =
-        (await this.options.wallet.getOperation(recovery.deploymentId)) ?? recovery.deployment;
-    if (recovery.deployment.status === 'failed' || recovery.deployment.status === 'expired')
+        (await this.config.primitives.refreshEvmOperationLocked(recovery.deploymentId)) ??
+        recovery.deployment;
+    if (
+      recovery.deployment.status === 'failed' ||
+      (recovery.deployment.status === 'expired' && recovery.deployment.preSubmitExpired === true)
+    )
       throw new WalletError(
         'INVALID_RECOVERY',
         `Owner deployment ${recovery.deployment.status}. Prepare a new recovery review.`,
         409
       );
     if (recovery.deployment.status === 'executed' && recovery.deployment.txnHash) {
-      const receipt = await this.options.chains.receipt(
+      const receipt = await this.config.chains.receipt(
         recovery.chainId,
         recovery.deployment.txnHash
       );
@@ -937,29 +1058,31 @@ export class WalletSwaps {
         );
     }
   }
-  private async signRecovery(record: SwapRecord) {
+
+  private async signRecoveryLocked(record: SwapRecord) {
     const recovery = this.currentRecovery(record, true);
-    await this.enabled(true);
-    await this.recoveryAllowed(record);
+    await this.enabledLocked(true);
+    await this.recoveryAllowedLocked(record);
     await this.recheckRecovery(record, recovery);
-    if (emptyCode(await this.options.chains.code(recovery.chainId, record.owner)))
+    if (emptyCode(await this.config.chains.code(recovery.chainId, record.owner)))
       throw new WalletError(
         'INVALID_RECOVERY',
         'The owner must be deployed on the recovery chain.',
         409
       );
     recovery.status = 'signing';
-    await this.save(record);
+    await this.saveLocked(record);
     const validated = validateRecoveryPayload(
       recovery.prepared,
       record.quote.intent,
       record.owner,
       recovery.assets
     );
-    recovery.signed = await this.options.wallet.signTypedData(
+    recovery.signed = await this.config.primitives.signEvmTypedDataLocked(
       recovery.signingId,
       recovery.chainId,
-      validated.typedData
+      validated.typedData,
+      { allowSwapsPrefix: true }
     );
     if (
       !recovery.signed.verified ||
@@ -973,11 +1096,12 @@ export class WalletSwaps {
       );
     record.action = 'build-recovery';
   }
-  private async buildRecovery(record: SwapRecord) {
+
+  private async buildRecoveryLocked(record: SwapRecord) {
     const recovery = this.currentRecovery(record, true);
-    await this.enabled(true);
+    await this.enabledLocked(true);
     await this.recheckRecovery(record, recovery);
-    recovery.built = await this.remote().buildIntentRecoveryTransaction(
+    recovery.built = await this.config.trails.buildIntentRecoveryTransaction(
       recovery.prepared,
       recovery.signed!.signature!,
       record.owner
@@ -989,24 +1113,25 @@ export class WalletSwaps {
       record.owner,
       recovery.assets
     );
-    await this.save(record);
-    recovery.transaction = await this.options.wallet.prepareRecoveryTransaction(
+    await this.saveLocked(record);
+    recovery.transaction = await this.config.primitives.prepareRecoveryLocked(
       recovery.transactionId,
       permit
     );
     this.sponsored(recovery.transaction);
     record.action = 'submit-recovery';
   }
-  private async submitRecovery(record: SwapRecord) {
+
+  private async submitRecoveryLocked(record: SwapRecord) {
     const recovery = this.currentRecovery(record, true);
-    await this.enabled(true);
-    const op = await this.options.wallet.getOperation(recovery.transactionId);
+    await this.enabledLocked(true);
+    const op = await this.config.primitives.refreshEvmOperationLocked(recovery.transactionId);
     if (!op) throw new WalletError('INVALID_RECOVERY', 'Prepared recovery is missing.', 409);
     if (op.status === 'quoted') {
       this.sponsored(op);
-      await this.recoveryAllowed(record);
+      await this.recoveryAllowedLocked(record);
       await this.recheckRecovery(record, recovery);
-      await this.available(recovery.chainId, record.id, [
+      await this.availableLocked(recovery.chainId, record.id, [
         record.fundingId,
         recovery.deploymentId,
         recovery.transactionId
@@ -1022,22 +1147,30 @@ export class WalletSwaps {
       for (const asset of recovery.assets)
         recovery.ownerBalances.push({
           asset: asset.asset,
-          amount: await this.options.chains.balance(recovery.chainId, record.owner, asset.asset)
+          amount: await this.config.chains.balance(recovery.chainId, record.owner, asset.asset)
         });
       recovery.status = 'submitting';
-      await this.save(record);
-      recovery.transaction = await this.options.wallet.executeOperation(recovery.transactionId);
+      await this.saveLocked(record);
+      recovery.transaction = await this.config.primitives.executeEvmOperationLocked(
+        recovery.transactionId,
+        ['recovery'],
+        { skipGate: true, bypassReviewId: true }
+      );
     } else recovery.transaction = op;
     recovery.status = 'pending';
     record.action = 'observe-recovery';
   }
-  private async observeRecovery(record: SwapRecord) {
+
+  private async observeRecoveryLocked(record: SwapRecord) {
     const recovery = this.currentRecovery(record, true);
-    if (!(await this.options.wallet.inspect()).disabled)
+    if (!(await this.config.primitives.inspectLocked()).disabled)
       recovery.transaction =
-        (await this.options.wallet.getOperation(recovery.transactionId)) ?? recovery.transaction;
-    // Expired proves, like failed, that the recovery transaction was never broadcast.
-    if (recovery.transaction?.status === 'failed' || recovery.transaction?.status === 'expired') {
+        (await this.config.primitives.refreshEvmOperationLocked(recovery.transactionId)) ??
+        recovery.transaction;
+    if (
+      recovery.transaction?.status === 'failed' ||
+      (recovery.transaction?.status === 'expired' && recovery.transaction.preSubmitExpired === true)
+    ) {
       recovery.status = recovery.transaction.status;
       recovery.error =
         recovery.transaction.status === 'expired' ? 'RECOVERY_EXPIRED' : 'RECOVERY_FAILED';
@@ -1047,7 +1180,7 @@ export class WalletSwaps {
       return;
     }
     if (recovery.transaction?.status !== 'executed' || !recovery.transaction.txnHash) return;
-    const receipt = await this.options.chains.receipt(
+    const receipt = await this.config.chains.receipt(
       recovery.chainId,
       recovery.transaction.txnHash
     );
@@ -1061,12 +1194,12 @@ export class WalletSwaps {
     const recovered: RecoveryRecord['assets'] = [];
     let partial = false;
     for (const asset of recovery.assets) {
-      const remaining = await this.options.chains.balance(
+      const remaining = await this.config.chains.balance(
         recovery.chainId,
         recovery.intentAddress,
         asset.asset
       );
-      const ownerAfter = await this.options.chains.balance(
+      const ownerAfter = await this.config.chains.balance(
         recovery.chainId,
         record.owner,
         asset.asset
@@ -1087,18 +1220,179 @@ export class WalletSwaps {
       )
         throw new WalletError(
           'RECOVERY_EVIDENCE_PENDING',
-          'Waiting for recovered balances to be confirmed.',
+          'Confirmed recovery receipt does not yet prove the received native amount.',
           409
         );
-      recovered.push({ ...asset, amount: actual.toString() });
-      partial ||= BigInt(remaining) > 0n || actual < BigInt(asset.amount);
+      if (actual > 0n) recovered.push({ ...asset, amount: actual.toString() });
+      if (actual < BigInt(asset.amount) || BigInt(remaining) > 0n) partial = true;
     }
     recovery.received = recovered;
     recovery.status = partial ? 'partial' : 'recovered';
-    recovery.error = partial ? 'RECOVERY_PARTIAL' : undefined;
     record.activeRecoveryId = undefined;
     record.phase = partial ? 'attention' : 'refunded';
-    record.error = partial ? 'RECOVERY_PARTIAL' : undefined;
     record.action = partial ? 'observe' : null;
   }
+}
+
+function validateTrailsOptions(options: TrailsOptions): {
+  chainsCopy: Record<number, string>;
+  assetsCopy: SwapAsset[];
+  environment: string;
+  enabled: boolean;
+} {
+  if (!options || typeof options !== 'object')
+    throw new WalletError('CONFIGURATION', 'Configure trails(...) options.', 503);
+  if (!options.store || typeof options.store !== 'object')
+    throw new WalletError(
+      'CONFIGURATION',
+      'Configure trails store as { scope: "wallet", adapter } or { scope: "service", adapter }.',
+      503
+    );
+  const { scope, adapter } = options.store;
+  if (scope !== 'wallet' && scope !== 'service')
+    throw new WalletError(
+      'CONFIGURATION',
+      'trails store.scope must be "wallet" or "service".',
+      503
+    );
+  if (
+    !adapter ||
+    typeof adapter !== 'object' ||
+    typeof adapter.get !== 'function' ||
+    typeof adapter.findIntent !== 'function' ||
+    typeof adapter.save !== 'function' ||
+    typeof adapter.list !== 'function'
+  )
+    throw new WalletError(
+      'CONFIGURATION',
+      'trails store.adapter must implement get, findIntent, save, and list.',
+      503
+    );
+  if (!options.chains || typeof options.chains !== 'object')
+    throw new WalletError('CONFIGURATION', 'Configure HTTPS RPC URLs in trails chains.', 503);
+  const chainsCopy: Record<number, string> = {};
+  for (const [key, url] of Object.entries(options.chains)) {
+    const chainId = Number(key);
+    if (!Number.isInteger(chainId) || chainId <= 0 || typeof url !== 'string')
+      throw new WalletError('CONFIGURATION', 'Invalid chain RPC mapping in trails options.', 503);
+    chainsCopy[chainId] = url;
+  }
+  if (!Array.isArray(options.assets))
+    throw new WalletError(
+      'CONFIGURATION',
+      'Configure approved assets array in trails options.',
+      503
+    );
+  const assetsCopy: SwapAsset[] = options.assets.map((asset) => {
+    if (
+      !asset ||
+      typeof asset !== 'object' ||
+      !Number.isInteger(asset.chainId) ||
+      typeof asset.asset !== 'string' ||
+      !Number.isInteger(asset.decimals) ||
+      asset.decimals < 0 ||
+      asset.decimals > 255
+    )
+      throw new WalletError('CONFIGURATION', 'Invalid swap asset entry in trails options.', 503);
+    return {
+      chainId: asset.chainId,
+      asset: asset.asset,
+      decimals: asset.decimals,
+      ...(asset.symbol !== undefined ? { symbol: asset.symbol } : {})
+    };
+  });
+  const environment = options.environment ?? 'default';
+  if (typeof environment !== 'string' || !environment.trim())
+    throw new WalletError('CONFIGURATION', 'Configure a non-empty trails environment string.', 503);
+  return {
+    chainsCopy,
+    assetsCopy,
+    environment,
+    enabled: options.enabled ?? true
+  };
+}
+
+/** Package-private test seam: registers a `SwapsConfig` backed by custom gateway/chains/clock. */
+export function trailsInternal<TStore extends TrailsStoreOption>(
+  options: TrailsOptions<TStore>,
+  overrides: { gateway?: SwapGateway; chains?: ChainReader; clock?: () => number } = {}
+): SwapsConfig<TStore['scope'], SwapsFacet> {
+  const { chainsCopy, assetsCopy, environment, enabled } = validateTrailsOptions(options);
+  // Validate TrailsClient configuration eagerly when using the real gateway.
+  if (!overrides.gateway) {
+    new TrailsClient({
+      apiKey: options.apiKey,
+      baseUrl: options.baseUrl,
+      origin: options.origin,
+      fetch: options.fetch,
+      timeoutMs: options.timeoutMs
+    });
+  }
+  const storeOption = options.store;
+  let boundWalletNamespace: string | undefined;
+
+  return registerSwapsBinder<TStore['scope'], SwapsFacet>({
+    scope: storeOption.scope,
+    bind(primitives: LockedEnginePrimitives): BoundSwaps<SwapsFacet> {
+      let store: SwapStore;
+      if (storeOption.scope === 'wallet') {
+        if (boundWalletNamespace !== undefined && boundWalletNamespace !== primitives.namespace)
+          throw new WalletError(
+            'CONFIGURATION',
+            'A wallet-scoped trails(...) configuration cannot be bound to a second wallet namespace.',
+            503
+          );
+        boundWalletNamespace = primitives.namespace;
+        store = storeOption.adapter;
+      } else {
+        store = scopeSwapStore(storeOption.adapter, primitives.namespace);
+      }
+
+      const gateway =
+        overrides.gateway ??
+        new TrailsClient({
+          apiKey: options.apiKey,
+          baseUrl: options.baseUrl,
+          origin: options.origin ?? primitives.origin,
+          fetch: options.fetch,
+          timeoutMs: options.timeoutMs
+        });
+      const chainReader =
+        overrides.chains ?? new EvmChainReader(chainsCopy, options.fetch ?? fetch);
+
+      const coordinator = new TrailsCoordinator({
+        primitives,
+        trails: gateway,
+        chains: chainReader,
+        store,
+        assets: assetsCopy,
+        enabled,
+        environment,
+        clock: overrides.clock ?? (() => Date.now())
+      });
+      return {
+        gate: coordinator.gate(),
+        facet: coordinator.facet()
+      };
+    }
+  });
+}
+
+/**
+ * Enable durable Trails swaps and recovery on a server wallet via
+ * `createServerWallet({ ..., swaps: trails({ ..., store: { scope: 'wallet', adapter } }) })`
+ * or `createServerWalletService({ ..., swaps: trails({ ..., store: { scope: 'service', adapter } }) })`.
+ * Ordinary EVM debits and swaps automatically share one executor and one debit gate.
+ */
+export function trails(
+  options: TrailsOptions<{ readonly scope: 'wallet'; readonly adapter: SwapStore }>
+): SwapsConfig<'wallet', SwapsFacet>;
+export function trails(
+  options: TrailsOptions<{ readonly scope: 'service'; readonly adapter: NamespacedSwapStore }>
+): SwapsConfig<'service', SwapsFacet>;
+export function trails(
+  options: TrailsOptions
+): SwapsConfig<'wallet', SwapsFacet> | SwapsConfig<'service', SwapsFacet> {
+  return trailsInternal(options) as
+    SwapsConfig<'wallet', SwapsFacet> | SwapsConfig<'service', SwapsFacet>;
 }

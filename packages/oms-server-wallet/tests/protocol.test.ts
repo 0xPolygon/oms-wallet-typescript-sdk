@@ -1,7 +1,8 @@
 import { describe, expect, it } from 'vitest';
 import { credentialId, generateCredential, signatureHeader } from '../src/protocol.js';
 import { WaasTransport, boundedText } from '../src/transport.js';
-import { IndexerClient, omsFetch } from '@polygonlabs/oms-server-wallet-sdk';
+import { IndexerClient } from '../src/indexer.js';
+import { omsFetch } from '../src/http.js';
 
 const requestOrigin = 'https://app.example';
 
@@ -62,7 +63,7 @@ describe('WaaS request protocol', () => {
     };
     const client = new WaasTransport(
       'pk_dev_live_test_key',
-      ['0'.repeat(96)],
+      { trustedPcr0s: ['0'.repeat(96)], allowDebugEnclave: true },
       omsFetch(`${requestOrigin}/`, fetcher)
     );
     const credential = await generateCredential();
@@ -74,7 +75,13 @@ describe('WaaS request protocol', () => {
     expect(requestHeaders?.get('Origin')).toBe(requestOrigin);
     expect(requestHeaders?.get('OMS-Wallet-Signature')).toContain('scope="prj_test"');
     expect(requestHeaders?.get('X-Attestation-Nonce')).toHaveLength(24);
-    expect(() => new WaasTransport('pk_live_test_key', ['0'.repeat(96)])).toThrow('Debug enclaves');
+    expect(
+      () =>
+        new WaasTransport('pk_live_test_key', {
+          trustedPcr0s: ['0'.repeat(96)],
+          allowDebugEnclave: true
+        })
+    ).toThrow('Debug enclaves');
   });
   it('bounds responses while streaming', async () => {
     const stream = new ReadableStream({

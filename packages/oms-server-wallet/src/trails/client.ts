@@ -1,33 +1,44 @@
 import { z } from 'zod';
 
-import type { PreparedRecovery } from './protocol.js';
+import type {
+  BuiltRecovery,
+  PreparedRecovery,
+  TrailsContracts,
+  TrailsIntent,
+  TrailsReceipt,
+  TrailsToken
+} from './protocol.js';
+import type { SwapQuoteRequest } from './quote.js';
 
 import { WalletError } from '../errors.js';
 import { boundedText } from '../http.js';
 import { canonicalJson } from '../json.js';
 import {
   addressSchema,
-  chainSchema,
+  builtRecoverySchema,
   chainInfoSchema,
+  chainSchema,
   contractsSchema,
   hashSchema,
   intentSchema,
-  tokenSchema,
-  recoverySchema,
   receiptSchema,
+  recoverySchema,
   statusSchema,
-  builtRecoverySchema
+  tokenSchema
 } from './protocol.js';
 
+export type TrailsChainInfo = z.infer<typeof chainInfoSchema>;
+export type TrailsIntentStatus = z.infer<typeof statusSchema>;
+
 export interface TrailsClientOptions {
-  apiKey: string;
-  baseUrl?: string;
-  origin?: string;
-  fetch?: typeof fetch;
-  timeoutMs?: number;
+  readonly apiKey: string;
+  readonly baseUrl?: string;
+  readonly origin?: string;
+  readonly fetch?: typeof fetch;
+  readonly timeoutMs?: number;
 }
 
-/** Structured errors intentionally exclude upstream messages, bodies and secrets. */
+/** Structured Trails API error excluding upstream messages, response bodies, and secrets. */
 export class TrailsError extends WalletError {
   constructor(
     public readonly method: string,
@@ -98,7 +109,7 @@ export class TrailsClient {
       const fetcher = this.fetcher;
       response = await fetcher(`${this.baseUrl}/rpc/Trails/${method}`, {
         method: 'POST',
-        headers: { ...this.headers },
+        headers: this.headers,
         body,
         redirect: 'manual',
         signal: combined
@@ -141,7 +152,7 @@ export class TrailsClient {
       );
     return parsed.data;
   }
-  async readiness(signal?: AbortSignal) {
+  async readiness(signal?: AbortSignal): Promise<{ TrailsContracts: TrailsContracts }> {
     const { versions } = await this.call(
       'GetSupportedIntentProtocols',
       {},
@@ -157,7 +168,7 @@ export class TrailsClient {
       signal
     );
   }
-  getChains(signal?: AbortSignal) {
+  getChains(signal?: AbortSignal): Promise<{ chains: TrailsChainInfo[] }> {
     return this.call(
       'GetChains',
       {},
@@ -165,7 +176,7 @@ export class TrailsClient {
       signal
     );
   }
-  getTokenList(chainIds: number[], signal?: AbortSignal) {
+  getTokenList(chainIds: number[], signal?: AbortSignal): Promise<{ tokens: TrailsToken[] }> {
     z.array(chainSchema).min(1).max(20).parse(chainIds);
     return this.call(
       'GetTokenList',
@@ -174,7 +185,11 @@ export class TrailsClient {
       signal
     );
   }
-  getExactInputRoutes(originChainId: number, originTokenAddress: string, signal?: AbortSignal) {
+  getExactInputRoutes(
+    originChainId: number,
+    originTokenAddress: string,
+    signal?: AbortSignal
+  ): Promise<{ tokens: TrailsToken[] }> {
     return this.call(
       'GetExactInputRoutes',
       {
@@ -186,7 +201,10 @@ export class TrailsClient {
     );
   }
   /** Request built by buildSwapRequest; validate the returned quote before using its deposit. */
-  quoteIntent(request: Record<string, unknown>, signal?: AbortSignal) {
+  quoteIntent(
+    request: SwapQuoteRequest | Record<string, unknown>,
+    signal?: AbortSignal
+  ): Promise<{ intent: TrailsIntent }> {
     return this.call(
       'QuoteIntent',
       request,
@@ -194,7 +212,7 @@ export class TrailsClient {
       signal
     );
   }
-  getIntent(intentId: string, signal?: AbortSignal) {
+  getIntent(intentId: string, signal?: AbortSignal): Promise<{ intent: TrailsIntent }> {
     return this.call(
       'GetIntent',
       { intentId: hashSchema.parse(intentId) },
@@ -202,7 +220,10 @@ export class TrailsClient {
       signal
     );
   }
-  executeIntent(intentId: string, signal?: AbortSignal) {
+  executeIntent(
+    intentId: string,
+    signal?: AbortSignal
+  ): Promise<{ intentId: string; intentStatus: TrailsIntentStatus }> {
     return this.call(
       'ExecuteIntent',
       { intentId: hashSchema.parse(intentId) },
@@ -210,7 +231,10 @@ export class TrailsClient {
       signal
     );
   }
-  getIntentReceipt(intentId: string, signal?: AbortSignal) {
+  getIntentReceipt(
+    intentId: string,
+    signal?: AbortSignal
+  ): Promise<{ intentReceipt: TrailsReceipt }> {
     return this.call(
       'GetIntentReceipt',
       { intentId: hashSchema.parse(intentId) },
@@ -218,7 +242,11 @@ export class TrailsClient {
       signal
     );
   }
-  retryIntent(intentId: string, depositTransactionHash: string, signal?: AbortSignal) {
+  retryIntent(
+    intentId: string,
+    depositTransactionHash: string,
+    signal?: AbortSignal
+  ): Promise<{ intentId: string; intentStatus: TrailsIntentStatus }> {
     return this.call(
       'RetryIntent',
       {
@@ -234,19 +262,23 @@ export class TrailsClient {
     signature: string,
     refundToAddress: string,
     signal?: AbortSignal
-  ) {
+  ): Promise<BuiltRecovery> {
+    const valid = recoverySchema.parse(prepared);
+    const sig = z
+      .string()
+      .regex(/^0x(?:[0-9a-fA-F]{2})+$/)
+      .max(65_536)
+      .parse(signature);
     return this.call(
       'BuildIntentRecoveryTransaction',
       {
-        intentId: hashSchema.parse(prepared.intentId),
-        intentAddress: addressSchema.parse(prepared.intentAddress),
-        payload: prepared.payload,
-        signature: z
-          .string()
-          .regex(/^0x(?:[0-9a-fA-F]{2})+$/)
-          .max(131_074)
-          .parse(signature),
-        refundToAddress: addressSchema.parse(refundToAddress)
+        intentId: valid.intentId,
+        intentProtocol: valid.intentProtocol,
+        intentAddress: valid.intentAddress,
+        chainId: valid.chainId,
+        refundToAddress: addressSchema.parse(refundToAddress),
+        payload: valid.payload,
+        signature: sig
       },
       builtRecoverySchema,
       signal
@@ -257,7 +289,7 @@ export class TrailsClient {
     intentAddress: string,
     refundToAddress: string,
     signal?: AbortSignal
-  ) {
+  ): Promise<PreparedRecovery> {
     return this.call(
       'PrepareIntentRecovery',
       {

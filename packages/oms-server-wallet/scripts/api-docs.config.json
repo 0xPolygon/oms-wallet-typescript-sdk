@@ -1,0 +1,130 @@
+{
+  "groups": [
+    {
+      "label": "Factories and setup",
+      "symbols": [
+        "createServerWallet",
+        "createServerWalletService",
+        "ServerWalletOptions",
+        "ServerWalletServiceOptions",
+        "WalletOidcOptions",
+        "ServiceOidcOptions",
+        "AttestationOptions",
+        "ApprovalMode",
+        "SwapsConfig",
+        "SwapsConfigScope",
+        "ServerWallet",
+        "ServerWalletBase",
+        "ServerWalletService",
+        "WalletSnapshot",
+        "CreateOrRestoreOptions",
+        "NetworkFamily",
+        "RemoteWallet",
+        "SupportedEvmChainId"
+      ]
+    },
+    {
+      "label": "Storage and concurrency",
+      "symbols": [
+        "createSingleProcessExecutor",
+        "createSingleProcessExecutorPool",
+        "ExclusiveExecutor",
+        "ExecutorProvider",
+        "StateStore",
+        "NamespacedStateStore",
+        "WalletStoreOption",
+        "ServiceStorageOption"
+      ]
+    },
+    {
+      "label": "EVM",
+      "symbols": [
+        "EvmFacet",
+        "EvmFacetBase",
+        "EvmImmediateFacet",
+        "EvmTransferInput",
+        "EvmTransfer",
+        "EvmCallInput",
+        "EvmSignMessageInput",
+        "EvmSignTypedDataInput",
+        "EvmOperation",
+        "Quote",
+        "parseAmount"
+      ]
+    },
+    {
+      "label": "Solana",
+      "symbols": [
+        "SolanaFacet",
+        "SolanaFacetBase",
+        "SolanaImmediateFacet",
+        "SolanaNetwork",
+        "SolanaTransferInput",
+        "SolanaTransfer",
+        "SolanaSignMessageInput",
+        "SolanaOperation"
+      ]
+    },
+    {
+      "label": "Tron",
+      "symbols": [
+        "TronFacet",
+        "TronFacetBase",
+        "TronImmediateFacet",
+        "TronNetwork",
+        "TronTransactionInput",
+        "TronContractCallInput",
+        "TronAbiArg",
+        "TronSignMessageInput",
+        "TronSignTypedDataInput",
+        "TronOperation",
+        "ChainQuote",
+        "FeeOption"
+      ]
+    },
+    {
+      "label": "Execution, observation and guidance",
+      "symbols": [
+        "ExecuteInput",
+        "TypedDataInput",
+        "TypedDataDomain",
+        "TypedDataField",
+        "OperationBase",
+        "OperationStatus",
+        "SubmissionMode",
+        "WalletOperation",
+        "ListOperationsOptions",
+        "OperationPage",
+        "WaitForOperationOptions",
+        "WaitResult",
+        "describeOperation",
+        "OperationGuidance",
+        "OperationNextAction"
+      ]
+    },
+    {
+      "label": "Indexer (unattested)",
+      "symbols": [
+        "WalletIndexerFacet",
+        "ServiceIndexerFacet",
+        "GetEvmBalancesOptions",
+        "GetSolanaBalancesOptions",
+        "GetTronBalancesOptions",
+        "EvmBalances",
+        "EvmBalance",
+        "ChainBalances",
+        "ChainBalance"
+      ]
+    },
+    {
+      "label": "Errors",
+      "symbols": [
+        "WalletError",
+        "UpstreamError",
+        "isWalletError",
+        "isUpstreamError",
+        "WalletErrorCode"
+      ]
+    }
+  ]
+}
