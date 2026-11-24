@@ -55,7 +55,7 @@ it('validates an intent execute envelope and grants a non-forgeable zero-value c
   const capability = validateRecoveryTransaction(tx, prepared, intent, owner, balances);
   expect(Object.isFrozen(capability)).toBe(true);
   const h = engineHarness();
-  await h.engine.createOrRestore();
+  await h.engine.core.createOrRestore();
   const operation = await h.primitives.prepareRecoveryLocked('swp_recovery_test', capability);
   expect(operation.kind).toBe('recovery');
   expect(h.remote.calls.find((c) => c.method === 'PrepareEthereumTransaction')?.body).toMatchObject(
@@ -142,7 +142,7 @@ it('rejects calldata suffixes, altered signed calls, changed targets, hashes, ch
 });
 it('prepares only the managed wallet self-call for owner deployment, and rejects unsponsored recovery', async () => {
   const h = engineHarness();
-  await h.engine.createOrRestore();
+  await h.engine.core.createOrRestore();
   await h.primitives.prepareDeploymentLocked('swp_deployment_test', 8453);
   expect(h.remote.calls.find((c) => c.method === 'PrepareEthereumTransaction')?.body).toMatchObject(
     { network: '8453', to: owner, value: '0', data: '0x', mode: 'relayer' }

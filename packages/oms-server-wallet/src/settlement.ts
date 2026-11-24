@@ -1,6 +1,6 @@
 import type { WalletErrorCode } from './errors.js';
 
-import { UpstreamError } from './errors.js';
+import { UpstreamError, WalletError } from './errors.js';
 import { WaasErrorCode } from './internal/protocol/waasErrors.js';
 
 /**
@@ -138,5 +138,63 @@ export async function refreshStatus(
     op.status = result.status;
     op.error = undefined;
   }
+  if (result.txnHash) op.txnHash = result.txnHash;
+}
+
+/**
+ * Settle an operator's report that an unconfirmed submission was not broadcast. Only an open
+ * `RECONCILIATION_REQUIRED` operation with no transaction hash qualifies, and WaaS is asked again
+ * first: a claimed status settles the operation from that evidence instead. It is marked `expired`
+ * with `operatorResolved` only when WaaS still answers `TransactionExpired` past the grace window.
+ * The caller persists the operation; every refusal throws without changing it.
+ */
+export async function resolveNotBroadcast(
+  op: Settleable & { quote?: { txnId: string; expiresAt: string }; operatorResolved?: boolean },
+  txnId: string,
+  status: () => Promise<TransactionStatus>,
+  now: () => number
+): Promise<void> {
+  if (op.status !== 'unknown' || op.error !== 'RECONCILIATION_REQUIRED' || !op.quote)
+    throw new WalletError(
+      'INVALID_STATE',
+      'Only operations in unknown / RECONCILIATION_REQUIRED can be resolved.',
+      409
+    );
+  if (op.quote.txnId !== txnId)
+    throw new WalletError(
+      'STALE_REVIEW',
+      'Provided txnId does not match the stored operation quote.',
+      409
+    );
+  if (op.txnHash)
+    throw new WalletError(
+      'INVALID_STATE',
+      'Cannot resolve an operation with an observed transaction hash as not-broadcast.',
+      409
+    );
+  let result: TransactionStatus;
+  try {
+    result = await status();
+  } catch (error) {
+    if (!isStaleExpiryRead(error)) throw error;
+    if (now() < Date.parse(op.quote.expiresAt) + CLAIM_GRACE_MS)
+      throw new WalletError(
+        'RECONCILIATION_REQUIRED',
+        'Cannot resolve before the post-expiry grace window has elapsed.',
+        409
+      );
+    op.status = 'expired';
+    op.error = 'QUOTE_EXPIRED';
+    op.operatorResolved = true;
+    return;
+  }
+  if (result.status === 'quoted')
+    throw new WalletError(
+      'RECONCILIATION_REQUIRED',
+      'WaaS still reports this transaction as quoted; cannot resolve as expired yet.',
+      409
+    );
+  op.status = result.status;
+  op.error = undefined;
   if (result.txnHash) op.txnHash = result.txnHash;
 }

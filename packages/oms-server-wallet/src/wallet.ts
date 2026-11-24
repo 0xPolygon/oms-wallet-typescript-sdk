@@ -235,96 +235,99 @@ function buildWalletFacade<
   const allowImmediate = approval === 'allow-immediate';
 
   const evmBase: EvmFacetBase = {
-    prepareTransfer: (input: EvmTransferInput) => engine.prepareEvmTransfer(input),
+    prepareTransfer: (input: EvmTransferInput) => engine.evm.prepareEvmTransfer(input),
     prepareCall: <
       const abi extends Abi | readonly unknown[] = Abi,
       functionName extends ContractFunctionName<abi> = ContractFunctionName<abi>
     >(
       input: EvmCallInput<abi, functionName>
-    ) => engine.prepareEvmCall(input),
-    execute: (input: ExecuteInput) => engine.executeEvm(input?.idempotencyKey, input?.reviewId),
+    ) => engine.evm.prepareEvmCall(input),
+    execute: (input: ExecuteInput) => engine.evm.executeEvm(input?.idempotencyKey, input?.reviewId),
     signMessage: (input: EvmSignMessageInput) =>
-      engine.signEvmMessage(input?.idempotencyKey, input?.chainId, input?.message),
+      engine.evm.signEvmMessage(input?.idempotencyKey, input?.chainId, input?.message),
     signTypedData: (input: EvmSignTypedDataInput) =>
-      engine.signEvmTypedData(input?.idempotencyKey, input?.chainId, input?.typedData),
-    getOperation: (id: string) => engine.getEvmOperationLocal(id),
-    refreshOperation: (id: string) => engine.refreshEvmOperation(id),
+      engine.evm.signEvmTypedData(input?.idempotencyKey, input?.chainId, input?.typedData),
+    getOperation: (id: string) => engine.evm.getEvmOperationLocal(id),
+    refreshOperation: (id: string) => engine.evm.refreshEvmOperation(id),
     waitForOperation: (id: string, options: WaitForOperationOptions) =>
       waitFor<EvmOperation>(
         id,
-        (opId) => engine.getEvmOperationLocal(opId),
-        (opId) => engine.refreshEvmOperation(opId),
+        (opId) => engine.evm.getEvmOperationLocal(opId),
+        (opId) => engine.evm.refreshEvmOperation(opId),
         options,
         clock
       ),
     resolveReconciliation: (input: ResolveReconciliationInput) =>
-      engine.resolveEvmReconciliation(input),
-    listOperations: (options?: ListOperationsOptions) => engine.listEvmOperations(options)
+      engine.evm.resolveEvmReconciliation(input),
+    listOperations: (options?: ListOperationsOptions) => engine.evm.listEvmOperations(options)
   };
   const evmImmediate: EvmImmediateFacet = {
-    sendTransfer: (input: EvmTransferInput) => engine.sendEvmTransfer(input),
+    sendTransfer: (input: EvmTransferInput) => engine.evm.sendEvmTransfer(input),
     sendCall: <
       const abi extends Abi | readonly unknown[] = Abi,
       functionName extends ContractFunctionName<abi> = ContractFunctionName<abi>
     >(
       input: EvmCallInput<abi, functionName>
-    ) => engine.sendEvmCall(input)
+    ) => engine.evm.sendEvmCall(input)
   };
   const evm = Object.freeze(
     allowImmediate ? { ...evmBase, ...evmImmediate } : { ...evmBase }
   ) as EvmFacet<TApproval>;
 
   const solanaBase: SolanaFacetBase = {
-    prepareTransfer: (input: SolanaTransferInput) => engine.prepareSolanaTransfer(input),
-    execute: (input: ExecuteInput) => engine.executeSolana(input?.idempotencyKey, input?.reviewId),
+    prepareTransfer: (input: SolanaTransferInput) => engine.chain.prepareSolanaTransfer(input),
+    execute: (input: ExecuteInput) =>
+      engine.chain.executeSolana(input?.idempotencyKey, input?.reviewId),
     signMessage: (input: SolanaSignMessageInput) =>
-      engine.signSolanaMessage(input?.idempotencyKey, input?.message),
-    getOperation: (id: string) => engine.getSolanaOperationLocal(id),
-    refreshOperation: (id: string) => engine.refreshSolanaOperation(id),
+      engine.chain.signSolanaMessage(input?.idempotencyKey, input?.message),
+    getOperation: (id: string) => engine.chain.getSolanaOperationLocal(id),
+    refreshOperation: (id: string) => engine.chain.refreshSolanaOperation(id),
     waitForOperation: (id: string, options: WaitForOperationOptions) =>
       waitFor<SolanaOperation>(
         id,
-        (opId) => engine.getSolanaOperationLocal(opId),
-        (opId) => engine.refreshSolanaOperation(opId),
+        (opId) => engine.chain.getSolanaOperationLocal(opId),
+        (opId) => engine.chain.refreshSolanaOperation(opId),
         options,
         clock
       ),
     resolveReconciliation: (input: ResolveReconciliationInput) =>
-      engine.resolveSolanaReconciliation(input),
-    listOperations: (options?: ListOperationsOptions) => engine.listSolanaOperations(options)
+      engine.chain.resolveSolanaReconciliation(input),
+    listOperations: (options?: ListOperationsOptions) => engine.chain.listSolanaOperations(options)
   };
   const solanaImmediate: SolanaImmediateFacet = {
-    sendTransfer: (input: SolanaTransferInput) => engine.sendSolanaTransfer(input)
+    sendTransfer: (input: SolanaTransferInput) => engine.chain.sendSolanaTransfer(input)
   };
   const solana = Object.freeze(
     allowImmediate ? { ...solanaBase, ...solanaImmediate } : { ...solanaBase }
   ) as SolanaFacet<TApproval>;
 
   const tronBase: TronFacetBase = {
-    prepareTransaction: (input: TronTransactionInput) => engine.prepareTronTransaction(input),
-    prepareContractCall: (input: TronContractCallInput) => engine.prepareTronContractCall(input),
-    execute: (input: ExecuteInput) => engine.executeTron(input?.idempotencyKey, input?.reviewId),
+    prepareTransaction: (input: TronTransactionInput) => engine.chain.prepareTronTransaction(input),
+    prepareContractCall: (input: TronContractCallInput) =>
+      engine.chain.prepareTronContractCall(input),
+    execute: (input: ExecuteInput) =>
+      engine.chain.executeTron(input?.idempotencyKey, input?.reviewId),
     signMessage: (input: TronSignMessageInput) =>
-      engine.signTronMessage(input?.idempotencyKey, input?.message),
+      engine.chain.signTronMessage(input?.idempotencyKey, input?.message),
     signTypedData: (input: TronSignTypedDataInput) =>
-      engine.signTronTypedData(input?.idempotencyKey, input?.network, input?.typedData),
-    getOperation: (id: string) => engine.getTronOperationLocal(id),
-    refreshOperation: (id: string) => engine.refreshTronOperation(id),
+      engine.chain.signTronTypedData(input?.idempotencyKey, input?.network, input?.typedData),
+    getOperation: (id: string) => engine.chain.getTronOperationLocal(id),
+    refreshOperation: (id: string) => engine.chain.refreshTronOperation(id),
     waitForOperation: (id: string, options: WaitForOperationOptions) =>
       waitFor<TronOperation>(
         id,
-        (opId) => engine.getTronOperationLocal(opId),
-        (opId) => engine.refreshTronOperation(opId),
+        (opId) => engine.chain.getTronOperationLocal(opId),
+        (opId) => engine.chain.refreshTronOperation(opId),
         options,
         clock
       ),
     resolveReconciliation: (input: ResolveReconciliationInput) =>
-      engine.resolveTronReconciliation(input),
-    listOperations: (options?: ListOperationsOptions) => engine.listTronOperations(options)
+      engine.chain.resolveTronReconciliation(input),
+    listOperations: (options?: ListOperationsOptions) => engine.chain.listTronOperations(options)
   };
   const tronImmediate: TronImmediateFacet = {
-    sendTransaction: (input: TronTransactionInput) => engine.sendTronTransaction(input),
-    sendContractCall: (input: TronContractCallInput) => engine.sendTronContractCall(input)
+    sendTransaction: (input: TronTransactionInput) => engine.chain.sendTronTransaction(input),
+    sendContractCall: (input: TronContractCallInput) => engine.chain.sendTronContractCall(input)
   };
   const tron = Object.freeze(
     allowImmediate ? { ...tronBase, ...tronImmediate } : { ...tronBase }
@@ -332,7 +335,7 @@ function buildWalletFacade<
 
   const indexerFacet: WalletIndexerFacet = Object.freeze({
     async getEvmBalances(options?: GetEvmBalancesOptions) {
-      const address = await engine.snapshotAddress('evm');
+      const address = await engine.core.snapshotAddress('evm');
       if (!address)
         throw new WalletError(
           'WALLET_NOT_INITIALIZED',
@@ -342,7 +345,7 @@ function buildWalletFacade<
       return indexer.getBalances(address, options);
     },
     async getSolanaBalances(options?: GetSolanaBalancesOptions) {
-      const address = await engine.snapshotAddress('solana');
+      const address = await engine.core.snapshotAddress('solana');
       if (!address)
         throw new WalletError(
           'WALLET_NOT_INITIALIZED',
@@ -352,7 +355,7 @@ function buildWalletFacade<
       return indexer.getSolanaBalances(address, options?.networks);
     },
     async getTronBalances(options?: GetTronBalancesOptions) {
-      const address = await engine.snapshotAddress('tron');
+      const address = await engine.core.snapshotAddress('tron');
       if (!address)
         throw new WalletError(
           'WALLET_NOT_INITIALIZED',
@@ -364,12 +367,12 @@ function buildWalletFacade<
   });
 
   const base: ServerWalletBase<TApproval> = {
-    inspect: () => engine.inspect(),
+    inspect: () => engine.core.inspect(),
     createOrRestore: (options?: CreateOrRestoreOptions) =>
-      engine.createOrRestore(options?.families),
-    rotateCredential: () => engine.rotateCredential(),
-    disable: () => engine.disable(),
-    enable: () => engine.enable(),
+      engine.core.createOrRestore(options?.families),
+    rotateCredential: () => engine.core.rotateCredential(),
+    disable: () => engine.core.disable(),
+    enable: () => engine.core.enable(),
     evm,
     solana,
     tron,
