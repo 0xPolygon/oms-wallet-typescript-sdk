@@ -9,4 +9,4 @@ Tighten transaction settlement, open-operation indexing, and swap debit coordina
 - **Known claims are kept:** once WaaS has shown a transaction claimed (`pending`, or a transaction hash), a later stale status read (`quoted`, or `TransactionExpired`) never regresses the operation back to `unknown` or `expired`.
 - **Signatures:** `signMessage` and `signTypedData` record a failed or unverified signature as `failed` with its error code; retrying under the same ID returns that record without signing again.
 - **Interrupted preparations:** an operation whose preparation was interrupted before its quote was stored is quoted again under the same ID and matching submission mode instead of staying stuck in `preparing`.
-- **Open operation index:** `listOperations({ status: 'open' })` reads unsettled operations from a maintained open index (`v: 2`) that upgrades unproven pre-0.3.0 `expired` records into open reconciliation.
+- **Open operation index:** `listOperations({ status: 'open' })` reads unsettled operations from a maintained open index without scanning settled history.

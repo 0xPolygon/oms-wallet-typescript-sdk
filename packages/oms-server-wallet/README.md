@@ -213,13 +213,13 @@ await wallet.swaps.tick();
 
 See [docs/SWAPS-INTEGRATION.md](docs/SWAPS-INTEGRATION.md) and [TRAILS-API.md](TRAILS-API.md) for service-scoped stores (`scope: 'service'`), durable alarm scheduling, and separately reviewed recovery.
 
-## Storage, concurrency & 0.2.x state migration
+## Storage & concurrency
 
 - `StateStore.write` / `NamespacedStateStore.write` must complete durable persistence before resolving.
 - `ExclusiveExecutor.run` must hold exclusive ownership for the entire async task, including remote I/O. `createSingleProcessExecutor` / `createSingleProcessExecutorPool` are sufficient only within one Node process or a single per-wallet Durable Object. Construct one wallet (and executor) per Durable Object instance — never a fresh `createSingleProcessExecutor()` per HTTP request — and never call back into the wallet from `getIdToken`, store adapters, or custom `fetch` hooks (which would deadlock the executor).
 - Once swaps are enabled and confirmed on a wallet, keep `swaps: trails({ ..., enabled: false })` if you later pause new swaps rather than removing `swaps` entirely, so existing reservations stay coordinated.
-- The SDK computes the canonical `0.2.x`-compatible namespace (`JSON.stringify([waasOrigin, projectId, issuer, audience, subject])`) from the routed **WaaS API origin** (never `APP_ORIGIN`). If an existing `0.2.x` deployment used a custom `EncryptedStore` context string (such as the bare subject), pass `store: { adapter, encryptionKey, encryptionContext }` (or `storage.encryptionContext: (subject, namespace) => ...` on `createServerWalletService`) explicitly — the SDK never falls back after an integrity error.
-- Encrypted `0.2.x` wallet state is migrated automatically on first load (including `inspect()`), preserving credentials, nonces, and operations. Fence older workers before the first `0.3.0` load. Restoring a pre-upgrade backup after new nonces or submissions have been sent requires upstream reconciliation — a database backup alone is not a safe rollback. Unknown formats fail closed with `INVALID_STATE`.
+- The SDK computes the canonical namespace (`JSON.stringify([waasOrigin, projectId, issuer, audience, subject])`) from the routed **WaaS API origin** (never `APP_ORIGIN`) and binds AES-256-GCM AAD to it. Unrecognized or corrupted state fails closed with `INVALID_STATE` or `STORAGE_INTEGRITY`.
+- Restoring a database backup after newer nonces or submissions have been sent requires upstream reconciliation — a backup alone is not a safe rollback.
 
 ## Development
 

@@ -74,7 +74,7 @@ export function createSingleProcessExecutorPool(): ExecutorProvider {
 }
 
 /**
- * Compute the canonical, 0.2.x-compatible storage namespace and AES-GCM encryption context.
+ * Compute the canonical storage namespace and AES-GCM encryption context.
  * Uses the routed WaaS API origin (never the application's HTTP Origin header).
  */
 export function computeIdentityNamespace(params: {

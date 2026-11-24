@@ -112,18 +112,9 @@ const OPEN_STATUSES: ReadonlySet<string> = new Set([
   'unknown'
 ]);
 
-function isUnprovenLegacyExpiry(op: StoredOperationRecord): boolean {
-  return op.status === 'expired' && op.preSubmitExpired !== true && op.operatorResolved !== true;
-}
-
-function isOperationOpen(op: StoredOperationRecord): boolean {
-  return OPEN_STATUSES.has(op.status) || isUnprovenLegacyExpiry(op);
-}
-
 const PUBLIC_EVM_KINDS: ReadonlySet<StoredEvmOperation['kind']> = new Set([
   'transfer',
   'call',
-  'userOperation',
   'sign',
   'signTypedData'
 ]);
@@ -132,11 +123,7 @@ function isInternalEvmOperation(op: StoredEvmOperation): boolean {
   return op.internal === true || op.id.startsWith('swp_') || !PUBLIC_EVM_KINDS.has(op.kind);
 }
 
-const PUBLIC_EVM_TX_KINDS: readonly StoredEvmOperation['kind'][] = [
-  'transfer',
-  'call',
-  'userOperation'
-];
+const PUBLIC_EVM_TX_KINDS: readonly StoredEvmOperation['kind'][] = ['transfer', 'call'];
 
 /** Convert a human-readable decimal token amount into a positive base-unit decimal string. */
 export function parseAmount(value: string, decimals: number): string {
@@ -461,11 +448,10 @@ function computeProvenUnsent(op: StoredOperationRecord): boolean {
 }
 
 export function projectEvmOperation(op: StoredEvmOperation): EvmOperation {
-  const kind = op.kind === 'userOperation' ? 'call' : op.kind;
   return {
     id: op.id,
     family: 'evm',
-    kind: kind as EvmOperation['kind'],
+    kind: op.kind as EvmOperation['kind'],
     chainId: op.chainId,
     inputHash: op.inputHash,
     createdAt: op.createdAt,
@@ -674,7 +660,7 @@ export class WalletEngine {
         const out: StoredEvmOperation[] = [];
         for (const id of await this.openOperationIds()) {
           const op = await this.readEvmOperation(id);
-          if (op && isOperationOpen(op)) out.push(op);
+          if (op && OPEN_STATUSES.has(op.status)) out.push(op);
         }
         return out;
       },
@@ -809,11 +795,7 @@ export class WalletEngine {
         'immediate'
       );
       if (prepared.status === 'quoted') {
-        const executed = await this.executeEvmInternal(
-          prepared.id,
-          ['call', 'userOperation'],
-          prepared.reviewId
-        );
+        const executed = await this.executeEvmInternal(prepared.id, ['call'], prepared.reviewId);
         return projectEvmOperation(executed);
       }
       return projectEvmOperation(await this.refreshEvm(prepared));
@@ -934,7 +916,7 @@ export class WalletEngine {
       for (const id of ids) {
         const op = await this.readEvmOperation(id);
         if (!op || isInternalEvmOperation(op)) continue;
-        if (status === 'open' && !isOperationOpen(op)) continue;
+        if (status === 'open' && !OPEN_STATUSES.has(op.status)) continue;
         operations.push(projectEvmOperation(op));
       }
       return paginate(operations, offset, limit);
@@ -1043,7 +1025,7 @@ export class WalletEngine {
       for (const id of ids) {
         const op = await this.readChainOperation(id, 'solana');
         if (!op) continue;
-        if (status === 'open' && !isOperationOpen(op)) continue;
+        if (status === 'open' && !OPEN_STATUSES.has(op.status)) continue;
         operations.push(projectSolanaOperation(op));
       }
       return paginate(operations, offset, limit);
@@ -1224,7 +1206,7 @@ export class WalletEngine {
       for (const id of ids) {
         const op = await this.readChainOperation(id, 'tron');
         if (!op) continue;
-        if (status === 'open' && !isOperationOpen(op)) continue;
+        if (status === 'open' && !OPEN_STATUSES.has(op.status)) continue;
         operations.push(projectTronOperation(op));
       }
       return paginate(operations, offset, limit);
@@ -1328,8 +1310,7 @@ export class WalletEngine {
       'call',
       { chainId, ...transaction },
       submissionMode,
-      false,
-      ['call', 'userOperation']
+      false
     );
     if (operation) return operation;
     let state = await this.load();
@@ -1489,9 +1470,9 @@ export class WalletEngine {
 
   private async refreshEvm(op: StoredEvmOperation): Promise<StoredEvmOperation> {
     if (
-      !['transfer', 'call', 'userOperation', 'deployment', 'recovery'].includes(op.kind) ||
+      !['transfer', 'call', 'deployment', 'recovery'].includes(op.kind) ||
       !op.quote ||
-      (!['submitting', 'pending', 'unknown'].includes(op.status) && !isUnprovenLegacyExpiry(op))
+      !['submitting', 'pending', 'unknown'].includes(op.status)
     )
       return op;
     const state = await this.load();
@@ -1964,11 +1945,7 @@ export class WalletEngine {
   }
 
   private async refreshChain(op: StoredChainOperation): Promise<StoredChainOperation> {
-    if (
-      !op.quote ||
-      (!['submitting', 'pending', 'unknown'].includes(op.status) && !isUnprovenLegacyExpiry(op))
-    )
-      return op;
+    if (!op.quote || !['submitting', 'pending', 'unknown'].includes(op.status)) return op;
     const state = await this.load();
     await refreshStatus(op, () => this.chainTransactionStatus(state, op), this.now());
     await this.writeOperation(op);
@@ -2053,10 +2030,8 @@ export class WalletEngine {
 
   // ── State, Auth & Indexing ─────────────────────────────────────────────────────────────────
 
-  private async load(): Promise<State> {
-    const { state, migrated } = await readState(this.config.store);
-    if (migrated) await this.save(state);
-    return state;
+  private load(): Promise<State> {
+    return readState(this.config.store);
   }
 
   private save(state: State) {
@@ -2286,16 +2261,7 @@ export class WalletEngine {
 
   private async readOperation(id: string): Promise<StoredOperationRecord | null> {
     const value = await this.config.store.read(`operation:${id}`);
-    if (value === null) return null;
-    const op = parseStoredOperation(value);
-    if (isUnprovenLegacyExpiry(op)) {
-      // Pre-0.3.0 heuristic expiry has no proof submission never occurred: upgrade to open
-      // reconciliation so it stays in the open index, is pollable, and blocks competing debits.
-      op.status = 'unknown';
-      op.error = 'RECONCILIATION_REQUIRED';
-      await this.writeOperation(op);
-    }
-    return op;
+    return value === null ? null : parseStoredOperation(value);
   }
 
   private async readEvmOperation(id: string): Promise<StoredEvmOperation | null> {
@@ -2316,9 +2282,8 @@ export class WalletEngine {
     const added = !ids.includes(op.id);
     if (added) await this.config.store.write('operationIndex', JSON.stringify([...ids, op.id]));
     const open = parseOpenOperationIndex(await this.config.store.read('openOperationIndex'));
-    const isOpen = isOperationOpen(op);
+    const isOpen = OPEN_STATUSES.has(op.status);
     const next = open && {
-      v: 2 as const,
       synced: added && open.synced === ids.length ? ids.length + 1 : open.synced,
       ids: isOpen
         ? open.ids.includes(op.id)
@@ -2333,7 +2298,7 @@ export class WalletEngine {
     if (changed && !isOpen) await this.writeOpenIndex(next);
   }
 
-  private writeOpenIndex(index: { v: 2; synced: number; ids: string[] }) {
+  private writeOpenIndex(index: { synced: number; ids: string[] }) {
     return this.config.store.write('openOperationIndex', JSON.stringify(index));
   }
 
@@ -2341,16 +2306,14 @@ export class WalletEngine {
     const all = parseOperationIndex(await this.config.store.read('operationIndex'));
     const stored = parseOpenOperationIndex(await this.config.store.read('openOperationIndex'));
     const open =
-      stored && stored.synced <= all.length
-        ? stored
-        : { v: 2 as const, synced: 0, ids: [] as string[] };
+      stored && stored.synced <= all.length ? stored : { synced: 0, ids: [] as string[] };
     if (open.synced === all.length && stored === open) return open.ids;
     const ids = [...open.ids];
     for (const id of all.slice(open.synced)) {
       const op = await this.readOperation(id);
-      if ((!op || isOperationOpen(op)) && !ids.includes(id)) ids.push(id);
+      if ((!op || OPEN_STATUSES.has(op.status)) && !ids.includes(id)) ids.push(id);
     }
-    await this.writeOpenIndex({ v: 2, synced: all.length, ids });
+    await this.writeOpenIndex({ synced: all.length, ids });
     return ids;
   }
 

@@ -35,8 +35,8 @@ export declare function createServerWallet<TFacet>(options: ServerWalletOptionsB
 ### `createServerWalletService`
 
 Create a multi-tenant server wallet service for backends operating many identities.
-Computes exact 0.2.x-compatible namespaces from the routed WaaS origin, project, issuer,
-audience, and subject.
+Computes canonical identity namespaces from the routed WaaS origin, project, issuer, audience,
+and subject.
 
 ```typescript
 export declare function createServerWalletService(options: ServerWalletServiceOptionsBase & {
@@ -361,13 +361,11 @@ durability).
 export type WalletStoreOption = {
     readonly adapter: StateStore;
     readonly encryptionKey: string;
-    readonly encryptionContext?: string;
     readonly encryptedStore?: never;
 } | {
     readonly encryptedStore: StateStore;
     readonly adapter?: never;
     readonly encryptionKey?: never;
-    readonly encryptionContext?: never;
 };
 ```
 
@@ -382,13 +380,11 @@ durability).
 export type ServiceStorageOption = {
     readonly adapter: NamespacedStateStore;
     readonly encryptionKey: string;
-    readonly encryptionContext?: (subject: string, namespace: string) => string;
     readonly encryptedStore?: never;
 } | {
     readonly encryptedStore: NamespacedStateStore;
     readonly adapter?: never;
     readonly encryptionKey?: never;
-    readonly encryptionContext?: never;
 };
 ```
 

@@ -86,19 +86,12 @@ export type WalletStoreOption =
   | {
       readonly adapter: StateStore;
       readonly encryptionKey: string;
-      /**
-       * Optional AES-GCM context override for upgrading `0.2.x` stores that used a custom
-       * `EncryptedStore` context (for example, the bare subject). Omit for new wallets to use the
-       * canonical `[waasOrigin, projectId, issuer, audience, subject]` context.
-       */
-      readonly encryptionContext?: string;
       readonly encryptedStore?: never;
     }
   | {
       readonly encryptedStore: StateStore;
       readonly adapter?: never;
       readonly encryptionKey?: never;
-      readonly encryptionContext?: never;
     };
 
 /**
@@ -111,18 +104,12 @@ export type ServiceStorageOption =
   | {
       readonly adapter: NamespacedStateStore;
       readonly encryptionKey: string;
-      /**
-       * Optional AES-GCM context resolver for upgrading `0.2.x` multi-tenant stores that used a
-       * custom `EncryptedStore` context. Omit for new deployments to use the canonical namespace.
-       */
-      readonly encryptionContext?: (subject: string, namespace: string) => string;
       readonly encryptedStore?: never;
     }
   | {
       readonly encryptedStore: NamespacedStateStore;
       readonly adapter?: never;
       readonly encryptionKey?: never;
-      readonly encryptionContext?: never;
     };
 
 /** Base options shared by all `createServerWallet` configurations. */
@@ -591,7 +578,7 @@ export type TronFacet<TApproval extends ApprovalMode = 'two-phase'> =
 
 /** Base handle for a single OIDC identity's attested server wallet. */
 export interface ServerWalletBase<TApproval extends ApprovalMode = 'two-phase'> {
-  /** Local snapshot of persisted state (may persist a 0.2.x → v2 state migration on first load). */
+  /** Pure local snapshot of persisted state; does not authenticate, poll WaaS, or mutate storage. */
   inspect(): Promise<WalletSnapshot>;
   /** Authenticate if needed and create or restore one wallet per requested family (default EVM). */
   createOrRestore(options?: CreateOrRestoreOptions): Promise<WalletSnapshot>;

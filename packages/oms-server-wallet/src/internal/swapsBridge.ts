@@ -43,7 +43,7 @@ export interface LockedEnginePrimitives {
   ): Promise<StoredEvmOperation>;
   executeEvmOperationLocked(
     id: string,
-    kinds: readonly ('transfer' | 'call' | 'userOperation' | 'deployment' | 'recovery')[],
+    kinds: readonly ('transfer' | 'call' | 'deployment' | 'recovery')[],
     options: { skipGate: true; bypassReviewId?: true }
   ): Promise<StoredEvmOperation>;
   prepareDeploymentLocked(id: string, chainId: number): Promise<StoredEvmOperation>;

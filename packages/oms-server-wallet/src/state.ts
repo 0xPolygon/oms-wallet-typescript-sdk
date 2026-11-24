@@ -6,7 +6,6 @@ import type { StateStore } from './storage.js';
 import { WalletError } from './errors.js';
 import {
   chainQuoteSchema,
-  credentialId,
   feeOptionSchema,
   isWalletAddress,
   NETWORK_FAMILIES,
@@ -14,10 +13,7 @@ import {
   walletSchema
 } from './protocol.js';
 
-/**
- * Persisted under the `wallet` key. Version 2 keeps one wallet per network family; records from
- * 0.2.x (one EVM wallet, no version) are migrated when first loaded.
- */
+/** Persisted under the `wallet` key. Holds one wallet per network family and active coordination state. */
 export interface State {
   version: 2;
   wallets: Partial<Record<NetworkFamily, RemoteWallet>>;
@@ -44,20 +40,9 @@ const storedWallet = (family: NetworkFamily) =>
 const credentialSchema = z.object({
   privateJwk: z.looseObject({ kty: z.literal('EC'), crv: z.literal('P-256'), d: z.string() }),
   id: z.string().regex(/^0x04[0-9a-fA-F]{128}$/),
-  credentialId: z
-    .string()
-    .regex(/^0x[0-9a-f]{64}$/)
-    .optional(),
+  credentialId: z.string().regex(/^0x[0-9a-f]{64}$/),
   nonce: z.string().regex(/^[0-9]{1,30}$/),
   expiresAt: z.string().optional()
-});
-
-/** 0.2.x always wrote both flags, so a record without them is not theirs. */
-const legacySchema = z.strictObject({
-  wallet: storedWallet('evm').optional(),
-  credential: credentialSchema.optional(),
-  disabled: z.boolean(),
-  creating: z.boolean()
 });
 
 const stateSchema = z.strictObject({
@@ -90,15 +75,7 @@ const submissionModeSchema = z.enum(['review', 'immediate']);
 
 const storedEvmOperationSchema = z.strictObject({
   id: z.string().min(1),
-  kind: z.enum([
-    'transfer',
-    'userOperation',
-    'call',
-    'sign',
-    'signTypedData',
-    'deployment',
-    'recovery'
-  ]),
+  kind: z.enum(['transfer', 'call', 'sign', 'signTypedData', 'deployment', 'recovery']),
   inputHash: z.string().min(1),
   createdAt: z.string().min(1),
   status: z.enum(operationStatusValues),
@@ -185,7 +162,7 @@ export type StoredOperationRecord = StoredEvmOperation | StoredChainOperation;
 const invalid = (message = 'Stored wallet state is not in a recognised format.') =>
   new WalletError('INVALID_STATE', message, 500);
 
-/** Validate a stored operation record (including 0.2.x records); fail closed on unrecognized data. */
+/** Validate a stored operation record; fail closed on unrecognized data. */
 export function parseStoredOperation(raw: string): StoredOperationRecord {
   let json: unknown;
   try {
@@ -220,10 +197,10 @@ export function parseOperationIndex(raw: string | null): string[] {
   return parsed.data;
 }
 
-/** Validate the stored open-operation index (`v: 2` includes unproven legacy expiries). */
+/** Validate the stored open-operation index. */
 export function parseOpenOperationIndex(
   raw: string | null
-): { v: 2; synced: number; ids: string[] } | null {
+): { synced: number; ids: string[] } | null {
   if (raw === null) return null;
   let json: unknown;
   try {
@@ -231,59 +208,29 @@ export function parseOpenOperationIndex(
   } catch {
     throw invalid('Stored open-operation index is not valid JSON.');
   }
-  const v2 = z
+  const parsed = z
     .strictObject({
-      v: z.literal(2),
       synced: z.number().int().min(0),
       ids: z.array(z.string().min(1))
     })
     .safeParse(json);
-  if (v2.success) return v2.data;
-  // Pre-v2 open index (without `v: 2`) may have excluded unproven legacy `expired` records:
-  // force a clean one-time rebuild from `operationIndex`.
-  const v1 = z
-    .strictObject({ synced: z.number().int().min(0), ids: z.array(z.string().min(1)) })
-    .safeParse(json);
-  if (v1.success) return null;
-  throw invalid('Stored open-operation index is not in a recognised format.');
+  if (!parsed.success) throw invalid('Stored open-operation index is not in a recognised format.');
+  return parsed.data;
 }
 
-/** Read and validate the state, migrating a 0.2.x record. `migrated` means it must be saved. */
-export async function readState(store: StateStore): Promise<{ state: State; migrated: boolean }> {
+/** Pure read-only load and strict validation of persisted wallet state. */
+export async function readState(store: StateStore): Promise<State> {
   const value = await store.read('wallet');
-  if (value === null)
-    return { state: { version: 2, wallets: {}, disabled: false, creating: [] }, migrated: false };
+  if (value === null) return { version: 2, wallets: {}, disabled: false, creating: [] };
   let json: unknown;
   try {
     json = JSON.parse(value);
   } catch {
     throw invalid();
   }
-  let state: State;
-  let migrated = false;
-  if (json && typeof json === 'object' && 'version' in json) {
-    const parsed = stateSchema.safeParse(json);
-    if (!parsed.success) throw invalid();
-    state = parsed.data as State;
-  } else {
-    const parsed = legacySchema.safeParse(json);
-    if (!parsed.success) throw invalid();
-    const { wallet, credential, disabled, creating } = parsed.data;
-    state = {
-      version: 2,
-      wallets: wallet ? { evm: wallet } : {},
-      ...(credential ? { credential: credential as Credential } : {}),
-      disabled,
-      creating: creating && !wallet ? ['evm'] : []
-    };
-    migrated = true;
-  }
-  // Upgrade encrypted records created before RPC identifiers were stored separately.
-  if (state.credential && !state.credential.credentialId) {
-    state.credential.credentialId = await credentialId(state.credential.id);
-    migrated = true;
-  }
-  return { state, migrated };
+  const parsed = stateSchema.safeParse(json);
+  if (!parsed.success) throw invalid();
+  return parsed.data as State;
 }
 
 export function writeState(store: StateStore, state: State): Promise<void> {

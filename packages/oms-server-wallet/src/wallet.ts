@@ -140,14 +140,7 @@ function resolveWalletStore(store: WalletStoreOption, namespace: string) {
       'store.adapter must implement read/write and include a 32-byte base64 encryptionKey.',
       503
     );
-  const context = store.encryptionContext === undefined ? namespace : store.encryptionContext;
-  if (typeof context !== 'string' || !context.trim())
-    throw new WalletError(
-      'CONFIGURATION',
-      'store.encryptionContext must be a non-empty string when provided.',
-      503
-    );
-  return new EncryptedStore(store.adapter, store.encryptionKey, context);
+  return new EncryptedStore(store.adapter, store.encryptionKey, namespace);
 }
 
 function sleepAbortable(ms: number, signal?: AbortSignal): Promise<boolean> {
@@ -648,22 +641,11 @@ function instantiateServerWalletService(
       });
       const store = hasEncrypted
         ? scopeNamespacedStore(storage.encryptedStore, namespace)
-        : (() => {
-            const context = storage.encryptionContext
-              ? storage.encryptionContext(subject, namespace)
-              : namespace;
-            if (typeof context !== 'string' || !context.trim())
-              throw new WalletError(
-                'CONFIGURATION',
-                'storage.encryptionContext must return a non-empty string.',
-                503
-              );
-            return new EncryptedStore(
-              scopeNamespacedStore(storage.adapter, namespace),
-              storage.encryptionKey,
-              context
-            );
-          })();
+        : new EncryptedStore(
+            scopeNamespacedStore(storage.adapter, namespace),
+            storage.encryptionKey,
+            namespace
+          );
       const executor = options.executor(namespace);
       if (!executor || typeof executor.run !== 'function')
         throw new WalletError(
@@ -743,8 +725,8 @@ export function createServerWalletServiceInternal(
 
 /**
  * Create a multi-tenant server wallet service for backends operating many identities.
- * Computes exact 0.2.x-compatible namespaces from the routed WaaS origin, project, issuer,
- * audience, and subject.
+ * Computes canonical identity namespaces from the routed WaaS origin, project, issuer, audience,
+ * and subject.
  */
 export function createServerWalletService(
   options: ServerWalletServiceOptionsBase & {

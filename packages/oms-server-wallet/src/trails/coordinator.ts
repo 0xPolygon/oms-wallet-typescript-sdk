@@ -51,9 +51,7 @@ const idSchema = z
   .regex(/^[A-Za-z0-9_-]{8,100}$/)
   .refine((id) => !id.startsWith('swp_'));
 const uncertain = (op?: StoredEvmOperation) =>
-  !!op &&
-  (['submitting', 'pending', 'unknown'].includes(op.status) ||
-    (op.status === 'expired' && op.preSubmitExpired !== true && op.operatorResolved !== true));
+  !!op && ['submitting', 'pending', 'unknown'].includes(op.status);
 const terminalUpstream = new Set(['FAILED', 'ABORTED', 'INVALID', 'REFUNDED', 'SUCCEEDED']);
 const emptyCode = (code: string) => /^0x0*$/.test(code);
 const errorCode = (error: unknown) =>
@@ -281,7 +279,7 @@ export class TrailsCoordinator {
         operation.chainId !== chainId ||
         exceptOperations.includes(operation.id) ||
         !uncertain(operation) ||
-        !['transfer', 'call', 'userOperation', 'deployment', 'recovery'].includes(operation.kind)
+        !['transfer', 'call', 'deployment', 'recovery'].includes(operation.kind)
       )
         continue;
       if (!disabled)

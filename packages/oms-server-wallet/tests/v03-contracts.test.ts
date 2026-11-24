@@ -1,4 +1,3 @@
-import { readFileSync } from 'node:fs';
 import { describe, expect, it, vi } from 'vitest';
 
 import {
@@ -22,7 +21,7 @@ import {
 
 import { environmentFromKey, resolveAttestationPolicy } from '../src/environment.js';
 import { IndexerClient } from '../src/indexer.js';
-import { computeIdentityNamespace, EncryptedStore } from '../src/storage.js';
+import { computeIdentityNamespace } from '../src/storage.js';
 import { trailsInternal } from '../src/trails/coordinator.js';
 import { createServerWalletInternal, createServerWalletServiceInternal } from '../src/wallet.js';
 import { quoteFixture, recoveryFixture } from './fixtures/trails.js';
@@ -626,74 +625,31 @@ describe('observation, waitForOperation, describeOperation, indexer facet, and e
     expect(isUpstreamError(w)).toBe(false);
   });
 
-  it('migrates an encrypted 0.2.x wallet with pending op, interrupted preparing op, and uncertain create via createServerWallet({ adapter, encryptionKey })', async () => {
+  it('keeps storage encryption AAD independent of the HTTP Origin header', async () => {
     const raw = new MemoryStore();
-    const env = environmentFromKey(TEST_PUBLISHABLE_KEY);
-    const ns = computeIdentityNamespace({
-      waasOrigin: env.origin,
-      projectId: env.projectId,
-      issuer: 'https://issuer.example',
-      audience: 'oms',
-      subject: 'customer-1'
-    });
-    const encrypted = new EncryptedStore(raw, encryptionKey, ns);
-    await encrypted.write(
-      'wallet',
-      JSON.stringify({
-        disabled: false,
-        creating: true
-      })
-    );
-    await encrypted.write('operationIndex', JSON.stringify(['pend-op-1', 'prep-op-1']));
-    await encrypted.write(
-      'operation:pend-op-1',
-      JSON.stringify({
-        id: 'pend-op-1',
-        kind: 'transfer',
-        inputHash: 'hash1',
-        createdAt: new Date().toISOString(),
-        status: 'pending',
-        chainId: 137
-      })
-    );
-    await encrypted.write(
-      'operation:prep-op-1',
-      JSON.stringify({
-        id: 'prep-op-1',
-        kind: 'transfer',
-        inputHash: 'hash2',
-        createdAt: new Date().toISOString(),
-        status: 'preparing',
-        chainId: 137
-      })
-    );
-
     const remote = new FakeWaas();
-    const wallet = createServerWalletInternal(
-      {
-        publishableKey: TEST_PUBLISHABLE_KEY,
-        origin: 'https://app.example', // Must NOT affect storage namespace AAD!
-        oidc: {
-          subject: 'customer-1',
-          issuer: 'https://issuer.example',
-          audience: 'oms',
-          getIdToken: async () => ({
-            token: `tok-${crypto.randomUUID()}`,
-            expiresAt: Math.floor(Date.now() / 1000) + 300
-          })
+    const make = (origin: string) =>
+      createServerWalletInternal(
+        {
+          publishableKey: TEST_PUBLISHABLE_KEY,
+          origin,
+          oidc: {
+            subject: 'customer-1',
+            issuer: 'https://issuer.example',
+            audience: 'oms',
+            getIdToken: async () => ({
+              token: `tok-${crypto.randomUUID()}`,
+              expiresAt: Math.floor(Date.now() / 1000) + 300
+            })
+          },
+          store: { adapter: raw, encryptionKey },
+          executor: createSingleProcessExecutor()
         },
-        store: { adapter: raw, encryptionKey },
-        executor: createSingleProcessExecutor()
-      },
-      { transport: remote }
-    );
-    const snap = await wallet.inspect();
-    expect(snap.creationUncertain).toBe(true);
-    const open = await wallet.evm.listOperations({ status: 'open' });
-    expect(open.items.map((o) => [o.id, o.status, o.provenUnsent])).toEqual([
-      ['pend-op-1', 'pending', false],
-      ['prep-op-1', 'preparing', true]
-    ]);
+        { transport: remote }
+      );
+    const created = await make('https://app-a.example').createOrRestore();
+    const restored = await make('https://app-b.example').inspect();
+    expect(restored.wallet).toEqual(created.wallet);
   });
 });
 
@@ -833,100 +789,6 @@ describe('review-audit boundary regressions', () => {
     expect(await h.wallet.evm.getOperation(signingId)).toBeNull();
     expect(await h.wallet.evm.refreshOperation(signingId)).toBeNull();
     expect(await h.wallet.evm.getOperation(record.fundingId)).toBeNull();
-  });
-
-  it('upgrades pre-0.3.0 heuristic expired records into open reconciliation, blocks competing debits, and requires affirmative evidence for failed provenUnsent', async () => {
-    const h = await swapHarness();
-    // Simulate a pre-0.3.0 store: v1 openOperationIndex (omitting legacy expired) + legacy expired & failed ops.
-    await h.waas.store.write('operationIndex', JSON.stringify(['legacy-exp-01', 'legacy-fail-01']));
-    await h.waas.store.write('openOperationIndex', JSON.stringify({ synced: 2, ids: [] }));
-    await h.waas.store.write(
-      'operation:legacy-exp-01',
-      JSON.stringify({
-        id: 'legacy-exp-01',
-        kind: 'transfer',
-        inputHash: 'h1',
-        createdAt: new Date().toISOString(),
-        status: 'expired',
-        chainId: 137,
-        error: 'TRANSACTION_EXPIRED',
-        quote: {
-          txnId: 'legacy-txn-1',
-          status: 'quoted',
-          sponsored: true,
-          expiresAt: new Date(Date.now() - 300_000).toISOString()
-        }
-      })
-    );
-    await h.waas.store.write(
-      'operation:legacy-fail-01',
-      JSON.stringify({
-        id: 'legacy-fail-01',
-        kind: 'transfer',
-        inputHash: 'h2',
-        createdAt: new Date().toISOString(),
-        status: 'failed',
-        chainId: 137,
-        error: 'PREPARATION_FAILED'
-      })
-    );
-
-    const open = await h.wallet.evm.listOperations({ status: 'open' });
-    expect(open.items.map((o) => [o.id, o.status, o.error, o.provenUnsent])).toEqual([
-      ['legacy-exp-01', 'unknown', 'RECONCILIATION_REQUIRED', false]
-    ]);
-    const legacyFail = await h.wallet.evm.getOperation('legacy-fail-01');
-    expect(legacyFail?.provenUnsent).toBe(false);
-
-    // Competing swap on chain 137 MUST be blocked by the upgraded legacy-exp-01!
-    h.waas.remote.evmStatusError = 7309;
-    const q = await h.quote();
-    await expect(
-      h.swaps.confirm({ swapId: q.id, reviewId: q.quote.reviewId })
-    ).rejects.toMatchObject({ code: 'DEBIT_PENDING' });
-  });
-
-  it('decrypts the actual checked-in published 0.2.0 fixture via createServerWallet with explicit encryptionContext and never falls back on wrong context', async () => {
-    const legacy = JSON.parse(
-      readFileSync(new URL('./fixtures/state-0.2.0.json', import.meta.url), 'utf8')
-    ) as { subject: string; encryptionKey: string; store: Record<string, string> };
-    const raw = new MemoryStore();
-    for (const [k, v] of Object.entries(legacy.store)) raw.values.set(k, v);
-
-    // Without matching encryptionContext, fails closed with STORAGE_INTEGRITY (no fallback!).
-    const wrongContext = createServerWallet({
-      publishableKey: 'pk_live_abc_secret',
-      oidc: {
-        subject: legacy.subject,
-        issuer: 'https://issuer.example',
-        audience: 'oms-server-wallet',
-        getIdToken: async () => ({ token: 't', expiresAt: 1 })
-      },
-      store: { adapter: raw, encryptionKey: legacy.encryptionKey },
-      executor: createSingleProcessExecutor()
-    });
-    await expect(wrongContext.inspect()).rejects.toMatchObject({ code: 'STORAGE_INTEGRITY' });
-
-    // With explicit legacy encryptionContext, decrypts and migrates cleanly through the public factory!
-    const migrated = createServerWallet({
-      publishableKey: 'pk_live_abc_secret',
-      oidc: {
-        subject: legacy.subject,
-        issuer: 'https://issuer.example',
-        audience: 'oms-server-wallet',
-        getIdToken: async () => ({ token: 't', expiresAt: 1 })
-      },
-      store: {
-        adapter: raw,
-        encryptionKey: legacy.encryptionKey,
-        encryptionContext: legacy.subject
-      },
-      executor: createSingleProcessExecutor()
-    });
-    const snap = await migrated.inspect();
-    expect(snap.wallet?.id).toBe('wallet-legacy');
-    const ops = await migrated.evm.listOperations();
-    expect(ops.items.map((o) => o.id)).toEqual(['legacy-sign-1', 'legacy-transfer-1']);
   });
 
   it('snapshots swap and recovery confirmation inputs synchronously before queuing', async () => {
@@ -1214,41 +1076,10 @@ describe('deep systems hardening (Dot + Opus 5.5 audit)', () => {
     expect(settled).toMatchObject({ status: 'executed', txnHash: `0x${'ab'.repeat(32)}` });
   });
 
-  it('supports service-level encryptionContext for 0.2.x multi-tenant migration, legacy quoted describeOperation, and immediate reconciliation-required on unknown signatures', async () => {
-    const legacy = JSON.parse(
-      readFileSync(new URL('./fixtures/state-0.2.0.json', import.meta.url), 'utf8')
-    ) as { subject: string; encryptionKey: string; store: Record<string, string> };
-    const nsStore = new MemoryNamespacedStore();
-    const env = environmentFromKey('pk_live_abc_secret');
-    const ns = computeIdentityNamespace({
-      waasOrigin: env.origin,
-      projectId: env.projectId,
-      issuer: 'https://issuer.example',
-      audience: 'oms-server-wallet',
-      subject: legacy.subject
-    });
-    for (const [k, v] of Object.entries(legacy.store)) await nsStore.write(ns, k, v);
-
-    const svc = createServerWalletService({
-      publishableKey: 'pk_live_abc_secret',
-      oidc: {
-        issuer: 'https://issuer.example',
-        audience: 'oms-server-wallet',
-        getIdToken: async () => ({ token: 't', expiresAt: 1 })
-      },
-      storage: {
-        adapter: nsStore,
-        encryptionKey: legacy.encryptionKey,
-        encryptionContext: (subject) => subject
-      },
-      executor: createSingleProcessExecutorPool()
-    });
-    expect((await svc.forSubject(legacy.subject).inspect()).wallet?.id).toBe('wallet-legacy');
-
-    // Legacy quoted op without reviewId -> safe-to-reprepare (not an endless await-review loop).
+  it('returns safe-to-reprepare for a quoted op missing reviewId and reconciliation-required immediately on unknown signatures', async () => {
     expect(
       describeOperation({
-        id: 'legacy-q-1',
+        id: 'missing-rev-1',
         family: 'evm',
         kind: 'transfer',
         chainId: 137,
