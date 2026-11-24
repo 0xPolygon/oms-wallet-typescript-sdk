@@ -93,6 +93,7 @@
         "OperationPage",
         "WaitForOperationOptions",
         "WaitResult",
+        "TransactionStatusView",
         "describeOperation",
         "OperationGuidance",
         "OperationNextAction"

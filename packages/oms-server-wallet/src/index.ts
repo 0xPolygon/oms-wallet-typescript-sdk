@@ -65,6 +65,7 @@ export type {
   TronSignMessageInput,
   TronSignTypedDataInput,
   TronTransactionInput,
+  TransactionStatusView,
   TypedDataInput,
   WaitForOperationOptions,
   WaitResult,

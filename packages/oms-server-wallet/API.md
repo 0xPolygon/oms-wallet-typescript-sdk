@@ -402,6 +402,7 @@ export type EvmFacet<TApproval extends ApprovalMode = "two-phase"> = {
         waitForOperation(id: string, options: WaitForOperationOptions): Promise<WaitResult<EvmOperation>>;
         resolveReconciliation(input: ResolveReconciliationInput): Promise<EvmOperation>;
         listOperations(options?: ListOperationsOptions): Promise<OperationPage<EvmOperation>>;
+        getTransactionStatus(txnId: string): Promise<TransactionStatusView>;
     } & {
         sendTransfer(input: EvmTransferInput): Promise<EvmOperation>;
         sendCall<const abi extends Abi | readonly unknown[] = Abi, functionName extends ContractFunctionName<abi> = ContractFunctionName<abi>>(input: EvmCallInput<abi, functionName>): Promise<EvmOperation>;
@@ -416,6 +417,7 @@ export type EvmFacet<TApproval extends ApprovalMode = "two-phase"> = {
         waitForOperation(id: string, options: WaitForOperationOptions): Promise<WaitResult<EvmOperation>>;
         resolveReconciliation(input: ResolveReconciliationInput): Promise<EvmOperation>;
         listOperations(options?: ListOperationsOptions): Promise<OperationPage<EvmOperation>>;
+        getTransactionStatus(txnId: string): Promise<TransactionStatusView>;
     })]: (TApproval extends "allow-immediate" ? {
         prepareTransfer(input: EvmTransferInput): Promise<EvmOperation>;
         prepareCall<const abi extends Abi | readonly unknown[] = Abi, functionName extends ContractFunctionName<abi> = ContractFunctionName<abi>>(input: EvmCallInput<abi, functionName>): Promise<EvmOperation>;
@@ -427,6 +429,7 @@ export type EvmFacet<TApproval extends ApprovalMode = "two-phase"> = {
         waitForOperation(id: string, options: WaitForOperationOptions): Promise<WaitResult<EvmOperation>>;
         resolveReconciliation(input: ResolveReconciliationInput): Promise<EvmOperation>;
         listOperations(options?: ListOperationsOptions): Promise<OperationPage<EvmOperation>>;
+        getTransactionStatus(txnId: string): Promise<TransactionStatusView>;
     } & {
         sendTransfer(input: EvmTransferInput): Promise<EvmOperation>;
         sendCall<const abi extends Abi | readonly unknown[] = Abi, functionName extends ContractFunctionName<abi> = ContractFunctionName<abi>>(input: EvmCallInput<abi, functionName>): Promise<EvmOperation>;
@@ -441,6 +444,7 @@ export type EvmFacet<TApproval extends ApprovalMode = "two-phase"> = {
         waitForOperation(id: string, options: WaitForOperationOptions): Promise<WaitResult<EvmOperation>>;
         resolveReconciliation(input: ResolveReconciliationInput): Promise<EvmOperation>;
         listOperations(options?: ListOperationsOptions): Promise<OperationPage<EvmOperation>>;
+        getTransactionStatus(txnId: string): Promise<TransactionStatusView>;
     })[K];
 };
 ```
@@ -581,6 +585,7 @@ export type SolanaFacet<TApproval extends ApprovalMode = "two-phase"> = {
         waitForOperation(id: string, options: WaitForOperationOptions): Promise<WaitResult<SolanaOperation>>;
         resolveReconciliation(input: ResolveReconciliationInput): Promise<SolanaOperation>;
         listOperations(options?: ListOperationsOptions): Promise<OperationPage<SolanaOperation>>;
+        getTransactionStatus(txnId: string): Promise<TransactionStatusView>;
     } & {
         sendTransfer(input: SolanaTransferInput): Promise<SolanaOperation>;
     } : {
@@ -592,6 +597,7 @@ export type SolanaFacet<TApproval extends ApprovalMode = "two-phase"> = {
         waitForOperation(id: string, options: WaitForOperationOptions): Promise<WaitResult<SolanaOperation>>;
         resolveReconciliation(input: ResolveReconciliationInput): Promise<SolanaOperation>;
         listOperations(options?: ListOperationsOptions): Promise<OperationPage<SolanaOperation>>;
+        getTransactionStatus(txnId: string): Promise<TransactionStatusView>;
     })]: (TApproval extends "allow-immediate" ? {
         prepareTransfer(input: SolanaTransferInput): Promise<SolanaOperation>;
         execute(input: ExecuteInput): Promise<SolanaOperation>;
@@ -601,6 +607,7 @@ export type SolanaFacet<TApproval extends ApprovalMode = "two-phase"> = {
         waitForOperation(id: string, options: WaitForOperationOptions): Promise<WaitResult<SolanaOperation>>;
         resolveReconciliation(input: ResolveReconciliationInput): Promise<SolanaOperation>;
         listOperations(options?: ListOperationsOptions): Promise<OperationPage<SolanaOperation>>;
+        getTransactionStatus(txnId: string): Promise<TransactionStatusView>;
     } & {
         sendTransfer(input: SolanaTransferInput): Promise<SolanaOperation>;
     } : {
@@ -612,6 +619,7 @@ export type SolanaFacet<TApproval extends ApprovalMode = "two-phase"> = {
         waitForOperation(id: string, options: WaitForOperationOptions): Promise<WaitResult<SolanaOperation>>;
         resolveReconciliation(input: ResolveReconciliationInput): Promise<SolanaOperation>;
         listOperations(options?: ListOperationsOptions): Promise<OperationPage<SolanaOperation>>;
+        getTransactionStatus(txnId: string): Promise<TransactionStatusView>;
     })[K];
 };
 ```
@@ -693,6 +701,7 @@ export type TronFacet<TApproval extends ApprovalMode = "two-phase"> = {
         waitForOperation(id: string, options: WaitForOperationOptions): Promise<WaitResult<TronOperation>>;
         resolveReconciliation(input: ResolveReconciliationInput): Promise<TronOperation>;
         listOperations(options?: ListOperationsOptions): Promise<OperationPage<TronOperation>>;
+        getTransactionStatus(txnId: string): Promise<TransactionStatusView>;
     } & {
         sendTransaction(input: TronTransactionInput): Promise<TronOperation>;
         sendContractCall(input: TronContractCallInput): Promise<TronOperation>;
@@ -707,6 +716,7 @@ export type TronFacet<TApproval extends ApprovalMode = "two-phase"> = {
         waitForOperation(id: string, options: WaitForOperationOptions): Promise<WaitResult<TronOperation>>;
         resolveReconciliation(input: ResolveReconciliationInput): Promise<TronOperation>;
         listOperations(options?: ListOperationsOptions): Promise<OperationPage<TronOperation>>;
+        getTransactionStatus(txnId: string): Promise<TransactionStatusView>;
     })]: (TApproval extends "allow-immediate" ? {
         prepareTransaction(input: TronTransactionInput): Promise<TronOperation>;
         prepareContractCall(input: TronContractCallInput): Promise<TronOperation>;
@@ -718,6 +728,7 @@ export type TronFacet<TApproval extends ApprovalMode = "two-phase"> = {
         waitForOperation(id: string, options: WaitForOperationOptions): Promise<WaitResult<TronOperation>>;
         resolveReconciliation(input: ResolveReconciliationInput): Promise<TronOperation>;
         listOperations(options?: ListOperationsOptions): Promise<OperationPage<TronOperation>>;
+        getTransactionStatus(txnId: string): Promise<TransactionStatusView>;
     } & {
         sendTransaction(input: TronTransactionInput): Promise<TronOperation>;
         sendContractCall(input: TronContractCallInput): Promise<TronOperation>;
@@ -732,6 +743,7 @@ export type TronFacet<TApproval extends ApprovalMode = "two-phase"> = {
         waitForOperation(id: string, options: WaitForOperationOptions): Promise<WaitResult<TronOperation>>;
         resolveReconciliation(input: ResolveReconciliationInput): Promise<TronOperation>;
         listOperations(options?: ListOperationsOptions): Promise<OperationPage<TronOperation>>;
+        getTransactionStatus(txnId: string): Promise<TransactionStatusView>;
     })[K];
 };
 ```
@@ -1019,6 +1031,18 @@ export type WaitResult<TOperation extends WalletOperation> = {
     readonly outcome: "cancelled";
     readonly operation: TOperation;
 };
+```
+
+### `TransactionStatusView`
+
+WaaS status of a transaction, read by `getTransactionStatus`.
+
+```typescript
+export interface TransactionStatusView {
+    readonly txnId: string;
+    readonly status: "quoted" | "pending" | "executed" | "failed";
+    readonly txnHash?: string;
+}
 ```
 
 ### `describeOperation`

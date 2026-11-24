@@ -579,6 +579,49 @@ describe('observation, waitForOperation, describeOperation, indexer facet, and e
     ).rejects.toMatchObject({ code: 'INVALID_INPUT' });
   });
 
+  it('reads transaction status by txnId without settling operations or creating wallets', async () => {
+    const h = sdkHarness();
+    for (const facet of [h.client.evm, h.client.solana, h.client.tron])
+      await expect(facet.getTransactionStatus('txn-unknown-1')).rejects.toMatchObject({
+        code: 'WALLET_NOT_INITIALIZED'
+      });
+    expect(h.remote.calls.filter((call) => call.method === 'CreateWallet')).toHaveLength(0);
+    for (const bad of ['', 'has space', 'x'.repeat(257)])
+      await expect(h.client.evm.getTransactionStatus(bad)).rejects.toMatchObject({
+        code: 'INVALID_INPUT'
+      });
+
+    const sent = await h.client.evm.sendTransfer({
+      idempotencyKey: 'status-evm-1',
+      chainId: 137,
+      to: '0x2222222222222222222222222222222222222222',
+      asset: 'native',
+      amount: '1000'
+    });
+    expect(sent.status).toBe('pending');
+    h.remote.txnStatus = 'executed';
+    expect(await h.client.evm.getTransactionStatus(sent.quote!.txnId)).toEqual({
+      txnId: sent.quote!.txnId,
+      status: 'executed',
+      txnHash: `0x${'ab'.repeat(32)}`
+    });
+    // A status read never settles the stored operation.
+    expect((await h.client.evm.getOperation('status-evm-1'))?.status).toBe('pending');
+
+    const sol = await h.client.solana.sendTransfer({
+      idempotencyKey: 'status-sol-1',
+      network: 'solana:devnet',
+      to: SOLANA_RECIPIENT,
+      asset: 'native',
+      amount: '1000'
+    });
+    expect(await h.client.solana.getTransactionStatus(sol.quote!.txnId)).toMatchObject({
+      txnId: sol.quote!.txnId,
+      status: sol.status,
+      ...(sol.txnHash ? { txnHash: sol.txnHash } : {})
+    });
+  });
+
   it('derives safe next actions from operation evidence in describeOperation', () => {
     const base = {
       id: 'op-12345678',

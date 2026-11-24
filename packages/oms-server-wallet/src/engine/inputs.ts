@@ -104,6 +104,13 @@ export function validateIdempotencyKey(id: unknown, allowSwapsPrefix = false): s
   return id;
 }
 
+/** A WaaS transaction ID as returned in `quote.txnId`: 1–256 printable ASCII characters. */
+export function validateTxnId(txnId: unknown): string {
+  if (typeof txnId !== 'string' || !/^[\x21-\x7e]{1,256}$/.test(txnId))
+    throw new WalletError('INVALID_INPUT', 'Provide the txnId from an operation quote.');
+  return txnId;
+}
+
 export function validateReviewId(reviewId: unknown): string {
   if (typeof reviewId !== 'string' || reviewId.length < 8 || reviewId.length > 128)
     throw new WalletError(

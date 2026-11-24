@@ -12,6 +12,7 @@ import type {
   OperationPage,
   ResolveReconciliationInput,
   SubmissionMode,
+  TransactionStatusView,
   TypedDataInput
 } from '../types.js';
 import type { EngineCore } from './core.js';
@@ -33,7 +34,8 @@ import {
   requireMessage,
   validSchema,
   validateIdempotencyKey,
-  validateReviewId
+  validateReviewId,
+  validateTxnId
 } from './inputs.js';
 import { projectEvmOperation, parseListOptions, paginate } from './projection.js';
 
@@ -205,6 +207,26 @@ export class EvmEngine {
       const op = await this.core.readEvmOperation(id);
       if (!op || isInternalEvmOperation(op)) return null;
       return projectEvmOperation(await this.refreshEvm(op));
+    });
+  }
+
+  async getTransactionStatus(txnId: string): Promise<TransactionStatusView> {
+    const id = validateTxnId(txnId);
+    return this.core.config.executor.run(async () => {
+      const state = await this.core.load();
+      // Checked first so the authenticated call below can never create a wallet.
+      if (!state.wallets.evm)
+        throw new WalletError(
+          'WALLET_NOT_INITIALIZED',
+          'EVM wallet has not been created or restored yet.',
+          409
+        );
+      const result = await this.evmTransactionStatus(state, id);
+      return {
+        txnId: id,
+        status: result.status,
+        ...(result.txnHash ? { txnHash: result.txnHash } : {})
+      };
     });
   }
 

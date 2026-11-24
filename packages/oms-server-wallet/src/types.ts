@@ -487,6 +487,13 @@ export interface ServiceIndexerFacet {
   getTronBalances(address: string, options?: GetTronBalancesOptions): Promise<ChainBalances>;
 }
 
+/** WaaS status of a transaction, read by `getTransactionStatus`. */
+export interface TransactionStatusView {
+  readonly txnId: string;
+  readonly status: 'quoted' | 'pending' | 'executed' | 'failed';
+  readonly txnHash?: string;
+}
+
 /** Base EVM operations available in both two-phase and immediate approval modes. */
 export interface EvmFacetBase {
   prepareTransfer(input: EvmTransferInput): Promise<EvmOperation>;
@@ -514,6 +521,13 @@ export interface EvmFacetBase {
   resolveReconciliation(input: ResolveReconciliationInput): Promise<EvmOperation>;
   /** Bounded local listing of persisted EVM operations. */
   listOperations(options?: ListOperationsOptions): Promise<OperationPage<EvmOperation>>;
+  /**
+   * Read-only WaaS status of a transaction by its `txnId` (`operation.quote.txnId`). Never changes
+   * a stored operation; use `refreshOperation` to settle one. A `quoted` answer, or a
+   * `TransactionExpired` error, does not prove nothing was broadcast while WaaS reads are still
+   * catching up after the quote expired.
+   */
+  getTransactionStatus(txnId: string): Promise<TransactionStatusView>;
 }
 
 /** Immediate one-shot EVM shortcuts, present only when `approval: 'allow-immediate'` is enabled. */
@@ -553,6 +567,13 @@ export interface SolanaFacetBase {
   /** Resolve an operation in `unknown` / `RECONCILIATION_REQUIRED` after out-of-band verification. */
   resolveReconciliation(input: ResolveReconciliationInput): Promise<SolanaOperation>;
   listOperations(options?: ListOperationsOptions): Promise<OperationPage<SolanaOperation>>;
+  /**
+   * Read-only WaaS status of a transaction by its `txnId` (`operation.quote.txnId`). Never changes
+   * a stored operation; use `refreshOperation` to settle one. A `quoted` answer, or a
+   * `TransactionExpired` error, does not prove nothing was broadcast while WaaS reads are still
+   * catching up after the quote expired.
+   */
+  getTransactionStatus(txnId: string): Promise<TransactionStatusView>;
 }
 
 /** Immediate one-shot Solana shortcut, present only when `approval: 'allow-immediate'` is enabled. */
@@ -587,6 +608,13 @@ export interface TronFacetBase {
   /** Resolve an operation in `unknown` / `RECONCILIATION_REQUIRED` after out-of-band verification. */
   resolveReconciliation(input: ResolveReconciliationInput): Promise<TronOperation>;
   listOperations(options?: ListOperationsOptions): Promise<OperationPage<TronOperation>>;
+  /**
+   * Read-only WaaS status of a transaction by its `txnId` (`operation.quote.txnId`). Never changes
+   * a stored operation; use `refreshOperation` to settle one. A `quoted` answer, or a
+   * `TransactionExpired` error, does not prove nothing was broadcast while WaaS reads are still
+   * catching up after the quote expired.
+   */
+  getTransactionStatus(txnId: string): Promise<TransactionStatusView>;
 }
 
 /** Immediate one-shot Tron shortcuts, present only when `approval: 'allow-immediate'` is enabled. */

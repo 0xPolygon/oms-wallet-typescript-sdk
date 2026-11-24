@@ -259,7 +259,8 @@ function buildWalletFacade<
       ),
     resolveReconciliation: (input: ResolveReconciliationInput) =>
       engine.evm.resolveEvmReconciliation(input),
-    listOperations: (options?: ListOperationsOptions) => engine.evm.listEvmOperations(options)
+    listOperations: (options?: ListOperationsOptions) => engine.evm.listEvmOperations(options),
+    getTransactionStatus: (txnId: string) => engine.evm.getTransactionStatus(txnId)
   };
   const evmImmediate: EvmImmediateFacet = {
     sendTransfer: (input: EvmTransferInput) => engine.evm.sendEvmTransfer(input),
@@ -292,7 +293,8 @@ function buildWalletFacade<
       ),
     resolveReconciliation: (input: ResolveReconciliationInput) =>
       engine.chain.resolveSolanaReconciliation(input),
-    listOperations: (options?: ListOperationsOptions) => engine.chain.listSolanaOperations(options)
+    listOperations: (options?: ListOperationsOptions) => engine.chain.listSolanaOperations(options),
+    getTransactionStatus: (txnId: string) => engine.chain.getSolanaTransactionStatus(txnId)
   };
   const solanaImmediate: SolanaImmediateFacet = {
     sendTransfer: (input: SolanaTransferInput) => engine.chain.sendSolanaTransfer(input)
@@ -323,7 +325,8 @@ function buildWalletFacade<
       ),
     resolveReconciliation: (input: ResolveReconciliationInput) =>
       engine.chain.resolveTronReconciliation(input),
-    listOperations: (options?: ListOperationsOptions) => engine.chain.listTronOperations(options)
+    listOperations: (options?: ListOperationsOptions) => engine.chain.listTronOperations(options),
+    getTransactionStatus: (txnId: string) => engine.chain.getTronTransactionStatus(txnId)
   };
   const tronImmediate: TronImmediateFacet = {
     sendTransaction: (input: TronTransactionInput) => engine.chain.sendTronTransaction(input),

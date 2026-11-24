@@ -10,6 +10,7 @@ import type {
   SolanaTransfer,
   SolanaTransferInput,
   SubmissionMode,
+  TransactionStatusView,
   TronAbiArg,
   TronContractCallInput,
   TronNetwork,
@@ -39,7 +40,8 @@ import {
   requireTronNetwork,
   validSchema,
   validateIdempotencyKey,
-  validateReviewId
+  validateReviewId,
+  validateTxnId
 } from './inputs.js';
 import {
   projectSolanaOperation,
@@ -139,6 +141,10 @@ export class ChainEngine {
         await this.resolveChainReconciliationInternal('solana', idempotencyKey, txnId)
       )
     );
+  }
+
+  getSolanaTransactionStatus(txnId: string): Promise<TransactionStatusView> {
+    return this.transactionStatusByTxnId('solana', txnId);
   }
 
   listSolanaOperations(options?: ListOperationsOptions): Promise<OperationPage<SolanaOperation>> {
@@ -318,6 +324,10 @@ export class ChainEngine {
         await this.resolveChainReconciliationInternal('tron', idempotencyKey, txnId)
       )
     );
+  }
+
+  getTronTransactionStatus(txnId: string): Promise<TransactionStatusView> {
+    return this.transactionStatusByTxnId('tron', txnId);
   }
 
   listTronOperations(options?: ListOperationsOptions): Promise<OperationPage<TronOperation>> {
@@ -599,6 +609,31 @@ export class ChainEngine {
         .refine(valid)
         .optional()
         .or(z.literal('').transform(() => undefined))
+    });
+  }
+
+  private async transactionStatusByTxnId(
+    family: 'solana' | 'tron',
+    txnId: string
+  ): Promise<TransactionStatusView> {
+    const id = validateTxnId(txnId);
+    return this.core.config.executor.run(async () => {
+      const state = await this.core.load();
+      // Checked first so the authenticated call below can never create a wallet.
+      if (!state.wallets[family])
+        throw new WalletError(
+          'WALLET_NOT_INITIALIZED',
+          `${family === 'solana' ? 'Solana' : 'Tron'} wallet has not been created or restored yet.`,
+          409
+        );
+      const result = this.chainStatusSchema(family).parse(
+        await this.core.activeCall(state, 'TransactionStatus', { txnId: id }, [family])
+      );
+      return {
+        txnId: id,
+        status: result.status,
+        ...(result.txnHash ? { txnHash: result.txnHash } : {})
+      };
     });
   }
 
