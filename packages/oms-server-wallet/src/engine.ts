@@ -79,10 +79,14 @@ export class WalletEngine {
       },
       listOpenEvmOperationsLocked: async () => {
         const out: StoredEvmOperation[] = [];
+        const settled: string[] = [];
         for (const id of await this.core.openOperationIds()) {
           const op = await this.core.readEvmOperation(id);
-          if (op && OPEN_STATUSES.has(op.status)) out.push(op);
+          if (!op) continue;
+          if (OPEN_STATUSES.has(op.status)) out.push(op);
+          else settled.push(id);
         }
+        await this.core.pruneOpenOperations(settled);
         return out;
       },
       refreshEvmOperationLocked: async (id) => {

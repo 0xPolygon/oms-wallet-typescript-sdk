@@ -939,9 +939,16 @@ describe('review-audit boundary regressions', () => {
     expect(record.recoveries[0].signed?.signature).toBe('0x1234');
     // Public EVM history MUST NOT expose internal swp_* funding, signing, deployment, or recovery ops!
     expect((await h.wallet.evm.listOperations()).items).toEqual([]);
+    expect(await h.waas.store.read('operationIndex:evm:meta')).toBeNull();
     expect(await h.wallet.evm.getOperation(signingId)).toBeNull();
     expect(await h.wallet.evm.refreshOperation(signingId)).toBeNull();
     expect(await h.wallet.evm.getOperation(record.fundingId)).toBeNull();
+    // Deleting openOperationIndex still rebuilds open internal ops from the internal bucket.
+    h.waas.store.values.delete('openOperationIndex');
+    await h.wallet.evm.listOperations({ status: 'open' });
+    expect(JSON.parse((await h.waas.store.read('openOperationIndex'))!).ids).toContain(
+      record.recoveries[0].transactionId
+    );
   });
 
   it('snapshots swap and recovery confirmation inputs synchronously before queuing', async () => {

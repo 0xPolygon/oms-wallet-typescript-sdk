@@ -25,11 +25,9 @@ import { WalletError } from '../errors.js';
 import { TRON_CHAIN_IDS } from '../internal/protocol/networks.js';
 import { chainQuoteSchema } from '../protocol.js';
 import { refreshStatus, resolveNotBroadcast, settleExecuteError } from '../settlement.js';
-import { parseOperationIndex } from '../state.js';
 import { validateTronTypedData } from '../typed-data.js';
 import { parseWaas } from '../validation.js';
 import {
-  OPEN_STATUSES,
   assertReviewId,
   isSolanaSignature,
   isTronTxid,
@@ -42,12 +40,7 @@ import {
   validateReviewId,
   validateTxnId
 } from './inputs.js';
-import {
-  projectSolanaOperation,
-  projectTronOperation,
-  parseListOptions,
-  paginate
-} from './projection.js';
+import { projectSolanaOperation, projectTronOperation, parseListOptions } from './projection.js';
 import {
   requestChainSignature,
   solanaMessageRequest,
@@ -142,18 +135,15 @@ export class ChainEngine {
   listSolanaOperations(options?: ListOperationsOptions): Promise<OperationPage<SolanaOperation>> {
     const { status, limit, offset } = parseListOptions(options);
     return this.core.config.executor.run(async () => {
-      const ids =
-        status === 'open'
-          ? await this.core.openOperationIds()
-          : parseOperationIndex(await this.core.config.store.read('operationIndex'));
-      const operations: SolanaOperation[] = [];
-      for (const id of ids) {
+      if (status === 'all')
+        return this.core.listIndexedOperations('solana', offset, limit, async (id) => {
+          const op = await this.core.readChainOperation(id, 'solana');
+          return op ? projectSolanaOperation(op) : null;
+        });
+      return this.core.listOpenOperations(offset, limit, async (id) => {
         const op = await this.core.readChainOperation(id, 'solana');
-        if (!op) continue;
-        if (status === 'open' && !OPEN_STATUSES.has(op.status)) continue;
-        operations.push(projectSolanaOperation(op));
-      }
-      return paginate(operations, offset, limit);
+        return op ? { status: op.status, view: projectSolanaOperation(op) } : null;
+      });
     });
   }
 
@@ -304,18 +294,15 @@ export class ChainEngine {
   listTronOperations(options?: ListOperationsOptions): Promise<OperationPage<TronOperation>> {
     const { status, limit, offset } = parseListOptions(options);
     return this.core.config.executor.run(async () => {
-      const ids =
-        status === 'open'
-          ? await this.core.openOperationIds()
-          : parseOperationIndex(await this.core.config.store.read('operationIndex'));
-      const operations: TronOperation[] = [];
-      for (const id of ids) {
+      if (status === 'all')
+        return this.core.listIndexedOperations('tron', offset, limit, async (id) => {
+          const op = await this.core.readChainOperation(id, 'tron');
+          return op ? projectTronOperation(op) : null;
+        });
+      return this.core.listOpenOperations(offset, limit, async (id) => {
         const op = await this.core.readChainOperation(id, 'tron');
-        if (!op) continue;
-        if (status === 'open' && !OPEN_STATUSES.has(op.status)) continue;
-        operations.push(projectTronOperation(op));
-      }
-      return paginate(operations, offset, limit);
+        return op ? { status: op.status, view: projectTronOperation(op) } : null;
+      });
     });
   }
 

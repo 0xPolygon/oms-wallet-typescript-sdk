@@ -21,11 +21,9 @@ import { requireChain } from '../environment.js';
 import { WalletError } from '../errors.js';
 import { quoteSchema, statusSchema } from '../protocol.js';
 import { refreshStatus, resolveNotBroadcast, settleExecuteError } from '../settlement.js';
-import { parseOperationIndex } from '../state.js';
 import { validateTypedData } from '../typed-data.js';
 import { parseWaas } from '../validation.js';
 import {
-  OPEN_STATUSES,
   PUBLIC_EVM_TX_KINDS,
   assertReviewId,
   isInternalEvmOperation,
@@ -36,7 +34,7 @@ import {
   validateReviewId,
   validateTxnId
 } from './inputs.js';
-import { projectEvmOperation, parseListOptions, paginate } from './projection.js';
+import { projectEvmOperation, parseListOptions } from './projection.js';
 import {
   assertNotSelfVerifying,
   assertPublicTypedData,
@@ -215,18 +213,17 @@ export class EvmEngine {
   listEvmOperations(options?: ListOperationsOptions): Promise<OperationPage<EvmOperation>> {
     const { status, limit, offset } = parseListOptions(options);
     return this.core.config.executor.run(async () => {
-      const ids =
-        status === 'open'
-          ? await this.core.openOperationIds()
-          : parseOperationIndex(await this.core.config.store.read('operationIndex'));
-      const operations: EvmOperation[] = [];
-      for (const id of ids) {
+      if (status === 'all')
+        return this.core.listIndexedOperations('evm', offset, limit, async (id) => {
+          const op = await this.core.readEvmOperation(id);
+          return op && !isInternalEvmOperation(op) ? projectEvmOperation(op) : null;
+        });
+      return this.core.listOpenOperations(offset, limit, async (id) => {
         const op = await this.core.readEvmOperation(id);
-        if (!op || isInternalEvmOperation(op)) continue;
-        if (status === 'open' && !OPEN_STATUSES.has(op.status)) continue;
-        operations.push(projectEvmOperation(op));
-      }
-      return paginate(operations, offset, limit);
+        return op
+          ? { status: op.status, view: isInternalEvmOperation(op) ? null : projectEvmOperation(op) }
+          : null;
+      });
     });
   }
 

@@ -81,6 +81,7 @@ const storedEvmOperationSchema = z.strictObject({
   status: z.enum(operationStatusValues),
   chainId: z.number().int(),
   submissionMode: submissionModeSchema,
+  indexed: z.boolean().optional(),
   internal: z.boolean().optional(),
   reviewId: z.string().min(1).optional(),
   submitted: z.boolean().optional(),
@@ -118,6 +119,7 @@ const storedChainOperationSchema = z.strictObject({
   createdAt: z.string().min(1),
   status: z.enum(operationStatusValues),
   submissionMode: submissionModeSchema,
+  indexed: z.boolean().optional(),
   reviewId: z.string().min(1).optional(),
   submitted: z.boolean().optional(),
   preSubmitExpired: z.boolean().optional(),
@@ -183,24 +185,56 @@ export function parseStoredOperation(raw: string): StoredOperationRecord {
   return parsed.data;
 }
 
-/** Validate a stored string-array operation index. */
-export function parseOperationIndex(raw: string | null): string[] {
+export const OPERATION_INDEX_CHUNK_SIZE = 256;
+export const OPERATION_INDEX_BUCKETS = ['evm', 'solana', 'tron', 'internal'] as const;
+export type OperationIndexBucket = (typeof OPERATION_INDEX_BUCKETS)[number];
+
+export interface OperationIndexMeta {
+  v: 1;
+  chunks: number;
+  total: number;
+}
+
+/** Validate a stored per-bucket chunked operation index metadata record. */
+export function parseOperationIndexMeta(raw: string | null): OperationIndexMeta {
+  if (raw === null) return { v: 1, chunks: 0, total: 0 };
+  let json: unknown;
+  try {
+    json = JSON.parse(raw);
+  } catch {
+    throw invalid('Stored operation index metadata is not valid JSON.');
+  }
+  const parsed = z
+    .strictObject({
+      v: z.literal(1),
+      chunks: z.number().int().min(0),
+      total: z.number().int().min(0)
+    })
+    .safeParse(json);
+  if (
+    !parsed.success ||
+    parsed.data.chunks !== Math.ceil(parsed.data.total / OPERATION_INDEX_CHUNK_SIZE)
+  )
+    throw invalid('Stored operation index metadata is not in a recognised format.');
+  return parsed.data;
+}
+
+/** Validate a stored chunk of operation IDs (at most `OPERATION_INDEX_CHUNK_SIZE` entries). */
+export function parseOperationIndexChunk(raw: string | null): string[] {
   if (raw === null) return [];
   let json: unknown;
   try {
     json = JSON.parse(raw);
   } catch {
-    throw invalid('Stored operation index is not valid JSON.');
+    throw invalid('Stored operation index chunk is not valid JSON.');
   }
-  const parsed = z.array(z.string().min(1)).safeParse(json);
-  if (!parsed.success) throw invalid('Stored operation index is not in a recognised format.');
+  const parsed = z.array(z.string().min(1)).max(OPERATION_INDEX_CHUNK_SIZE).safeParse(json);
+  if (!parsed.success) throw invalid('Stored operation index chunk is not in a recognised format.');
   return parsed.data;
 }
 
 /** Validate the stored open-operation index. */
-export function parseOpenOperationIndex(
-  raw: string | null
-): { synced: number; ids: string[] } | null {
+export function parseOpenOperationIndex(raw: string | null): { v: 1; ids: string[] } | null {
   if (raw === null) return null;
   let json: unknown;
   try {
@@ -210,7 +244,7 @@ export function parseOpenOperationIndex(
   }
   const parsed = z
     .strictObject({
-      synced: z.number().int().min(0),
+      v: z.literal(1),
       ids: z.array(z.string().min(1))
     })
     .safeParse(json);

@@ -245,64 +245,157 @@ describe('open operation index', () => {
   });
 });
 
-describe('open operation index with an older SDK writing', () => {
-  it('finds an operation an older version appended without updating the open index', async () => {
+describe('chunked operation index and crash recovery', () => {
+  it('rolls over across 256-entry chunks, pages in O(limit) reads, and skips internal/other-family ops', async () => {
     const h = sdkHarness();
-    await h.client.evm.prepareTransfer({ idempotencyKey: 'new-writer-1', ...transfer });
+    await h.client.createOrRestore({ families: ['evm', 'solana', 'tron'] });
+    await h.client.solana.signMessage({ idempotencyKey: 'sol-op-0001', message: 'hi' });
+    await h.client.solana.prepareTransfer({
+      idempotencyKey: 'sol-open-0001',
+      network: 'solana:devnet',
+      to: '11111111111111111111111111111111',
+      asset: 'native',
+      amount: '100'
+    });
+    await h.client.tron.prepareTransaction({
+      idempotencyKey: 'tron-open-0001',
+      network: 'tron:nile',
+      to: 'TXYZopYRdj2D9XRtbG411XZZ3kM5VkAeBf',
+      value: '100'
+    });
     expect(
-      (await h.client.evm.listOperations({ status: 'open' })).items.map((op) => op.id)
-    ).toEqual(['new-writer-1']);
-    const legacy = JSON.parse((await h.store.read('operation:new-writer-1'))!);
-    const ids = JSON.parse((await h.store.read('operationIndex'))!);
-    await h.store.write('operationIndex', JSON.stringify([...ids, 'old-writer-1']));
+      (await h.client.solana.listOperations({ status: 'open' })).items.map((op) => op.id)
+    ).toEqual(['sol-open-0001']);
+    expect(
+      (await h.client.tron.listOperations({ status: 'open' })).items.map((op) => op.id)
+    ).toEqual(['tron-open-0001']);
+
+    const total = 262;
+    for (let i = 0; i < total; i++) {
+      const id = `evm-op-${String(i).padStart(4, '0')}`;
+      await h.client.evm.signMessage({ idempotencyKey: id, chainId: 137, message: `msg-${i}` });
+    }
+    const meta = JSON.parse((await h.store.read('operationIndex:evm:meta'))!);
+    expect(meta).toEqual({ v: 1, chunks: 2, total });
+    expect(JSON.parse((await h.store.read('operationIndex:evm:0'))!)).toHaveLength(256);
+    expect(JSON.parse((await h.store.read('operationIndex:evm:1'))!)).toHaveLength(6);
+
+    // Count reads for a page crossing the 256 boundary: must be O(limit), not O(total).
+    let reads = 0;
+    const origRead = h.store.read.bind(h.store);
+    h.store.read = async (key) => {
+      reads++;
+      return origRead(key);
+    };
+    const cross = await h.client.evm.listOperations({ limit: 5, cursor: '253' });
+    expect(cross.items.map((op) => op.id)).toEqual([
+      'evm-op-0253',
+      'evm-op-0254',
+      'evm-op-0255',
+      'evm-op-0256',
+      'evm-op-0257'
+    ]);
+    expect(cross.nextCursor).toBe('258');
+    // 1 meta + 2 chunks + 6 op reads (limit + 1 lookahead) = 9 reads (vs 264+ in monolithic scan).
+    expect(reads).toBeLessThanOrEqual(12);
+
+    const tail = await h.client.evm.listOperations({ limit: 10, cursor: cross.nextCursor });
+    expect(tail.items.map((op) => op.id)).toEqual([
+      'evm-op-0258',
+      'evm-op-0259',
+      'evm-op-0260',
+      'evm-op-0261'
+    ]);
+    expect(tail.nextCursor).toBeUndefined();
+    h.store.read = origRead;
+
+    // Resuming an interrupted 'preparing' op from chunk 0 after >256 intervening ops never duplicates it.
+    const preparingOp = JSON.parse((await h.store.read('operation:evm-op-0000'))!);
     await h.store.write(
-      'operation:old-writer-1',
-      JSON.stringify({ ...legacy, id: 'old-writer-1', status: 'pending' })
+      'operation:evm-op-0000',
+      JSON.stringify({ ...preparingOp, status: 'preparing' })
     );
-    expect(
-      (await h.client.evm.listOperations({ status: 'open' })).items.map((op) => op.id).sort()
-    ).toEqual(['new-writer-1', 'old-writer-1']);
-    await h.client.evm.prepareTransfer({ idempotencyKey: 'new-writer-2', ...transfer });
-    expect(
-      (await h.client.evm.listOperations({ status: 'open' })).items.map((op) => op.id).sort()
-    ).toEqual(['new-writer-1', 'new-writer-2', 'old-writer-1']);
+    await h.client.evm.signMessage({
+      idempotencyKey: 'evm-op-0000',
+      chainId: 137,
+      message: 'msg-0'
+    });
+    const metaAfterResume = JSON.parse((await h.store.read('operationIndex:evm:meta'))!);
+    expect(metaAfterResume).toEqual({ v: 1, chunks: 2, total });
   });
 
-  it('scans entries an older version appended even when a newer write came after them', async () => {
+  it('self-heals after a crash between chunk write and meta update, and handles orphaned crash entries cleanly', async () => {
     const h = sdkHarness();
-    await h.client.evm.prepareTransfer({ idempotencyKey: 'first-new-1', ...transfer });
-    await h.client.evm.listOperations({ status: 'open' });
-    const record = JSON.parse((await h.store.read('operation:first-new-1'))!);
-    const ids = JSON.parse((await h.store.read('operationIndex'))!);
-    await h.store.write('operationIndex', JSON.stringify([...ids, 'old-between-1']));
-    await h.store.write(
-      'operation:old-between-1',
-      JSON.stringify({ ...record, id: 'old-between-1', status: 'unknown' })
-    );
-    await h.client.evm.prepareTransfer({ idempotencyKey: 'second-new-1', ...transfer });
-    expect(
-      (await h.client.evm.listOperations({ status: 'open' })).items.map((op) => op.id).sort()
-    ).toEqual(['first-new-1', 'old-between-1', 'second-new-1']);
-  });
-});
+    await h.client.evm.signMessage({ idempotencyKey: 'heal-op-1', chainId: 137, message: 'one' });
 
-describe('open operation index after an interrupted older writer', () => {
-  it('keeps an appended ID whose record was not written yet, and finds the record later', async () => {
+    // Crash after writing chunk 0 with heal-op-2, before bumping meta.
+    const write = h.store.write.bind(h.store);
+    h.store.write = async (key, value) => {
+      if (key === 'operationIndex:evm:meta') throw new Error('meta write failed');
+      return write(key, value);
+    };
+    await expect(
+      h.client.evm.signMessage({ idempotencyKey: 'heal-op-2', chainId: 137, message: 'two' })
+    ).rejects.toThrow('meta write failed');
+    h.store.write = write;
+
+    // Next write slices to committed meta.total and cleanly overwrites the uncommitted tail entry.
+    await h.client.evm.signMessage({ idempotencyKey: 'heal-op-3', chainId: 137, message: 'three' });
+    expect(JSON.parse((await h.store.read('operationIndex:evm:meta'))!)).toEqual({
+      v: 1,
+      chunks: 1,
+      total: 2
+    });
+    expect(JSON.parse((await h.store.read('operationIndex:evm:0'))!)).toEqual([
+      'heal-op-1',
+      'heal-op-3'
+    ]);
+
+    // Crash after bumping meta, before writing operation:heal-op-4:
+    // listOperations skips the orphan without returning a bogus trailing nextCursor,
+    // and immediate retry deduplicates against the committed tail.
+    h.store.write = async (key, value) => {
+      if (key === 'operation:heal-op-4') throw new Error('record write failed');
+      return write(key, value);
+    };
+    await expect(
+      h.client.evm.signMessage({ idempotencyKey: 'heal-op-4', chainId: 137, message: 'four' })
+    ).rejects.toThrow('record write failed');
+    h.store.write = write;
+
+    const beforeRetry = await h.client.evm.listOperations({ limit: 2 });
+    expect(beforeRetry.items.map((op) => op.id)).toEqual(['heal-op-1', 'heal-op-3']);
+    expect(beforeRetry.nextCursor).toBeUndefined();
+
+    await h.client.evm.signMessage({ idempotencyKey: 'heal-op-4', chainId: 137, message: 'four' });
+    expect(JSON.parse((await h.store.read('operationIndex:evm:meta'))!)).toEqual({
+      v: 1,
+      chunks: 1,
+      total: 3
+    });
+    const afterRetry = await h.client.evm.listOperations({ limit: 10 });
+    expect(afterRetry.items.map((op) => op.id)).toEqual(['heal-op-1', 'heal-op-3', 'heal-op-4']);
+  });
+
+  it('prunes settled IDs left in openOperationIndex after an interrupted terminal write and rejects corrupted index chunks', async () => {
     const h = sdkHarness();
-    await h.client.evm.prepareTransfer({ idempotencyKey: 'before-crash-1', ...transfer });
-    await h.client.evm.listOperations({ status: 'open' });
-    const record = JSON.parse((await h.store.read('operation:before-crash-1'))!);
-    const ids = JSON.parse((await h.store.read('operationIndex'))!);
-    await h.store.write('operationIndex', JSON.stringify([...ids, 'crashed-old-1']));
+    await h.client.evm.signMessage({ idempotencyKey: 'prune-op-1', chainId: 137, message: 'done' });
+    await h.client.evm.prepareTransfer({ idempotencyKey: 'prune-op-2', ...transfer });
+    // Simulate a crash after operation:prune-op-1 became signed, before removeOpenOperation ran.
+    await h.store.write(
+      'openOperationIndex',
+      JSON.stringify({ v: 1, ids: ['prune-op-1', 'prune-op-2'] })
+    );
     expect(
       (await h.client.evm.listOperations({ status: 'open' })).items.map((op) => op.id)
-    ).toEqual(['before-crash-1']);
-    await h.store.write(
-      'operation:crashed-old-1',
-      JSON.stringify({ ...record, id: 'crashed-old-1', status: 'pending' })
-    );
-    expect(
-      (await h.client.evm.listOperations({ status: 'open' })).items.map((op) => op.id).sort()
-    ).toEqual(['before-crash-1', 'crashed-old-1']);
+    ).toEqual(['prune-op-2']);
+    expect(JSON.parse((await h.store.read('openOperationIndex'))!).ids).toEqual(['prune-op-2']);
+
+    // Truncated chunk fails closed with INVALID_STATE.
+    await h.store.write('operationIndex:evm:0', JSON.stringify(['prune-op-1']));
+    await expect(h.client.evm.listOperations()).rejects.toMatchObject({
+      code: 'INVALID_STATE',
+      status: 500
+    });
   });
 });

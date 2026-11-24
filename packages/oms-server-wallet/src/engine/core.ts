@@ -3,6 +3,7 @@ import { z } from 'zod';
 import type { CoordinatorGate } from '../internal/swapsBridge.js';
 import type { NetworkFamily, RemoteWallet } from '../protocol.js';
 import type {
+  OperationIndexBucket,
   State,
   StoredChainOperation,
   StoredEvmOperation,
@@ -10,7 +11,13 @@ import type {
 } from '../state.js';
 import type { ExclusiveExecutor, StateStore } from '../storage.js';
 import type { RpcTransport } from '../transport.js';
-import type { ResolveReconciliationInput, SubmissionMode, WalletSnapshot } from '../types.js';
+import type {
+  OperationPage,
+  ResolveReconciliationInput,
+  SubmissionMode,
+  WalletOperation,
+  WalletSnapshot
+} from '../types.js';
 
 import { sha256 } from '../encoding.js';
 import { UpstreamError, WalletError } from '../errors.js';
@@ -27,19 +34,24 @@ import {
   walletSchema
 } from '../protocol.js';
 import {
+  OPERATION_INDEX_BUCKETS,
+  OPERATION_INDEX_CHUNK_SIZE,
   parseOpenOperationIndex,
-  parseOperationIndex,
+  parseOperationIndexChunk,
+  parseOperationIndexMeta,
   parseStoredOperation,
   readState,
   writeState
 } from '../state.js';
 import { parseWaas } from '../validation.js';
 import {
+  isInternalEvmOperation,
   okSchema,
   credentialRejectedCodes,
   OPEN_STATUSES,
   validateIdempotencyKey
 } from './inputs.js';
+import { paginate } from './projection.js';
 
 export interface WalletEngineConfig {
   readonly namespace: string;
@@ -501,44 +513,190 @@ export class EngineCore {
     return op && 'family' in op && op.family === family ? op : null;
   }
 
-  async writeOperation(op: StoredOperationRecord) {
-    const ids = parseOperationIndex(await this.config.store.read('operationIndex'));
-    const added = !ids.includes(op.id);
-    if (added) await this.config.store.write('operationIndex', JSON.stringify([...ids, op.id]));
-    const open = parseOpenOperationIndex(await this.config.store.read('openOperationIndex'));
-    const isOpen = OPEN_STATUSES.has(op.status);
-    const next = open && {
-      synced: added && open.synced === ids.length ? ids.length + 1 : open.synced,
-      ids: isOpen
-        ? open.ids.includes(op.id)
-          ? open.ids
-          : [...open.ids, op.id]
-        : open.ids.filter((entry) => entry !== op.id)
-    };
-    const changed =
-      !!open && !!next && (next.synced !== open.synced || next.ids.length !== open.ids.length);
-    if (changed && isOpen) await this.writeOpenIndex(next);
-    await this.config.store.write(`operation:${op.id}`, JSON.stringify(op));
-    if (changed && !isOpen) await this.writeOpenIndex(next);
+  private indexMetaKey(bucket: OperationIndexBucket): string {
+    return `operationIndex:${bucket}:meta`;
   }
 
-  private writeOpenIndex(index: { synced: number; ids: string[] }) {
-    return this.config.store.write('openOperationIndex', JSON.stringify(index));
+  private indexChunkKey(bucket: OperationIndexBucket, chunkIndex: number): string {
+    return `operationIndex:${bucket}:${chunkIndex}`;
+  }
+
+  private bucketFor(op: StoredOperationRecord): OperationIndexBucket {
+    if ('family' in op) return op.family;
+    return isInternalEvmOperation(op) ? 'internal' : 'evm';
+  }
+
+  private async appendToIndex(bucket: OperationIndexBucket, id: string): Promise<void> {
+    const metaKey = this.indexMetaKey(bucket);
+    const meta = parseOperationIndexMeta(await this.config.store.read(metaKey));
+    if (meta.chunks > 0) {
+      const lastIdx = meta.chunks - 1;
+      const tailKey = this.indexChunkKey(bucket, lastIdx);
+      const tail = parseOperationIndexChunk(await this.config.store.read(tailKey));
+      const committedLen = meta.total - lastIdx * OPERATION_INDEX_CHUNK_SIZE;
+      if (tail.length < committedLen)
+        throw new WalletError('INVALID_STATE', 'Stored operation index chunk is truncated.', 500);
+      // Slice to meta.total so a crash after writing a chunk and before bumping meta self-heals.
+      const committedTail = tail.slice(0, committedLen);
+      if (committedTail.includes(id)) return;
+      if (committedTail.length < OPERATION_INDEX_CHUNK_SIZE) {
+        await this.config.store.write(tailKey, JSON.stringify([...committedTail, id]));
+        await this.config.store.write(
+          metaKey,
+          JSON.stringify({ v: 1, chunks: meta.chunks, total: meta.total + 1 })
+        );
+        return;
+      }
+    }
+    const nextIdx = meta.chunks;
+    await this.config.store.write(this.indexChunkKey(bucket, nextIdx), JSON.stringify([id]));
+    await this.config.store.write(
+      metaKey,
+      JSON.stringify({ v: 1, chunks: meta.chunks + 1, total: meta.total + 1 })
+    );
+  }
+
+  async writeOperation(op: StoredOperationRecord) {
+    const isOpen = OPEN_STATUSES.has(op.status);
+    if (isOpen) await this.addOpenOperation(op.id);
+    if (op.indexed !== true) {
+      const existing = await this.readOperation(op.id);
+      if (existing?.indexed === true) {
+        op.indexed = true;
+      } else {
+        await this.appendToIndex(this.bucketFor(op), op.id);
+        op.indexed = true;
+      }
+    }
+    await this.config.store.write(`operation:${op.id}`, JSON.stringify(op));
+    if (!isOpen) await this.removeOpenOperation(op.id);
+  }
+
+  private writeOpenIndex(ids: string[]) {
+    return this.config.store.write('openOperationIndex', JSON.stringify({ v: 1, ids }));
+  }
+
+  private async addOpenOperation(id: string): Promise<void> {
+    const stored = parseOpenOperationIndex(await this.config.store.read('openOperationIndex'));
+    const ids = stored ? stored.ids : await this.rebuildOpenIds();
+    if (!ids.includes(id)) await this.writeOpenIndex([...ids, id]);
+    else if (!stored) await this.writeOpenIndex(ids);
+  }
+
+  private async removeOpenOperation(id: string): Promise<void> {
+    const stored = parseOpenOperationIndex(await this.config.store.read('openOperationIndex'));
+    if (!stored || !stored.ids.includes(id)) return;
+    await this.writeOpenIndex(stored.ids.filter((entry) => entry !== id));
+  }
+
+  async pruneOpenOperations(settledIds: readonly string[]): Promise<void> {
+    if (!settledIds.length) return;
+    const stored = parseOpenOperationIndex(await this.config.store.read('openOperationIndex'));
+    if (!stored) return;
+    const drop = new Set(settledIds);
+    const next = stored.ids.filter((id) => !drop.has(id));
+    if (next.length !== stored.ids.length) await this.writeOpenIndex(next);
+  }
+
+  private async rebuildOpenIds(): Promise<string[]> {
+    const ids: string[] = [];
+    const seen = new Set<string>();
+    for (const bucket of OPERATION_INDEX_BUCKETS) {
+      const meta = parseOperationIndexMeta(await this.config.store.read(this.indexMetaKey(bucket)));
+      for (let chunkIdx = 0; chunkIdx < meta.chunks; chunkIdx++) {
+        const rawChunk = parseOperationIndexChunk(
+          await this.config.store.read(this.indexChunkKey(bucket, chunkIdx))
+        );
+        const expectedLen = Math.min(
+          OPERATION_INDEX_CHUNK_SIZE,
+          meta.total - chunkIdx * OPERATION_INDEX_CHUNK_SIZE
+        );
+        if (rawChunk.length < expectedLen)
+          throw new WalletError('INVALID_STATE', 'Stored operation index chunk is truncated.', 500);
+        for (const id of rawChunk.slice(0, expectedLen)) {
+          if (seen.has(id)) continue;
+          seen.add(id);
+          const op = await this.readOperation(id);
+          if (!op || OPEN_STATUSES.has(op.status)) ids.push(id);
+        }
+      }
+    }
+    return ids;
   }
 
   async openOperationIds(): Promise<string[]> {
-    const all = parseOperationIndex(await this.config.store.read('operationIndex'));
     const stored = parseOpenOperationIndex(await this.config.store.read('openOperationIndex'));
-    const open =
-      stored && stored.synced <= all.length ? stored : { synced: 0, ids: [] as string[] };
-    if (open.synced === all.length && stored === open) return open.ids;
-    const ids = [...open.ids];
-    for (const id of all.slice(open.synced)) {
-      const op = await this.readOperation(id);
-      if ((!op || OPEN_STATUSES.has(op.status)) && !ids.includes(id)) ids.push(id);
-    }
-    await this.writeOpenIndex({ synced: all.length, ids });
+    if (stored) return stored.ids;
+    const ids = await this.rebuildOpenIds();
+    await this.writeOpenIndex(ids);
     return ids;
+  }
+
+  /** Page through a family's chunked history index in O(limit) store reads. */
+  async listIndexedOperations<T extends WalletOperation>(
+    bucket: 'evm' | 'solana' | 'tron',
+    offset: number,
+    limit: number,
+    readAndProject: (id: string) => Promise<T | null>
+  ): Promise<OperationPage<T>> {
+    const meta = parseOperationIndexMeta(await this.config.store.read(this.indexMetaKey(bucket)));
+    if (offset >= meta.total) return { items: [] };
+    const items: T[] = [];
+    let pos = offset;
+    let nextCursor: string | undefined;
+    let loadedChunkIdx = -1;
+    let loadedChunk: string[] = [];
+
+    while (pos < meta.total) {
+      const chunkIdx = Math.floor(pos / OPERATION_INDEX_CHUNK_SIZE);
+      if (chunkIdx !== loadedChunkIdx) {
+        const rawChunk = parseOperationIndexChunk(
+          await this.config.store.read(this.indexChunkKey(bucket, chunkIdx))
+        );
+        const expectedLen = Math.min(
+          OPERATION_INDEX_CHUNK_SIZE,
+          meta.total - chunkIdx * OPERATION_INDEX_CHUNK_SIZE
+        );
+        if (rawChunk.length < expectedLen)
+          throw new WalletError('INVALID_STATE', 'Stored operation index chunk is truncated.', 500);
+        loadedChunk = rawChunk.slice(0, expectedLen);
+        loadedChunkIdx = chunkIdx;
+      }
+      const id = loadedChunk[pos % OPERATION_INDEX_CHUNK_SIZE];
+      const op = await readAndProject(id);
+      if (op) {
+        if (items.length < limit) {
+          items.push(op);
+        } else {
+          nextCursor = String(pos);
+          break;
+        }
+      }
+      pos++;
+    }
+    return { items, ...(nextCursor !== undefined ? { nextCursor } : {}) };
+  }
+
+  /** Page through open operations for one family, lazily pruning settled IDs left by a crash. */
+  async listOpenOperations<T extends WalletOperation>(
+    offset: number,
+    limit: number,
+    readRecord: (id: string) => Promise<{ readonly status: string; readonly view: T | null } | null>
+  ): Promise<OperationPage<T>> {
+    const ids = await this.openOperationIds();
+    const operations: T[] = [];
+    const settled: string[] = [];
+    for (const id of ids) {
+      const entry = await readRecord(id);
+      if (!entry) continue;
+      if (!OPEN_STATUSES.has(entry.status)) {
+        settled.push(id);
+        continue;
+      }
+      if (entry.view) operations.push(entry.view);
+    }
+    await this.pruneOpenOperations(settled);
+    return paginate(operations, offset, limit);
   }
 
   async existingEvm(
