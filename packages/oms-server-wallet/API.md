@@ -382,11 +382,13 @@ durability).
 export type ServiceStorageOption = {
     readonly adapter: NamespacedStateStore;
     readonly encryptionKey: string;
+    readonly encryptionContext?: (subject: string, namespace: string) => string;
     readonly encryptedStore?: never;
 } | {
     readonly encryptedStore: NamespacedStateStore;
     readonly adapter?: never;
     readonly encryptionKey?: never;
+    readonly encryptionContext?: never;
 };
 ```
 
@@ -412,6 +414,7 @@ export interface EvmFacetBase {
     getOperation(id: string): Promise<EvmOperation | null>;
     refreshOperation(id: string): Promise<EvmOperation | null>;
     waitForOperation(id: string, options: WaitForOperationOptions): Promise<WaitResult<EvmOperation>>;
+    resolveReconciliation(input: ResolveReconciliationInput): Promise<EvmOperation>;
     listOperations(options?: ListOperationsOptions): Promise<OperationPage<EvmOperation>>;
 }
 ```
@@ -566,6 +569,7 @@ export interface SolanaFacetBase {
     getOperation(id: string): Promise<SolanaOperation | null>;
     refreshOperation(id: string): Promise<SolanaOperation | null>;
     waitForOperation(id: string, options: WaitForOperationOptions): Promise<WaitResult<SolanaOperation>>;
+    resolveReconciliation(input: ResolveReconciliationInput): Promise<SolanaOperation>;
     listOperations(options?: ListOperationsOptions): Promise<OperationPage<SolanaOperation>>;
 }
 ```
@@ -660,6 +664,7 @@ export interface TronFacetBase {
     getOperation(id: string): Promise<TronOperation | null>;
     refreshOperation(id: string): Promise<TronOperation | null>;
     waitForOperation(id: string, options: WaitForOperationOptions): Promise<WaitResult<TronOperation>>;
+    resolveReconciliation(input: ResolveReconciliationInput): Promise<TronOperation>;
     listOperations(options?: ListOperationsOptions): Promise<OperationPage<TronOperation>>;
 }
 ```
@@ -810,6 +815,19 @@ Input to `execute` on any wallet family.
 export interface ExecuteInput {
     readonly idempotencyKey: string;
     readonly reviewId: string;
+}
+```
+
+### `ResolveReconciliationInput`
+
+Input to `resolveReconciliation` on any wallet family after an operator has independently
+verified that an operation in `unknown` / `RECONCILIATION_REQUIRED` was never broadcast.
+
+```typescript
+export interface ResolveReconciliationInput {
+    readonly idempotencyKey: string;
+    readonly txnId: string;
+    readonly resolution: "not-broadcast";
 }
 ```
 

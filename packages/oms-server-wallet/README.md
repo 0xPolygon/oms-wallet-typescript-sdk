@@ -129,11 +129,11 @@ By default (`approval: 'two-phase'`), one-shot `send*` shortcuts are omitted at 
 | Surface | Methods |
 | --- | --- |
 | `wallet` | `inspect()`, `createOrRestore({ families? })`, `rotateCredential()`, `disable()`, `enable()` |
-| `wallet.evm` | `prepareTransfer`, `prepareCall`, `execute`, `signMessage`, `signTypedData`, `getOperation`, `refreshOperation`, `waitForOperation`, `listOperations` (+ `sendTransfer`, `sendCall` in `allow-immediate` mode) |
-| `wallet.solana` | `prepareTransfer`, `execute`, `signMessage`, `getOperation`, `refreshOperation`, `waitForOperation`, `listOperations` (+ `sendTransfer` in `allow-immediate` mode) |
-| `wallet.tron` | `prepareTransaction`, `prepareContractCall`, `execute`, `signMessage`, `signTypedData`, `getOperation`, `refreshOperation`, `waitForOperation`, `listOperations` (+ `sendTransaction`, `sendContractCall` in `allow-immediate` mode) |
+| `wallet.evm` | `prepareTransfer`, `prepareCall`, `execute`, `signMessage`, `signTypedData`, `getOperation`, `refreshOperation`, `waitForOperation`, `resolveReconciliation`, `listOperations` (+ `sendTransfer`, `sendCall` in `allow-immediate` mode) |
+| `wallet.solana` | `prepareTransfer`, `execute`, `signMessage`, `getOperation`, `refreshOperation`, `waitForOperation`, `resolveReconciliation`, `listOperations` (+ `sendTransfer` in `allow-immediate` mode) |
+| `wallet.tron` | `prepareTransaction`, `prepareContractCall`, `execute`, `signMessage`, `signTypedData`, `getOperation`, `refreshOperation`, `waitForOperation`, `resolveReconciliation`, `listOperations` (+ `sendTransaction`, `sendContractCall` in `allow-immediate` mode) |
 | `wallet.indexer` | Unattested `getEvmBalances({ chainIds?, page? })`, `getSolanaBalances({ networks? })`, `getTronBalances({ networks? })` |
-| `wallet.swaps` | Present only when `swaps: trails(...)` is passed: `quote`, `confirm`, `get`, `list`, `reconcile`, `tick`, `prepareRecovery`, `confirmRecovery` |
+| `wallet.swaps` | Present only when `swaps: trails(...)` is passed: `quote`, `confirm`, `get`, `list`, `reconcile`, `tick`, `prepareRecovery`, `confirmRecovery`, `resolveReconciliation` |
 
 ### EVM contract calls (`wallet.evm.prepareCall` / `sendCall`)
 
@@ -163,7 +163,7 @@ Never build `to`, `data`, `abi`, `functionName`, `args`, or `typedData` from unt
 
 - `getOperation(id)` is a **local read** (never authenticates or polls WaaS). Use `refreshOperation(id)` for one remote status poll, or `waitForOperation(id, { timeoutMs, pollIntervalMs?, signal? })` to poll outside exclusive ownership with distinct `'settled' | 'reconciliation-required' | 'timed-out' | 'cancelled'` outcomes.
 - **Pre-submit quote expiry** marks the operation terminal `expired` (`QUOTE_EXPIRED`, `provenUnsent: true`) and never calls WaaS `Execute`.
-- **Ambiguous `Execute` (lost response)** stays **open** (`status: 'unknown'`). If WaaS still answers `TransactionExpired` two minutes past quote expiry without claim evidence, the operation escalates to `error: 'RECONCILIATION_REQUIRED'` while remaining open (`status: 'unknown'`) and retaining swap debit reservations — because an eventually-consistent negative read is a heuristic, not proof nothing was broadcast.
+- **Ambiguous `Execute` (lost response)** stays **open** (`status: 'unknown'`). If WaaS still answers `TransactionExpired` two minutes past quote expiry without claim evidence, the operation escalates to `error: 'RECONCILIATION_REQUIRED'` while remaining open (`status: 'unknown'`) and retaining swap debit reservations — because an eventually-consistent negative read is a heuristic, not proof nothing was broadcast. Once an operator verifies out of band that nothing was broadcast, call `resolveReconciliation({ idempotencyKey, txnId, resolution: 'not-broadcast' })` (or `wallet.swaps.resolveReconciliation({ swapId, txnId, resolution: 'not-broadcast' })` for swap funding/recovery), which re-checks WaaS under lock before releasing reservations.
 - `describeOperation(op)` derives a pure next-action recommendation (`await-review`, `poll-original`, `reconcile-original`, `safe-to-reprepare`, or `done`) strictly from validated evidence, with original IDs.
 
 ### Unattested indexer reads (`wallet.indexer` / `service.indexer`)
@@ -216,8 +216,9 @@ See [docs/SWAPS-INTEGRATION.md](docs/SWAPS-INTEGRATION.md) and [TRAILS-API.md](T
 ## Storage, concurrency & 0.2.x state migration
 
 - `StateStore.write` / `NamespacedStateStore.write` must complete durable persistence before resolving.
-- `ExclusiveExecutor.run` must hold exclusive ownership for the entire async task, including remote I/O. `createSingleProcessExecutor` / `createSingleProcessExecutorPool` are sufficient only within one Node process or a single per-wallet Durable Object.
-- The SDK computes the canonical `0.2.x`-compatible namespace (`JSON.stringify([waasOrigin, projectId, issuer, audience, subject])`) from the routed **WaaS API origin** (never `APP_ORIGIN`). If an existing `0.2.x` deployment used a custom `EncryptedStore` context string (such as the bare subject), pass `store: { adapter, encryptionKey, encryptionContext }` explicitly — the SDK never falls back after an integrity error.
+- `ExclusiveExecutor.run` must hold exclusive ownership for the entire async task, including remote I/O. `createSingleProcessExecutor` / `createSingleProcessExecutorPool` are sufficient only within one Node process or a single per-wallet Durable Object. Construct one wallet (and executor) per Durable Object instance — never a fresh `createSingleProcessExecutor()` per HTTP request — and never call back into the wallet from `getIdToken`, store adapters, or custom `fetch` hooks (which would deadlock the executor).
+- Once swaps are enabled and confirmed on a wallet, keep `swaps: trails({ ..., enabled: false })` if you later pause new swaps rather than removing `swaps` entirely, so existing reservations stay coordinated.
+- The SDK computes the canonical `0.2.x`-compatible namespace (`JSON.stringify([waasOrigin, projectId, issuer, audience, subject])`) from the routed **WaaS API origin** (never `APP_ORIGIN`). If an existing `0.2.x` deployment used a custom `EncryptedStore` context string (such as the bare subject), pass `store: { adapter, encryptionKey, encryptionContext }` (or `storage.encryptionContext: (subject, namespace) => ...` on `createServerWalletService`) explicitly — the SDK never falls back after an integrity error.
 - Encrypted `0.2.x` wallet state is migrated automatically on first load (including `inspect()`), preserving credentials, nonces, and operations. Fence older workers before the first `0.3.0` load. Restoring a pre-upgrade backup after new nonces or submissions have been sent requires upstream reconciliation — a database backup alone is not a safe rollback. Unknown formats fail closed with `INVALID_STATE`.
 
 ## Development

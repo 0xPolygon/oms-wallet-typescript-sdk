@@ -98,7 +98,8 @@ await wallet.swaps.confirm({
 });
 
 // Drive durable progress from your scheduler / Durable Object alarm:
-await wallet.swaps.tick({ limit: 3 });
+const { nextAt } = await wallet.swaps.tick({ limit: 3 });
+// If nextAt !== null, schedule your next alarm/timer for nextAt.
 
 const current = await wallet.swaps.get(quoted.id);
 const page = await wallet.swaps.list({ limit: 25 });
@@ -141,6 +142,7 @@ await wallet.swaps.confirmRecovery({
 ```
 
 - Pre-submit local quote expiry on funding marks the swap `expired` (`QUOTE_EXPIRED`) and releases the origin-chain debit reservation.
-- Ambiguous funding or recovery submissions that remain unconfirmed past the post-expiry grace window escalate to `RECONCILIATION_REQUIRED` while staying open and **retaining** the debit reservation until reconciled.
+- Ambiguous funding or recovery submissions that remain unconfirmed past the post-expiry grace window escalate to `RECONCILIATION_REQUIRED` while staying open and **retaining** the debit reservation until reconciled. After out-of-band verification that nothing was broadcast, call `wallet.swaps.resolveReconciliation({ swapId, txnId, resolution: 'not-broadcast' })` to re-check WaaS under lock and release the reservation.
+- To pause new swaps on a wallet that already has `swapsCoordinated` active, keep passing `swaps: trails({ ..., enabled: false })` instead of omitting `swaps`.
 
 See [TRAILS-API.md](../TRAILS-API.md) for the complete Trails API reference.

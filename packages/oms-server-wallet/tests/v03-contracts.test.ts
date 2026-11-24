@@ -25,7 +25,7 @@ import { IndexerClient } from '../src/indexer.js';
 import { computeIdentityNamespace, EncryptedStore } from '../src/storage.js';
 import { trailsInternal } from '../src/trails/coordinator.js';
 import { createServerWalletInternal, createServerWalletServiceInternal } from '../src/wallet.js';
-import { quoteFixture } from './fixtures/trails.js';
+import { quoteFixture, recoveryFixture } from './fixtures/trails.js';
 import {
   FakeWaas,
   MemoryStore,
@@ -939,5 +939,343 @@ describe('review-audit boundary regressions', () => {
     mutableConfirm.reviewId = q.quote.reviewId;
     await blocker;
     await expect(pendingConfirm).rejects.toMatchObject({ code: 'STALE_QUOTE' });
+  });
+});
+
+describe('deep systems hardening (Dot + Opus 5.5 audit)', () => {
+  it('prevents a second worker with an empty swap store from clearing or bypassing an active reservation via quote() or confirm()', async () => {
+    const h = await swapHarness();
+    await h.confirm(); // Reserves chain 137 under swap-test-0001 in wallet state.
+
+    const emptySwapStore = new MemorySwapStore();
+    const worker2 = createServerWalletInternal(
+      {
+        publishableKey: TEST_PUBLISHABLE_KEY,
+        oidc: {
+          subject: 'customer-1',
+          issuer: 'https://issuer.example',
+          audience: 'oms-server-wallet',
+          getIdToken: async () => ({ token: 'tok', expiresAt: Math.floor(Date.now() / 1000) + 300 })
+        },
+        store: { encryptedStore: h.waas.store },
+        executor: h.waas.executor,
+        swaps: trailsInternal(
+          {
+            apiKey: 'trails-key',
+            chains: { 137: 'https://polygon.rpc.example', 8453: 'https://base.rpc.example' },
+            assets: h.fixture.assets,
+            store: { scope: 'wallet', adapter: emptySwapStore }
+          },
+          { gateway: h.gateway, chains: h.chains }
+        )
+      },
+      { transport: h.waas.remote }
+    );
+
+    // Calling quote with the SAME swapId on worker2 MUST fail closed and MUST NOT clear wallet state's reservation!
+    await expect(
+      worker2.swaps.quote({ idempotencyKey: 'swap-test-0001', ...h.fixture.input })
+    ).rejects.toMatchObject({ code: 'DEBIT_PENDING' });
+
+    // Confirming a DIFFERENT swap on the same chain via worker2 MUST also be blocked by wallet state's reservation!
+    const otherQuote = await worker2.swaps.quote({
+      idempotencyKey: 'swap-other-0002',
+      ...h.fixture.input
+    });
+    await expect(
+      worker2.swaps.confirm({ swapId: otherQuote.id, reviewId: otherQuote.quote.reviewId })
+    ).rejects.toMatchObject({ code: 'DEBIT_PENDING' });
+
+    // Ordinary EVM debit on worker2 stays blocked AND names the blocking swapId!
+    await expect(
+      worker2.evm.prepareTransfer({
+        idempotencyKey: 'ordinary-blocked-1',
+        chainId: 137,
+        to: '0x2222222222222222222222222222222222222222',
+        asset: 'native',
+        amount: '1'
+      })
+    ).rejects.toThrow(/swap-test-0001/);
+
+    // Tick on worker2 with missing swap store record retains the reservation (fails closed).
+    await worker2.swaps.tick();
+    const state = JSON.parse((await h.waas.store.read('wallet'))!);
+    expect(state.swapReservations).toEqual({ 'swap-test-0001': 137 });
+  });
+
+  it('clears an orphaned wallet-state reservation during tick() when the swap record exists and is unreserved, and returns nextAt', async () => {
+    const h = await swapHarness();
+    const q = await h.quote();
+    // Simulate SwapStore.save failing during confirm AFTER wallet state persisted the reservation.
+    h.store.fail = (r) => r.phase === 'preparing';
+    await expect(h.swaps.confirm({ swapId: q.id, reviewId: q.quote.reviewId })).rejects.toThrow(
+      'Simulated storage outage'
+    );
+    h.store.fail = undefined;
+    // Reservation is orphaned while record in SwapStore is still 'quoted' (unreserved).
+    expect(JSON.parse((await h.waas.store.read('wallet'))!).swapReservations).toEqual({
+      'swap-test-0001': 137
+    });
+    const result = await h.swaps.tick();
+    expect(result).toEqual({ nextAt: null });
+    expect(JSON.parse((await h.waas.store.read('wallet'))!).swapReservations).toBeUndefined();
+  });
+
+  it('reloads wallet state after checkEvmDebitGate so gate-driven nonce/credential updates are never overwritten', async () => {
+    const h = await swapHarness();
+    // Create an open EVM op on chain 137 whose refresh triggers a credential rotation (expiredOnce).
+    const first = await h.wallet.evm.prepareTransfer({
+      idempotencyKey: 'gate-refresh-1',
+      chainId: 137,
+      to: '0x2222222222222222222222222222222222222222',
+      asset: 'native',
+      amount: '1'
+    });
+    await h.wallet.evm.execute({ idempotencyKey: 'gate-refresh-1', reviewId: first.reviewId! });
+    const credBefore = (await h.wallet.inspect()).credentialId;
+
+    // Now TransactionStatus will first hit KeyExpired (7203) -> rotate credential -> return executed!
+    h.waas.remote.txnStatus = 'executed';
+    let rotatedOnce = false;
+    const origReq = h.waas.remote.request.bind(h.waas.remote);
+    h.waas.remote.request = async (method, body, cred) => {
+      if (method === 'TransactionStatus' && !rotatedOnce) {
+        rotatedOnce = true;
+        throw new UpstreamError(7203, method);
+      }
+      return origReq(method, body, cred);
+    };
+
+    // Preparing a new transfer invokes checkEvmDebitGate -> refreshes gate-refresh-1 -> rotates credential.
+    // Must reload state after the gate and use the NEW credential rather than overwriting it with the old one!
+    const second = await h.wallet.evm.prepareTransfer({
+      idempotencyKey: 'gate-refresh-2',
+      chainId: 137,
+      to: '0x2222222222222222222222222222222222222222',
+      asset: 'native',
+      amount: '2'
+    });
+    expect(second.status).toBe('quoted');
+    expect((await h.wallet.inspect()).credentialId).not.toBe(credBefore);
+  });
+
+  it('preserves pre-claim UpstreamError when re-auth fails during Execute retry (no false SUBMISSION_UNCERTAIN)', async () => {
+    let failIdp = false;
+    const store = new MemoryStore();
+    const remote = new FakeWaas();
+    const wallet = createServerWalletInternal(
+      {
+        publishableKey: TEST_PUBLISHABLE_KEY,
+        oidc: {
+          subject: 'customer-1',
+          issuer: 'https://issuer.example',
+          audience: 'oms-server-wallet',
+          getIdToken: async () => {
+            if (failIdp) throw new Error('IdP outage');
+            return {
+              token: `tok-${crypto.randomUUID()}`,
+              expiresAt: Math.floor(Date.now() / 1000) + 300
+            };
+          }
+        },
+        store: { encryptedStore: store },
+        executor: createSingleProcessExecutor()
+      },
+      { transport: remote }
+    );
+    const prep = await wallet.evm.prepareTransfer({
+      idempotencyKey: 'reauth-fail-1',
+      chainId: 137,
+      to: '0x2222222222222222222222222222222222222222',
+      asset: 'native',
+      amount: '100'
+    });
+    // WaaS rejects Execute pre-claim with KeyExpired (7203), and the IdP is down during retry:
+    remote.evmExecuteRefusal = 7203;
+    failIdp = true;
+    const result = await wallet.evm.execute({
+      idempotencyKey: 'reauth-fail-1',
+      reviewId: prep.reviewId!
+    });
+    expect(result).toMatchObject({
+      status: 'failed',
+      error: 'EXECUTE_REFUSED',
+      provenUnsent: true
+    });
+  });
+
+  it('detects tampered swap payload funding target or digest before confirm and before funding', async () => {
+    const h = await swapHarness();
+    const q = await h.quote();
+    const rec = await h.record();
+    // Attacker tampers with stored funding recipient without changing intent:
+    rec.quote = {
+      ...rec.quote,
+      funding: { ...rec.quote.funding, to: '0x9999999999999999999999999999999999999999' }
+    };
+    await h.store.putRecord(rec);
+    await expect(
+      h.swaps.confirm({ swapId: q.id, reviewId: q.quote.reviewId })
+    ).rejects.toMatchObject({ code: 'INVALID_STATE' });
+  });
+
+  it('rejects public evm.signTypedData for Sequence Wallet Calls payloads and self verifyingContract', async () => {
+    const h = sdkHarness();
+    await h.client.createOrRestore();
+    const selfAddress = (await h.client.inspect()).wallet!.address;
+    const { typedData } = recoveryFixture();
+    // Sequence Wallet Calls payload must be refused on public signTypedData.
+    await expect(
+      h.client.evm.signTypedData({
+        idempotencyKey: 'block-seq-calls',
+        chainId: 137,
+        typedData
+      })
+    ).rejects.toMatchObject({ code: 'INVALID_TYPED_DATA' });
+
+    // Any typed data with verifyingContract === walletAddress must also be refused.
+    await expect(
+      h.client.evm.signTypedData({
+        idempotencyKey: 'block-self-vc',
+        chainId: 137,
+        typedData: {
+          domain: { name: 'App', version: '1', chainId: 137, verifyingContract: selfAddress },
+          types: { Note: [{ name: 'text', type: 'string' }] },
+          primaryType: 'Note',
+          message: { text: 'hi' }
+        }
+      })
+    ).rejects.toMatchObject({ code: 'INVALID_TYPED_DATA' });
+  });
+
+  it('resolves RECONCILIATION_REQUIRED on ordinary EVM and swap funding operations via resolveReconciliation', async () => {
+    const h = await swapHarness();
+    await h.confirm();
+    h.waas.remote.failExecute = true;
+    await h.tick(4);
+    const { fundingId } = await h.record();
+    h.waas.remote.evmStatusError = 7309;
+    const rawOp = JSON.parse((await h.waas.store.read(`operation:${fundingId}`))!);
+    rawOp.quote.expiresAt = new Date(Date.now() - 121_000).toISOString();
+    await h.waas.store.write(`operation:${fundingId}`, JSON.stringify(rawOp));
+    await h.tick();
+    expect((await h.record()).error).toBe('RECONCILIATION_REQUIRED');
+
+    // Wrong txnId is refused
+    await expect(
+      h.swaps.resolveReconciliation({
+        swapId: 'swap-test-0001',
+        txnId: 'wrong-txn-id',
+        resolution: 'not-broadcast'
+      })
+    ).rejects.toMatchObject({ code: 'NOT_FOUND' });
+
+    // Valid operator resolution re-checks WaaS (still 7309 past grace) -> expires swap & frees chain 137!
+    const resolved = await h.swaps.resolveReconciliation({
+      swapId: 'swap-test-0001',
+      txnId: rawOp.quote.txnId,
+      resolution: 'not-broadcast'
+    });
+    expect(resolved).toMatchObject({ phase: 'expired', error: 'QUOTE_EXPIRED' });
+    // Chain 137 is now unlocked for new ordinary transfers!
+    await expect(
+      h.wallet.evm.prepareTransfer({
+        idempotencyKey: 'after-op-resolve',
+        chainId: 137,
+        to: '0x2222222222222222222222222222222222222222',
+        asset: 'native',
+        amount: '1'
+      })
+    ).resolves.toMatchObject({ status: 'quoted' });
+
+    // Ordinary EVM operation: if WaaS actually answers 'executed' during resolveReconciliation, settle instead of expiring!
+    const h2 = sdkHarness();
+    const p2 = await h2.client.evm.prepareTransfer({
+      idempotencyKey: 'ord-resolve-1',
+      chainId: 137,
+      to: '0x2222222222222222222222222222222222222222',
+      asset: 'native',
+      amount: '10'
+    });
+    h2.remote.failExecute = true;
+    await h2.client.evm.execute({ idempotencyKey: 'ord-resolve-1', reviewId: p2.reviewId! });
+    h2.remote.evmStatusError = 7309;
+    const raw2 = JSON.parse((await h2.store.read('operation:ord-resolve-1'))!);
+    raw2.quote.expiresAt = new Date(Date.now() - 121_000).toISOString();
+    await h2.store.write('operation:ord-resolve-1', JSON.stringify(raw2));
+    await h2.client.evm.refreshOperation('ord-resolve-1');
+    h2.remote.evmStatusError = undefined;
+    h2.remote.txnStatus = 'executed';
+    const settled = await h2.client.evm.resolveReconciliation({
+      idempotencyKey: 'ord-resolve-1',
+      txnId: raw2.quote.txnId,
+      resolution: 'not-broadcast'
+    });
+    expect(settled).toMatchObject({ status: 'executed', txnHash: `0x${'ab'.repeat(32)}` });
+  });
+
+  it('supports service-level encryptionContext for 0.2.x multi-tenant migration, legacy quoted describeOperation, and immediate reconciliation-required on unknown signatures', async () => {
+    const legacy = JSON.parse(
+      readFileSync(new URL('./fixtures/state-0.2.0.json', import.meta.url), 'utf8')
+    ) as { subject: string; encryptionKey: string; store: Record<string, string> };
+    const nsStore = new MemoryNamespacedStore();
+    const env = environmentFromKey('pk_live_abc_secret');
+    const ns = computeIdentityNamespace({
+      waasOrigin: env.origin,
+      projectId: env.projectId,
+      issuer: 'https://issuer.example',
+      audience: 'oms-server-wallet',
+      subject: legacy.subject
+    });
+    for (const [k, v] of Object.entries(legacy.store)) await nsStore.write(ns, k, v);
+
+    const svc = createServerWalletService({
+      publishableKey: 'pk_live_abc_secret',
+      oidc: {
+        issuer: 'https://issuer.example',
+        audience: 'oms-server-wallet',
+        getIdToken: async () => ({ token: 't', expiresAt: 1 })
+      },
+      storage: {
+        adapter: nsStore,
+        encryptionKey: legacy.encryptionKey,
+        encryptionContext: (subject) => subject
+      },
+      executor: createSingleProcessExecutorPool()
+    });
+    expect((await svc.forSubject(legacy.subject).inspect()).wallet?.id).toBe('wallet-legacy');
+
+    // Legacy quoted op without reviewId -> safe-to-reprepare (not an endless await-review loop).
+    expect(
+      describeOperation({
+        id: 'legacy-q-1',
+        family: 'evm',
+        kind: 'transfer',
+        chainId: 137,
+        inputHash: 'h',
+        createdAt: new Date().toISOString(),
+        status: 'quoted',
+        submissionMode: 'review',
+        provenUnsent: false
+      })
+    ).toMatchObject({ action: 'safe-to-reprepare' });
+
+    // Unknown signature operation returns reconciliation-required immediately from waitForOperation without polling.
+    const h = sdkHarness();
+    await h.store.write(
+      'operation:sig-unknown-1',
+      JSON.stringify({
+        id: 'sig-unknown-1',
+        kind: 'sign',
+        chainId: 137,
+        inputHash: 'h',
+        createdAt: new Date().toISOString(),
+        status: 'unknown',
+        submissionMode: 'review'
+      })
+    );
+    const waited = await h.client.evm.waitForOperation('sig-unknown-1', { timeoutMs: 5_000 });
+    expect(waited.outcome).toBe('reconciliation-required');
+    expect(h.remote.calls).toHaveLength(0);
   });
 });

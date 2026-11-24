@@ -20,6 +20,7 @@ import type {
   EvmTransferInput,
   ListOperationsOptions,
   OperationPage,
+  ResolveReconciliationInput,
   SolanaNetwork,
   SolanaOperation,
   SolanaTransfer,
@@ -57,7 +58,12 @@ import {
   walletFamily,
   walletSchema
 } from './protocol.js';
-import { refreshStatus, settleExecuteError } from './settlement.js';
+import {
+  CLAIM_GRACE_MS,
+  refreshStatus,
+  settleExecuteError,
+  TRANSACTION_EXPIRED
+} from './settlement.js';
 import {
   parseOpenOperationIndex,
   parseOperationIndex,
@@ -107,7 +113,7 @@ const OPEN_STATUSES: ReadonlySet<string> = new Set([
 ]);
 
 function isUnprovenLegacyExpiry(op: StoredOperationRecord): boolean {
-  return op.status === 'expired' && op.preSubmitExpired !== true;
+  return op.status === 'expired' && op.preSubmitExpired !== true && op.operatorResolved !== true;
 }
 
 function isOperationOpen(op: StoredOperationRecord): boolean {
@@ -637,6 +643,10 @@ export class WalletEngine {
           await this.save(state);
         }
       },
+      readSwapReservationsLocked: async () => {
+        const state = await this.load();
+        return { ...(state.swapReservations ?? {}) };
+      },
       setSwapReservationLocked: async (swapId, chainId) => {
         const state = await this.load();
         const next: Record<string, number> = { ...(state.swapReservations ?? {}) };
@@ -650,6 +660,8 @@ export class WalletEngine {
         state.swapReservations = Object.keys(next).length > 0 ? next : undefined;
         await this.save(state);
       },
+      resolveEvmReconciliationLocked: (id, txnId) =>
+        this.resolveEvmReconciliationInternal(id, txnId, { allowInternal: true }),
       readEvmOperationsLocked: async (ids) => {
         const out: StoredEvmOperation[] = [];
         for (const id of new Set(ids)) {
@@ -870,9 +882,28 @@ export class WalletEngine {
     const id = validateIdempotencyKey(idempotencyKey);
     // Snapshot synchronously so callers cannot mutate an authorization while it is queued.
     const validated = validateTypedData(typedData, chainId);
+    if (
+      validated.typedData.domain.name === 'Sequence Wallet' &&
+      validated.typedData.primaryType === 'Calls'
+    )
+      throw new WalletError(
+        'INVALID_TYPED_DATA',
+        'Sequence Wallet Calls authorizations cannot be signed through public signTypedData; use the reviewed recovery workflow.'
+      );
     return this.config.executor.run(async () =>
       projectEvmOperation(
-        await this.signEvmTypedDataValidated(id, chainId, validated.typedData, validated.digest)
+        await this.signEvmTypedDataValidated(id, chainId, validated.typedData, validated.digest, {
+          rejectSelfVerifyingContract: true
+        })
+      )
+    );
+  }
+
+  async resolveEvmReconciliation(input: ResolveReconciliationInput): Promise<EvmOperation> {
+    const { idempotencyKey, txnId } = this.validateResolveInput(input);
+    return this.config.executor.run(async () =>
+      projectEvmOperation(
+        await this.resolveEvmReconciliationInternal(idempotencyKey, txnId, { allowInternal: false })
       )
     );
   }
@@ -990,6 +1021,15 @@ export class WalletEngine {
       const op = await this.readChainOperation(id, 'solana');
       return op ? projectSolanaOperation(await this.refreshChain(op)) : null;
     });
+  }
+
+  async resolveSolanaReconciliation(input: ResolveReconciliationInput): Promise<SolanaOperation> {
+    const { idempotencyKey, txnId } = this.validateResolveInput(input);
+    return this.config.executor.run(async () =>
+      projectSolanaOperation(
+        await this.resolveChainReconciliationInternal('solana', idempotencyKey, txnId)
+      )
+    );
   }
 
   listSolanaOperations(options?: ListOperationsOptions): Promise<OperationPage<SolanaOperation>> {
@@ -1164,6 +1204,15 @@ export class WalletEngine {
     });
   }
 
+  async resolveTronReconciliation(input: ResolveReconciliationInput): Promise<TronOperation> {
+    const { idempotencyKey, txnId } = this.validateResolveInput(input);
+    return this.config.executor.run(async () =>
+      projectTronOperation(
+        await this.resolveChainReconciliationInternal('tron', idempotencyKey, txnId)
+      )
+    );
+  }
+
   listTronOperations(options?: ListOperationsOptions): Promise<OperationPage<TronOperation>> {
     const { status, limit, offset } = parseListOptions(options);
     return this.config.executor.run(async () => {
@@ -1199,12 +1248,15 @@ export class WalletEngine {
       );
     // Authoritative swap reservations in wallet state protect against a misconfigured worker
     // pointing at an empty or different swap store while sharing wallet state and executor.
-    if (state.swapReservations && Object.values(state.swapReservations).includes(chainId))
-      throw new WalletError(
-        'DEBIT_PENDING',
-        'Another debit on this chain must be reconciled first.',
-        409
-      );
+    if (state.swapReservations) {
+      const blocking = Object.entries(state.swapReservations).find(([, c]) => c === chainId);
+      if (blocking)
+        throw new WalletError(
+          'DEBIT_PENDING',
+          `Another debit on chain ${chainId} (swap "${blocking[0]}") must be reconciled first.`,
+          409
+        );
+    }
     if (this.gate) await this.gate.assertChainAvailableLocked(chainId, { exceptOperationId });
   }
 
@@ -1226,8 +1278,10 @@ export class WalletEngine {
       options.allowSwapsPrefix
     );
     if (operation) return operation;
-    const state = await this.load();
+    let state = await this.load();
     await this.checkEvmDebitGate(state, transfer.chainId, id, options.skipGate);
+    // Reload state after the debit gate in case gate refreshes advanced the nonce or rotated credentials.
+    state = await this.load();
     await this.ensure(state, ['evm']);
     const op: StoredEvmOperation = {
       id,
@@ -1278,8 +1332,10 @@ export class WalletEngine {
       ['call', 'userOperation']
     );
     if (operation) return operation;
-    const state = await this.load();
+    let state = await this.load();
     await this.checkEvmDebitGate(state, chainId, id, false);
+    // Reload state after the debit gate in case gate refreshes advanced the nonce or rotated credentials.
+    state = await this.load();
     await this.ensure(state, ['evm']);
     if (transaction.to.toLowerCase() === state.wallets.evm!.address.toLowerCase())
       throw new WalletError('INVALID_CALL', 'Calls to the wallet itself are not allowed.');
@@ -1409,8 +1465,10 @@ export class WalletEngine {
         409
       );
     }
-    const state = await this.load();
+    let state = await this.load();
     await this.checkEvmDebitGate(state, op.chainId, op.id, options.skipGate);
+    // Reload state after the debit gate in case gate refreshes advanced the nonce or rotated credentials.
+    state = await this.load();
     await this.ensure(state, ['evm']);
     op.status = 'submitting';
     op.submitted = true;
@@ -1443,6 +1501,138 @@ export class WalletEngine {
     return op;
   }
 
+  private validateResolveInput(input: ResolveReconciliationInput): {
+    idempotencyKey: string;
+    txnId: string;
+  } {
+    if (!input || typeof input !== 'object')
+      throw new WalletError(
+        'INVALID_STATE',
+        'Provide idempotencyKey, txnId, and resolution: "not-broadcast".'
+      );
+    const idempotencyKey = validateIdempotencyKey(input.idempotencyKey);
+    if (typeof input.txnId !== 'string' || !input.txnId.trim())
+      throw new WalletError('INVALID_STATE', 'Provide the operation quote txnId to resolve.');
+    if (input.resolution !== 'not-broadcast')
+      throw new WalletError('INVALID_STATE', 'Only resolution: "not-broadcast" is supported.');
+    return { idempotencyKey, txnId: input.txnId };
+  }
+
+  private async resolveEvmReconciliationInternal(
+    id: string,
+    txnId: string,
+    options: { allowInternal: boolean }
+  ): Promise<StoredEvmOperation> {
+    const op = await this.readEvmOperation(id);
+    if (!op || (!options.allowInternal && isInternalEvmOperation(op)))
+      throw new WalletError('NOT_FOUND', 'Operation not found.', 404);
+    if (op.status !== 'unknown' || op.error !== 'RECONCILIATION_REQUIRED' || !op.quote)
+      throw new WalletError(
+        'INVALID_STATE',
+        'Only operations in unknown / RECONCILIATION_REQUIRED can be resolved.',
+        409
+      );
+    if (op.quote.txnId !== txnId)
+      throw new WalletError(
+        'STALE_REVIEW',
+        'Provided txnId does not match the stored operation quote.',
+        409
+      );
+    if (op.txnHash)
+      throw new WalletError(
+        'INVALID_STATE',
+        'Cannot resolve an operation with an observed transaction hash as not-broadcast.',
+        409
+      );
+    const state = await this.load();
+    try {
+      const result = await this.evmTransactionStatus(state, op.quote.txnId);
+      if (result.status !== 'quoted') {
+        op.status = result.status;
+        op.error = undefined;
+        if (result.txnHash) op.txnHash = result.txnHash;
+        await this.writeOperation(op);
+        return op;
+      }
+      throw new WalletError(
+        'RECONCILIATION_REQUIRED',
+        'WaaS still reports this transaction as quoted; cannot resolve as expired yet.',
+        409
+      );
+    } catch (error) {
+      if (!(error instanceof UpstreamError) || error.upstreamCode !== TRANSACTION_EXPIRED)
+        throw error;
+      if (this.now() < Date.parse(op.quote.expiresAt) + CLAIM_GRACE_MS)
+        throw new WalletError(
+          'RECONCILIATION_REQUIRED',
+          'Cannot resolve before the post-expiry grace window has elapsed.',
+          409
+        );
+      op.status = 'expired';
+      op.error = 'QUOTE_EXPIRED';
+      op.operatorResolved = true;
+      await this.writeOperation(op);
+      return op;
+    }
+  }
+
+  private async resolveChainReconciliationInternal(
+    family: 'solana' | 'tron',
+    id: string,
+    txnId: string
+  ): Promise<StoredChainOperation> {
+    const op = await this.readChainOperation(id, family);
+    if (!op) throw new WalletError('NOT_FOUND', 'Operation not found.', 404);
+    if (op.status !== 'unknown' || op.error !== 'RECONCILIATION_REQUIRED' || !op.quote)
+      throw new WalletError(
+        'INVALID_STATE',
+        'Only operations in unknown / RECONCILIATION_REQUIRED can be resolved.',
+        409
+      );
+    if (op.quote.txnId !== txnId)
+      throw new WalletError(
+        'STALE_REVIEW',
+        'Provided txnId does not match the stored operation quote.',
+        409
+      );
+    if (op.txnHash)
+      throw new WalletError(
+        'INVALID_STATE',
+        'Cannot resolve an operation with an observed transaction hash as not-broadcast.',
+        409
+      );
+    const state = await this.load();
+    try {
+      const result = await this.chainTransactionStatus(state, op);
+      if (result.status !== 'quoted') {
+        op.status = result.status;
+        op.error = undefined;
+        if (result.txnHash) op.txnHash = result.txnHash;
+        await this.writeOperation(op);
+        return op;
+      }
+      throw new WalletError(
+        'RECONCILIATION_REQUIRED',
+        'WaaS still reports this transaction as quoted; cannot resolve as expired yet.',
+        409
+      );
+    } catch (error) {
+      if (!(error instanceof UpstreamError) || error.upstreamCode !== TRANSACTION_EXPIRED)
+        throw error;
+      if (this.now() < Date.parse(op.quote.expiresAt) + CLAIM_GRACE_MS)
+        throw new WalletError(
+          'RECONCILIATION_REQUIRED',
+          'Cannot resolve before the post-expiry grace window has elapsed.',
+          409
+        );
+      op.status = 'expired';
+      op.error = 'QUOTE_EXPIRED';
+      op.operatorResolved = true;
+      await this.writeOperation(op);
+      return op;
+    }
+  }
+
   private async evmTransactionStatus(state: State, txnId: string) {
     return statusSchema.parse(await this.activeCall(state, 'TransactionStatus', { txnId }));
   }
@@ -1462,7 +1652,7 @@ export class WalletEngine {
     chainId: number,
     typedData: ReturnType<typeof validateTypedData>['typedData'],
     digest: `0x${string}`,
-    options: { allowSwapsPrefix?: boolean } = {}
+    options: { allowSwapsPrefix?: boolean; rejectSelfVerifyingContract?: boolean } = {}
   ): Promise<StoredEvmOperation> {
     const { operation, hash } = await this.existingEvm(
       id,
@@ -1474,6 +1664,14 @@ export class WalletEngine {
     if (operation) return operation;
     const state = await this.load();
     await this.ensure(state, ['evm']);
+    if (
+      options.rejectSelfVerifyingContract &&
+      typedData.domain.verifyingContract.toLowerCase() === state.wallets.evm!.address.toLowerCase()
+    )
+      throw new WalletError(
+        'INVALID_TYPED_DATA',
+        'Typed data verifyingContract cannot be the wallet itself.'
+      );
     const op: StoredEvmOperation = {
       id,
       kind: 'signTypedData',
@@ -1901,7 +2099,13 @@ export class WalletEngine {
         throw error;
       state.credential = undefined;
       await this.save(state);
-      await this.ensure(state, families);
+      try {
+        await this.ensure(state, families);
+      } catch {
+        // Preserve the original pre-claim credential rejection so settlement never treats an
+        // unsent Execute as SUBMISSION_UNCERTAIN during an IdP outage.
+        throw error;
+      }
       return this.call(state, method, params);
     }
   }

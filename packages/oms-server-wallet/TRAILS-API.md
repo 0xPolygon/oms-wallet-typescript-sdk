@@ -92,6 +92,7 @@ export type SwapsConfigScope = "wallet" | "service";
 ### `SwapsFacet`
 
 Public swaps capability attached at `wallet.swaps` when `swaps: trails(...)` is configured.
+Shares one identity executor and debit gate with `wallet.evm`.
 
 ```typescript
 export interface SwapsFacet {
@@ -100,9 +101,10 @@ export interface SwapsFacet {
     get(swapId: string): Promise<SwapView>;
     list(options?: ListSwapsOptions): Promise<SwapListPage>;
     reconcile(swapId: string): Promise<SwapView>;
-    tick(options?: TickSwapsOptions): Promise<void>;
+    tick(options?: TickSwapsOptions): Promise<TickSwapsResult>;
     prepareRecovery(input: PrepareRecoveryInput): Promise<SwapView>;
     confirmRecovery(input: ConfirmRecoveryInput): Promise<SwapView>;
+    resolveReconciliation(input: ResolveSwapReconciliationInput): Promise<SwapView>;
 }
 ```
 
@@ -164,6 +166,16 @@ export interface TickSwapsOptions {
 }
 ```
 
+### `TickSwapsResult`
+
+Result of `wallet.swaps.tick`, returning the earliest pending alarm timestamp.
+
+```typescript
+export interface TickSwapsResult {
+    readonly nextAt: number | null;
+}
+```
+
 ### `PrepareRecoveryInput`
 
 ```typescript
@@ -181,6 +193,20 @@ export interface ConfirmRecoveryInput {
     readonly swapId: string;
     readonly recoveryId: string;
     readonly reviewId: string;
+}
+```
+
+### `ResolveSwapReconciliationInput`
+
+Input to `wallet.swaps.resolveReconciliation` after an operator has independently verified that
+a funding or recovery transaction stuck in `unknown` / `RECONCILIATION_REQUIRED` was never
+broadcast.
+
+```typescript
+export interface ResolveSwapReconciliationInput {
+    readonly swapId: string;
+    readonly txnId: string;
+    readonly resolution: "not-broadcast";
 }
 ```
 

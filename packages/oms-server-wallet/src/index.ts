@@ -39,6 +39,7 @@ export type {
   OperationStatus,
   Quote,
   RemoteWallet,
+  ResolveReconciliationInput,
   ServerWallet,
   ServerWalletBase,
   ServerWalletOptions,

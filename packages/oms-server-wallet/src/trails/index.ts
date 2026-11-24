@@ -12,6 +12,7 @@ export type {
   RecoveryAsset,
   RecoveryStatus,
   RecoveryView,
+  ResolveSwapReconciliationInput,
   StoredSwapEntry,
   SwapListPage,
   SwapPhase,
@@ -19,6 +20,7 @@ export type {
   SwapStore,
   SwapView,
   TickSwapsOptions,
+  TickSwapsResult,
   TrailsOptions,
   TrailsStoreOption,
   TransactionView

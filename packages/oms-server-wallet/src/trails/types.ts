@@ -287,6 +287,12 @@ export interface TickSwapsOptions {
   readonly limit?: number;
 }
 
+/** Result of `wallet.swaps.tick`, returning the earliest pending alarm timestamp. */
+export interface TickSwapsResult {
+  /** Epoch ms timestamp for the next scheduled wake-up, or `null` when no active swaps remain. */
+  readonly nextAt: number | null;
+}
+
 export interface PrepareRecoveryInput {
   readonly swapId: string;
   readonly idempotencyKey: string;
@@ -300,24 +306,53 @@ export interface ConfirmRecoveryInput {
   readonly reviewId: string;
 }
 
-/** Public swaps capability attached at `wallet.swaps` when `swaps: trails(...)` is configured. */
+/**
+ * Input to `wallet.swaps.resolveReconciliation` after an operator has independently verified that
+ * a funding or recovery transaction stuck in `unknown` / `RECONCILIATION_REQUIRED` was never
+ * broadcast.
+ */
+export interface ResolveSwapReconciliationInput {
+  readonly swapId: string;
+  /** Must match the funding or active recovery transaction's WaaS `txnId`. */
+  readonly txnId: string;
+  readonly resolution: 'not-broadcast';
+}
+
+/**
+ * Public swaps capability attached at `wallet.swaps` when `swaps: trails(...)` is configured.
+ * Shares one identity executor and debit gate with `wallet.evm`.
+ */
 export interface SwapsFacet {
-  /** Request and validate an exact-input swap quote without activating or funding it. */
+  /**
+   * Request and validate an exact-input swap quote without activating or funding it.
+   * Retrying with the same `idempotencyKey` and identical inputs returns the existing quote.
+   */
   quote(input: QuoteSwapInput): Promise<SwapView>;
-  /** Authorize a reviewed swap quote bound to its exact `reviewId`. */
+  /**
+   * Authorize a reviewed swap quote bound to its exact `reviewId`, reserving its origin chain
+   * before any funding or activation occurs. Repeated calls with the same `reviewId` are idempotent.
+   */
   confirm(input: ConfirmSwapInput): Promise<SwapView>;
-  /** Return the current sanitized view of a swap. */
+  /** Return the current sanitized view of a swap (expires unconfirmed quotes past deadline). */
   get(swapId: string): Promise<SwapView>;
-  /** Paginated list of persisted swaps. */
+  /** Paginated list of persisted swaps owned by this wallet. */
   list(options?: ListSwapsOptions): Promise<SwapListPage>;
-  /** Advance one due swap if eligible and return its updated view. */
+  /** Advance one due swap if its `nextAt` has elapsed and return its updated view. */
   reconcile(swapId: string): Promise<SwapView>;
-  /** Advance one bounded batch of due swaps; host reschedules using persisted `nextAt`. */
-  tick(options?: TickSwapsOptions): Promise<void>;
-  /** Inspect on-chain intent balances and prepare a reviewable recovery plan. */
+  /**
+   * Advance one bounded batch of due swaps, reconcile orphaned reservations, and return the
+   * earliest remaining `nextAt` timestamp for host / Durable Object alarm rescheduling.
+   */
+  tick(options?: TickSwapsOptions): Promise<TickSwapsResult>;
+  /** Inspect on-chain intent balances and prepare a separately reviewable recovery plan. */
   prepareRecovery(input: PrepareRecoveryInput): Promise<SwapView>;
   /** Authorize a reviewed recovery bound to its exact `reviewId`. */
   confirmRecovery(input: ConfirmRecoveryInput): Promise<SwapView>;
+  /**
+   * Resolve a swap funding or recovery transaction stuck in `unknown` / `RECONCILIATION_REQUIRED`
+   * after out-of-band verification, re-checking WaaS status under lock before releasing the chain.
+   */
+  resolveReconciliation(input: ResolveSwapReconciliationInput): Promise<SwapView>;
 }
 
 export type { ChainReader };

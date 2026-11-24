@@ -34,6 +34,13 @@ export function describeOperation(operation: WalletOperation): OperationGuidance
       };
 
     case 'quoted':
+      if (!operation.reviewId)
+        return {
+          ...base,
+          action: 'safe-to-reprepare',
+          reason:
+            'Legacy quoted operation predates reviewId binding and cannot be executed. Prepare and review a new operation under a fresh idempotencyKey.'
+        };
       return {
         ...base,
         action: 'await-review',

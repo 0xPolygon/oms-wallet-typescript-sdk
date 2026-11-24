@@ -111,12 +111,18 @@ export type ServiceStorageOption =
   | {
       readonly adapter: NamespacedStateStore;
       readonly encryptionKey: string;
+      /**
+       * Optional AES-GCM context resolver for upgrading `0.2.x` multi-tenant stores that used a
+       * custom `EncryptedStore` context. Omit for new deployments to use the canonical namespace.
+       */
+      readonly encryptionContext?: (subject: string, namespace: string) => string;
       readonly encryptedStore?: never;
     }
   | {
       readonly encryptedStore: NamespacedStateStore;
       readonly adapter?: never;
       readonly encryptionKey?: never;
+      readonly encryptionContext?: never;
     };
 
 /** Base options shared by all `createServerWallet` configurations. */
@@ -269,6 +275,17 @@ export interface ExecuteInput {
   readonly idempotencyKey: string;
   /** Opaque SDK-issued review revision from the prepared operation (`operation.reviewId`). */
   readonly reviewId: string;
+}
+
+/**
+ * Input to `resolveReconciliation` on any wallet family after an operator has independently
+ * verified that an operation in `unknown` / `RECONCILIATION_REQUIRED` was never broadcast.
+ */
+export interface ResolveReconciliationInput {
+  readonly idempotencyKey: string;
+  /** Must match the stored operation's WaaS `quote.txnId`. */
+  readonly txnId: string;
+  readonly resolution: 'not-broadcast';
 }
 
 /** Input to `wallet.solana.prepareTransfer` and `wallet.solana.sendTransfer`. */
@@ -497,6 +514,12 @@ export interface EvmFacetBase {
   refreshOperation(id: string): Promise<EvmOperation | null>;
   /** Observe an operation across bounded refresh turns, sleeping outside exclusive ownership. */
   waitForOperation(id: string, options: WaitForOperationOptions): Promise<WaitResult<EvmOperation>>;
+  /**
+   * Resolve an operation stuck in `unknown` / `RECONCILIATION_REQUIRED` after out-of-band
+   * verification. Re-checks WaaS `TransactionStatus` under lock and only transitions to terminal
+   * `expired` if WaaS still reports `TransactionExpired` past grace with no claim evidence.
+   */
+  resolveReconciliation(input: ResolveReconciliationInput): Promise<EvmOperation>;
   /** Bounded local listing of persisted EVM operations. */
   listOperations(options?: ListOperationsOptions): Promise<OperationPage<EvmOperation>>;
 }
@@ -526,6 +549,8 @@ export interface SolanaFacetBase {
     id: string,
     options: WaitForOperationOptions
   ): Promise<WaitResult<SolanaOperation>>;
+  /** Resolve an operation in `unknown` / `RECONCILIATION_REQUIRED` after out-of-band verification. */
+  resolveReconciliation(input: ResolveReconciliationInput): Promise<SolanaOperation>;
   listOperations(options?: ListOperationsOptions): Promise<OperationPage<SolanaOperation>>;
 }
 
@@ -550,6 +575,8 @@ export interface TronFacetBase {
     id: string,
     options: WaitForOperationOptions
   ): Promise<WaitResult<TronOperation>>;
+  /** Resolve an operation in `unknown` / `RECONCILIATION_REQUIRED` after out-of-band verification. */
+  resolveReconciliation(input: ResolveReconciliationInput): Promise<TronOperation>;
   listOperations(options?: ListOperationsOptions): Promise<OperationPage<TronOperation>>;
 }
 

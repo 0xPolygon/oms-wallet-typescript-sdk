@@ -19,6 +19,7 @@ import type {
   PrepareRecoveryInput,
   QuoteSwapInput,
   RecoveryRecord,
+  ResolveSwapReconciliationInput,
   StoredSwapEntry,
   SwapGateway,
   SwapListPage,
@@ -27,6 +28,7 @@ import type {
   SwapStore,
   SwapView,
   TickSwapsOptions,
+  TickSwapsResult,
   TrailsOptions,
   TrailsStoreOption
 } from './types.js';
@@ -51,7 +53,7 @@ const idSchema = z
 const uncertain = (op?: StoredEvmOperation) =>
   !!op &&
   (['submitting', 'pending', 'unknown'].includes(op.status) ||
-    (op.status === 'expired' && op.preSubmitExpired !== true));
+    (op.status === 'expired' && op.preSubmitExpired !== true && op.operatorResolved !== true));
 const terminalUpstream = new Set(['FAILED', 'ABORTED', 'INVALID', 'REFUNDED', 'SUCCEEDED']);
 const emptyCode = (code: string) => /^0x0*$/.test(code);
 const errorCode = (error: unknown) =>
@@ -154,7 +156,9 @@ export class TrailsCoordinator {
       reconcile: (swapId: string) => this.reconcileSwap(swapId),
       tick: (options?: TickSwapsOptions) => this.tick(options?.limit),
       prepareRecovery: (input: PrepareRecoveryInput) => this.prepareRecovery(input),
-      confirmRecovery: (input: ConfirmRecoveryInput) => this.confirmRecovery(input)
+      confirmRecovery: (input: ConfirmRecoveryInput) => this.confirmRecovery(input),
+      resolveReconciliation: (input: ResolveSwapReconciliationInput) =>
+        this.resolveReconciliation(input)
     });
   }
 
@@ -194,10 +198,18 @@ export class TrailsCoordinator {
       );
   }
 
-  private async saveLocked(record: SwapRecord, delay: number | null = record.action ? 5000 : null) {
+  private async saveLocked(
+    record: SwapRecord,
+    delay: number | null = record.action ? 5000 : null,
+    options: { syncReservation?: boolean } = {}
+  ) {
     record.version++;
     record.updatedAt = new Date(this.now()).toISOString();
     record.nextAt = delay === null ? null : this.now() + delay;
+    if (options.syncReservation === false) {
+      await this.config.store.save(serializeSwapRecord(record));
+      return;
+    }
     const reserved = this.reservedChain(record);
     // Conservative crash ordering: persist reservation BEFORE swap record when acquiring,
     // and clear reservation AFTER swap record when releasing.
@@ -213,7 +225,14 @@ export class TrailsCoordinator {
     if (entries.length > 1000)
       throw new WalletError('WALLET_BUSY', 'Too many unresolved wallet operations.', 409);
     const records = entries.map(deserializeSwapRecord);
-    for (const record of records) await this.assertRecordOwnerLocked(record);
+    if (records.length > 0) {
+      const snapshot = await this.config.primitives.inspectLocked();
+      const owner = snapshot.wallet?.address.toLowerCase();
+      for (const record of records) {
+        if (!owner || owner !== record.owner)
+          throw new WalletError('WALLET_MISMATCH', 'Swap belongs to another wallet.', 409);
+      }
+    }
     return records;
   }
 
@@ -236,11 +255,22 @@ export class TrailsCoordinator {
     exceptSwap?: string,
     exceptOperations: readonly string[] = []
   ): Promise<void> {
+    // Check authoritative wallet-state swap reservations first so a worker with an empty or stale
+    // swap store cannot confirm a competing swap or recovery on a reserved chain.
+    const walletReservations = await this.config.primitives.readSwapReservationsLocked();
+    for (const [swapId, reserved] of Object.entries(walletReservations)) {
+      if (swapId !== exceptSwap && reserved === chainId)
+        throw new WalletError(
+          'DEBIT_PENDING',
+          `Another debit on chain ${chainId} (swap "${swapId}") must be reconciled first.`,
+          409
+        );
+    }
     for (const record of await this.activeRecordsLocked()) {
       if (record.id !== exceptSwap && this.reservedChain(record) === chainId)
         throw new WalletError(
           'DEBIT_PENDING',
-          'Another debit on this chain must be reconciled first.',
+          `Another debit on chain ${chainId} (swap "${record.id}") must be reconciled first.`,
           409
         );
     }
@@ -294,6 +324,15 @@ export class TrailsCoordinator {
           );
         return swapView(existing);
       }
+      // Fail closed if wallet state already holds an active reservation for this swap ID while
+      // this worker's swap store does not have it (e.g. misconfigured rollout store).
+      const reservations = await this.config.primitives.readSwapReservationsLocked();
+      if (id in reservations)
+        throw new WalletError(
+          'DEBIT_PENDING',
+          `Swap "${id}" already holds an active debit reservation in wallet state.`,
+          409
+        );
       const { TrailsContracts } = await this.config.trails.readiness();
       const { intent } = await this.config.trails.quoteIntent(
         request as unknown as Record<string, unknown>
@@ -349,9 +388,34 @@ export class TrailsCoordinator {
         fundingConfirmed: false,
         recoveries: []
       };
-      await this.saveLocked(record);
+      // Creating an unconfirmed quote never acquires or clears an existing wallet reservation.
+      await this.saveLocked(record, null, { syncReservation: false });
       return swapView(record);
     });
+  }
+
+  /** Re-verify stored quote digest and funding transfer against the stored intent to detect payload tampering. */
+  private async verifyStoredQuoteIntegrity(record: SwapRecord): Promise<void> {
+    const request = buildSwapRequest(record.owner, record.request, this.config.assets);
+    const expectedDigest = await sha256(canonicalJson({ request, intent: record.quote.intent }));
+    const deposit = record.quote.intent.depositTransaction;
+    const native = request.originTokenAddress === zeroAddress;
+    const expectedAsset = native ? 'native' : request.originTokenAddress;
+    const funding = record.quote.funding;
+    if (
+      expectedDigest !== record.quote.digest ||
+      funding.chainId !== request.originChainId ||
+      funding.to.toLowerCase() !== record.quote.intent.originIntentAddress.toLowerCase() ||
+      funding.to.toLowerCase() !== deposit.toAddress.toLowerCase() ||
+      tokenAddress(funding.asset) !== tokenAddress(expectedAsset) ||
+      funding.amount !== request.originTokenAmount ||
+      funding.amount !== deposit.amount
+    )
+      throw new WalletError(
+        'INVALID_STATE',
+        'Stored swap quote payload failed integrity verification.',
+        500
+      );
   }
 
   private async confirmSwap(input: ConfirmSwapInput): Promise<SwapView> {
@@ -363,6 +427,7 @@ export class TrailsCoordinator {
     const reviewId = input.reviewId;
     return this.config.primitives.runLocked(async () => {
       const record = await this.loadRecordLocked(swapId);
+      await this.verifyStoredQuoteIntegrity(record);
       if (record.quote.digest !== reviewId)
         throw new WalletError('STALE_QUOTE', 'Review the current quote before confirming.', 409);
       if (record.confirmedAt) return swapView(record);
@@ -426,13 +491,94 @@ export class TrailsCoordinator {
     });
   }
 
-  private tick(limit = 3): Promise<void> {
+  private tick(limit = 3): Promise<TickSwapsResult> {
     return this.config.primitives.runLocked(async () => {
-      const due = (await this.activeRecordsLocked())
+      // Reconcile orphaned wallet-state reservations (e.g. if SwapStore.save failed during confirm).
+      // Only clear a reservation when the swap record exists in this store, belongs to this wallet,
+      // and no longer reserves a chain; missing records remain fail-closed!
+      const reservations = await this.config.primitives.readSwapReservationsLocked();
+      for (const swapId of Object.keys(reservations)) {
+        const entry = await this.config.store.get(swapId);
+        if (!entry) continue;
+        const record = deserializeSwapRecord(entry);
+        await this.assertRecordOwnerLocked(record);
+        if (this.reservedChain(record) === undefined)
+          await this.config.primitives.setSwapReservationLocked(swapId, null);
+      }
+
+      const active = await this.activeRecordsLocked();
+      const due = active
         .filter((r) => r.action && (r.nextAt ?? 0) <= this.now())
         .sort((a, b) => (a.nextAt ?? 0) - (b.nextAt ?? 0));
       for (const record of due.slice(0, Math.max(1, Math.min(limit, 10))))
         await this.advanceLocked(record);
+
+      const remaining = await this.activeRecordsLocked();
+      let nextAt: number | null = null;
+      for (const record of remaining) {
+        if (record.nextAt !== null && (nextAt === null || record.nextAt < nextAt))
+          nextAt = record.nextAt;
+      }
+      return { nextAt };
+    });
+  }
+
+  private resolveReconciliation(input: ResolveSwapReconciliationInput): Promise<SwapView> {
+    if (!input || typeof input !== 'object')
+      throw new WalletError(
+        'INVALID_STATE',
+        'Provide swapId, txnId, and resolution: "not-broadcast".'
+      );
+    const swapId = validateId(input.swapId);
+    const txnId = input.txnId;
+    const resolution = input.resolution;
+    if (typeof txnId !== 'string' || !txnId.trim() || resolution !== 'not-broadcast')
+      throw new WalletError(
+        'INVALID_STATE',
+        'Provide a valid txnId and resolution: "not-broadcast".'
+      );
+    return this.config.primitives.runLocked(async () => {
+      const record = await this.loadRecordLocked(swapId);
+      // Case 1: funding transaction in RECONCILIATION_REQUIRED
+      if (record.funding?.quote?.txnId === txnId) {
+        record.funding = await this.config.primitives.resolveEvmReconciliationLocked(
+          record.fundingId,
+          txnId
+        );
+        if (record.funding.status === 'expired' && record.funding.operatorResolved === true) {
+          record.phase = 'expired';
+          record.action = null;
+          record.error = 'QUOTE_EXPIRED';
+        }
+        await this.saveLocked(record);
+        return swapView(record);
+      }
+      // Case 2: active recovery transaction in RECONCILIATION_REQUIRED
+      const recovery = this.currentRecovery(record, false);
+      if (recovery && recovery.transaction?.quote?.txnId === txnId) {
+        recovery.transaction = await this.config.primitives.resolveEvmReconciliationLocked(
+          recovery.transactionId,
+          txnId
+        );
+        if (
+          recovery.transaction.status === 'expired' &&
+          recovery.transaction.operatorResolved === true
+        ) {
+          recovery.status = 'expired';
+          recovery.error = 'RECOVERY_EXPIRED';
+          record.activeRecoveryId = undefined;
+          record.phase = 'attention';
+          record.action = 'observe';
+          record.error = 'RECOVERY_EXPIRED';
+        }
+        await this.saveLocked(record);
+        return swapView(record);
+      }
+      throw new WalletError(
+        'NOT_FOUND',
+        'No funding or active recovery operation matches that txnId.',
+        404
+      );
     });
   }
 
@@ -502,6 +648,7 @@ export class TrailsCoordinator {
       switch (record.action) {
         case 'prepare-funding': {
           await this.enabledLocked();
+          await this.verifyStoredQuoteIntegrity(record);
           await this.availableLocked(record.request.originChainId, record.id, [record.fundingId]);
           await this.funds(record);
           await this.saveLocked(record);
@@ -1385,7 +1532,12 @@ export function trailsInternal<TStore extends TrailsStoreOption>(
       timeoutMs: options.timeoutMs
     });
   }
-  // Snapshot store scope and adapter eagerly so mutating options.store later cannot redirect binding.
+  // Snapshot ALL options eagerly so mutating caller objects later cannot redirect binding.
+  const apiKey = options.apiKey;
+  const baseUrl = options.baseUrl;
+  const configuredOrigin = options.origin;
+  const configuredFetch = options.fetch;
+  const timeoutMs = options.timeoutMs;
   const storeScope = options.store.scope;
   const storeAdapter = options.store.adapter;
   let boundWalletNamespace: string | undefined;
@@ -1410,14 +1562,14 @@ export function trailsInternal<TStore extends TrailsStoreOption>(
       const gateway =
         overrides.gateway ??
         new TrailsClient({
-          apiKey: options.apiKey,
-          baseUrl: options.baseUrl,
-          origin: options.origin ?? primitives.origin,
-          fetch: options.fetch,
-          timeoutMs: options.timeoutMs
+          apiKey,
+          baseUrl,
+          origin: configuredOrigin ?? primitives.origin,
+          fetch: configuredFetch,
+          timeoutMs
         });
       const chainReader =
-        overrides.chains ?? new EvmChainReader(chainsCopy, options.fetch ?? fetch);
+        overrides.chains ?? new EvmChainReader(chainsCopy, configuredFetch ?? fetch);
 
       const coordinator = new TrailsCoordinator({
         primitives,

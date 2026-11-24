@@ -109,6 +109,7 @@ const storedEvmOperationSchema = z.strictObject({
   submitted: z.boolean().optional(),
   preSubmitExpired: z.boolean().optional(),
   preClaimRefused: z.boolean().optional(),
+  operatorResolved: z.boolean().optional(),
   transfer: z
     .object({
       chainId: z.number().int(),
@@ -144,6 +145,7 @@ const storedChainOperationSchema = z.strictObject({
   submitted: z.boolean().optional(),
   preSubmitExpired: z.boolean().optional(),
   preClaimRefused: z.boolean().optional(),
+  operatorResolved: z.boolean().optional(),
   quote: chainQuoteSchema.optional(),
   fee: feeOptionSchema.optional(),
   feeIndex: z.number().int().min(0).optional(),

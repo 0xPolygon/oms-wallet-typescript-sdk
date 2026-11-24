@@ -18,6 +18,7 @@ import type {
   GetSolanaBalancesOptions,
   GetTronBalancesOptions,
   ListOperationsOptions,
+  ResolveReconciliationInput,
   ServerWalletBase,
   ServerWalletOptions,
   ServerWalletOptionsBase,
@@ -191,7 +192,12 @@ async function waitFor<TOperation extends WalletOperation>(
   let last = await getLocal(id);
   if (!last) throw new WalletError('NOT_FOUND', 'Operation not found.', 404);
   if (SETTLED_STATUSES.has(last.status)) return { outcome: 'settled', operation: last };
-  if (last.status === 'unknown' && last.error === 'RECONCILIATION_REQUIRED')
+  if (
+    last.status === 'unknown' &&
+    (last.error === 'RECONCILIATION_REQUIRED' ||
+      last.kind === 'sign' ||
+      last.kind === 'signTypedData')
+  )
     return { outcome: 'reconciliation-required', operation: last };
   if (options.signal?.aborted) return { outcome: 'cancelled', operation: last };
 
@@ -251,6 +257,8 @@ function buildWalletFacade<
         options,
         clock
       ),
+    resolveReconciliation: (input: ResolveReconciliationInput) =>
+      engine.resolveEvmReconciliation(input),
     listOperations: (options?: ListOperationsOptions) => engine.listEvmOperations(options)
   };
   const evmImmediate: EvmImmediateFacet = {
@@ -281,6 +289,8 @@ function buildWalletFacade<
         options,
         clock
       ),
+    resolveReconciliation: (input: ResolveReconciliationInput) =>
+      engine.resolveSolanaReconciliation(input),
     listOperations: (options?: ListOperationsOptions) => engine.listSolanaOperations(options)
   };
   const solanaImmediate: SolanaImmediateFacet = {
@@ -308,6 +318,8 @@ function buildWalletFacade<
         options,
         clock
       ),
+    resolveReconciliation: (input: ResolveReconciliationInput) =>
+      engine.resolveTronReconciliation(input),
     listOperations: (options?: ListOperationsOptions) => engine.listTronOperations(options)
   };
   const tronImmediate: TronImmediateFacet = {
@@ -636,11 +648,22 @@ function instantiateServerWalletService(
       });
       const store = hasEncrypted
         ? scopeNamespacedStore(storage.encryptedStore, namespace)
-        : new EncryptedStore(
-            scopeNamespacedStore(storage.adapter, namespace),
-            storage.encryptionKey,
-            namespace
-          );
+        : (() => {
+            const context = storage.encryptionContext
+              ? storage.encryptionContext(subject, namespace)
+              : namespace;
+            if (typeof context !== 'string' || !context.trim())
+              throw new WalletError(
+                'CONFIGURATION',
+                'storage.encryptionContext must return a non-empty string.',
+                503
+              );
+            return new EncryptedStore(
+              scopeNamespacedStore(storage.adapter, namespace),
+              storage.encryptionKey,
+              context
+            );
+          })();
       const executor = options.executor(namespace);
       if (!executor || typeof executor.run !== 'function')
         throw new WalletError(
