@@ -1,10 +1,13 @@
 import type { Abi, ContractFunctionName } from 'viem';
 
 import type { SwapsConfig } from './internal/swapsBridge.js';
+import type { NetworkFamily } from './protocol.js';
 import type { RpcTransport } from './transport.js';
 import type {
   ApprovalMode,
   CreateOrRestoreOptions,
+  EphemeralServerWallet,
+  EphemeralServerWalletOptions,
   EvmCallInput,
   EvmFacet,
   EvmFacetBase,
@@ -36,10 +39,12 @@ import type {
   TronFacet,
   TronFacetBase,
   TronImmediateFacet,
+  TronNetwork,
   TronOperation,
   TronSignMessageInput,
   TronSignTypedDataInput,
   TronTransactionInput,
+  TypedDataInput,
   WaitForOperationOptions,
   WaitResult,
   WalletIndexerFacet,
@@ -48,13 +53,21 @@ import type {
 } from './types.js';
 
 import { WalletEngine } from './engine.js';
+import { EngineCore } from './engine/core.js';
+import { EphemeralEngine } from './engine/ephemeral.js';
 import { environmentFromKey, resolveAttestationPolicy } from './environment.js';
 import { WalletError } from './errors.js';
 import { omsFetch } from './http.js';
 import { IndexerClient } from './indexer.js';
 import { resolveSwapsBinder } from './internal/swapsBridge.js';
 import { isStaleExpiryRead } from './settlement.js';
-import { computeIdentityNamespace, EncryptedStore, scopeNamespacedStore } from './storage.js';
+import {
+  computeIdentityNamespace,
+  createSingleProcessExecutor,
+  EncryptedStore,
+  MemoryStateStore,
+  scopeNamespacedStore
+} from './storage.js';
 import { WaasTransport } from './transport.js';
 
 const SETTLED_STATUSES: ReadonlySet<string> = new Set(['executed', 'failed', 'expired', 'signed']);
@@ -218,6 +231,26 @@ async function waitFor<TOperation extends WalletOperation>(
   }
 }
 
+const familyLabel: Record<NetworkFamily, string> = { evm: 'EVM', solana: 'Solana', tron: 'Tron' };
+
+/** Balance reads for a handle's own wallets; `addressOf` throws when a family is not held. */
+function buildIndexerFacet(
+  indexer: IndexerClient,
+  addressOf: (family: NetworkFamily) => Promise<string>
+): WalletIndexerFacet {
+  return Object.freeze({
+    async getEvmBalances(options?: GetEvmBalancesOptions) {
+      return indexer.getBalances(await addressOf('evm'), options);
+    },
+    async getSolanaBalances(options?: GetSolanaBalancesOptions) {
+      return indexer.getSolanaBalances(await addressOf('solana'), options?.networks);
+    },
+    async getTronBalances(options?: GetTronBalancesOptions) {
+      return indexer.getTronBalances(await addressOf('tron'), options?.networks);
+    }
+  });
+}
+
 function buildWalletFacade<
   TApproval extends ApprovalMode,
   TSwaps extends SwapsConfig<'wallet' | 'service', unknown> | undefined
@@ -336,37 +369,15 @@ function buildWalletFacade<
     allowImmediate ? { ...tronBase, ...tronImmediate } : { ...tronBase }
   ) as TronFacet<TApproval>;
 
-  const indexerFacet: WalletIndexerFacet = Object.freeze({
-    async getEvmBalances(options?: GetEvmBalancesOptions) {
-      const address = await engine.core.snapshotAddress('evm');
-      if (!address)
-        throw new WalletError(
-          'WALLET_NOT_INITIALIZED',
-          'EVM wallet has not been created or restored yet.',
-          409
-        );
-      return indexer.getBalances(address, options);
-    },
-    async getSolanaBalances(options?: GetSolanaBalancesOptions) {
-      const address = await engine.core.snapshotAddress('solana');
-      if (!address)
-        throw new WalletError(
-          'WALLET_NOT_INITIALIZED',
-          'Solana wallet has not been created or restored yet.',
-          409
-        );
-      return indexer.getSolanaBalances(address, options?.networks);
-    },
-    async getTronBalances(options?: GetTronBalancesOptions) {
-      const address = await engine.core.snapshotAddress('tron');
-      if (!address)
-        throw new WalletError(
-          'WALLET_NOT_INITIALIZED',
-          'Tron wallet has not been created or restored yet.',
-          409
-        );
-      return indexer.getTronBalances(address, options?.networks);
-    }
+  const indexerFacet = buildIndexerFacet(indexer, async (family) => {
+    const address = await engine.core.snapshotAddress(family);
+    if (!address)
+      throw new WalletError(
+        'WALLET_NOT_INITIALIZED',
+        `${familyLabel[family]} wallet has not been created or restored yet.`,
+        409
+      );
+    return address;
   });
 
   const base: ServerWalletBase<TApproval> = {
@@ -774,4 +785,103 @@ export function createServerWalletService(
       readonly swaps?: SwapsConfig<'service', unknown>;
     }
   );
+}
+
+function instantiateEphemeralServerWallet(
+  options: EphemeralServerWalletOptions,
+  overrides: { transport?: RpcTransport; clock?: () => number; indexer?: IndexerClient } = {}
+): EphemeralServerWallet {
+  if (!options || typeof options !== 'object')
+    throw new WalletError('CONFIGURATION', 'Configure createEphemeralServerWallet options.', 503);
+  for (const key of ['store', 'storage', 'executor', 'swaps', 'approval'])
+    if ((options as unknown as Record<string, unknown>)[key] !== undefined)
+      throw new WalletError(
+        'CONFIGURATION',
+        `createEphemeralServerWallet does not take "${key}": ephemeral handles keep no durable state, cannot send, and do not support swaps. Use createServerWallet for those.`,
+        503
+      );
+  const environment = environmentFromKey(options.publishableKey);
+  const origin = normalizeOrigin(options.origin);
+  validateOidcCore(
+    options.oidc?.issuer,
+    options.oidc?.audience,
+    options.oidc?.sessionLifetimeSeconds
+  );
+  if (typeof options.oidc?.getIdToken !== 'function')
+    throw new WalletError('CONFIGURATION', 'Configure oidc.getIdToken.', 503);
+  if (!overrides.transport) resolveAttestationPolicy(environment, options.attestation);
+
+  const namespace = computeIdentityNamespace({
+    waasOrigin: environment.origin,
+    projectId: environment.projectId,
+    issuer: options.oidc.issuer,
+    audience: options.oidc.audience,
+    subject: options.oidc.subject
+  });
+  const baseFetch = options.fetch ?? fetch;
+  const fetcher = origin ? omsFetch(origin, baseFetch) : baseFetch;
+  const transport =
+    overrides.transport ?? new WaasTransport(options.publishableKey, options.attestation, fetcher);
+  const indexer = overrides.indexer ?? new IndexerClient(options.publishableKey, fetcher);
+
+  const engine = new EphemeralEngine(
+    new EngineCore({
+      namespace,
+      origin,
+      subject: options.oidc.subject,
+      issuer: options.oidc.issuer,
+      audience: options.oidc.audience,
+      getIdToken: options.oidc.getIdToken,
+      sessionLifetimeSeconds: options.oidc.sessionLifetimeSeconds ?? 900,
+      store: new MemoryStateStore(),
+      executor: createSingleProcessExecutor(),
+      transport,
+      clock: overrides.clock,
+      createWallets: false
+    })
+  );
+
+  return Object.freeze({
+    restore: (restoreOptions?: CreateOrRestoreOptions) => engine.restore(restoreOptions?.families),
+    inspect: () => engine.inspect(),
+    rotateCredential: () => engine.rotateCredential(),
+    close: () => engine.close(),
+    evm: Object.freeze({
+      signMessage: (input: { readonly chainId: number; readonly message: string }) =>
+        engine.signEvmMessage(input?.chainId, input?.message),
+      signTypedData: (input: { readonly chainId: number; readonly typedData: TypedDataInput }) =>
+        engine.signEvmTypedData(input?.chainId, input?.typedData)
+    }),
+    solana: Object.freeze({
+      signMessage: (input: { readonly message: string }) => engine.signSolanaMessage(input?.message)
+    }),
+    tron: Object.freeze({
+      signMessage: (input: { readonly message: string }) => engine.signTronMessage(input?.message),
+      signTypedData: (input: {
+        readonly network: TronNetwork;
+        readonly typedData: TypedDataInput;
+      }) => engine.signTronTypedData(input?.network, input?.typedData)
+    }),
+    indexer: buildIndexerFacet(indexer, (family) => engine.address(family))
+  });
+}
+
+/** Package-private test seam for `createEphemeralServerWallet`. */
+export function createEphemeralServerWalletInternal(
+  options: EphemeralServerWalletOptions,
+  overrides?: { transport?: RpcTransport; clock?: () => number; indexer?: IndexerClient }
+): EphemeralServerWallet {
+  return instantiateEphemeralServerWallet(options, overrides);
+}
+
+/**
+ * Create a memory-only signer for one OIDC identity. It needs no storage, encryption key or
+ * distributed lock: each handle holds its own credential, so run one handle per concurrent
+ * worker. It signs and reads balances but cannot send, keeps no records and never creates
+ * wallets; provision wallets with `createServerWallet` first. Call `close()` when done.
+ */
+export function createEphemeralServerWallet(
+  options: EphemeralServerWalletOptions
+): EphemeralServerWallet {
+  return instantiateEphemeralServerWallet(options);
 }

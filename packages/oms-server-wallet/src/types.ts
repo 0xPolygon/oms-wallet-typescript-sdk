@@ -677,3 +677,72 @@ export interface ServerWalletService<
   /** Unattested indexer reads for arbitrary addresses. */
   readonly indexer: ServiceIndexerFacet;
 }
+
+/** Options for `createEphemeralServerWallet`. There is no store, executor, swaps or approval mode. */
+export interface EphemeralServerWalletOptions {
+  readonly publishableKey: string;
+  /** Application origin sent to WaaS, when the project restricts origins. */
+  readonly origin?: string;
+  /** OIDC identity. `sessionLifetimeSeconds` defaults to 900 (15 minutes) for ephemeral handles. */
+  readonly oidc: WalletOidcOptions;
+  readonly attestation?: AttestationOptions;
+  readonly fetch?: typeof fetch;
+}
+
+/** Wallets and credential held by an ephemeral handle. */
+export interface EphemeralWalletSnapshot {
+  readonly wallet?: RemoteWallet;
+  readonly wallets: Partial<Record<NetworkFamily, RemoteWallet>>;
+  readonly expiresAt?: string;
+  readonly credentialId?: string;
+}
+
+/** A signature that WaaS produced and then verified. */
+export interface SignatureResult {
+  readonly signature: string;
+  readonly verified: true;
+}
+
+/**
+ * Memory-only signer for one OIDC identity, from `createEphemeralServerWallet`. It signs and reads
+ * balances; it cannot prepare or send transactions, keeps no operation records, and never creates
+ * wallets. Not assignable to `ServerWallet`. Call `close()` when done.
+ */
+export interface EphemeralServerWallet {
+  /**
+   * Sign in and bind wallets that already exist on WaaS. With `families`, each must exist;
+   * without, every existing family is bound. Throws `WALLET_NOT_INITIALIZED` when none exists:
+   * create wallets with `createServerWallet` first. Required before signing or balance reads.
+   */
+  restore(options?: CreateOrRestoreOptions): Promise<EphemeralWalletSnapshot>;
+  inspect(): Promise<EphemeralWalletSnapshot>;
+  /** Revoke this handle's credential and sign in again with a new one. */
+  rotateCredential(): Promise<EphemeralWalletSnapshot>;
+  /**
+   * Close the handle and revoke its credential. Every later call, including calls already queued,
+   * throws `WALLET_CLOSED`. Idempotent; call again to retry a revoke that failed.
+   */
+  close(): Promise<void>;
+  readonly evm: {
+    signMessage(input: {
+      readonly chainId: number;
+      readonly message: string;
+    }): Promise<SignatureResult>;
+    /** Refuses Sequence wallet `Calls` and typed data whose `verifyingContract` is the wallet. */
+    signTypedData(input: {
+      readonly chainId: number;
+      readonly typedData: TypedDataInput;
+    }): Promise<SignatureResult>;
+  };
+  readonly solana: {
+    signMessage(input: { readonly message: string }): Promise<SignatureResult>;
+  };
+  readonly tron: {
+    signMessage(input: { readonly message: string }): Promise<SignatureResult>;
+    signTypedData(input: {
+      readonly network: TronNetwork;
+      readonly typedData: TypedDataInput;
+    }): Promise<SignatureResult>;
+  };
+  readonly indexer: WalletIndexerFacet;
+}

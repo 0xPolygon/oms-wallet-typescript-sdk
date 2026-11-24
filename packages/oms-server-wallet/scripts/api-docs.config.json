@@ -25,6 +25,16 @@
       ]
     },
     {
+      "label": "Ephemeral signer",
+      "symbols": [
+        "createEphemeralServerWallet",
+        "EphemeralServerWalletOptions",
+        "EphemeralServerWallet",
+        "EphemeralWalletSnapshot",
+        "SignatureResult"
+      ]
+    },
+    {
       "label": "Storage and concurrency",
       "symbols": [
         "createSingleProcessExecutor",

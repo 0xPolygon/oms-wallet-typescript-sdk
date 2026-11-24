@@ -19,6 +19,7 @@ import type {
   TypedDataInput
 } from '../types.js';
 import type { EngineCore } from './core.js';
+import type { ChainSignRequest } from './signing.js';
 
 import { WalletError } from '../errors.js';
 import { TRON_CHAIN_IDS } from '../internal/protocol/networks.js';
@@ -29,16 +30,13 @@ import { validateTronTypedData } from '../typed-data.js';
 import {
   OPEN_STATUSES,
   assertReviewId,
-  chainSignatureSchema,
   isSolanaSignature,
-  isTronSignature,
   isTronTxid,
   normalizeSolanaTransfer,
   normalizeTronContractCall,
   normalizeTronTransaction,
   requireMessage,
   requireTronNetwork,
-  validSchema,
   validateIdempotencyKey,
   validateReviewId,
   validateTxnId
@@ -49,6 +47,12 @@ import {
   parseListOptions,
   paginate
 } from './projection.js';
+import {
+  requestChainSignature,
+  solanaMessageRequest,
+  tronMessageRequest,
+  tronTypedDataRequest
+} from './signing.js';
 
 /** Solana and Tron operations: transfers, transactions, contract calls and signatures. */
 export class ChainEngine {
@@ -101,20 +105,7 @@ export class ChainEngine {
         'solana',
         'sign',
         { message: text },
-        (wallet) => ({
-          method: 'SignMessage',
-          params: { network: '', walletId: wallet.id, message: text }
-        }),
-        (wallet, signature) => ({
-          valid: isSolanaSignature(signature),
-          method: 'IsValidMessageSignature',
-          params: {
-            networkFamily: 'solana',
-            walletAddress: wallet.address,
-            message: text,
-            signature
-          }
-        })
+        solanaMessageRequest(text)
       );
       return projectSolanaOperation(op);
     });
@@ -254,15 +245,7 @@ export class ChainEngine {
         'tron',
         'sign',
         { message: text },
-        (wallet) => ({
-          method: 'SignMessage',
-          params: { network: '', walletId: wallet.id, message: text }
-        }),
-        (wallet, signature) => ({
-          valid: isTronSignature(signature),
-          method: 'IsValidMessageSignature',
-          params: { networkFamily: 'tron', walletAddress: wallet.address, message: text, signature }
-        })
+        tronMessageRequest(text)
       );
       return projectTronOperation(op);
     });
@@ -283,20 +266,7 @@ export class ChainEngine {
         'tron',
         'signTypedData',
         { network: validNetwork, digest },
-        (wallet) => ({
-          method: 'SignTypedData',
-          params: { network: '', walletId: wallet.id, typedData }
-        }),
-        (wallet, signature) => ({
-          valid: isTronSignature(signature),
-          method: 'IsValidTypedDataSignature',
-          params: {
-            networkFamily: 'tron',
-            walletAddress: wallet.address,
-            typedData,
-            signature
-          }
-        }),
+        tronTypedDataRequest(typedData),
         { network: validNetwork }
       );
       return projectTronOperation(op);
@@ -650,18 +620,13 @@ export class ChainEngine {
     family: 'solana' | 'tron',
     kind: 'sign' | 'signTypedData',
     input: Record<string, unknown>,
-    sign: (wallet: RemoteWallet) => { method: string; params: Record<string, unknown> },
-    check: (
-      wallet: RemoteWallet,
-      signature: string
-    ) => { valid: boolean; method: string; params: Record<string, unknown> },
+    request: ChainSignRequest,
     stored: Partial<StoredChainOperation> = {}
   ): Promise<StoredChainOperation> {
     const { operation, hash } = await this.core.existingAny(id, kind, input, family, 'review');
     if (operation) return operation as StoredChainOperation;
     const state = await this.core.load();
     await this.core.ensure(state, [family]);
-    const wallet = state.wallets[family]!;
     const op: StoredChainOperation = {
       id,
       family,
@@ -674,23 +639,7 @@ export class ChainEngine {
     };
     await this.core.writeOperation(op);
     try {
-      const request = sign(wallet);
-      const { signature } = chainSignatureSchema.parse(
-        await this.core.activeCall(state, request.method, request.params, [family])
-      );
-      const verification = check(wallet, signature);
-      if (!verification.valid)
-        throw new WalletError('INVALID_RESPONSE', 'WaaS returned a malformed signature.', 502);
-      const { isValid } = validSchema.parse(
-        await this.core.config.transport.request(verification.method, verification.params)
-      );
-      if (!isValid)
-        throw new WalletError(
-          'SIGNATURE_INVALID',
-          'WaaS returned a signature that did not verify.',
-          502
-        );
-      op.signature = signature;
+      op.signature = await requestChainSignature(this.core, state, family, request);
       op.verified = true;
       op.status = 'signed';
     } catch (error) {

@@ -37,6 +37,7 @@ const wallet = createServerWallet({
     issuer: process.env.OIDC_ISSUER!,
     audience: process.env.OIDC_AUDIENCE!,
     subject: 'customer:12345',
+    // Mint a new ID token on every call: WaaS rejects a token that was already used to sign in.
     getIdToken: () => issueIdToken('customer:12345') // { token, expiresAt (Unix seconds) }
   },
   store: {
@@ -129,11 +130,15 @@ By default (`approval: 'two-phase'`), one-shot `send*` shortcuts are omitted at 
 | Surface | Methods |
 | --- | --- |
 | `wallet` | `inspect()`, `createOrRestore({ families? })`, `rotateCredential()`, `disable()`, `enable()` |
-| `wallet.evm` | `prepareTransfer`, `prepareCall`, `execute`, `signMessage`, `signTypedData`, `getOperation`, `refreshOperation`, `waitForOperation`, `resolveReconciliation`, `listOperations` (+ `sendTransfer`, `sendCall` in `allow-immediate` mode) |
-| `wallet.solana` | `prepareTransfer`, `execute`, `signMessage`, `getOperation`, `refreshOperation`, `waitForOperation`, `resolveReconciliation`, `listOperations` (+ `sendTransfer` in `allow-immediate` mode) |
-| `wallet.tron` | `prepareTransaction`, `prepareContractCall`, `execute`, `signMessage`, `signTypedData`, `getOperation`, `refreshOperation`, `waitForOperation`, `resolveReconciliation`, `listOperations` (+ `sendTransaction`, `sendContractCall` in `allow-immediate` mode) |
+| `wallet.evm` | `prepareTransfer`, `prepareCall`, `execute`, `signMessage`, `signTypedData`, `getOperation`, `refreshOperation`, `waitForOperation`, `resolveReconciliation`, `listOperations`, `getTransactionStatus` (+ `sendTransfer`, `sendCall` in `allow-immediate` mode) |
+| `wallet.solana` | `prepareTransfer`, `execute`, `signMessage`, `getOperation`, `refreshOperation`, `waitForOperation`, `resolveReconciliation`, `listOperations`, `getTransactionStatus` (+ `sendTransfer` in `allow-immediate` mode) |
+| `wallet.tron` | `prepareTransaction`, `prepareContractCall`, `execute`, `signMessage`, `signTypedData`, `getOperation`, `refreshOperation`, `waitForOperation`, `resolveReconciliation`, `listOperations`, `getTransactionStatus` (+ `sendTransaction`, `sendContractCall` in `allow-immediate` mode) |
 | `wallet.indexer` | Unattested `getEvmBalances({ chainIds?, page? })`, `getSolanaBalances({ networks? })`, `getTronBalances({ networks? })` |
 | `wallet.swaps` | Present only when `swaps: trails(...)` is passed: `quote`, `confirm`, `get`, `list`, `reconcile`, `tick`, `prepareRecovery`, `confirmRecovery`, `resolveReconciliation` |
+
+### EVM networks
+
+Every EVM network the client SDK (`@polygonlabs/oms-wallet`) supports is accepted, mainnets and testnets: Ethereum and Sepolia, Polygon and Polygon Amoy (`80002`), Arbitrum, Arbitrum Sepolia and Arbitrum Nova, Optimism and Optimism Sepolia, Base and Base Sepolia, BNB Chain and its testnet, Avalanche and its testnet, and Katana. `SupportedEvmChainId` lists their chain IDs. Sponsorship is configured per project and network in WaaS.
 
 ### EVM contract calls (`wallet.evm.prepareCall` / `sendCall`)
 
@@ -164,6 +169,7 @@ Never build `to`, `data`, `abi`, `functionName`, `args`, or `typedData` from unt
 - `getOperation(id)` is a **local read** (never authenticates or polls WaaS). Use `refreshOperation(id)` for one remote status poll, or `waitForOperation(id, { timeoutMs, pollIntervalMs?, signal? })` to poll outside exclusive ownership with distinct `'settled' | 'reconciliation-required' | 'timed-out' | 'cancelled'` outcomes.
 - **Pre-submit quote expiry** marks the operation terminal `expired` (`QUOTE_EXPIRED`, `provenUnsent: true`) and never calls WaaS `Execute`.
 - **Ambiguous `Execute` (lost response)** stays **open** (`status: 'unknown'`). If WaaS still answers `TransactionExpired` two minutes past quote expiry without claim evidence, the operation escalates to `error: 'RECONCILIATION_REQUIRED'` while remaining open (`status: 'unknown'`) and retaining swap debit reservations — because an eventually-consistent negative read is a heuristic, not proof nothing was broadcast. Once an operator verifies out of band that nothing was broadcast, call `resolveReconciliation({ idempotencyKey, txnId, resolution: 'not-broadcast' })` (or `wallet.swaps.resolveReconciliation({ swapId, txnId, resolution: 'not-broadcast' })` for swap funding/recovery), which re-checks WaaS under lock before releasing reservations and marks the operation `expired` with `operatorResolved: true`. A stale `TransactionExpired` read inside the grace window leaves the operation unchanged, so `waitForOperation` keeps polling.
+- `getTransactionStatus(txnId)` reads the current WaaS status of a transaction by the `txnId` from its quote, for operators reconciling from their own records. It never changes a stored operation and never creates a wallet. Like any status read, a `quoted` or `TransactionExpired` answer is not proof that nothing was broadcast while WaaS is still catching up after the quote expired.
 - `describeOperation(op)` derives a pure next-action recommendation (`await-review`, `poll-original`, `reconcile-original`, `safe-to-reprepare`, or `done`) strictly from validated evidence, with original IDs.
 
 ### Unattested indexer reads (`wallet.indexer` / `service.indexer`)
@@ -213,12 +219,40 @@ await wallet.swaps.tick();
 
 See [docs/SWAPS-INTEGRATION.md](docs/SWAPS-INTEGRATION.md) and [TRAILS-API.md](TRAILS-API.md) for service-scoped stores (`scope: 'service'`), durable alarm scheduling, and separately reviewed recovery.
 
+## Ephemeral signer (`createEphemeralServerWallet`)
+
+A memory-only signer for one identity: no storage, encryption key or distributed lock. Each handle signs in with its own credential, so run one handle per concurrent worker for parallel signing.
+
+```ts
+import { createEphemeralServerWallet } from '@polygonlabs/oms-server-wallet-sdk';
+
+const signer = createEphemeralServerWallet({
+  publishableKey,
+  origin: appOrigin,
+  oidc: { issuer, audience, subject, getIdToken } // sessionLifetimeSeconds defaults to 900
+});
+try {
+  await signer.restore(); // binds wallets that already exist; never creates one
+  const { signature } = await signer.evm.signMessage({ chainId: 80002, message: 'hello' });
+} finally {
+  await signer.close(); // revokes this handle's credential
+}
+```
+
+- **Signing and balances only.** There is no prepare, execute or send, and no operation records or `idempotencyKey`. Transfers, contract calls and swaps need `createServerWallet`, whose records survive a restart.
+- **Never creates wallets.** Provision each identity once with `createServerWallet(...).createOrRestore(...)`. `restore()` binds what exists and throws `WALLET_NOT_INITIALIZED` otherwise; call it before signing or reading balances.
+- **`close()`** revokes the credential and makes every later or queued call throw `WALLET_CLOSED`. It is idempotent, and calling it again retries a revoke that failed. A crashed process cannot close, so keep `sessionLifetimeSeconds` short.
+- **No kill switch per identity.** There is no `disable()`: it would only affect one handle. To stop an identity, block it at your OIDC issuer and let credentials expire, or close every handle.
+- **Typed data:** `evm.signTypedData` refuses Sequence wallet `Calls` and typed data whose `verifyingContract` is the wallet. Other typed data, such as an ERC-20 permit, can still authorize spending, and an ephemeral handle cannot see swap reservations held by a durable wallet for the same identity. Do not sign spending authorizations for an identity with swaps in flight.
+- **Fresh ID tokens.** Every handle signs in, and WaaS rejects an ID token that another sign-in already used, so `getIdToken` must mint a new token on each call; never share a cached token between handles.
+- Every handle signs in, which counts against OIDC and WaaS rate limits. Reuse a small pool of handles rather than creating one per request.
+
 ## Storage & concurrency
 
 - `StateStore.write` / `NamespacedStateStore.write` must complete durable persistence before resolving.
 - `ExclusiveExecutor.run` must hold exclusive ownership for the entire async task, including remote I/O. `createSingleProcessExecutor` / `createSingleProcessExecutorPool` are sufficient only within one Node process or a single per-wallet Durable Object. Construct one wallet (and executor) per Durable Object instance — never a fresh `createSingleProcessExecutor()` per HTTP request — and never call back into the wallet from `getIdToken`, store adapters, or custom `fetch` hooks (which would deadlock the executor).
 - Once swaps are enabled and confirmed on a wallet, keep `swaps: trails({ ..., enabled: false })` if you later pause new swaps rather than removing `swaps` entirely, so existing reservations stay coordinated.
-- The SDK computes the canonical namespace (`JSON.stringify([waasOrigin, projectId, issuer, audience, subject])`) from the routed **WaaS API origin** (never `APP_ORIGIN`) and binds AES-256-GCM AAD to it. Unrecognized or corrupted state fails closed with `INVALID_STATE` or `STORAGE_INTEGRITY`.
+- The SDK computes the canonical namespace (`JSON.stringify([waasOrigin, projectId, issuer, audience, subject])`) from the routed **WaaS API origin** (never `APP_ORIGIN`), ignoring a trailing slash on the issuer, and binds AES-256-GCM AAD to it. Unrecognized or corrupted state fails closed with `INVALID_STATE` or `STORAGE_INTEGRITY`.
 - Restoring a database backup after newer nonces or submissions have been sent requires upstream reconciliation — a backup alone is not a safe rollback.
 
 ## Development

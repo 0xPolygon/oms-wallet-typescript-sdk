@@ -1,16 +1,23 @@
 // Live acceptance for the server wallet SDK against a WaaS v1.2.0 deployment: sign-in, wallet
 // restore across restarts, credential rotation and disabling, EVM signing and quoting, Solana
-// devnet and Tron Nile wallets, and the attestation format WaaS sends.
+// devnet, Tron Nile and Polygon Amoy wallets, ephemeral signers, and the attestation format WaaS
+// sends.
 //
 //   node --import tsx --env-file=.env scripts/live-acceptance.ts
 //
 // Reads the same variables as the demo dashboard's acceptance: OMS_PUBLISHABLE_KEY,
 // TRUSTED_PCR0S, ENCRYPTION_KEY, OIDC_PRIVATE_JWK, OIDC_ISSUER, OIDC_AUDIENCE and OMS_ORIGIN (the
-// Origin the project allows). Secrets are never printed. By default nothing is sent: EVM transfers
-// are only quoted (the SDK's EVM networks are mainnets), and Solana and Tron transfers are only
-// quoted unless LIVE_EXECUTE=1, which sends to LIVE_SOLANA_RECIPIENT and LIVE_TRON_RECIPIENT; a
-// Tron transfer pays TRX only up to LIVE_TRON_MAX_FEE sun. Credential rotation and disabling use a
-// separate identity, so they never touch the main acceptance wallets.
+// Origin the project allows). Secrets are never printed. Set LIVE_SUBJECT to a fixed identity to
+// keep funded testnet wallets across runs (the default subject changes daily).
+//
+// By default nothing is sent: transfers are only quoted. LIVE_EXECUTE=1 sends small testnet
+// transfers only: LIVE_EVM_AMOUNT wei of POL on Polygon Amoy (default 0.0001 POL),
+// LIVE_SOLANA_AMOUNT lamports on Solana devnet (default 0.001 SOL, enough to open a new account)
+// and LIVE_TRON_AMOUNT sun on Tron Nile (default 1 sun, paying TRX only up to LIVE_TRON_MAX_FEE).
+// Recipients default to the separate lifecycle identity's wallets, so funds stay in test wallets;
+// LIVE_EVM_RECIPIENT, LIVE_SOLANA_RECIPIENT and LIVE_TRON_RECIPIENT override them. Mainnet
+// transfers are never sent. Credential rotation and disabling use the lifecycle identity, so they
+// never touch the main acceptance wallets.
 //
 // The report goes to .data/live-acceptance.json. Attested WaaS responses are recorded to
 // .data/live-fixtures/ (never CommitVerifier or CompleteAuth, whose bodies hold the ID token);
@@ -20,6 +27,7 @@ import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { Decoder, Tag } from 'cbor-x';
 
 import {
+  createEphemeralServerWallet,
   createServerWallet,
   createSingleProcessExecutor,
   WalletError,
@@ -155,7 +163,8 @@ const open = (identity: string, prefix = '') =>
     approval: 'allow-immediate',
     fetch: recording
   });
-const wallet = open(subject);
+// Each identity's records live under its own key prefix, so a different subject never reads them.
+const wallet = open(subject, `${subject}:`);
 
 const report: { check: string; result: 'passed' | 'failed' | 'skipped'; detail?: unknown }[] = [];
 async function check(name: string, run: () => Promise<unknown>) {
@@ -213,7 +222,7 @@ await check(
   async () => {
     const before = (await wallet.inspect()).credentialId;
     const signIns = calls.CommitVerifier ?? 0;
-    const restarted = open(subject);
+    const restarted = open(subject, `${subject}:`);
     const restored = await restarted.createOrRestore({ families: ['evm', 'solana', 'tron'] });
     if (JSON.stringify(restored.wallets) !== JSON.stringify(snapshot.wallets))
       throw new Error('Restart restored different wallets');
@@ -301,8 +310,10 @@ await check('EVM sponsored transfer quote on Polygon (never executed)', async ()
   return { status: op.status, sponsored: op.quote.sponsored, expiresAt: op.quote.expiresAt };
 });
 
-const lifecycle = open(`${subject}-lifecycle`, 'lifecycle:');
-const lifecycleWallet = (await lifecycle.createOrRestore()).wallet!;
+const lifecycle = open(`${subject}-lifecycle`, `${subject}-lifecycle:`);
+const lifecycleWallets = (await lifecycle.createOrRestore({ families: ['evm', 'solana', 'tron'] }))
+  .wallets;
+const lifecycleWallet = lifecycleWallets.evm!;
 await check('credential rotation keeps the wallet and replaces the credential', async () => {
   const before = (await lifecycle.inspect()).credentialId;
   const rotated = await lifecycle.rotateCredential();
@@ -331,6 +342,58 @@ await check('a disabled wallet refuses to sign; re-enabling restores the same wa
   return { wallet: enabled.wallet?.address };
 });
 
+const amoy = 80002;
+await check('EVM message signing on Polygon Amoy, verified by WaaS', async () => {
+  const op = await wallet.evm.signMessage({
+    idempotencyKey: id('live-amoy-sign'),
+    chainId: amoy,
+    message: 'OMS server wallet acceptance'
+  });
+  if (op.status !== 'signed' || !op.verified) throw new Error(`Signing ended ${op.status}`);
+  return { status: op.status, verified: op.verified };
+});
+await check('Polygon Amoy balances', () =>
+  balances(wallet.indexer.getEvmBalances({ chainIds: [amoy] }))
+);
+const amoyTransfer = {
+  chainId: amoy,
+  to: process.env.LIVE_EVM_RECIPIENT ?? lifecycleWallet.address,
+  asset: 'native',
+  amount: process.env.LIVE_EVM_AMOUNT ?? '100000000000000'
+} as const;
+await check('EVM sponsored transfer quote on Polygon Amoy', async () => {
+  const op = await wallet.evm.prepareTransfer({
+    idempotencyKey: id('live-amoy-quote'),
+    ...amoyTransfer
+  });
+  if (op.status !== 'quoted' || !op.quote?.sponsored) throw new Error(`Quote ended ${op.status}`);
+  return { status: op.status, sponsored: op.quote.sponsored, expiresAt: op.quote.expiresAt };
+});
+if (!execute)
+  skip('EVM transfer execution on Polygon Amoy', 'Set LIVE_EXECUTE=1 to send testnet POL.');
+else
+  await check(
+    'EVM sponsored transfer executes on Polygon Amoy; getTransactionStatus agrees',
+    async () => {
+      const op = await wallet.evm.sendTransfer({
+        idempotencyKey: id('live-amoy-send'),
+        ...amoyTransfer
+      });
+      const done = await executed(() => wallet.evm.refreshOperation(op.id));
+      const status = await wallet.evm.getTransactionStatus(op.quote!.txnId);
+      if (
+        status.status !== 'executed' ||
+        status.txnHash?.toLowerCase() !== done.txnHash?.toLowerCase()
+      )
+        throw new Error(`getTransactionStatus returned ${JSON.stringify(status)}`);
+      return {
+        to: amoyTransfer.to,
+        txnHash: done.txnHash,
+        explorer: `https://amoy.polygonscan.com/tx/${done.txnHash}`
+      };
+    }
+  );
+
 await check('Solana message signing, verified by WaaS', () =>
   wallet.solana.signMessage({
     idempotencyKey: id('live-sol-sign'),
@@ -340,14 +403,13 @@ await check('Solana message signing, verified by WaaS', () =>
 await check('Solana devnet balances', () =>
   balances(wallet.indexer.getSolanaBalances({ networks: ['solana:devnet'] }))
 );
-const solanaRecipient = process.env.LIVE_SOLANA_RECIPIENT;
-if (!solanaRecipient) skip('Solana transfer quote', 'Set LIVE_SOLANA_RECIPIENT.');
-else {
+const solanaRecipient = process.env.LIVE_SOLANA_RECIPIENT ?? lifecycleWallets.solana!.address;
+{
   const transfer = {
     network: 'solana:devnet',
     to: solanaRecipient,
     asset: 'native',
-    amount: '1000'
+    amount: process.env.LIVE_SOLANA_AMOUNT ?? '1000000'
   } as const;
   await check('Solana sponsored transfer quote expires within about a minute', async () => {
     const op = await wallet.solana.prepareTransfer({
@@ -375,14 +437,18 @@ else {
     if (status !== 'expired') throw new Error(`Expired quote left the operation ${status}`);
     return status;
   });
-  if (!execute) skip('Solana transfer execution', 'Set LIVE_EXECUTE=1 to send 1000 lamports.');
+  if (!execute) skip('Solana transfer execution', 'Set LIVE_EXECUTE=1 to send devnet SOL.');
   else
-    await check('Solana sponsored transfer executes', async () => {
+    await check('Solana sponsored transfer executes; getTransactionStatus agrees', async () => {
       const op = await wallet.solana.sendTransfer({
         idempotencyKey: id('live-sol-send'),
         ...transfer
       });
-      return executed(() => wallet.solana.refreshOperation(op.id));
+      const done = await executed(() => wallet.solana.refreshOperation(op.id));
+      const status = await wallet.solana.getTransactionStatus(op.quote!.txnId);
+      if (status.status !== 'executed' || status.txnHash !== done.txnHash)
+        throw new Error(`getTransactionStatus returned ${JSON.stringify(status)}`);
+      return { to: transfer.to, txnHash: done.txnHash };
     });
 }
 
@@ -412,10 +478,13 @@ await check('Tron TIP-712 signing, verified by WaaS', () =>
 await check('Tron Nile balances', () =>
   balances(wallet.indexer.getTronBalances({ networks: ['tron:nile'] }))
 );
-const tronRecipient = process.env.LIVE_TRON_RECIPIENT;
-if (!tronRecipient) skip('Tron transfer quote', 'Set LIVE_TRON_RECIPIENT.');
-else {
-  const transfer = { network: 'tron:nile', to: tronRecipient, value: '1' } as const;
+const tronRecipient = process.env.LIVE_TRON_RECIPIENT ?? lifecycleWallets.tron!.address;
+{
+  const transfer = {
+    network: 'tron:nile',
+    to: tronRecipient,
+    value: process.env.LIVE_TRON_AMOUNT ?? '1'
+  } as const;
   await check('Tron quote without maxFee is sent only when sponsored', async () => {
     const result = await wallet.tron
       .prepareTransaction({ idempotencyKey: id('live-trx-quote'), ...transfer })
@@ -426,17 +495,92 @@ else {
     return { sponsored: result.quote?.sponsored };
   });
   const maxFee = process.env.LIVE_TRON_MAX_FEE;
-  if (!execute) skip('Tron transfer execution', 'Set LIVE_EXECUTE=1 to send 1 sun.');
+  if (!execute) skip('Tron transfer execution', 'Set LIVE_EXECUTE=1 to send Nile TRX.');
   else
-    await check('Tron transfer executes within maxFee', async () => {
+    await check('Tron transfer executes within maxFee; getTransactionStatus agrees', async () => {
       const op = await wallet.tron.sendTransaction({
         idempotencyKey: id('live-trx-send'),
         ...transfer,
         maxFee
       });
-      return executed(() => wallet.tron.refreshOperation(op.id));
+      const done = await executed(() => wallet.tron.refreshOperation(op.id));
+      const status = await wallet.tron.getTransactionStatus(op.quote!.txnId);
+      if (status.status !== 'executed' || status.txnHash !== done.txnHash)
+        throw new Error(`getTransactionStatus returned ${JSON.stringify(status)}`);
+      return { to: transfer.to, txnHash: done.txnHash };
     });
 }
+
+const ephemeral = (getIdToken: () => ReturnType<typeof idToken> = () => idToken(subject)) =>
+  createEphemeralServerWallet({
+    publishableKey: key,
+    origin,
+    oidc: { subject, issuer, audience, getIdToken },
+    attestation: { trustedPcr0s: pcr0s, allowDebugEnclave },
+    fetch: recording
+  });
+await check('ephemeral handles restore the same wallets and sign in parallel', async () => {
+  const handles = [ephemeral(), ephemeral(), ephemeral()];
+  try {
+    const restored = await Promise.all(handles.map((handle) => handle.restore()));
+    for (const r of restored)
+      if (JSON.stringify(r.wallets) !== JSON.stringify(snapshot.wallets))
+        throw new Error('An ephemeral handle restored different wallets');
+    if (new Set(restored.map((r) => r.credentialId)).size !== handles.length)
+      throw new Error('Ephemeral handles shared a credential');
+    const started = Date.now();
+    const signatures = await Promise.all(
+      handles.flatMap((handle, n) => [
+        handle.evm.signMessage({ chainId: amoy, message: `ephemeral ${n}` }),
+        handle.solana.signMessage({ message: `ephemeral ${n}` }),
+        handle.tron.signMessage({ message: `ephemeral ${n}` })
+      ])
+    );
+    if (!signatures.every((signature) => signature.verified))
+      throw new Error('A signature did not verify');
+    return { handles: handles.length, signatures: signatures.length, ms: Date.now() - started };
+  } finally {
+    await Promise.allSettled(handles.map((handle) => handle.close()));
+  }
+});
+await check('a closed ephemeral handle revokes its credential and refuses to sign', async () => {
+  const handle = ephemeral();
+  await handle.restore({ families: ['evm'] });
+  const revokes = calls.RevokeCredential ?? 0;
+  await handle.close();
+  if ((calls.RevokeCredential ?? 0) !== revokes + 1) throw new Error('close() did not revoke');
+  const refused = await handle.evm
+    .signMessage({ chainId: amoy, message: 'closed' })
+    .catch((error) => error);
+  if (!(refused instanceof WalletError) || refused.code !== 'WALLET_CLOSED')
+    throw new Error('A closed handle signed');
+  return { refused: refused.code };
+});
+await check('observation: two ephemeral handles signing in with the same ID token', async () => {
+  const outcome = async (run: () => Promise<unknown[]>) =>
+    (await run()).map((r) =>
+      r instanceof WalletError
+        ? `${r.code}${'upstreamCode' in r ? ` ${String(r.upstreamCode)}` : ''}`
+        : 'ok'
+    );
+  const attempt = (handle: ReturnType<typeof ephemeral>) =>
+    handle.restore({ families: ['evm'] }).then(
+      () => 'ok',
+      (error: unknown) => error
+    );
+  const sequentialToken = await idToken(subject);
+  const seq = [ephemeral(async () => sequentialToken), ephemeral(async () => sequentialToken)];
+  const concurrentToken = await idToken(subject);
+  const conc = [ephemeral(async () => concurrentToken), ephemeral(async () => concurrentToken)];
+  try {
+    return {
+      sequential: await outcome(async () => [await attempt(seq[0]), await attempt(seq[1])]),
+      concurrent: await outcome(() => Promise.all(conc.map(attempt)))
+    };
+  } finally {
+    await Promise.allSettled([...seq, ...conc].map((handle) => handle.close()));
+  }
+});
 
 await check('every WaaS response carried a known attestation format', async () => {
   const unknown = Object.keys(attestations).filter(

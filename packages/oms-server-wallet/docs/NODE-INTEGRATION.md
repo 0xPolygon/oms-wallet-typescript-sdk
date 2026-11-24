@@ -160,6 +160,30 @@ export const wallets = createServerWalletService({
 
 The SDK automatically computes the canonical storage namespace (`[waasOrigin, projectId, issuer, audience, subject]`), encrypts every record with AES-256-GCM bound to that namespace and key, advances monotonic nonces before dispatch, and verifies AWS Nitro attestation on every WaaS response.
 
+### Signing-only workers: `createEphemeralServerWallet`
+
+A worker that only signs, such as a webhook signer or a login challenge, needs no storage or lock. Provision the identity's wallets with the durable service once, then sign from memory-only handles:
+
+```ts
+import { createEphemeralServerWallet } from '@polygonlabs/oms-server-wallet-sdk';
+
+export async function signChallenge(subject: string, message: string) {
+  const signer = createEphemeralServerWallet({
+    publishableKey: required('OMS_PUBLISHABLE_KEY'),
+    origin: required('APP_ORIGIN'),
+    oidc: { issuer, audience, subject, getIdToken: () => issueIdToken(subject) }
+  });
+  try {
+    await signer.restore({ families: ['evm'] });
+    return await signer.evm.signMessage({ chainId: 137, message });
+  } finally {
+    await signer.close();
+  }
+}
+```
+
+Each handle signs in, so for steady traffic keep a small pool of long-lived handles instead of one per request. Ephemeral handles cannot send transactions; see the README section "Ephemeral signer" for the full contract.
+
 ## 4. Create, sign, prepare, review, execute, and observe
 
 ```ts

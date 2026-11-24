@@ -280,6 +280,97 @@ Chain ID of an EVM network the SDK accepts.
 export type SupportedEvmChainId = (typeof EVM_NETWORKS)[number]["id"];
 ```
 
+## Ephemeral signer
+
+### `createEphemeralServerWallet`
+
+Create a memory-only signer for one OIDC identity. It needs no storage, encryption key or
+distributed lock: each handle holds its own credential, so run one handle per concurrent
+worker. It signs and reads balances but cannot send, keeps no records and never creates
+wallets; provision wallets with `createServerWallet` first. Call `close()` when done.
+
+```typescript
+export declare function createEphemeralServerWallet(options: EphemeralServerWalletOptions): EphemeralServerWallet;
+```
+
+### `EphemeralServerWalletOptions`
+
+Options for `createEphemeralServerWallet`. There is no store, executor, swaps or approval mode.
+
+```typescript
+export interface EphemeralServerWalletOptions {
+    readonly publishableKey: string;
+    readonly origin?: string;
+    readonly oidc: WalletOidcOptions;
+    readonly attestation?: AttestationOptions;
+    readonly fetch?: typeof fetch;
+}
+```
+
+### `EphemeralServerWallet`
+
+Memory-only signer for one OIDC identity, from `createEphemeralServerWallet`. It signs and reads
+balances; it cannot prepare or send transactions, keeps no operation records, and never creates
+wallets. Not assignable to `ServerWallet`. Call `close()` when done.
+
+```typescript
+export interface EphemeralServerWallet {
+    restore(options?: CreateOrRestoreOptions): Promise<EphemeralWalletSnapshot>;
+    inspect(): Promise<EphemeralWalletSnapshot>;
+    rotateCredential(): Promise<EphemeralWalletSnapshot>;
+    close(): Promise<void>;
+    readonly evm: {
+        signMessage(input: {
+            readonly chainId: number;
+            readonly message: string;
+        }): Promise<SignatureResult>;
+        signTypedData(input: {
+            readonly chainId: number;
+            readonly typedData: TypedDataInput;
+        }): Promise<SignatureResult>;
+    };
+    readonly solana: {
+        signMessage(input: {
+            readonly message: string;
+        }): Promise<SignatureResult>;
+    };
+    readonly tron: {
+        signMessage(input: {
+            readonly message: string;
+        }): Promise<SignatureResult>;
+        signTypedData(input: {
+            readonly network: TronNetwork;
+            readonly typedData: TypedDataInput;
+        }): Promise<SignatureResult>;
+    };
+    readonly indexer: WalletIndexerFacet;
+}
+```
+
+### `EphemeralWalletSnapshot`
+
+Wallets and credential held by an ephemeral handle.
+
+```typescript
+export interface EphemeralWalletSnapshot {
+    readonly wallet?: RemoteWallet;
+    readonly wallets: Partial<Record<NetworkFamily, RemoteWallet>>;
+    readonly expiresAt?: string;
+    readonly credentialId?: string;
+}
+```
+
+### `SignatureResult`
+
+A signature that WaaS produced and then verified.
+
+```typescript
+export interface SignatureResult {
+    readonly signature: string;
+    readonly verified: true;
+}
+```
+
 ## Storage and concurrency
 
 ### `createSingleProcessExecutor`
@@ -1239,5 +1330,5 @@ export declare function isUpstreamError(error: unknown): error is UpstreamError;
 Closed union of safe, machine-readable SDK error codes.
 
 ```typescript
-export type WalletErrorCode = "APPROVAL_REQUIRED" | "ATTESTATION_FAILED" | "CHAIN_READ_FAILED" | "CONFIGURATION" | "CREATION_UNCERTAIN" | "DEBIT_PENDING" | "EXECUTE_REFUSED" | "FEE_ABOVE_QUOTE" | "FEE_LIMIT_EXCEEDED" | "FUNDING_FAILED" | "FUNDING_RECEIPT_UNVERIFIED" | "FUNDING_REVERTED" | "FUNDING_UNKNOWN" | "IDEMPOTENCY_CONFLICT" | "IDENTITY_MISMATCH" | "INDEXER_UNAVAILABLE" | "INSUFFICIENT_BALANCE" | "INTENT_ALREADY_TRACKED" | "INTENT_NOT_FUNDABLE" | "INVALID_ADDRESS" | "INVALID_AMOUNT" | "INVALID_CALL" | "INVALID_FAMILY" | "INVALID_FEE" | "INVALID_IDEMPOTENCY_KEY" | "INVALID_IDENTITY" | "INVALID_INPUT" | "INVALID_JSON" | "INVALID_MESSAGE" | "INVALID_METHOD" | "INVALID_PAGE" | "INVALID_RECOVERY" | "INVALID_RECOVERY_TRANSACTION" | "INVALID_RESPONSE" | "INVALID_STATE" | "INVALID_SWAP" | "INVALID_SWAP_QUOTE" | "INVALID_TRANSACTION" | "INVALID_TRANSFER" | "INVALID_TYPED_DATA" | "NO_CREDENTIAL" | "NO_RECOVERABLE_BALANCE" | "NOT_FOUND" | "PREPARATION_FAILED" | "QUOTE_EXPIRED" | "RECONCILIATION_REQUIRED" | "RECOVERY_CHANGED" | "RECOVERY_EVIDENCE_PENDING" | "RECOVERY_EXPIRED" | "RECOVERY_FAILED" | "RECOVERY_LIMIT" | "RECOVERY_NOT_READY" | "RECOVERY_PENDING" | "REFUND_REQUIRES_REVIEW" | "RESPONSE_TOO_LARGE" | "RPC_CONFIGURATION" | "SETTLEMENT_REQUIRES_REVIEW" | "SIGNATURE_INVALID" | "SIGNING_FAILED" | "SPONSORSHIP_REQUIRED" | "STALE_QUOTE" | "STALE_RECOVERY" | "STALE_REVIEW" | "STORAGE_INTEGRITY" | "SUBMISSION_UNCERTAIN" | "SWAP_ENVIRONMENT_CHANGED" | "SWAP_UNAVAILABLE" | "SWAPS_COORDINATION_REQUIRED" | "SWAPS_DISABLED" | "SWAPS_UNAVAILABLE" | "TRAILS_ABORTED" | "TRAILS_ERROR" | "TRAILS_TIMEOUT" | "TRAILS_UNAVAILABLE" | "UNSUPPORTED_BATCH" | "UNSUPPORTED_CHAIN" | "UNSUPPORTED_NETWORK" | "UNSUPPORTED_PROTOCOL" | "UPSTREAM_ERROR" | "UPSTREAM_REDIRECT" | "WALLET_BUSY" | "WALLET_DISABLED" | "WALLET_MISMATCH" | "WALLET_NOT_INITIALIZED" | "WALLET_PENDING";
+export type WalletErrorCode = "APPROVAL_REQUIRED" | "ATTESTATION_FAILED" | "CHAIN_READ_FAILED" | "CONFIGURATION" | "CREATION_UNCERTAIN" | "DEBIT_PENDING" | "EXECUTE_REFUSED" | "FEE_ABOVE_QUOTE" | "FEE_LIMIT_EXCEEDED" | "FUNDING_FAILED" | "FUNDING_RECEIPT_UNVERIFIED" | "FUNDING_REVERTED" | "FUNDING_UNKNOWN" | "IDEMPOTENCY_CONFLICT" | "IDENTITY_MISMATCH" | "INDEXER_UNAVAILABLE" | "INSUFFICIENT_BALANCE" | "INTENT_ALREADY_TRACKED" | "INTENT_NOT_FUNDABLE" | "INVALID_ADDRESS" | "INVALID_AMOUNT" | "INVALID_CALL" | "INVALID_FAMILY" | "INVALID_FEE" | "INVALID_IDEMPOTENCY_KEY" | "INVALID_IDENTITY" | "INVALID_INPUT" | "INVALID_JSON" | "INVALID_MESSAGE" | "INVALID_METHOD" | "INVALID_PAGE" | "INVALID_RECOVERY" | "INVALID_RECOVERY_TRANSACTION" | "INVALID_RESPONSE" | "INVALID_STATE" | "INVALID_SWAP" | "INVALID_SWAP_QUOTE" | "INVALID_TRANSACTION" | "INVALID_TRANSFER" | "INVALID_TYPED_DATA" | "NO_CREDENTIAL" | "NO_RECOVERABLE_BALANCE" | "NOT_FOUND" | "PREPARATION_FAILED" | "QUOTE_EXPIRED" | "RECONCILIATION_REQUIRED" | "RECOVERY_CHANGED" | "RECOVERY_EVIDENCE_PENDING" | "RECOVERY_EXPIRED" | "RECOVERY_FAILED" | "RECOVERY_LIMIT" | "RECOVERY_NOT_READY" | "RECOVERY_PENDING" | "REFUND_REQUIRES_REVIEW" | "RESPONSE_TOO_LARGE" | "RPC_CONFIGURATION" | "SETTLEMENT_REQUIRES_REVIEW" | "SIGNATURE_INVALID" | "SIGNING_FAILED" | "SPONSORSHIP_REQUIRED" | "STALE_QUOTE" | "STALE_RECOVERY" | "STALE_REVIEW" | "STORAGE_INTEGRITY" | "SUBMISSION_UNCERTAIN" | "SWAP_ENVIRONMENT_CHANGED" | "SWAP_UNAVAILABLE" | "SWAPS_COORDINATION_REQUIRED" | "SWAPS_DISABLED" | "SWAPS_UNAVAILABLE" | "TRAILS_ABORTED" | "TRAILS_ERROR" | "TRAILS_TIMEOUT" | "TRAILS_UNAVAILABLE" | "UNSUPPORTED_BATCH" | "UNSUPPORTED_CHAIN" | "UNSUPPORTED_NETWORK" | "UNSUPPORTED_PROTOCOL" | "UPSTREAM_ERROR" | "UPSTREAM_REDIRECT" | "WALLET_BUSY" | "WALLET_CLOSED" | "WALLET_DISABLED" | "WALLET_MISMATCH" | "WALLET_NOT_INITIALIZED" | "WALLET_PENDING";
 ```

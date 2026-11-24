@@ -27,17 +27,21 @@ import {
   OPEN_STATUSES,
   PUBLIC_EVM_TX_KINDS,
   assertReviewId,
-  evmSignatureSchema,
   isInternalEvmOperation,
   normalizeEvmCall,
   normalizeEvmTransfer,
   requireMessage,
-  validSchema,
   validateIdempotencyKey,
   validateReviewId,
   validateTxnId
 } from './inputs.js';
 import { projectEvmOperation, parseListOptions, paginate } from './projection.js';
+import {
+  assertNotSelfVerifying,
+  assertPublicTypedData,
+  requestEvmMessageSignature,
+  requestEvmTypedDataSignature
+} from './signing.js';
 
 /** EVM operations: transfers, contract calls, signatures, settlement and the swaps debit gate. */
 export class EvmEngine {
@@ -138,25 +142,9 @@ export class EvmEngine {
         submissionMode: 'review'
       };
       await this.core.writeOperation(op);
-      const signed = await this.recordEvmSignature(op, async () => {
-        const result = evmSignatureSchema.parse(
-          await this.core.activeCall(state, 'SignMessage', {
-            network: String(chainId),
-            walletId: state.wallets.evm!.id,
-            message: text
-          })
-        );
-        const validity = validSchema.parse(
-          await this.core.config.transport.request('IsValidMessageSignature', {
-            network: String(chainId),
-            networkFamily: 'evm',
-            walletAddress: state.wallets.evm!.address,
-            message: text,
-            signature: result.signature
-          })
-        );
-        return { signature: result.signature, valid: validity.isValid };
-      });
+      const signed = await this.recordEvmSignature(op, () =>
+        requestEvmMessageSignature(this.core, state, chainId, text)
+      );
       return projectEvmOperation(signed);
     });
   }
@@ -169,14 +157,7 @@ export class EvmEngine {
     const id = validateIdempotencyKey(idempotencyKey);
     // Snapshot synchronously so callers cannot mutate an authorization while it is queued.
     const validated = validateTypedData(typedData, chainId);
-    if (
-      validated.typedData.domain.name === 'Sequence Wallet' &&
-      validated.typedData.primaryType === 'Calls'
-    )
-      throw new WalletError(
-        'INVALID_TYPED_DATA',
-        'Sequence Wallet Calls authorizations cannot be signed through public signTypedData; use the reviewed recovery workflow.'
-      );
+    assertPublicTypedData(validated.typedData);
     return this.core.config.executor.run(async () =>
       projectEvmOperation(
         await this.signEvmTypedDataValidated(id, chainId, validated.typedData, validated.digest, {
@@ -545,14 +526,8 @@ export class EvmEngine {
     if (operation) return operation;
     const state = await this.core.load();
     await this.core.ensure(state, ['evm']);
-    if (
-      options.rejectSelfVerifyingContract &&
-      typedData.domain.verifyingContract.toLowerCase() === state.wallets.evm!.address.toLowerCase()
-    )
-      throw new WalletError(
-        'INVALID_TYPED_DATA',
-        'Typed data verifyingContract cannot be the wallet itself.'
-      );
+    if (options.rejectSelfVerifyingContract)
+      assertNotSelfVerifying(typedData, state.wallets.evm!.address);
     const op: StoredEvmOperation = {
       id,
       kind: 'signTypedData',
@@ -564,24 +539,9 @@ export class EvmEngine {
       ...(options.allowSwapsPrefix ? { internal: true } : {})
     };
     await this.core.writeOperation(op);
-    return this.recordEvmSignature(op, async () => {
-      const { signature } = evmSignatureSchema.parse(
-        await this.core.activeCall(state, 'SignTypedData', {
-          network: String(chainId),
-          walletId: state.wallets.evm!.id,
-          typedData
-        })
-      );
-      const { isValid } = validSchema.parse(
-        await this.core.config.transport.request('IsValidTypedDataSignature', {
-          network: String(chainId),
-          walletAddress: state.wallets.evm!.address,
-          typedData,
-          signature
-        })
-      );
-      return { signature, valid: isValid };
-    });
+    return this.recordEvmSignature(op, () =>
+      requestEvmTypedDataSignature(this.core, state, chainId, typedData)
+    );
   }
 
   private async recordEvmSignature(

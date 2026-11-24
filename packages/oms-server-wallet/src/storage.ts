@@ -103,6 +103,20 @@ export function scopeNamespacedStore(store: NamespacedStateStore, namespace: str
   };
 }
 
+/**
+ * Process-memory `StateStore` for the ephemeral signer. Internal: it is not exported, so callers
+ * cannot pass non-durable storage to the durable factories. Never logged or persisted.
+ */
+export class MemoryStateStore implements StateStore {
+  private readonly values = new Map<string, string>();
+  async read(key: string): Promise<string | null> {
+    return this.values.get(key) ?? null;
+  }
+  async write(key: string, value: string): Promise<void> {
+    this.values.set(key, value);
+  }
+}
+
 /** Authenticated AES-256-GCM encryption bound to the identity namespace and record key. */
 export class EncryptedStore implements StateStore {
   private readonly key: Promise<CryptoKey>;

@@ -52,6 +52,12 @@ export interface WalletEngineConfig {
   readonly executor: ExclusiveExecutor;
   readonly transport: RpcTransport;
   readonly clock?: () => number;
+  /**
+   * Whether a missing family wallet may be created with CreateWallet (default true). The
+   * ephemeral signer sets false: it keeps no record of an uncertain create, so a lost response
+   * could otherwise lead to a second wallet for the identity.
+   */
+  readonly createWallets?: boolean;
 }
 
 /**
@@ -292,6 +298,12 @@ export class EngineCore {
         await this.save(state);
         if (state.wallets[family]) continue;
       }
+      if (this.config.createWallets === false)
+        throw new WalletError(
+          'WALLET_NOT_INITIALIZED',
+          `No ${family} wallet exists for this identity yet. Create it with a durable wallet first.`,
+          409
+        );
       if (state.creating.includes(family))
         throw new WalletError(
           'CREATION_UNCERTAIN',
@@ -383,12 +395,18 @@ export class EngineCore {
     }
   }
 
-  private async revoke(state: State): Promise<void> {
-    if (state.credential?.expiresAt && Date.parse(state.credential.expiresAt) > this.now()) {
+  /**
+   * Revoke the current credential unless it has already expired, then forget it. A credential
+   * without `expiresAt` (sign-in or wallet creation failed part way) is revoked too, since WaaS may
+   * have registered it; a credential WaaS rejects counts as revoked.
+   */
+  async revoke(state: State): Promise<void> {
+    const credential = state.credential;
+    if (credential && (!credential.expiresAt || Date.parse(credential.expiresAt) > this.now())) {
       try {
         okSchema.parse(
           await this.call(state, 'RevokeCredential', {
-            credentialId: state.credential.credentialId
+            credentialId: credential.credentialId
           })
         );
       } catch (error) {
@@ -398,6 +416,25 @@ export class EngineCore {
     }
     state.credential = undefined;
     await this.save(state);
+  }
+
+  /**
+   * Sign in if needed and bind wallets that already exist on WaaS, without creating any. With
+   * `families`, each must exist; without, every existing family is bound and at least one must
+   * exist. Throws `WALLET_NOT_INITIALIZED` otherwise.
+   */
+  async restoreExisting(state: State, families?: readonly NetworkFamily[]): Promise<void> {
+    await this.ensure(state, families ?? []);
+    if (!families) {
+      await this.discover(state, NETWORK_FAMILIES, [], '');
+      await this.save(state);
+    }
+    if (!NETWORK_FAMILIES.some((family) => state.wallets[family]))
+      throw new WalletError(
+        'WALLET_NOT_INITIALIZED',
+        'No wallet exists for this identity yet. Create it with a durable wallet first.',
+        409
+      );
   }
 
   private async readOperation(id: string): Promise<StoredOperationRecord | null> {

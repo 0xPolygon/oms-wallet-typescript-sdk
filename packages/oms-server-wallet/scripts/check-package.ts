@@ -106,6 +106,7 @@ verifyRootRuntimeGraph(installedPkgDir);
 writeFileSync(
   join(directory, 'consumer.ts'),
   `import {
+  createEphemeralServerWallet,
   createServerWallet,
   createServerWalletService,
   createSingleProcessExecutor,
@@ -115,6 +116,7 @@ writeFileSync(
   isWalletError,
   parseAmount,
   type NamespacedStateStore,
+  type ServerWallet,
   type StateStore
 } from '@polygonlabs/oms-server-wallet-sdk';
 import {
@@ -246,6 +248,19 @@ const selector = () => wTwoPhase.evm.prepareCall({ idempotencyKey: 'consumer-hex
 void pay; void misspelled; void wrongArgs; void selector;
 void parseAmount; void describeOperation; void isWalletError; void isUpstreamError; void TrailsError;
 
+// Ephemeral signer: no store, executor, swaps or sending, and not substitutable for a durable wallet.
+const eph = createEphemeralServerWallet({ publishableKey: key, oidc });
+void eph.evm.signMessage({ chainId: 80002, message: 'hi' });
+// @ts-expect-error an ephemeral handle is not a durable ServerWallet
+const asDurable: ServerWallet = eph;
+// @ts-expect-error ephemeral handles cannot prepare transactions
+void eph.evm.prepareTransfer;
+// @ts-expect-error ephemeral handles have no disable()
+void eph.disable;
+// @ts-expect-error ephemeral handles take no store
+createEphemeralServerWallet({ publishableKey: key, oidc, store: { adapter: state, encryptionKey } });
+void asDurable;
+
 // Declaration emit: inferred public types must be nameable from the package entry points (TS4023).
 export const declTwoPhase = wTwoPhase;
 export const declImmediate = wImmediate;
@@ -258,6 +273,8 @@ export const declTronTwoPhase = wTwoPhase.tron;
 export const declSwapsFacet = wTwoPhaseSwaps.swaps;
 export const declWalletSwaps = walletSwaps;
 export const declServiceSwaps = serviceSwaps;
+export const declEphemeral = eph;
+export const declEphemeralEvm = eph.evm;
 `
 );
 
@@ -282,6 +299,7 @@ writeFileSync(
   join(directory, 'smoke.mjs'),
   `import assert from 'node:assert/strict';
 import {
+  createEphemeralServerWallet,
   createServerWallet,
   createServerWalletService,
   createSingleProcessExecutor,
@@ -333,6 +351,21 @@ assert.throws(
     store: { adapter: mem(), encryptionKey },
     executor: createSingleProcessExecutor(),
     swaps: { ...swaps }
+  }),
+  (err) => isWalletError(err) && err.code === 'CONFIGURATION'
+);
+const ephemeral = createEphemeralServerWallet({
+  publishableKey: key,
+  oidc: { issuer: 'https://issuer.example', audience: 'oms', subject: 'smoke-3', getIdToken: async () => ({ token: 't', expiresAt: 1 }) }
+});
+assert.equal('prepareTransfer' in ephemeral.evm, false);
+await ephemeral.close();
+await assert.rejects(ephemeral.inspect(), (err) => isWalletError(err) && err.code === 'WALLET_CLOSED');
+assert.throws(
+  () => createEphemeralServerWallet({
+    publishableKey: key,
+    oidc: { issuer: 'https://issuer.example', audience: 'oms', subject: 'smoke-4', getIdToken: async () => ({ token: 't', expiresAt: 1 }) },
+    executor: createSingleProcessExecutor()
   }),
   (err) => isWalletError(err) && err.code === 'CONFIGURATION'
 );

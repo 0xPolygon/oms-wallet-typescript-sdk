@@ -1,4 +1,8 @@
-export { createServerWallet, createServerWalletService } from './wallet.js';
+export {
+  createEphemeralServerWallet,
+  createServerWallet,
+  createServerWalletService
+} from './wallet.js';
 export { parseAmount } from './engine.js';
 export { createSingleProcessExecutor, createSingleProcessExecutorPool } from './storage.js';
 export { WalletError, UpstreamError, isWalletError, isUpstreamError } from './errors.js';
@@ -11,6 +15,9 @@ export type {
   ChainBalances,
   ChainQuote,
   CreateOrRestoreOptions,
+  EphemeralServerWallet,
+  EphemeralServerWalletOptions,
+  EphemeralWalletSnapshot,
   EvmBalance,
   EvmBalances,
   EvmCallInput,
@@ -39,6 +46,7 @@ export type {
   RemoteWallet,
   ResolveReconciliationInput,
   ServerWallet,
+  SignatureResult,
   ServerWalletBase,
   ServerWalletOptions,
   ServerWalletOptionsBase,
