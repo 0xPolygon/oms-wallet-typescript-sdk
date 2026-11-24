@@ -247,6 +247,10 @@ try {
 - **Fresh ID tokens.** Every handle signs in, and WaaS rejects an ID token that another sign-in already used, so `getIdToken` must mint a new token on each call; never share a cached token between handles.
 - Every handle signs in, which counts against OIDC and WaaS rate limits. Reuse a small pool of handles rather than creating one per request.
 
+## Errors
+
+Every thrown error is a `WalletError` with a stable `code`, a safe `message` and an HTTP-style `status`. WaaS refusals are `UpstreamError` (`upstreamCode`, `method`), Trails refusals are `TrailsError` from `/trails`, and malformed upstream responses are `INVALID_RESPONSE`, never a raw validation error. Use `isWalletError` / `isUpstreamError` and branch on `code`. [docs/ERRORS.md](docs/ERRORS.md) lists every code with what it means and what to do.
+
 ## Storage & concurrency
 
 - `StateStore.write` / `NamespacedStateStore.write` must complete durable persistence before resolving.
