@@ -622,6 +622,35 @@ describe('observation, waitForOperation, describeOperation, indexer facet, and e
     });
   });
 
+  it('reports malformed WaaS responses as INVALID_RESPONSE and records the code', async () => {
+    const h = sdkHarness();
+    await h.client.createOrRestore();
+    const request = h.remote.request.bind(h.remote);
+    h.remote.request = async (method, body, credential) => {
+      if (method === 'PrepareEthereumTransaction') return { txnId: 7 };
+      if (method === 'SignMessage') return { signature: 42 };
+      return request(method, body, credential);
+    };
+    const failure = await h.client.evm
+      .prepareTransfer({
+        idempotencyKey: 'malformed-quote-1',
+        chainId: 137,
+        to: '0x2222222222222222222222222222222222222222',
+        asset: 'native',
+        amount: '1000'
+      })
+      .catch((error: unknown) => error);
+    expect(failure).toBeInstanceOf(WalletError);
+    expect(failure).toMatchObject({ code: 'INVALID_RESPONSE', status: 502 });
+    expect(await h.client.evm.getOperation('malformed-quote-1')).toMatchObject({
+      status: 'failed',
+      error: 'INVALID_RESPONSE'
+    });
+    await expect(
+      h.client.evm.signMessage({ idempotencyKey: 'malformed-sign-1', chainId: 137, message: 'hi' })
+    ).rejects.toMatchObject({ code: 'INVALID_RESPONSE' });
+  });
+
   it('derives safe next actions from operation evidence in describeOperation', () => {
     const base = {
       id: 'op-12345678',

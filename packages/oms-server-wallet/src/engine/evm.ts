@@ -23,6 +23,7 @@ import { quoteSchema, statusSchema } from '../protocol.js';
 import { refreshStatus, resolveNotBroadcast, settleExecuteError } from '../settlement.js';
 import { parseOperationIndex } from '../state.js';
 import { validateTypedData } from '../typed-data.js';
+import { parseWaas } from '../validation.js';
 import {
   OPEN_STATUSES,
   PUBLIC_EVM_TX_KINDS,
@@ -395,7 +396,8 @@ export class EvmEngine {
   ): Promise<StoredEvmOperation> {
     await this.core.writeOperation(op);
     try {
-      op.quote = quoteSchema.parse(
+      op.quote = parseWaas(
+        quoteSchema,
         await this.core.activeCall(state, 'PrepareEthereumTransaction', {
           network: String(op.chainId),
           walletId: state.wallets.evm!.id,
@@ -450,7 +452,8 @@ export class EvmEngine {
     await this.core.writeOperation(op);
     const quote = op.quote;
     try {
-      const result = statusSchema.parse(
+      const result = parseWaas(
+        statusSchema,
         await this.core.activeCall(state, 'Execute', { txnId: quote.txnId })
       );
       op.status = result.status === 'quoted' ? 'unknown' : result.status;
@@ -496,7 +499,10 @@ export class EvmEngine {
   }
 
   private async evmTransactionStatus(state: State, txnId: string) {
-    return statusSchema.parse(await this.core.activeCall(state, 'TransactionStatus', { txnId }));
+    return parseWaas(
+      statusSchema,
+      await this.core.activeCall(state, 'TransactionStatus', { txnId })
+    );
   }
 
   async signEvmTypedDataInternal(

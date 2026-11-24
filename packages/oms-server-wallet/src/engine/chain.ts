@@ -27,6 +27,7 @@ import { chainQuoteSchema } from '../protocol.js';
 import { refreshStatus, resolveNotBroadcast, settleExecuteError } from '../settlement.js';
 import { parseOperationIndex } from '../state.js';
 import { validateTronTypedData } from '../typed-data.js';
+import { parseWaas } from '../validation.js';
 import {
   OPEN_STATUSES,
   assertReviewId,
@@ -491,7 +492,8 @@ export class ChainEngine {
     };
     await this.core.writeOperation(op);
     try {
-      op.quote = chainQuoteSchema.parse(
+      op.quote = parseWaas(
+        chainQuoteSchema,
         await this.core.activeCall(state, method, params, [family])
       );
       const fee = selectFee(op);
@@ -542,7 +544,8 @@ export class ChainEngine {
     op.submitted = true;
     await this.core.writeOperation(op);
     try {
-      const result = this.chainStatusSchema(family).parse(
+      const result = parseWaas(
+        this.chainStatusSchema(family),
         await this.core.activeCall(
           state,
           'Execute',
@@ -596,7 +599,8 @@ export class ChainEngine {
           `${family === 'solana' ? 'Solana' : 'Tron'} wallet has not been created or restored yet.`,
           409
         );
-      const result = this.chainStatusSchema(family).parse(
+      const result = parseWaas(
+        this.chainStatusSchema(family),
         await this.core.activeCall(state, 'TransactionStatus', { txnId: id }, [family])
       );
       return {
@@ -608,7 +612,8 @@ export class ChainEngine {
   }
 
   private async chainTransactionStatus(state: State, op: StoredChainOperation) {
-    return this.chainStatusSchema(op.family).parse(
+    return parseWaas(
+      this.chainStatusSchema(op.family),
       await this.core.activeCall(state, 'TransactionStatus', { txnId: op.quote!.txnId }, [
         op.family
       ])

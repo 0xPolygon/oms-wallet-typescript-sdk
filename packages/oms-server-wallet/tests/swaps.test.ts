@@ -320,6 +320,17 @@ describe('reviewed recovery', () => {
     expect(h.waas.remote.calls.filter((c) => c.method === 'SignTypedData')).toHaveLength(1);
   });
 
+  it('rejects an unknown recovery source as INVALID_RECOVERY', async () => {
+    const h = await ready();
+    await expect(
+      h.swaps.prepareRecovery({
+        swapId: 'swap-test-0001',
+        idempotencyKey: 'recovery-bad-source',
+        source: 'sideways' as 'origin'
+      })
+    ).rejects.toMatchObject({ code: 'INVALID_RECOVERY' });
+  });
+
   it('rejects a changed recipient, side, balance, expiry or transaction target', async () => {
     const h = await ready();
     h.recovery = recoveryFixture([recoveryCall({ to: owner })]) as typeof h.recovery;

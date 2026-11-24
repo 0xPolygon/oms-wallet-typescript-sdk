@@ -33,6 +33,7 @@ import {
   readState,
   writeState
 } from '../state.js';
+import { parseWaas } from '../validation.js';
 import {
   okSchema,
   credentialRejectedCodes,
@@ -249,7 +250,8 @@ export class EngineCore {
       await this.save(state);
       const { token, expiresAt } = await this.config.getIdToken();
       const handle = await sha256(token);
-      const committed = z.object({ verifier: z.string() }).parse(
+      const committed = parseWaas(
+        z.object({ verifier: z.string() }),
         await this.call(state, 'CommitVerifier', {
           identityType: 'oidc',
           authMode: 'id-token',
@@ -261,7 +263,8 @@ export class EngineCore {
           }
         })
       );
-      const authenticated = authSchema.parse(
+      const authenticated = parseWaas(
+        authSchema,
         await this.call(state, 'CompleteAuth', {
           identityType: 'oidc',
           authMode: 'id-token',
@@ -313,7 +316,8 @@ export class EngineCore {
       state.creating.push(family);
       await this.save(state);
       try {
-        const { wallet } = z.object({ wallet: walletSchema }).parse(
+        const { wallet } = parseWaas(
+          z.object({ wallet: walletSchema }),
           await this.call(state, 'CreateWallet', {
             networkFamily: family,
             reference: this.config.subject
@@ -349,7 +353,8 @@ export class EngineCore {
       if (seen.has(cursor) || seen.size >= 100)
         throw new WalletError('INVALID_RESPONSE', 'Wallet pagination did not terminate.', 502);
       seen.add(cursor);
-      const page = listSchema.parse(
+      const page = parseWaas(
+        listSchema,
         await this.call(state, 'ListWallets', {
           page: cursor ? { cursor, limit: 100 } : { limit: 100 }
         })
@@ -375,10 +380,12 @@ export class EngineCore {
           409
         );
       if (found.length !== 1) continue;
-      const bound = walletSchema.parse(
-        z
-          .object({ wallet: walletSchema })
-          .parse(await this.call(state, 'UseWallet', { walletId: found[0].id })).wallet
+      const bound = parseWaas(
+        walletSchema,
+        parseWaas(
+          z.object({ wallet: walletSchema }),
+          await this.call(state, 'UseWallet', { walletId: found[0].id })
+        ).wallet
       );
       if (
         bound.id !== found[0].id ||
@@ -404,7 +411,8 @@ export class EngineCore {
     const credential = state.credential;
     if (credential && (!credential.expiresAt || Date.parse(credential.expiresAt) > this.now())) {
       try {
-        okSchema.parse(
+        parseWaas(
+          okSchema,
           await this.call(state, 'RevokeCredential', {
             credentialId: credential.credentialId
           })

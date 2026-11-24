@@ -3,6 +3,7 @@ import type { State } from '../state.js';
 import type { EngineCore } from './core.js';
 
 import { WalletError } from '../errors.js';
+import { parseWaas } from '../validation.js';
 import {
   chainSignatureSchema,
   evmSignatureSchema,
@@ -24,14 +25,16 @@ export async function requestEvmMessageSignature(
   chainId: number,
   message: string
 ): Promise<{ signature: string; valid: boolean }> {
-  const { signature } = evmSignatureSchema.parse(
+  const { signature } = parseWaas(
+    evmSignatureSchema,
     await core.activeCall(state, 'SignMessage', {
       network: String(chainId),
       walletId: state.wallets.evm!.id,
       message
     })
   );
-  const { isValid } = validSchema.parse(
+  const { isValid } = parseWaas(
+    validSchema,
     await core.config.transport.request('IsValidMessageSignature', {
       network: String(chainId),
       networkFamily: 'evm',
@@ -50,14 +53,16 @@ export async function requestEvmTypedDataSignature(
   chainId: number,
   typedData: object
 ): Promise<{ signature: string; valid: boolean }> {
-  const { signature } = evmSignatureSchema.parse(
+  const { signature } = parseWaas(
+    evmSignatureSchema,
     await core.activeCall(state, 'SignTypedData', {
       network: String(chainId),
       walletId: state.wallets.evm!.id,
       typedData
     })
   );
-  const { isValid } = validSchema.parse(
+  const { isValid } = parseWaas(
+    validSchema,
     await core.config.transport.request('IsValidTypedDataSignature', {
       network: String(chainId),
       walletAddress: state.wallets.evm!.address,
@@ -155,13 +160,15 @@ export async function requestChainSignature(
 ): Promise<string> {
   const wallet = state.wallets[family]!;
   const { method, params } = request.sign(wallet);
-  const { signature } = chainSignatureSchema.parse(
+  const { signature } = parseWaas(
+    chainSignatureSchema,
     await core.activeCall(state, method, params, [family])
   );
   const verification = request.check(wallet, signature);
   if (!verification.valid)
     throw new WalletError('INVALID_RESPONSE', 'WaaS returned a malformed signature.', 502);
-  const { isValid } = validSchema.parse(
+  const { isValid } = parseWaas(
+    validSchema,
     await core.config.transport.request(verification.method, verification.params)
   );
   if (!isValid)

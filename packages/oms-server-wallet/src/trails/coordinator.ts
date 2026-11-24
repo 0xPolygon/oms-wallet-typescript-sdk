@@ -38,6 +38,7 @@ import { WalletError } from '../errors.js';
 import { registerSwapsBinder } from '../internal/swapsBridge.js';
 import { canonicalJson } from '../json.js';
 import { isStaleExpiryRead } from '../settlement.js';
+import { parseOrThrow } from '../validation.js';
 import { EvmChainReader } from './chain.js';
 import { TrailsClient, TrailsError } from './client.js';
 import { recoveryTokenSchema } from './protocol.js';
@@ -467,7 +468,7 @@ export class TrailsCoordinator {
     });
   }
 
-  private listSwaps(options: ListSwapsOptions = {}): Promise<SwapListPage> {
+  private async listSwaps(options: ListSwapsOptions = {}): Promise<SwapListPage> {
     const limit = options.limit ?? 50;
     if (!Number.isInteger(limit) || limit < 1 || limit > 100)
       throw new WalletError('INVALID_PAGE', 'limit must be an integer between 1 and 100.');
@@ -533,7 +534,7 @@ export class TrailsCoordinator {
     });
   }
 
-  private resolveReconciliation(input: ResolveSwapReconciliationInput): Promise<SwapView> {
+  private async resolveReconciliation(input: ResolveSwapReconciliationInput): Promise<SwapView> {
     if (!input || typeof input !== 'object')
       throw new WalletError(
         'INVALID_INPUT',
@@ -1046,13 +1047,17 @@ export class TrailsCoordinator {
       );
   }
 
-  private prepareRecovery(input: PrepareRecoveryInput): Promise<SwapView> {
+  private async prepareRecovery(input: PrepareRecoveryInput): Promise<SwapView> {
     if (!input || typeof input !== 'object')
       throw new WalletError('INVALID_RECOVERY', 'Provide swapId, idempotencyKey, and source.');
     // Snapshot caller fields synchronously before waiting on the executor.
     const swapId = validateId(input.swapId);
     const recoveryId = validateId(input.idempotencyKey);
-    const source = z.enum(['origin', 'destination']).parse(input.source);
+    const source = parseOrThrow(
+      z.enum(['origin', 'destination']),
+      input.source,
+      () => new WalletError('INVALID_RECOVERY', 'Set source to "origin" or "destination".')
+    );
     return this.config.primitives.runLocked(async () => {
       await this.enabledLocked(true);
       const record = await this.loadRecordLocked(swapId);
@@ -1096,10 +1101,11 @@ export class TrailsCoordinator {
           'Recovery history limit reached; operator intervention is required.',
           409
         );
-      const tokens = z
-        .array(recoveryTokenSchema)
-        .max(64)
-        .parse(originalPrepared.recoveryTokens ?? []);
+      const tokens = parseOrThrow(
+        z.array(recoveryTokenSchema).max(64),
+        originalPrepared.recoveryTokens ?? [],
+        () => new WalletError('INVALID_RESPONSE', 'Trails returned invalid recovery tokens.', 502)
+      );
       const candidates = new Map<string, { symbol: string; decimals: number }>();
       for (const t of tokens) {
         if (t.chainId !== 0 && t.chainId !== chainId)
@@ -1155,7 +1161,7 @@ export class TrailsCoordinator {
     });
   }
 
-  private confirmRecovery(input: ConfirmRecoveryInput): Promise<SwapView> {
+  private async confirmRecovery(input: ConfirmRecoveryInput): Promise<SwapView> {
     if (!input || typeof input !== 'object')
       throw new WalletError('STALE_RECOVERY', 'Provide swapId, recoveryId, and reviewId.', 409);
     // Snapshot approval IDs synchronously so mutating the caller's object while queued cannot
