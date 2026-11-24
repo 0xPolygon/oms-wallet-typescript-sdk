@@ -1,3 +1,4 @@
+import { readFileSync } from 'node:fs';
 import { describe, expect, it, vi } from 'vitest';
 
 import {
@@ -462,7 +463,8 @@ describe('observation, waitForOperation, describeOperation, indexer facet, and e
     expect(timedOut.outcome).toBe('timed-out');
     expect(timedOut.operation.id).toBe('wait-op-1');
 
-    // Cancelled via AbortSignal
+    // Cancelled via pre-aborted AbortSignal makes ZERO remote WaaS calls
+    const beforeAbortCalls = h.remote.calls.length;
     const controller = new AbortController();
     controller.abort();
     const cancelled = await h.client.evm.waitForOperation('wait-op-1', {
@@ -471,6 +473,29 @@ describe('observation, waitForOperation, describeOperation, indexer facet, and e
     });
     expect(cancelled.outcome).toBe('cancelled');
     expect(cancelled.operation.id).toBe('wait-op-1');
+    expect(h.remote.calls.length).toBe(beforeAbortCalls);
+
+    // Escalation to reconciliation-required stops wait with distinct outcome
+    const h2 = sdkHarness();
+    const prep2 = await h2.client.evm.prepareTransfer({
+      idempotencyKey: 'wait-recon-1',
+      chainId: 137,
+      to: '0x2222222222222222222222222222222222222222',
+      asset: 'native',
+      amount: '1000'
+    });
+    h2.remote.failExecute = true;
+    await h2.client.evm.execute({ idempotencyKey: 'wait-recon-1', reviewId: prep2.reviewId! });
+    h2.remote.evmStatusError = 7309;
+    const stored2 = JSON.parse((await h2.store.read('operation:wait-recon-1'))!);
+    stored2.quote.expiresAt = new Date(Date.now() - 121_000).toISOString();
+    await h2.store.write('operation:wait-recon-1', JSON.stringify(stored2));
+    const recon = await h2.client.evm.waitForOperation('wait-recon-1', {
+      timeoutMs: 5_000,
+      pollIntervalMs: 250
+    });
+    expect(recon.outcome).toBe('reconciliation-required');
+    expect(recon.operation).toMatchObject({ status: 'unknown', error: 'RECONCILIATION_REQUIRED' });
 
     // Settled once WaaS reports executed
     h.remote.txnStatus = 'executed';
@@ -669,5 +694,250 @@ describe('observation, waitForOperation, describeOperation, indexer facet, and e
       ['pend-op-1', 'pending', false],
       ['prep-op-1', 'preparing', true]
     ]);
+  });
+});
+
+describe('review-audit boundary regressions', () => {
+  it('blocks mis-scoped swap adapters in list() and tick() so wallet B never executes wallet A swaps', async () => {
+    const h = await swapHarness();
+    await h.confirm();
+
+    // Wallet B has a DIFFERENT EVM address but erroneously points at wallet A's swap store.
+    const storeB = new MemoryStore();
+    const remoteB = new FakeWaas();
+    remoteB.wallet = {
+      id: 'wallet-b',
+      address: '0x9999999999999999999999999999999999999999',
+      networkFamily: 'evm'
+    };
+    const origReq = remoteB.request.bind(remoteB);
+    remoteB.request = async (method, body, cred) => {
+      if (method === 'CompleteAuth') {
+        return {
+          identity: { type: 'oidc', iss: 'https://issuer.example', sub: 'customer-b' },
+          credential: {
+            credentialId: cred!.credentialId,
+            expiresAt: new Date(Date.now() + 3_600_000).toISOString()
+          },
+          wallets: [remoteB.wallet!]
+        };
+      }
+      return origReq(method, body, cred);
+    };
+    const walletB = createServerWalletInternal(
+      {
+        publishableKey: TEST_PUBLISHABLE_KEY,
+        oidc: {
+          subject: 'customer-b',
+          issuer: 'https://issuer.example',
+          audience: 'oms-server-wallet',
+          getIdToken: async () => ({
+            token: 'tok-b',
+            expiresAt: Math.floor(Date.now() / 1000) + 300
+          })
+        },
+        store: { encryptedStore: storeB },
+        executor: createSingleProcessExecutor(),
+        swaps: trailsInternal(
+          {
+            apiKey: 'trails-key',
+            chains: { 137: 'https://polygon.rpc.example', 8453: 'https://base.rpc.example' },
+            assets: h.fixture.assets,
+            store: { scope: 'wallet', adapter: h.store }
+          },
+          { gateway: h.gateway, chains: h.chains }
+        )
+      },
+      { transport: remoteB }
+    );
+    await walletB.createOrRestore();
+    const callsBefore = remoteB.calls.length;
+    await expect(walletB.swaps.list()).rejects.toMatchObject({ code: 'WALLET_MISMATCH' });
+    await expect(walletB.swaps.tick()).rejects.toMatchObject({ code: 'WALLET_MISMATCH' });
+    // Wallet B must never Prepare or Execute anything for wallet A's swap.
+    expect(
+      remoteB.calls
+        .slice(callsBefore)
+        .filter((c) => c.method === 'PrepareEthereumTransaction' || c.method === 'Execute')
+    ).toHaveLength(0);
+  });
+
+  it('persists authoritative swap reservations in wallet state so a second worker with an empty swap store cannot bypass DEBIT_PENDING', async () => {
+    const h = await swapHarness();
+    await h.confirm();
+    // Worker 2 shares wallet state + executor, but points at a fresh/empty swap store (e.g. rollout mismatch).
+    const emptySwapStore = new MemorySwapStore();
+    const storeOpt = { scope: 'wallet' as const, adapter: emptySwapStore };
+    const swapsCfg = trailsInternal(
+      {
+        apiKey: 'trails-key',
+        chains: { 137: 'https://polygon.rpc.example', 8453: 'https://base.rpc.example' },
+        assets: h.fixture.assets,
+        store: storeOpt
+      },
+      { gateway: h.gateway, chains: h.chains }
+    );
+    // Mutating the caller's store object after trails(...) registration has no effect.
+    (storeOpt as { adapter: MemorySwapStore }).adapter = h.store;
+    const worker2 = createServerWalletInternal(
+      {
+        publishableKey: TEST_PUBLISHABLE_KEY,
+        oidc: {
+          subject: 'customer-1',
+          issuer: 'https://issuer.example',
+          audience: 'oms-server-wallet',
+          getIdToken: async () => ({ token: 'tok', expiresAt: Math.floor(Date.now() / 1000) + 300 })
+        },
+        store: { encryptedStore: h.waas.store },
+        executor: h.waas.executor,
+        swaps: swapsCfg
+      },
+      { transport: h.waas.remote }
+    );
+    await expect(
+      worker2.evm.prepareTransfer({
+        idempotencyKey: 'bypass-rollout-1',
+        chainId: 137,
+        to: '0x2222222222222222222222222222222222222222',
+        asset: 'native',
+        amount: '1'
+      })
+    ).rejects.toMatchObject({ code: 'DEBIT_PENDING' });
+  });
+
+  it('hides internal Trails recovery signatures and child operations from public EVM getOperation / listOperations / refreshOperation', async () => {
+    const h = await swapHarness();
+    await h.confirm();
+    await h.tick(4);
+    h.waas.remote.txnStatus = 'executed';
+    await h.tick();
+    h.intent.status = 'FAILED';
+    h.receipt.status = 'FAILED';
+    h.flags.intentBalance = '1000';
+    const view = await h.swaps.prepareRecovery({
+      swapId: 'swap-test-0001',
+      idempotencyKey: 'recovery-hide-1',
+      source: 'origin'
+    });
+    await h.swaps.confirmRecovery({
+      swapId: view.id,
+      recoveryId: 'recovery-hide-1',
+      reviewId: view.recoveries[0].reviewId
+    });
+    await h.tick(3);
+    const record = await h.record();
+    const signingId = record.recoveries[0].signingId;
+    expect(record.recoveries[0].signed?.signature).toBe('0x1234');
+    // Public EVM history MUST NOT expose internal swp_* funding, signing, deployment, or recovery ops!
+    expect((await h.wallet.evm.listOperations()).items).toEqual([]);
+    expect(await h.wallet.evm.getOperation(signingId)).toBeNull();
+    expect(await h.wallet.evm.refreshOperation(signingId)).toBeNull();
+    expect(await h.wallet.evm.getOperation(record.fundingId)).toBeNull();
+  });
+
+  it('upgrades pre-0.3.0 heuristic expired records into open reconciliation, blocks competing debits, and requires affirmative evidence for failed provenUnsent', async () => {
+    const h = await swapHarness();
+    // Simulate a pre-0.3.0 store: v1 openOperationIndex (omitting legacy expired) + legacy expired & failed ops.
+    await h.waas.store.write('operationIndex', JSON.stringify(['legacy-exp-01', 'legacy-fail-01']));
+    await h.waas.store.write('openOperationIndex', JSON.stringify({ synced: 2, ids: [] }));
+    await h.waas.store.write(
+      'operation:legacy-exp-01',
+      JSON.stringify({
+        id: 'legacy-exp-01',
+        kind: 'transfer',
+        inputHash: 'h1',
+        createdAt: new Date().toISOString(),
+        status: 'expired',
+        chainId: 137,
+        error: 'TRANSACTION_EXPIRED',
+        quote: {
+          txnId: 'legacy-txn-1',
+          status: 'quoted',
+          sponsored: true,
+          expiresAt: new Date(Date.now() - 300_000).toISOString()
+        }
+      })
+    );
+    await h.waas.store.write(
+      'operation:legacy-fail-01',
+      JSON.stringify({
+        id: 'legacy-fail-01',
+        kind: 'transfer',
+        inputHash: 'h2',
+        createdAt: new Date().toISOString(),
+        status: 'failed',
+        chainId: 137,
+        error: 'PREPARATION_FAILED'
+      })
+    );
+
+    const open = await h.wallet.evm.listOperations({ status: 'open' });
+    expect(open.items.map((o) => [o.id, o.status, o.error, o.provenUnsent])).toEqual([
+      ['legacy-exp-01', 'unknown', 'RECONCILIATION_REQUIRED', false]
+    ]);
+    const legacyFail = await h.wallet.evm.getOperation('legacy-fail-01');
+    expect(legacyFail?.provenUnsent).toBe(false);
+
+    // Competing swap on chain 137 MUST be blocked by the upgraded legacy-exp-01!
+    h.waas.remote.evmStatusError = 7309;
+    const q = await h.quote();
+    await expect(
+      h.swaps.confirm({ swapId: q.id, reviewId: q.quote.reviewId })
+    ).rejects.toMatchObject({ code: 'DEBIT_PENDING' });
+  });
+
+  it('decrypts the actual checked-in published 0.2.0 fixture via createServerWallet with explicit encryptionContext and never falls back on wrong context', async () => {
+    const legacy = JSON.parse(
+      readFileSync(new URL('./fixtures/state-0.2.0.json', import.meta.url), 'utf8')
+    ) as { subject: string; encryptionKey: string; store: Record<string, string> };
+    const raw = new MemoryStore();
+    for (const [k, v] of Object.entries(legacy.store)) raw.values.set(k, v);
+
+    // Without matching encryptionContext, fails closed with STORAGE_INTEGRITY (no fallback!).
+    const wrongContext = createServerWallet({
+      publishableKey: 'pk_live_abc_secret',
+      oidc: {
+        subject: legacy.subject,
+        issuer: 'https://issuer.example',
+        audience: 'oms-server-wallet',
+        getIdToken: async () => ({ token: 't', expiresAt: 1 })
+      },
+      store: { adapter: raw, encryptionKey: legacy.encryptionKey },
+      executor: createSingleProcessExecutor()
+    });
+    await expect(wrongContext.inspect()).rejects.toMatchObject({ code: 'STORAGE_INTEGRITY' });
+
+    // With explicit legacy encryptionContext, decrypts and migrates cleanly through the public factory!
+    const migrated = createServerWallet({
+      publishableKey: 'pk_live_abc_secret',
+      oidc: {
+        subject: legacy.subject,
+        issuer: 'https://issuer.example',
+        audience: 'oms-server-wallet',
+        getIdToken: async () => ({ token: 't', expiresAt: 1 })
+      },
+      store: {
+        adapter: raw,
+        encryptionKey: legacy.encryptionKey,
+        encryptionContext: legacy.subject
+      },
+      executor: createSingleProcessExecutor()
+    });
+    const snap = await migrated.inspect();
+    expect(snap.wallet?.id).toBe('wallet-legacy');
+    const ops = await migrated.evm.listOperations();
+    expect(ops.items.map((o) => o.id)).toEqual(['legacy-sign-1', 'legacy-transfer-1']);
+  });
+
+  it('snapshots swap and recovery confirmation inputs synchronously before queuing', async () => {
+    const h = await swapHarness();
+    const q = await h.quote();
+    // Hold the executor lock while a stale confirm is queued, then mutate the caller's input object.
+    const mutableConfirm = { swapId: q.id, reviewId: 'stale-revision' };
+    const blocker = h.waas.executor.run(() => new Promise((r) => setTimeout(r, 20)));
+    const pendingConfirm = h.swaps.confirm(mutableConfirm);
+    mutableConfirm.reviewId = q.quote.reviewId;
+    await blocker;
+    await expect(pendingConfirm).rejects.toMatchObject({ code: 'STALE_QUOTE' });
   });
 });

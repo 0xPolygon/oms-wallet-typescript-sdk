@@ -106,6 +106,14 @@ const OPEN_STATUSES: ReadonlySet<string> = new Set([
   'unknown'
 ]);
 
+function isUnprovenLegacyExpiry(op: StoredOperationRecord): boolean {
+  return op.status === 'expired' && op.preSubmitExpired !== true;
+}
+
+function isOperationOpen(op: StoredOperationRecord): boolean {
+  return OPEN_STATUSES.has(op.status) || isUnprovenLegacyExpiry(op);
+}
+
 const PUBLIC_EVM_KINDS: ReadonlySet<StoredEvmOperation['kind']> = new Set([
   'transfer',
   'call',
@@ -113,6 +121,10 @@ const PUBLIC_EVM_KINDS: ReadonlySet<StoredEvmOperation['kind']> = new Set([
   'sign',
   'signTypedData'
 ]);
+
+function isInternalEvmOperation(op: StoredEvmOperation): boolean {
+  return op.internal === true || op.id.startsWith('swp_') || !PUBLIC_EVM_KINDS.has(op.kind);
+}
 
 const PUBLIC_EVM_TX_KINDS: readonly StoredEvmOperation['kind'][] = [
   'transfer',
@@ -436,7 +448,8 @@ function computeProvenUnsent(op: StoredOperationRecord): boolean {
   if (op.status === 'expired') return op.preSubmitExpired === true;
   if (op.status === 'failed') {
     if (op.kind === 'sign' || op.kind === 'signTypedData') return false;
-    return op.submitted !== true || op.preClaimRefused === true;
+    // Require affirmative evidence that Execute never claimed/broadcast (legacy 0.2.x rows omit both).
+    return op.preClaimRefused === true || op.submitted === false;
   }
   return false;
 }
@@ -624,6 +637,19 @@ export class WalletEngine {
           await this.save(state);
         }
       },
+      setSwapReservationLocked: async (swapId, chainId) => {
+        const state = await this.load();
+        const next: Record<string, number> = { ...(state.swapReservations ?? {}) };
+        if (chainId === null) {
+          if (!(swapId in next)) return;
+          delete next[swapId];
+        } else {
+          if (next[swapId] === chainId) return;
+          next[swapId] = chainId;
+        }
+        state.swapReservations = Object.keys(next).length > 0 ? next : undefined;
+        await this.save(state);
+      },
       readEvmOperationsLocked: async (ids) => {
         const out: StoredEvmOperation[] = [];
         for (const id of new Set(ids)) {
@@ -636,7 +662,7 @@ export class WalletEngine {
         const out: StoredEvmOperation[] = [];
         for (const id of await this.openOperationIds()) {
           const op = await this.readEvmOperation(id);
-          if (op && OPEN_STATUSES.has(op.status)) out.push(op);
+          if (op && isOperationOpen(op)) out.push(op);
         }
         return out;
       },
@@ -854,14 +880,14 @@ export class WalletEngine {
   getEvmOperationLocal(id: string): Promise<EvmOperation | null> {
     return this.config.executor.run(async () => {
       const op = await this.readEvmOperation(id);
-      return op && PUBLIC_EVM_KINDS.has(op.kind) ? projectEvmOperation(op) : null;
+      return op && !isInternalEvmOperation(op) ? projectEvmOperation(op) : null;
     });
   }
 
   refreshEvmOperation(id: string): Promise<EvmOperation | null> {
     return this.config.executor.run(async () => {
       const op = await this.readEvmOperation(id);
-      if (!op || !PUBLIC_EVM_KINDS.has(op.kind)) return null;
+      if (!op || isInternalEvmOperation(op)) return null;
       return projectEvmOperation(await this.refreshEvm(op));
     });
   }
@@ -876,8 +902,8 @@ export class WalletEngine {
       const operations: EvmOperation[] = [];
       for (const id of ids) {
         const op = await this.readEvmOperation(id);
-        if (!op || !PUBLIC_EVM_KINDS.has(op.kind)) continue;
-        if (status === 'open' && !OPEN_STATUSES.has(op.status)) continue;
+        if (!op || isInternalEvmOperation(op)) continue;
+        if (status === 'open' && !isOperationOpen(op)) continue;
         operations.push(projectEvmOperation(op));
       }
       return paginate(operations, offset, limit);
@@ -977,7 +1003,7 @@ export class WalletEngine {
       for (const id of ids) {
         const op = await this.readChainOperation(id, 'solana');
         if (!op) continue;
-        if (status === 'open' && !OPEN_STATUSES.has(op.status)) continue;
+        if (status === 'open' && !isOperationOpen(op)) continue;
         operations.push(projectSolanaOperation(op));
       }
       return paginate(operations, offset, limit);
@@ -1149,7 +1175,7 @@ export class WalletEngine {
       for (const id of ids) {
         const op = await this.readChainOperation(id, 'tron');
         if (!op) continue;
-        if (status === 'open' && !OPEN_STATUSES.has(op.status)) continue;
+        if (status === 'open' && !isOperationOpen(op)) continue;
         operations.push(projectTronOperation(op));
       }
       return paginate(operations, offset, limit);
@@ -1169,6 +1195,14 @@ export class WalletEngine {
       throw new WalletError(
         'SWAPS_COORDINATION_REQUIRED',
         'This wallet has active Trails swaps coordination. Use createServerWallet with swaps: trails(...) so EVM debits coordinate with swap reservations.',
+        409
+      );
+    // Authoritative swap reservations in wallet state protect against a misconfigured worker
+    // pointing at an empty or different swap store while sharing wallet state and executor.
+    if (state.swapReservations && Object.values(state.swapReservations).includes(chainId))
+      throw new WalletError(
+        'DEBIT_PENDING',
+        'Another debit on this chain must be reconciled first.',
         409
       );
     if (this.gate) await this.gate.assertChainAvailableLocked(chainId, { exceptOperationId });
@@ -1203,6 +1237,7 @@ export class WalletEngine {
       chainId: transfer.chainId,
       status: 'preparing',
       submissionMode,
+      ...(options.allowSwapsPrefix ? { internal: true } : {}),
       submitted: false,
       transfer
     };
@@ -1297,6 +1332,7 @@ export class WalletEngine {
       inputHash: hash,
       status: 'preparing',
       submissionMode: 'immediate',
+      internal: true,
       submitted: false,
       createdAt: new Date(this.now()).toISOString()
     };
@@ -1397,7 +1433,7 @@ export class WalletEngine {
     if (
       !['transfer', 'call', 'userOperation', 'deployment', 'recovery'].includes(op.kind) ||
       !op.quote ||
-      !['submitting', 'pending', 'unknown'].includes(op.status)
+      (!['submitting', 'pending', 'unknown'].includes(op.status) && !isUnprovenLegacyExpiry(op))
     )
       return op;
     const state = await this.load();
@@ -1445,7 +1481,8 @@ export class WalletEngine {
       inputHash: hash,
       createdAt: new Date(this.now()).toISOString(),
       status: 'unknown',
-      submissionMode: 'review'
+      submissionMode: 'review',
+      ...(options.allowSwapsPrefix ? { internal: true } : {})
     };
     await this.writeOperation(op);
     return this.recordEvmSignature(op, async () => {
@@ -1729,7 +1766,11 @@ export class WalletEngine {
   }
 
   private async refreshChain(op: StoredChainOperation): Promise<StoredChainOperation> {
-    if (!op.quote || !['submitting', 'pending', 'unknown'].includes(op.status)) return op;
+    if (
+      !op.quote ||
+      (!['submitting', 'pending', 'unknown'].includes(op.status) && !isUnprovenLegacyExpiry(op))
+    )
+      return op;
     const state = await this.load();
     await refreshStatus(op, () => this.chainTransactionStatus(state, op), this.now());
     await this.writeOperation(op);
@@ -2041,7 +2082,16 @@ export class WalletEngine {
 
   private async readOperation(id: string): Promise<StoredOperationRecord | null> {
     const value = await this.config.store.read(`operation:${id}`);
-    return value === null ? null : parseStoredOperation(value);
+    if (value === null) return null;
+    const op = parseStoredOperation(value);
+    if (isUnprovenLegacyExpiry(op)) {
+      // Pre-0.3.0 heuristic expiry has no proof submission never occurred: upgrade to open
+      // reconciliation so it stays in the open index, is pollable, and blocks competing debits.
+      op.status = 'unknown';
+      op.error = 'RECONCILIATION_REQUIRED';
+      await this.writeOperation(op);
+    }
+    return op;
   }
 
   private async readEvmOperation(id: string): Promise<StoredEvmOperation | null> {
@@ -2062,8 +2112,9 @@ export class WalletEngine {
     const added = !ids.includes(op.id);
     if (added) await this.config.store.write('operationIndex', JSON.stringify([...ids, op.id]));
     const open = parseOpenOperationIndex(await this.config.store.read('openOperationIndex'));
-    const isOpen = OPEN_STATUSES.has(op.status);
+    const isOpen = isOperationOpen(op);
     const next = open && {
+      v: 2 as const,
       synced: added && open.synced === ids.length ? ids.length + 1 : open.synced,
       ids: isOpen
         ? open.ids.includes(op.id)
@@ -2078,7 +2129,7 @@ export class WalletEngine {
     if (changed && !isOpen) await this.writeOpenIndex(next);
   }
 
-  private writeOpenIndex(index: { synced: number; ids: string[] }) {
+  private writeOpenIndex(index: { v: 2; synced: number; ids: string[] }) {
     return this.config.store.write('openOperationIndex', JSON.stringify(index));
   }
 
@@ -2086,14 +2137,16 @@ export class WalletEngine {
     const all = parseOperationIndex(await this.config.store.read('operationIndex'));
     const stored = parseOpenOperationIndex(await this.config.store.read('openOperationIndex'));
     const open =
-      stored && stored.synced <= all.length ? stored : { synced: 0, ids: [] as string[] };
+      stored && stored.synced <= all.length
+        ? stored
+        : { v: 2 as const, synced: 0, ids: [] as string[] };
     if (open.synced === all.length && stored === open) return open.ids;
     const ids = [...open.ids];
     for (const id of all.slice(open.synced)) {
       const op = await this.readOperation(id);
-      if ((!op || OPEN_STATUSES.has(op.status)) && !ids.includes(id)) ids.push(id);
+      if ((!op || isOperationOpen(op)) && !ids.includes(id)) ids.push(id);
     }
-    await this.writeOpenIndex({ synced: all.length, ids });
+    await this.writeOpenIndex({ v: 2, synced: all.length, ids });
     return ids;
   }
 

@@ -86,12 +86,19 @@ export type WalletStoreOption =
   | {
       readonly adapter: StateStore;
       readonly encryptionKey: string;
+      /**
+       * Optional AES-GCM context override for upgrading `0.2.x` stores that used a custom
+       * `EncryptedStore` context (for example, the bare subject). Omit for new wallets to use the
+       * canonical `[waasOrigin, projectId, issuer, audience, subject]` context.
+       */
+      readonly encryptionContext?: string;
       readonly encryptedStore?: never;
     }
   | {
       readonly encryptedStore: StateStore;
       readonly adapter?: never;
       readonly encryptionKey?: never;
+      readonly encryptionContext?: never;
     };
 
 /**
@@ -112,11 +119,8 @@ export type ServiceStorageOption =
       readonly encryptionKey?: never;
     };
 
-/** Options for `createServerWallet`. */
-export interface ServerWalletOptions<
-  TApproval extends ApprovalMode = 'two-phase',
-  TSwaps extends SwapsConfig<'wallet', unknown> | undefined = undefined
-> {
+/** Base options shared by all `createServerWallet` configurations. */
+export interface ServerWalletOptionsBase {
   readonly publishableKey: string;
   /** Application Origin allowed by your OMS project (sent as the HTTP `Origin` header). */
   readonly origin?: string;
@@ -125,19 +129,24 @@ export interface ServerWalletOptions<
   /** Required exclusive ownership boundary for this wallet identity. */
   readonly executor: ExclusiveExecutor;
   readonly attestation?: AttestationOptions;
-  /** Defaults to `'two-phase'`, omitting one-shot `send*` shortcuts at type and runtime level. */
-  readonly approval?: TApproval;
-  /** Optional Trails swaps configuration from `trails({ ..., store: { scope: 'wallet', adapter } })`. */
-  readonly swaps?: TSwaps;
   /** Optional `fetch` override for instrumentation/testing; never bypasses Nitro attestation. */
   readonly fetch?: typeof fetch;
 }
 
-/** Options for `createServerWalletService`. */
-export interface ServerWalletServiceOptions<
+/** Options for `createServerWallet`. */
+export type ServerWalletOptions<
   TApproval extends ApprovalMode = 'two-phase',
-  TSwaps extends SwapsConfig<'service', unknown> | undefined = undefined
-> {
+  TSwaps extends SwapsConfig<'wallet', unknown> | undefined = undefined
+> = ServerWalletOptionsBase &
+  (TApproval extends 'allow-immediate'
+    ? { readonly approval: 'allow-immediate' }
+    : { readonly approval?: 'two-phase' }) &
+  (TSwaps extends SwapsConfig<'wallet', unknown>
+    ? { readonly swaps: TSwaps }
+    : { readonly swaps?: undefined });
+
+/** Base options shared by all `createServerWalletService` configurations. */
+export interface ServerWalletServiceOptionsBase {
   readonly publishableKey: string;
   /** Application Origin allowed by your OMS project (sent as the HTTP `Origin` header). */
   readonly origin?: string;
@@ -146,13 +155,21 @@ export interface ServerWalletServiceOptions<
   /** Required per-namespace exclusive ownership provider. */
   readonly executor: ExecutorProvider;
   readonly attestation?: AttestationOptions;
-  /** Defaults to `'two-phase'`, omitting one-shot `send*` shortcuts at type and runtime level. */
-  readonly approval?: TApproval;
-  /** Optional Trails swaps configuration from `trails({ ..., store: { scope: 'service', adapter } })`. */
-  readonly swaps?: TSwaps;
   /** Optional `fetch` override for instrumentation/testing; never bypasses Nitro attestation. */
   readonly fetch?: typeof fetch;
 }
+
+/** Options for `createServerWalletService`. */
+export type ServerWalletServiceOptions<
+  TApproval extends ApprovalMode = 'two-phase',
+  TSwaps extends SwapsConfig<'service', unknown> | undefined = undefined
+> = ServerWalletServiceOptionsBase &
+  (TApproval extends 'allow-immediate'
+    ? { readonly approval: 'allow-immediate' }
+    : { readonly approval?: 'two-phase' }) &
+  (TSwaps extends SwapsConfig<'service', unknown>
+    ? { readonly swaps: TSwaps }
+    : { readonly swaps?: undefined });
 
 /** Public snapshot of a wallet identity's persisted state. */
 export interface WalletSnapshot {

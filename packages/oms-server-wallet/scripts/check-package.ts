@@ -217,6 +217,16 @@ createServerWallet({ publishableKey: key, oidc, store: { adapter: state, encrypt
 // @ts-expect-error wallet-scoped trails cannot be passed to createServerWalletService
 createServerWalletService({ publishableKey: key, oidc: { issuer: oidc.issuer, audience: oidc.audience, getIdToken: oidc.getIdToken }, storage: { adapter: nsState, encryptionKey }, executor: createSingleProcessExecutorPool(), swaps: walletSwaps });
 
+// Callers cannot claim capabilities via options annotations or generic arguments without enabling them:
+// @ts-expect-error cannot claim allow-immediate without passing approval: 'allow-immediate'
+createServerWallet<'allow-immediate'>({ publishableKey: key, oidc, store: { adapter: state, encryptionKey }, executor: createSingleProcessExecutor() });
+// @ts-expect-error cannot claim swaps facet without passing swaps: trails(...)
+createServerWallet<typeof walletSwaps>({ publishableKey: key, oidc, store: { adapter: state, encryptionKey }, executor: createSingleProcessExecutor() });
+// @ts-expect-error cannot claim allow-immediate on service without passing approval: 'allow-immediate'
+createServerWalletService<'allow-immediate'>({ publishableKey: key, oidc: { issuer: oidc.issuer, audience: oidc.audience, getIdToken: oidc.getIdToken }, storage: { adapter: nsState, encryptionKey }, executor: createSingleProcessExecutorPool() });
+// @ts-expect-error cannot claim swaps facet on service without passing swaps: trails(...)
+createServerWalletService<typeof serviceSwaps>({ publishableKey: key, oidc: { issuer: oidc.issuer, audience: oidc.audience, getIdToken: oidc.getIdToken }, storage: { adapter: nsState, encryptionKey }, executor: createSingleProcessExecutorPool() });
+
 // Typed ABI checks on prepareCall / sendCall:
 const erc20 = [{ type: 'function', name: 'transfer', inputs: [{ name: 'to', type: 'address' }, { name: 'amount', type: 'uint256' }], outputs: [{ type: 'bool' }], stateMutability: 'nonpayable' }] as const;
 const pay = () => wImmediate.evm.sendCall({

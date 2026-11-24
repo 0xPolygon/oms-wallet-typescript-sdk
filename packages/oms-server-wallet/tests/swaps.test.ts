@@ -812,5 +812,17 @@ describe('settled funding and recovery operations', () => {
       status: 'unknown',
       error: 'RECONCILIATION_REQUIRED'
     });
+    // Public SwapView / RecoveryView also surfaces the diagnostic and original WaaS txnId!
+    const publicView = await h.swaps.get('swap-test-0001');
+    expect(publicView.phase).toBe('attention');
+    expect(publicView.error).toBe('RECONCILIATION_REQUIRED');
+    expect(publicView.recoveries[0]).toMatchObject({
+      error: 'RECONCILIATION_REQUIRED',
+      transaction: {
+        status: 'unknown',
+        txnId: recovery.transaction?.quote?.txnId,
+        error: 'RECONCILIATION_REQUIRED'
+      }
+    });
   });
 });

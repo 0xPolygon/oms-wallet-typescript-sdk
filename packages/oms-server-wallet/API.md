@@ -10,7 +10,26 @@ Create a single-identity attested server wallet (ideal for one Cloudflare Durabl
 wallet, or hosts managing per-identity storage and execution directly).
 
 ```typescript
-export declare function createServerWallet<TApproval extends ApprovalMode = "two-phase", TSwaps extends SwapsConfig<"wallet", unknown> | undefined = undefined>(options: ServerWalletOptions<TApproval, TSwaps>): ServerWallet<TApproval, TSwaps>;
+export declare function createServerWallet(options: ServerWalletOptionsBase & {
+    readonly approval?: "two-phase";
+    readonly swaps?: undefined;
+}): ServerWalletBase<"two-phase">;
+export declare function createServerWallet<TFacet>(options: ServerWalletOptionsBase & {
+    readonly approval?: "two-phase";
+    readonly swaps: SwapsConfig<"wallet", TFacet>;
+}): ServerWalletBase<"two-phase"> & {
+    readonly swaps: TFacet;
+};
+export declare function createServerWallet(options: ServerWalletOptionsBase & {
+    readonly approval: "allow-immediate";
+    readonly swaps?: undefined;
+}): ServerWalletBase<"allow-immediate">;
+export declare function createServerWallet<TFacet>(options: ServerWalletOptionsBase & {
+    readonly approval: "allow-immediate";
+    readonly swaps: SwapsConfig<"wallet", TFacet>;
+}): ServerWalletBase<"allow-immediate"> & {
+    readonly swaps: TFacet;
+};
 ```
 
 ### `createServerWalletService`
@@ -20,7 +39,22 @@ Computes exact 0.2.x-compatible namespaces from the routed WaaS origin, project,
 audience, and subject.
 
 ```typescript
-export declare function createServerWalletService<TApproval extends ApprovalMode = "two-phase", TSwaps extends SwapsConfig<"service", unknown> | undefined = undefined>(options: ServerWalletServiceOptions<TApproval, TSwaps>): ServerWalletService<TApproval, TSwaps>;
+export declare function createServerWalletService(options: ServerWalletServiceOptionsBase & {
+    readonly approval?: "two-phase";
+    readonly swaps?: undefined;
+}): ServerWalletService<"two-phase", undefined>;
+export declare function createServerWalletService<TFacet>(options: ServerWalletServiceOptionsBase & {
+    readonly approval?: "two-phase";
+    readonly swaps: SwapsConfig<"service", TFacet>;
+}): ServerWalletService<"two-phase", SwapsConfig<"service", TFacet>>;
+export declare function createServerWalletService(options: ServerWalletServiceOptionsBase & {
+    readonly approval: "allow-immediate";
+    readonly swaps?: undefined;
+}): ServerWalletService<"allow-immediate", undefined>;
+export declare function createServerWalletService<TFacet>(options: ServerWalletServiceOptionsBase & {
+    readonly approval: "allow-immediate";
+    readonly swaps: SwapsConfig<"service", TFacet>;
+}): ServerWalletService<"allow-immediate", SwapsConfig<"service", TFacet>>;
 ```
 
 ### `ServerWalletOptions`
@@ -28,15 +62,29 @@ export declare function createServerWalletService<TApproval extends ApprovalMode
 Options for `createServerWallet`.
 
 ```typescript
-export interface ServerWalletOptions<TApproval extends ApprovalMode = "two-phase", TSwaps extends SwapsConfig<"wallet", unknown> | undefined = undefined> {
+export type ServerWalletOptions<TApproval extends ApprovalMode = "two-phase", TSwaps extends SwapsConfig<"wallet", unknown> | undefined = undefined> = ServerWalletOptionsBase & (TApproval extends "allow-immediate" ? {
+    readonly approval: "allow-immediate";
+} : {
+    readonly approval?: "two-phase";
+}) & (TSwaps extends SwapsConfig<"wallet", unknown> ? {
+    readonly swaps: TSwaps;
+} : {
+    readonly swaps?: undefined;
+});
+```
+
+### `ServerWalletOptionsBase`
+
+Base options shared by all `createServerWallet` configurations.
+
+```typescript
+export interface ServerWalletOptionsBase {
     readonly publishableKey: string;
     readonly origin?: string;
     readonly oidc: WalletOidcOptions;
     readonly store: WalletStoreOption;
     readonly executor: ExclusiveExecutor;
     readonly attestation?: AttestationOptions;
-    readonly approval?: TApproval;
-    readonly swaps?: TSwaps;
     readonly fetch?: typeof fetch;
 }
 ```
@@ -46,15 +94,29 @@ export interface ServerWalletOptions<TApproval extends ApprovalMode = "two-phase
 Options for `createServerWalletService`.
 
 ```typescript
-export interface ServerWalletServiceOptions<TApproval extends ApprovalMode = "two-phase", TSwaps extends SwapsConfig<"service", unknown> | undefined = undefined> {
+export type ServerWalletServiceOptions<TApproval extends ApprovalMode = "two-phase", TSwaps extends SwapsConfig<"service", unknown> | undefined = undefined> = ServerWalletServiceOptionsBase & (TApproval extends "allow-immediate" ? {
+    readonly approval: "allow-immediate";
+} : {
+    readonly approval?: "two-phase";
+}) & (TSwaps extends SwapsConfig<"service", unknown> ? {
+    readonly swaps: TSwaps;
+} : {
+    readonly swaps?: undefined;
+});
+```
+
+### `ServerWalletServiceOptionsBase`
+
+Base options shared by all `createServerWalletService` configurations.
+
+```typescript
+export interface ServerWalletServiceOptionsBase {
     readonly publishableKey: string;
     readonly origin?: string;
     readonly oidc: ServiceOidcOptions;
     readonly storage: ServiceStorageOption;
     readonly executor: ExecutorProvider;
     readonly attestation?: AttestationOptions;
-    readonly approval?: TApproval;
-    readonly swaps?: TSwaps;
     readonly fetch?: typeof fetch;
 }
 ```
@@ -204,8 +266,18 @@ export type NetworkFamily = (typeof NETWORK_FAMILIES)[number];
 
 ### `RemoteWallet`
 
+Wallet identity returned by WaaS.
+
 ```typescript
-export type RemoteWallet = z.infer<typeof walletSchema>;
+export interface RemoteWallet {
+    readonly id: string;
+    readonly address: string;
+    readonly reference?: string;
+    readonly networkFamily?: string;
+    readonly implementation?: string;
+    readonly type?: string;
+    readonly keyOrigin?: string;
+}
 ```
 
 ### `SupportedEvmChainId`
@@ -289,11 +361,13 @@ durability).
 export type WalletStoreOption = {
     readonly adapter: StateStore;
     readonly encryptionKey: string;
+    readonly encryptionContext?: string;
     readonly encryptedStore?: never;
 } | {
     readonly encryptedStore: StateStore;
     readonly adapter?: never;
     readonly encryptionKey?: never;
+    readonly encryptionContext?: never;
 };
 ```
 
@@ -453,8 +527,15 @@ export interface EvmOperation extends OperationBase {
 
 ### `Quote`
 
+Sponsored EVM transaction quote returned by WaaS.
+
 ```typescript
-export type Quote = z.infer<typeof quoteSchema>;
+export interface Quote {
+    readonly txnId: string;
+    readonly status: "quoted";
+    readonly sponsored: boolean;
+    readonly expiresAt: string;
+}
 ```
 
 ### `parseAmount`
@@ -691,14 +772,32 @@ export interface TronOperation extends OperationBase {
 
 ### `ChainQuote`
 
+Solana or Tron transaction quote returned by WaaS.
+
 ```typescript
-export type ChainQuote = z.infer<typeof chainQuoteSchema>;
+export interface ChainQuote extends Quote {
+    readonly feeOptions: readonly FeeOption[];
+}
 ```
 
 ### `FeeOption`
 
+Single fee option offered by WaaS for a non-sponsored chain transaction.
+
 ```typescript
-export type FeeOption = z.infer<typeof feeOptionSchema>;
+export interface FeeOption {
+    readonly token: {
+        readonly network: string;
+        readonly name: string;
+        readonly symbol: string;
+        readonly type: string;
+        readonly decimals?: number;
+        readonly contractAddress?: string;
+        readonly tokenID?: string;
+    };
+    readonly value: string;
+    readonly displayValue: string;
+}
 ```
 
 ## Execution, observation and guidance

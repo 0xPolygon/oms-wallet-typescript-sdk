@@ -30,6 +30,12 @@ export interface State {
    * handle pointing at the same state refuses EVM debits instead of bypassing swap reservations.
    */
   swapsCoordinated?: boolean;
+  /**
+   * Authoritative active swap/recovery chain reservations (`swapId -> chainId`) persisted inside
+   * wallet state under the shared executor so a misconfigured worker with an empty swap store
+   * cannot bypass active debit reservations.
+   */
+  swapReservations?: Record<string, number>;
 }
 
 const storedWallet = (family: NetworkFamily) =>
@@ -64,7 +70,8 @@ const stateSchema = z.strictObject({
   credential: credentialSchema.optional(),
   disabled: z.boolean(),
   creating: z.array(z.enum(NETWORK_FAMILIES)).max(NETWORK_FAMILIES.length),
-  swapsCoordinated: z.boolean().optional()
+  swapsCoordinated: z.boolean().optional(),
+  swapReservations: z.record(z.string().min(1), z.number().int().positive()).optional()
 });
 
 const operationStatusValues = [
@@ -97,6 +104,7 @@ const storedEvmOperationSchema = z.strictObject({
   status: z.enum(operationStatusValues),
   chainId: z.number().int(),
   submissionMode: submissionModeSchema.optional(),
+  internal: z.boolean().optional(),
   reviewId: z.string().min(1).optional(),
   submitted: z.boolean().optional(),
   preSubmitExpired: z.boolean().optional(),
@@ -210,10 +218,10 @@ export function parseOperationIndex(raw: string | null): string[] {
   return parsed.data;
 }
 
-/** Validate the stored open-operation index. */
+/** Validate the stored open-operation index (`v: 2` includes unproven legacy expiries). */
 export function parseOpenOperationIndex(
   raw: string | null
-): { synced: number; ids: string[] } | null {
+): { v: 2; synced: number; ids: string[] } | null {
   if (raw === null) return null;
   let json: unknown;
   try {
@@ -221,11 +229,21 @@ export function parseOpenOperationIndex(
   } catch {
     throw invalid('Stored open-operation index is not valid JSON.');
   }
-  const parsed = z
+  const v2 = z
+    .strictObject({
+      v: z.literal(2),
+      synced: z.number().int().min(0),
+      ids: z.array(z.string().min(1))
+    })
+    .safeParse(json);
+  if (v2.success) return v2.data;
+  // Pre-v2 open index (without `v: 2`) may have excluded unproven legacy `expired` records:
+  // force a clean one-time rebuild from `operationIndex`.
+  const v1 = z
     .strictObject({ synced: z.number().int().min(0), ids: z.array(z.string().min(1)) })
     .safeParse(json);
-  if (!parsed.success) throw invalid('Stored open-operation index is not in a recognised format.');
-  return parsed.data;
+  if (v1.success) return null;
+  throw invalid('Stored open-operation index is not in a recognised format.');
 }
 
 /** Read and validate the state, migrating a 0.2.x record. `migrated` means it must be saved. */

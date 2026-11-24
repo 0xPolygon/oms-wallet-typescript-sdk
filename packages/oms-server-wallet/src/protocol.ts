@@ -16,6 +16,17 @@ const familyByType: Record<string, NetworkFamily> = {
   tron: 'tron'
 };
 
+/** Wallet identity returned by WaaS. */
+export interface RemoteWallet {
+  readonly id: string;
+  readonly address: string;
+  readonly reference?: string;
+  readonly networkFamily?: string;
+  readonly implementation?: string;
+  readonly type?: string;
+  readonly keyOrigin?: string;
+}
+
 /** Addresses are checked per family once the family is known; see `walletFamily`. */
 export const walletSchema = z.object({
   id: z.string().min(1),
@@ -26,7 +37,6 @@ export const walletSchema = z.object({
   type: z.string().optional(),
   keyOrigin: z.string().optional()
 });
-export type RemoteWallet = z.infer<typeof walletSchema>;
 
 export function isWalletAddress(family: NetworkFamily, address: string): boolean {
   if (family === 'solana') return isSolanaAddress(address);
@@ -65,13 +75,36 @@ export const statusSchema = z.object({
     .optional()
     .or(z.literal('').transform(() => undefined))
 });
+/** Sponsored EVM transaction quote returned by WaaS. */
+export interface Quote {
+  readonly txnId: string;
+  readonly status: 'quoted';
+  readonly sponsored: boolean;
+  readonly expiresAt: string;
+}
+
 export const quoteSchema = z.object({
   txnId: z.string().min(1),
   status: z.literal('quoted'),
   sponsored: z.boolean(),
   expiresAt: z.string().datetime({ offset: true })
 });
-export type Quote = z.infer<typeof quoteSchema>;
+
+/** Single fee option offered by WaaS for a non-sponsored chain transaction. */
+export interface FeeOption {
+  readonly token: {
+    readonly network: string;
+    readonly name: string;
+    readonly symbol: string;
+    readonly type: string;
+    readonly decimals?: number;
+    readonly contractAddress?: string;
+    readonly tokenID?: string;
+  };
+  readonly value: string;
+  readonly displayValue: string;
+}
+
 export const feeOptionSchema = z.object({
   token: z.object({
     network: z.string(),
@@ -85,7 +118,12 @@ export const feeOptionSchema = z.object({
   value: z.string().regex(/^(0|[1-9][0-9]{0,77})$/),
   displayValue: z.string()
 });
-export type FeeOption = z.infer<typeof feeOptionSchema>;
+
+/** Solana or Tron transaction quote returned by WaaS. */
+export interface ChainQuote extends Quote {
+  readonly feeOptions: readonly FeeOption[];
+}
+
 /** v1.2.0 adds fee options to every quote. Older servers send `null`, read as none. */
 export const chainQuoteSchema = quoteSchema.extend({
   feeOptions: z
@@ -94,7 +132,6 @@ export const chainQuoteSchema = quoteSchema.extend({
     .nullish()
     .transform((options) => options ?? [])
 });
-export type ChainQuote = z.infer<typeof chainQuoteSchema>;
 export interface Credential {
   privateJwk: JsonWebKey;
   /** Raw uncompressed public key used in the request signature header. */

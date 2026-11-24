@@ -30,6 +30,7 @@ export interface LockedEnginePrimitives {
     disabled: boolean;
   }>;
   markSwapsCoordinatedLocked(): Promise<void>;
+  setSwapReservationLocked(swapId: string, chainId: number | null): Promise<void>;
   readEvmOperationsLocked(ids: readonly string[]): Promise<StoredEvmOperation[]>;
   listOpenEvmOperationsLocked(): Promise<StoredEvmOperation[]>;
   refreshEvmOperationLocked(id: string): Promise<StoredEvmOperation | null>;

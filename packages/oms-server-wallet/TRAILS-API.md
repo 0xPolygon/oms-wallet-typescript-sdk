@@ -352,9 +352,11 @@ export interface RecoveryAsset {
 ```typescript
 export interface TransactionView {
     readonly status: string;
+    readonly txnId?: string;
     readonly hash?: string;
     readonly chainId: number;
     readonly sponsored: boolean;
+    readonly error?: string;
 }
 ```
 

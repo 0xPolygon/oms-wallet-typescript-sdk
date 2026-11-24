@@ -18,11 +18,12 @@ import type {
   GetSolanaBalancesOptions,
   GetTronBalancesOptions,
   ListOperationsOptions,
-  ServerWallet,
   ServerWalletBase,
   ServerWalletOptions,
+  ServerWalletOptionsBase,
   ServerWalletService,
   ServerWalletServiceOptions,
+  ServerWalletServiceOptionsBase,
   ServiceIndexerFacet,
   SolanaFacet,
   SolanaFacetBase,
@@ -138,7 +139,14 @@ function resolveWalletStore(store: WalletStoreOption, namespace: string) {
       'store.adapter must implement read/write and include a 32-byte base64 encryptionKey.',
       503
     );
-  return new EncryptedStore(store.adapter, store.encryptionKey, namespace);
+  const context = store.encryptionContext === undefined ? namespace : store.encryptionContext;
+  if (typeof context !== 'string' || !context.trim())
+    throw new WalletError(
+      'CONFIGURATION',
+      'store.encryptionContext must be a non-empty string when provided.',
+      503
+    );
+  return new EncryptedStore(store.adapter, store.encryptionKey, context);
 }
 
 function sleepAbortable(ms: number, signal?: AbortSignal): Promise<boolean> {
@@ -158,6 +166,7 @@ function sleepAbortable(ms: number, signal?: AbortSignal): Promise<boolean> {
 
 async function waitFor<TOperation extends WalletOperation>(
   id: string,
+  getLocal: (id: string) => Promise<TOperation | null>,
   refresh: (id: string) => Promise<TOperation | null>,
   options: WaitForOperationOptions,
   now: () => number = () => Date.now()
@@ -176,23 +185,26 @@ async function waitFor<TOperation extends WalletOperation>(
     );
   const pollMs = Math.max(250, Math.min(options.pollIntervalMs ?? 2_000, 30_000));
   const deadline = now() + options.timeoutMs;
-  let last: TOperation | null = null;
+
+  // Start with a local read so already-settled, reconciliation-required, or pre-aborted callers
+  // never trigger unnecessary remote WaaS polling.
+  let last = await getLocal(id);
+  if (!last) throw new WalletError('NOT_FOUND', 'Operation not found.', 404);
+  if (SETTLED_STATUSES.has(last.status)) return { outcome: 'settled', operation: last };
+  if (last.status === 'unknown' && last.error === 'RECONCILIATION_REQUIRED')
+    return { outcome: 'reconciliation-required', operation: last };
+  if (options.signal?.aborted) return { outcome: 'cancelled', operation: last };
 
   for (;;) {
-    if (options.signal?.aborted) {
-      if (!last) {
-        const current = await refresh(id);
-        if (!current) throw new WalletError('NOT_FOUND', 'Operation not found.', 404);
-        last = current;
-      }
-      return { outcome: 'cancelled', operation: last };
-    }
+    if (options.signal?.aborted) return { outcome: 'cancelled', operation: last };
+    if (now() >= deadline) return { outcome: 'timed-out', operation: last };
     const current = await refresh(id);
     if (!current) throw new WalletError('NOT_FOUND', 'Operation not found.', 404);
     last = current;
     if (SETTLED_STATUSES.has(current.status)) return { outcome: 'settled', operation: current };
     if (current.status === 'unknown' && current.error === 'RECONCILIATION_REQUIRED')
       return { outcome: 'reconciliation-required', operation: current };
+    if (options.signal?.aborted) return { outcome: 'cancelled', operation: current };
     const remaining = deadline - now();
     if (remaining <= 0) return { outcome: 'timed-out', operation: current };
     const waited = await sleepAbortable(Math.min(pollMs, remaining), options.signal);
@@ -232,7 +244,13 @@ function buildWalletFacade<
     getOperation: (id: string) => engine.getEvmOperationLocal(id),
     refreshOperation: (id: string) => engine.refreshEvmOperation(id),
     waitForOperation: (id: string, options: WaitForOperationOptions) =>
-      waitFor<EvmOperation>(id, (opId) => engine.refreshEvmOperation(opId), options, clock),
+      waitFor<EvmOperation>(
+        id,
+        (opId) => engine.getEvmOperationLocal(opId),
+        (opId) => engine.refreshEvmOperation(opId),
+        options,
+        clock
+      ),
     listOperations: (options?: ListOperationsOptions) => engine.listEvmOperations(options)
   };
   const evmImmediate: EvmImmediateFacet = {
@@ -256,7 +274,13 @@ function buildWalletFacade<
     getOperation: (id: string) => engine.getSolanaOperationLocal(id),
     refreshOperation: (id: string) => engine.refreshSolanaOperation(id),
     waitForOperation: (id: string, options: WaitForOperationOptions) =>
-      waitFor<SolanaOperation>(id, (opId) => engine.refreshSolanaOperation(opId), options, clock),
+      waitFor<SolanaOperation>(
+        id,
+        (opId) => engine.getSolanaOperationLocal(opId),
+        (opId) => engine.refreshSolanaOperation(opId),
+        options,
+        clock
+      ),
     listOperations: (options?: ListOperationsOptions) => engine.listSolanaOperations(options)
   };
   const solanaImmediate: SolanaImmediateFacet = {
@@ -277,7 +301,13 @@ function buildWalletFacade<
     getOperation: (id: string) => engine.getTronOperationLocal(id),
     refreshOperation: (id: string) => engine.refreshTronOperation(id),
     waitForOperation: (id: string, options: WaitForOperationOptions) =>
-      waitFor<TronOperation>(id, (opId) => engine.refreshTronOperation(opId), options, clock),
+      waitFor<TronOperation>(
+        id,
+        (opId) => engine.getTronOperationLocal(opId),
+        (opId) => engine.refreshTronOperation(opId),
+        options,
+        clock
+      ),
     listOperations: (options?: ListOperationsOptions) => engine.listTronOperations(options)
   };
   const tronImmediate: TronImmediateFacet = {
@@ -342,14 +372,13 @@ function buildWalletFacade<
       : Record<string, never>);
 }
 
-/** Package-private test seam: runs the exact public factory wiring over a custom `RpcTransport` and clock. */
-export function createServerWalletInternal<
-  TApproval extends ApprovalMode = 'two-phase',
-  TSwaps extends SwapsConfig<'wallet', unknown> | undefined = undefined
->(
-  options: ServerWalletOptions<TApproval, TSwaps>,
+function instantiateServerWallet(
+  options: ServerWalletOptionsBase & {
+    readonly approval?: ApprovalMode;
+    readonly swaps?: SwapsConfig<'wallet', unknown>;
+  },
   overrides: { transport?: RpcTransport; clock?: () => number; indexer?: IndexerClient } = {}
-): ServerWallet<TApproval, TSwaps> {
+): ServerWalletBase<ApprovalMode> & { readonly swaps?: unknown } {
   if (!options || typeof options !== 'object')
     throw new WalletError('CONFIGURATION', 'Configure createServerWallet options.', 503);
   const environment = environmentFromKey(options.publishableKey);
@@ -410,34 +439,107 @@ export function createServerWalletInternal<
     swapsFacet = bound.facet;
   }
 
-  return buildWalletFacade<TApproval, TSwaps>({
+  return buildWalletFacade<ApprovalMode, SwapsConfig<'wallet', unknown> | undefined>({
     engine,
     indexer,
-    approval: approval as TApproval,
+    approval,
     swapsFacet,
     clock: overrides.clock
-  }) as unknown as ServerWallet<TApproval, TSwaps>;
+  }) as unknown as ServerWalletBase<ApprovalMode> & { readonly swaps?: unknown };
+}
+
+/** Package-private test seam: runs the exact public factory wiring over a custom `RpcTransport` and clock. */
+export function createServerWalletInternal(
+  options: ServerWalletOptionsBase & {
+    readonly approval?: 'two-phase';
+    readonly swaps?: undefined;
+  },
+  overrides?: { transport?: RpcTransport; clock?: () => number; indexer?: IndexerClient }
+): ServerWalletBase<'two-phase'>;
+export function createServerWalletInternal<TFacet>(
+  options: ServerWalletOptionsBase & {
+    readonly approval?: 'two-phase';
+    readonly swaps: SwapsConfig<'wallet', TFacet>;
+  },
+  overrides?: { transport?: RpcTransport; clock?: () => number; indexer?: IndexerClient }
+): ServerWalletBase<'two-phase'> & { readonly swaps: TFacet };
+export function createServerWalletInternal(
+  options: ServerWalletOptionsBase & {
+    readonly approval: 'allow-immediate';
+    readonly swaps?: undefined;
+  },
+  overrides?: { transport?: RpcTransport; clock?: () => number; indexer?: IndexerClient }
+): ServerWalletBase<'allow-immediate'>;
+export function createServerWalletInternal<TFacet>(
+  options: ServerWalletOptionsBase & {
+    readonly approval: 'allow-immediate';
+    readonly swaps: SwapsConfig<'wallet', TFacet>;
+  },
+  overrides?: { transport?: RpcTransport; clock?: () => number; indexer?: IndexerClient }
+): ServerWalletBase<'allow-immediate'> & { readonly swaps: TFacet };
+export function createServerWalletInternal<TApproval extends ApprovalMode = 'two-phase'>(
+  options: ServerWalletOptionsBase & {
+    readonly approval?: TApproval;
+    readonly swaps?: undefined;
+  },
+  overrides?: { transport?: RpcTransport; clock?: () => number; indexer?: IndexerClient }
+): ServerWalletBase<TApproval>;
+export function createServerWalletInternal(
+  options: ServerWalletOptionsBase & {
+    readonly approval?: ApprovalMode;
+    readonly swaps?: SwapsConfig<'wallet', unknown>;
+  },
+  overrides?: { transport?: RpcTransport; clock?: () => number; indexer?: IndexerClient }
+): ServerWalletBase<ApprovalMode> & { readonly swaps?: unknown } {
+  return instantiateServerWallet(options, overrides);
 }
 
 /**
  * Create a single-identity attested server wallet (ideal for one Cloudflare Durable Object per
  * wallet, or hosts managing per-identity storage and execution directly).
  */
-export function createServerWallet<
-  TApproval extends ApprovalMode = 'two-phase',
-  TSwaps extends SwapsConfig<'wallet', unknown> | undefined = undefined
->(options: ServerWalletOptions<TApproval, TSwaps>): ServerWallet<TApproval, TSwaps> {
-  return createServerWalletInternal(options);
+export function createServerWallet(
+  options: ServerWalletOptionsBase & {
+    readonly approval?: 'two-phase';
+    readonly swaps?: undefined;
+  }
+): ServerWalletBase<'two-phase'>;
+export function createServerWallet<TFacet>(
+  options: ServerWalletOptionsBase & {
+    readonly approval?: 'two-phase';
+    readonly swaps: SwapsConfig<'wallet', TFacet>;
+  }
+): ServerWalletBase<'two-phase'> & { readonly swaps: TFacet };
+export function createServerWallet(
+  options: ServerWalletOptionsBase & {
+    readonly approval: 'allow-immediate';
+    readonly swaps?: undefined;
+  }
+): ServerWalletBase<'allow-immediate'>;
+export function createServerWallet<TFacet>(
+  options: ServerWalletOptionsBase & {
+    readonly approval: 'allow-immediate';
+    readonly swaps: SwapsConfig<'wallet', TFacet>;
+  }
+): ServerWalletBase<'allow-immediate'> & { readonly swaps: TFacet };
+export function createServerWallet(
+  options: ServerWalletOptions<ApprovalMode, SwapsConfig<'wallet', unknown> | undefined>
+): ServerWalletBase<ApprovalMode> & { readonly swaps?: unknown } {
+  return instantiateServerWallet(
+    options as ServerWalletOptionsBase & {
+      readonly approval?: ApprovalMode;
+      readonly swaps?: SwapsConfig<'wallet', unknown>;
+    }
+  );
 }
 
-/** Package-private test seam for `createServerWalletService`. */
-export function createServerWalletServiceInternal<
-  TApproval extends ApprovalMode = 'two-phase',
-  TSwaps extends SwapsConfig<'service', unknown> | undefined = undefined
->(
-  options: ServerWalletServiceOptions<TApproval, TSwaps>,
+function instantiateServerWalletService(
+  options: ServerWalletServiceOptionsBase & {
+    readonly approval?: ApprovalMode;
+    readonly swaps?: SwapsConfig<'service', unknown>;
+  },
   overrides: { transport?: RpcTransport; clock?: () => number; indexer?: IndexerClient } = {}
-): ServerWalletService<TApproval, TSwaps> {
+): ServerWalletService<ApprovalMode, SwapsConfig<'service', unknown> | undefined> {
   if (!options || typeof options !== 'object')
     throw new WalletError('CONFIGURATION', 'Configure createServerWalletService options.', 503);
   const environment = environmentFromKey(options.publishableKey);
@@ -565,16 +667,55 @@ export function createServerWalletServiceInternal<
         engine.attachGate(bound.gate);
         swapsFacet = bound.facet;
       }
-      return buildWalletFacade<TApproval, TSwaps>({
+      return buildWalletFacade<ApprovalMode, SwapsConfig<'service', unknown> | undefined>({
         engine,
         indexer,
-        approval: approval as TApproval,
+        approval,
         swapsFacet,
         clock: overrides.clock
       });
     },
     indexer: serviceIndexer
-  }) as unknown as ServerWalletService<TApproval, TSwaps>;
+  }) as unknown as ServerWalletService<ApprovalMode, SwapsConfig<'service', unknown> | undefined>;
+}
+
+/** Package-private test seam for `createServerWalletService`. */
+export function createServerWalletServiceInternal(
+  options: ServerWalletServiceOptionsBase & {
+    readonly approval?: 'two-phase';
+    readonly swaps?: undefined;
+  },
+  overrides?: { transport?: RpcTransport; clock?: () => number; indexer?: IndexerClient }
+): ServerWalletService<'two-phase', undefined>;
+export function createServerWalletServiceInternal<TFacet>(
+  options: ServerWalletServiceOptionsBase & {
+    readonly approval?: 'two-phase';
+    readonly swaps: SwapsConfig<'service', TFacet>;
+  },
+  overrides?: { transport?: RpcTransport; clock?: () => number; indexer?: IndexerClient }
+): ServerWalletService<'two-phase', SwapsConfig<'service', TFacet>>;
+export function createServerWalletServiceInternal(
+  options: ServerWalletServiceOptionsBase & {
+    readonly approval: 'allow-immediate';
+    readonly swaps?: undefined;
+  },
+  overrides?: { transport?: RpcTransport; clock?: () => number; indexer?: IndexerClient }
+): ServerWalletService<'allow-immediate', undefined>;
+export function createServerWalletServiceInternal<TFacet>(
+  options: ServerWalletServiceOptionsBase & {
+    readonly approval: 'allow-immediate';
+    readonly swaps: SwapsConfig<'service', TFacet>;
+  },
+  overrides?: { transport?: RpcTransport; clock?: () => number; indexer?: IndexerClient }
+): ServerWalletService<'allow-immediate', SwapsConfig<'service', TFacet>>;
+export function createServerWalletServiceInternal(
+  options: ServerWalletServiceOptionsBase & {
+    readonly approval?: ApprovalMode;
+    readonly swaps?: SwapsConfig<'service', unknown>;
+  },
+  overrides?: { transport?: RpcTransport; clock?: () => number; indexer?: IndexerClient }
+): ServerWalletService<ApprovalMode, SwapsConfig<'service', unknown> | undefined> {
+  return instantiateServerWalletService(options, overrides);
 }
 
 /**
@@ -582,9 +723,37 @@ export function createServerWalletServiceInternal<
  * Computes exact 0.2.x-compatible namespaces from the routed WaaS origin, project, issuer,
  * audience, and subject.
  */
-export function createServerWalletService<
-  TApproval extends ApprovalMode = 'two-phase',
-  TSwaps extends SwapsConfig<'service', unknown> | undefined = undefined
->(options: ServerWalletServiceOptions<TApproval, TSwaps>): ServerWalletService<TApproval, TSwaps> {
-  return createServerWalletServiceInternal(options);
+export function createServerWalletService(
+  options: ServerWalletServiceOptionsBase & {
+    readonly approval?: 'two-phase';
+    readonly swaps?: undefined;
+  }
+): ServerWalletService<'two-phase', undefined>;
+export function createServerWalletService<TFacet>(
+  options: ServerWalletServiceOptionsBase & {
+    readonly approval?: 'two-phase';
+    readonly swaps: SwapsConfig<'service', TFacet>;
+  }
+): ServerWalletService<'two-phase', SwapsConfig<'service', TFacet>>;
+export function createServerWalletService(
+  options: ServerWalletServiceOptionsBase & {
+    readonly approval: 'allow-immediate';
+    readonly swaps?: undefined;
+  }
+): ServerWalletService<'allow-immediate', undefined>;
+export function createServerWalletService<TFacet>(
+  options: ServerWalletServiceOptionsBase & {
+    readonly approval: 'allow-immediate';
+    readonly swaps: SwapsConfig<'service', TFacet>;
+  }
+): ServerWalletService<'allow-immediate', SwapsConfig<'service', TFacet>>;
+export function createServerWalletService(
+  options: ServerWalletServiceOptions<ApprovalMode, SwapsConfig<'service', unknown> | undefined>
+): ServerWalletService<ApprovalMode, SwapsConfig<'service', unknown> | undefined> {
+  return instantiateServerWalletService(
+    options as ServerWalletServiceOptionsBase & {
+      readonly approval?: ApprovalMode;
+      readonly swaps?: SwapsConfig<'service', unknown>;
+    }
+  );
 }

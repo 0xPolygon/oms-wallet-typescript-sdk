@@ -5,9 +5,11 @@ export const transactionView = (op?: StoredEvmOperation): TransactionView | unde
   op
     ? {
         status: op.status,
+        ...(op.quote?.txnId ? { txnId: op.quote.txnId } : {}),
         hash: publicHash(op.txnHash),
         chainId: op.chainId,
-        sponsored: op.quote?.sponsored === true
+        sponsored: op.quote?.sponsored === true,
+        ...(op.error ? { error: op.error } : {})
       }
     : undefined;
 

@@ -217,8 +217,8 @@ See [docs/SWAPS-INTEGRATION.md](docs/SWAPS-INTEGRATION.md) and [TRAILS-API.md](T
 
 - `StateStore.write` / `NamespacedStateStore.write` must complete durable persistence before resolving.
 - `ExclusiveExecutor.run` must hold exclusive ownership for the entire async task, including remote I/O. `createSingleProcessExecutor` / `createSingleProcessExecutorPool` are sufficient only within one Node process or a single per-wallet Durable Object.
-- The SDK computes the canonical `0.2.x`-compatible namespace (`JSON.stringify([waasOrigin, projectId, issuer, audience, subject])`) from the routed **WaaS API origin** (never `APP_ORIGIN`).
-- Encrypted `0.2.x` wallet state is migrated automatically on first load (including `inspect()`), preserving credentials, nonces, and operations. Fence older workers before the first `0.3.0` load; roll back only from a pre-upgrade backup. Unknown formats fail closed with `INVALID_STATE`.
+- The SDK computes the canonical `0.2.x`-compatible namespace (`JSON.stringify([waasOrigin, projectId, issuer, audience, subject])`) from the routed **WaaS API origin** (never `APP_ORIGIN`). If an existing `0.2.x` deployment used a custom `EncryptedStore` context string (such as the bare subject), pass `store: { adapter, encryptionKey, encryptionContext }` explicitly — the SDK never falls back after an integrity error.
+- Encrypted `0.2.x` wallet state is migrated automatically on first load (including `inspect()`), preserving credentials, nonces, and operations. Fence older workers before the first `0.3.0` load. Restoring a pre-upgrade backup after new nonces or submissions have been sent requires upstream reconciliation — a database backup alone is not a safe rollback. Unknown formats fail closed with `INVALID_STATE`.
 
 ## Development
 
