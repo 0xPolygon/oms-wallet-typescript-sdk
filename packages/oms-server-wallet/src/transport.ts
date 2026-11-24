@@ -56,16 +56,29 @@ export class WaasTransport implements RpcTransport {
         body
       );
     const fetcher = this.fetcher;
-    const response = await fetcher(this.environment.origin + path, {
-      method: 'POST',
-      body,
-      headers,
-      redirect: 'manual',
-      signal: AbortSignal.timeout(20_000)
-    });
-    if (response.status >= 300 && response.status < 400)
-      throw new WalletError('UPSTREAM_REDIRECT', 'WaaS redirects are not permitted.', 502);
-    const responseBody = await boundedText(response);
+    let response: Response;
+    let responseBody: string;
+    try {
+      response = await fetcher(this.environment.origin + path, {
+        method: 'POST',
+        body,
+        headers,
+        redirect: 'manual',
+        signal: AbortSignal.timeout(20_000)
+      });
+      if (response.status >= 300 && response.status < 400) {
+        await response.body?.cancel();
+        throw new WalletError('UPSTREAM_REDIRECT', 'WaaS redirects are not permitted.', 502);
+      }
+      responseBody = await boundedText(response);
+    } catch (error) {
+      if (error instanceof WalletError) throw error;
+      throw new WalletError(
+        'UPSTREAM_UNAVAILABLE',
+        `WaaS ${method} request did not complete.`,
+        502
+      );
+    }
     try {
       const encodedDocument = response.headers.get(ATTESTATION_DOCUMENT_HEADER);
       if (!encodedDocument || encodedDocument.length > 64_000)

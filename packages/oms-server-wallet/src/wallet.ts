@@ -651,7 +651,7 @@ function instantiateServerWalletService(
 
   return Object.freeze({
     forSubject(subject: string) {
-      if (!subject || subject.length > 128)
+      if (typeof subject !== 'string' || !subject || subject.length > 128)
         throw new WalletError(
           'INVALID_IDENTITY',
           'Wallet identifiers must contain 1–128 characters.'

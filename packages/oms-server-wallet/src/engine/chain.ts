@@ -540,6 +540,8 @@ export class ChainEngine {
     await this.core.expireBeforeSubmit(op);
     const state = await this.core.load();
     await this.core.ensure(state, [family]);
+    // Re-check expiry after re-auth I/O so a short-lived quote is never sent to Execute.
+    await this.core.expireBeforeSubmit(op);
     op.status = 'submitting';
     op.submitted = true;
     await this.core.writeOperation(op);

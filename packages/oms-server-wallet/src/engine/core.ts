@@ -77,7 +77,7 @@ export class EngineCore {
   readonly now: () => number;
 
   constructor(readonly config: WalletEngineConfig) {
-    if (!config.subject || config.subject.length > 128)
+    if (typeof config.subject !== 'string' || !config.subject || config.subject.length > 128)
       throw new WalletError(
         'INVALID_IDENTITY',
         'Wallet identifiers must contain 1–128 characters.'
@@ -203,7 +203,7 @@ export class EngineCore {
     params: Record<string, unknown>
   ): Promise<unknown> {
     if (!state.credential) throw new WalletError('NO_CREDENTIAL', 'Credential unavailable.');
-    state.credential.nonce = nextWalletNonce(BigInt(state.credential.nonce)).toString();
+    state.credential.nonce = nextWalletNonce(BigInt(state.credential.nonce), this.now()).toString();
     await this.save(state);
     return this.config.transport.request(method, params, state.credential);
   }
@@ -238,67 +238,109 @@ export class EngineCore {
     return families.length ? families : ['evm'];
   }
 
-  async ensure(state: State, families: readonly NetworkFamily[]): Promise<void> {
+  private async signIn(state: State, discoverFamilies: readonly NetworkFamily[]): Promise<void> {
+    const idToken = await this.config.getIdToken();
+    if (
+      !idToken ||
+      typeof idToken !== 'object' ||
+      typeof idToken.token !== 'string' ||
+      !idToken.token.trim() ||
+      typeof idToken.expiresAt !== 'number' ||
+      !Number.isFinite(idToken.expiresAt)
+    )
+      throw new WalletError(
+        'CONFIGURATION',
+        'oidc.getIdToken must return { token, expiresAt }.',
+        503
+      );
+    const { token, expiresAt } = idToken;
+    state.credential = await generateCredential();
+    await this.save(state);
+    const handle = await sha256(token);
+    const committed = parseWaas(
+      z.object({ verifier: z.string() }),
+      await this.call(state, 'CommitVerifier', {
+        identityType: 'oidc',
+        authMode: 'id-token',
+        handle,
+        metadata: {
+          iss: this.config.issuer,
+          aud: this.config.audience,
+          exp: String(expiresAt)
+        }
+      })
+    );
+    const authenticated = parseWaas(
+      authSchema,
+      await this.call(state, 'CompleteAuth', {
+        identityType: 'oidc',
+        authMode: 'id-token',
+        verifier: committed.verifier,
+        answer: token,
+        lifetime: this.config.sessionLifetimeSeconds ?? 21_600
+      })
+    );
+    if (
+      authenticated.identity.sub !== this.config.subject ||
+      authenticated.identity.iss.replace(/\/$/, '') !== this.config.issuer.replace(/\/$/, '') ||
+      authenticated.credential.credentialId.toLowerCase() !== state.credential.credentialId
+    )
+      throw new WalletError(
+        'IDENTITY_MISMATCH',
+        'WaaS returned a different identity or credential.',
+        502
+      );
+    await this.discover(
+      state,
+      discoverFamilies,
+      authenticated.wallets,
+      authenticated.page?.cursor || undefined
+    );
+    state.credential.expiresAt = authenticated.credential.expiresAt;
+    await this.save(state);
+  }
+
+  private async discoverWithRefresh(
+    state: State,
+    discoverFamilies: readonly NetworkFamily[]
+  ): Promise<void> {
+    try {
+      await this.discover(state, discoverFamilies, [], '');
+      await this.save(state);
+    } catch (error) {
+      if (!(error instanceof UpstreamError) || !credentialRejectedCodes.has(error.upstreamCode))
+        throw error;
+      state.credential = undefined;
+      await this.save(state);
+      await this.signIn(state, discoverFamilies);
+    }
+  }
+
+  async ensure(
+    state: State,
+    families: readonly NetworkFamily[],
+    options: { readonly bindAllExisting?: boolean } = {}
+  ): Promise<void> {
     if (state.disabled) throw new WalletError('WALLET_DISABLED', 'This wallet is disabled.', 409);
+    const discoverFamilies = options.bindAllExisting ? NETWORK_FAMILIES : families;
     let discovered = false;
     if (
       !state.credential?.expiresAt ||
       Date.parse(state.credential.expiresAt) <= this.now() + 60_000 ||
       state.creating.some((family) => !state.wallets[family])
     ) {
-      state.credential = await generateCredential();
-      await this.save(state);
-      const { token, expiresAt } = await this.config.getIdToken();
-      const handle = await sha256(token);
-      const committed = parseWaas(
-        z.object({ verifier: z.string() }),
-        await this.call(state, 'CommitVerifier', {
-          identityType: 'oidc',
-          authMode: 'id-token',
-          handle,
-          metadata: {
-            iss: this.config.issuer,
-            aud: this.config.audience,
-            exp: String(expiresAt)
-          }
-        })
-      );
-      const authenticated = parseWaas(
-        authSchema,
-        await this.call(state, 'CompleteAuth', {
-          identityType: 'oidc',
-          authMode: 'id-token',
-          verifier: committed.verifier,
-          answer: token,
-          lifetime: this.config.sessionLifetimeSeconds ?? 21_600
-        })
-      );
-      if (
-        authenticated.identity.sub !== this.config.subject ||
-        authenticated.identity.iss.replace(/\/$/, '') !== this.config.issuer.replace(/\/$/, '') ||
-        authenticated.credential.credentialId.toLowerCase() !== state.credential.credentialId
-      )
-        throw new WalletError(
-          'IDENTITY_MISMATCH',
-          'WaaS returned a different identity or credential.',
-          502
-        );
-      await this.discover(
-        state,
-        families,
-        authenticated.wallets,
-        authenticated.page?.cursor || undefined
-      );
+      await this.signIn(state, discoverFamilies);
       discovered = true;
-      state.credential.expiresAt = authenticated.credential.expiresAt;
-      await this.save(state);
+    }
+    if (options.bindAllExisting && !discovered) {
+      await this.discoverWithRefresh(state, discoverFamilies);
+      discovered = true;
     }
     for (const family of families) {
       if (state.wallets[family]) continue;
       if (!discovered) {
-        await this.discover(state, families, [], '');
+        await this.discoverWithRefresh(state, discoverFamilies);
         discovered = true;
-        await this.save(state);
         if (state.wallets[family]) continue;
       }
       if (this.config.createWallets === false)
@@ -432,11 +474,7 @@ export class EngineCore {
    * exist. Throws `WALLET_NOT_INITIALIZED` otherwise.
    */
   async restoreExisting(state: State, families?: readonly NetworkFamily[]): Promise<void> {
-    await this.ensure(state, families ?? []);
-    if (!families) {
-      await this.discover(state, NETWORK_FAMILIES, [], '');
-      await this.save(state);
-    }
+    await this.ensure(state, families ?? [], { bindAllExisting: !families });
     if (!NETWORK_FAMILIES.some((family) => state.wallets[family]))
       throw new WalletError(
         'WALLET_NOT_INITIALIZED',

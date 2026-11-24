@@ -80,7 +80,10 @@ if (
         'TRAILS-API.md',
         'CHANGELOG.md',
         'NOTICE',
-        'LICENSE-APACHE-2.0'
+        'LICENSE-APACHE-2.0',
+        'docs/ERRORS.md',
+        'docs/NODE-INTEGRATION.md',
+        'docs/SWAPS-INTEGRATION.md'
       ].includes(f.path)
   )
 )

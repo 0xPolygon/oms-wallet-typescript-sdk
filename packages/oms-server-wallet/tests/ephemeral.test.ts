@@ -63,9 +63,11 @@ describe('createEphemeralServerWallet', () => {
   it('restores existing wallets and signs on every family with WaaS verification', async () => {
     const remote = await provisioned();
     const before = calls(remote, 'CreateWallet').length;
+    const listsBefore = calls(remote, 'ListWallets').length;
     const wallet = ephemeral(remote);
     const snapshot = await wallet.restore();
     expect(Object.keys(snapshot.wallets).sort()).toEqual(['evm', 'solana', 'tron']);
+    expect(calls(remote, 'ListWallets')).toHaveLength(listsBefore);
     expect(calls(remote, 'CompleteAuth').at(-1)?.body.lifetime).toBe(900);
 
     await expect(wallet.evm.signMessage({ chainId: 80002, message: 'hi' })).resolves.toEqual({
@@ -190,6 +192,40 @@ describe('createEphemeralServerWallet', () => {
     expect(rotated.credentialId).not.toBe(first.credentialId);
     expect(remote.revoked.has(first.credentialId!)).toBe(true);
     expect(rotated.wallets.tron?.address).toBe(first.wallets.tron?.address);
+  });
+
+  it('re-authenticates during restore when a cached credential was revoked server-side', async () => {
+    const remote = await provisioned();
+    const wallet = ephemeral(remote);
+    const first = await wallet.restore({ families: ['evm'] });
+    // Simulate server-side revocation before local expiresAt elapses.
+    remote.revoked.add(first.credentialId!);
+    const second = await wallet.restore();
+    expect(second.credentialId).not.toBe(first.credentialId);
+    expect(Object.keys(second.wallets).sort()).toEqual(['evm', 'solana', 'tron']);
+  });
+
+  it('does not persist or attempt to revoke a credential when getIdToken fails before sign-in', async () => {
+    const remote = await provisioned();
+    const wallet = createEphemeralServerWalletInternal(
+      {
+        publishableKey: TEST_PUBLISHABLE_KEY,
+        oidc: {
+          subject: 'customer-1',
+          issuer: 'https://issuer.example',
+          audience: 'oms-server-wallet',
+          getIdToken: async () => {
+            throw new Error('IdP down');
+          }
+        }
+      },
+      { transport: remote }
+    );
+    await expect(wallet.restore()).rejects.toThrow('IdP down');
+    expect((await wallet.inspect()).credentialId).toBeUndefined();
+    const revokesBefore = calls(remote, 'RevokeCredential').length;
+    await wallet.close();
+    expect(calls(remote, 'RevokeCredential')).toHaveLength(revokesBefore);
   });
 
   it('rejects durable-only options at runtime', () => {

@@ -131,6 +131,43 @@ describe('WaaS request protocol', () => {
       code: 'RESPONSE_TOO_LARGE'
     });
   });
+  it('wraps fetch/timeout errors as UPSTREAM_UNAVAILABLE, cancels 3xx bodies, and rejects invalid UTF-8', async () => {
+    const netClient = new WaasTransport(
+      'pk_dev_live_test_key',
+      { trustedPcr0s: ['0'.repeat(96)], allowDebugEnclave: true },
+      async () => {
+        throw new TypeError('fetch failed');
+      }
+    );
+    await expect(netClient.request('SignMessage', {})).rejects.toMatchObject({
+      code: 'UPSTREAM_UNAVAILABLE',
+      status: 502
+    });
+
+    let cancelled = false;
+    const redirectStream = new ReadableStream({
+      cancel() {
+        cancelled = true;
+      }
+    });
+    const redirectClient = new WaasTransport(
+      'pk_dev_live_test_key',
+      { trustedPcr0s: ['0'.repeat(96)], allowDebugEnclave: true },
+      async () =>
+        new Response(redirectStream, { status: 302, headers: { Location: 'https://evil.example' } })
+    );
+    await expect(redirectClient.request('SignMessage', {})).rejects.toMatchObject({
+      code: 'UPSTREAM_REDIRECT',
+      status: 502
+    });
+    expect(cancelled).toBe(true);
+
+    const invalidUtf8 = new Uint8Array([0xff, 0xfe]);
+    await expect(boundedText(new Response(invalidUtf8))).rejects.toMatchObject({
+      code: 'INVALID_RESPONSE',
+      status: 502
+    });
+  });
 });
 describe('indexer gateway', () => {
   it('maps exact balances and metadata, reports network errors, and paginates', async () => {
@@ -217,5 +254,19 @@ describe('indexer gateway', () => {
         status: 502
       });
     }
+  });
+  it('wraps network errors from EVM, Solana and Tron indexer calls as INDEXER_UNAVAILABLE', async () => {
+    const client = new IndexerClient('pk_dev_live_test_key', async () => {
+      throw new TypeError('network down');
+    });
+    await expect(
+      client.getBalances('0x1111111111111111111111111111111111111111')
+    ).rejects.toMatchObject({ code: 'INDEXER_UNAVAILABLE', status: 502 });
+    await expect(
+      client.getSolanaBalances('11111111111111111111111111111111')
+    ).rejects.toMatchObject({ code: 'INDEXER_UNAVAILABLE', status: 502 });
+    await expect(
+      client.getTronBalances('TXYZopYRdj2D9XRtbG411XZZ3kM5VkAeBf')
+    ).rejects.toMatchObject({ code: 'INDEXER_UNAVAILABLE', status: 502 });
   });
 });

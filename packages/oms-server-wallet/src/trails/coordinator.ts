@@ -564,8 +564,27 @@ export class TrailsCoordinator {
         await this.saveLocked(record);
         return swapView(record);
       }
-      // Case 2: active recovery transaction in RECONCILIATION_REQUIRED
+      // Case 2: active recovery deployment or transaction in RECONCILIATION_REQUIRED
       const recovery = this.currentRecovery(record, false);
+      if (recovery && recovery.deployment?.quote?.txnId === txnId) {
+        recovery.deployment = await this.config.primitives.resolveEvmReconciliationLocked(
+          recovery.deploymentId,
+          txnId
+        );
+        if (
+          recovery.deployment.status === 'expired' &&
+          recovery.deployment.operatorResolved === true
+        ) {
+          recovery.status = 'expired';
+          recovery.error = 'RECOVERY_EXPIRED';
+          record.activeRecoveryId = undefined;
+          record.phase = 'attention';
+          record.action = 'observe';
+          record.error = 'RECOVERY_EXPIRED';
+        }
+        await this.saveLocked(record);
+        return swapView(record);
+      }
       if (recovery && recovery.transaction?.quote?.txnId === txnId) {
         recovery.transaction = await this.config.primitives.resolveEvmReconciliationLocked(
           recovery.transactionId,
@@ -925,7 +944,6 @@ export class TrailsCoordinator {
         record.error = 'RECONCILIATION_REQUIRED';
       } else {
         record.phase = 'funding';
-        record.error = 'FUNDING_PENDING';
       }
     }
   }
@@ -1247,6 +1265,15 @@ export class TrailsCoordinator {
       recovery.deployment =
         (await this.config.primitives.refreshEvmOperationLocked(recovery.deploymentId)) ??
         recovery.deployment;
+    if (
+      recovery.deployment.status === 'unknown' &&
+      recovery.deployment.error === 'RECONCILIATION_REQUIRED'
+    ) {
+      recovery.error = 'RECONCILIATION_REQUIRED';
+      record.phase = 'attention';
+      record.error = 'RECONCILIATION_REQUIRED';
+      return;
+    }
     if (
       recovery.deployment.status === 'failed' ||
       (recovery.deployment.status === 'expired' && recovery.deployment.preSubmitExpired === true)

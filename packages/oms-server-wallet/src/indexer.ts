@@ -166,18 +166,29 @@ export class IndexerClient {
       );
     const requested = [...new Set(networks)];
     const fetcher = this.fetcher;
-    const response = await fetcher(url, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json', 'Api-Key': this.key, Webrpc: webrpc },
-      body: JSON.stringify({
-        networks: requested,
-        filter: { accountAddresses: [address], omitNativeBalances: false },
-        omitMetadata: false
-      }),
-      redirect: 'manual',
-      signal: AbortSignal.timeout(20_000)
-    });
-    const body = await boundedText(response);
+    let response: Response;
+    let body: string;
+    try {
+      response = await fetcher(url, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'Api-Key': this.key, Webrpc: webrpc },
+        body: JSON.stringify({
+          networks: requested,
+          filter: { accountAddresses: [address], omitNativeBalances: false },
+          omitMetadata: false
+        }),
+        redirect: 'manual',
+        signal: AbortSignal.timeout(20_000)
+      });
+      body = await boundedText(response);
+    } catch (error) {
+      if (error instanceof WalletError) throw error;
+      throw new WalletError(
+        'INDEXER_UNAVAILABLE',
+        'Balance service request did not complete.',
+        502
+      );
+    }
     if (!response.ok)
       throw new WalletError(
         'INDEXER_UNAVAILABLE',
@@ -259,23 +270,34 @@ export class IndexerClient {
     const requestedSet = new Set<number>(requestedChainIds);
 
     const fetcher = this.fetcher;
-    const response = await fetcher(this.environment.indexerUrl, {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        'Api-Key': this.key,
-        Webrpc: 'webrpc@v0.31.2;gen-typescript@v0.23.1;sequence-indexer@v0.4.0'
-      },
-      body: JSON.stringify({
-        chainIds: requestedChainIds,
-        filter: { accountAddresses: [address], omitNativeBalances: false, contractStatus: 'ALL' },
-        omitMetadata: false,
-        page: { page, pageSize: 40 }
-      }),
-      redirect: 'manual',
-      signal: AbortSignal.timeout(20_000)
-    });
-    const body = await boundedText(response);
+    let response: Response;
+    let body: string;
+    try {
+      response = await fetcher(this.environment.indexerUrl, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Api-Key': this.key,
+          Webrpc: 'webrpc@v0.31.2;gen-typescript@v0.23.1;sequence-indexer@v0.4.0'
+        },
+        body: JSON.stringify({
+          chainIds: requestedChainIds,
+          filter: { accountAddresses: [address], omitNativeBalances: false, contractStatus: 'ALL' },
+          omitMetadata: false,
+          page: { page, pageSize: 40 }
+        }),
+        redirect: 'manual',
+        signal: AbortSignal.timeout(20_000)
+      });
+      body = await boundedText(response);
+    } catch (error) {
+      if (error instanceof WalletError) throw error;
+      throw new WalletError(
+        'INDEXER_UNAVAILABLE',
+        'Balance service request did not complete.',
+        502
+      );
+    }
     if (!response.ok)
       throw new WalletError(
         'INDEXER_UNAVAILABLE',

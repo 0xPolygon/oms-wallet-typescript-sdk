@@ -692,7 +692,7 @@ export interface EphemeralServerWalletOptions {
 /** Wallets and credential held by an ephemeral handle. */
 export interface EphemeralWalletSnapshot {
   readonly wallet?: RemoteWallet;
-  readonly wallets: Partial<Record<NetworkFamily, RemoteWallet>>;
+  readonly wallets: Readonly<Partial<Record<NetworkFamily, RemoteWallet>>>;
   readonly expiresAt?: string;
   readonly credentialId?: string;
 }

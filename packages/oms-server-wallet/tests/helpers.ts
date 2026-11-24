@@ -52,6 +52,7 @@ export class FakeWaas implements RpcTransport {
   pageSize = 100;
   calls: { method: string; body: Record<string, unknown>; credential?: string }[] = [];
   nonces = new Map<string, bigint>();
+  private evmTxnCount = 0;
   revoked = new Set<string>();
   sponsored = true;
   failCreate = false;
@@ -170,7 +171,7 @@ export class FakeWaas implements RpcTransport {
     }
     if (method === 'PrepareEthereumTransaction')
       return {
-        txnId: 'txn-1',
+        txnId: `txn-${++this.evmTxnCount}`,
         status: 'quoted',
         sponsored: this.sponsored,
         expiresAt: new Date(Date.now() + 60_000).toISOString()

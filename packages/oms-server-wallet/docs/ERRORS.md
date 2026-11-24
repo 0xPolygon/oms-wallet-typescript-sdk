@@ -116,6 +116,7 @@ so the outcome survives a restart. Settlement codes such as `SUBMISSION_UNCERTAI
 | --- | --- | --- |
 | `UPSTREAM_ERROR` | WaaS refused the request (`UpstreamError`; see `upstreamCode`, `method`). | Branch on `upstreamCode` where needed. |
 | `UPSTREAM_REDIRECT` | WaaS or Trails answered with a redirect, which is never followed. | Check the endpoint and network path. |
+| `UPSTREAM_UNAVAILABLE` | A WaaS request failed before a verified response was received (network error or timeout). | Retry idempotent reads; reconcile mutations before retrying. |
 | `ATTESTATION_FAILED` | A WaaS response failed enclave attestation. | Do not bypass; check `attestation` and the endpoint. |
 | `IDENTITY_MISMATCH` | WaaS authenticated a different identity or credential. | Check the OIDC subject and issuer. |
 | `INVALID_RESPONSE` | WaaS, Trails or the indexer returned a response the SDK does not accept. | Retry later; report if it persists. |

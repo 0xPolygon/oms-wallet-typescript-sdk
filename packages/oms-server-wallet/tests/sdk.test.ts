@@ -296,7 +296,12 @@ describe('encryption, amounts, environment routing', () => {
     const first = await raw.read('wallet');
     await store.write('wallet', 'same');
     expect(await raw.read('wallet')).not.toEqual(first);
-    expect(() => new EncryptedStore(raw, btoa('short'), 'subject')).toThrow();
+    expect(() => new EncryptedStore(raw, btoa('short'), 'subject')).toThrow(
+      expect.objectContaining({ code: 'CONFIGURATION', status: 503 })
+    );
+    expect(() => new EncryptedStore(raw, 'not-valid-base64!!!', 'subject')).toThrow(
+      expect.objectContaining({ code: 'CONFIGURATION', status: 503 })
+    );
   });
   it('parses amounts without floating-point rounding', () => {
     expect(parseAmount('12345678901234567890.123456', 6)).toBe('12345678901234567890123456');

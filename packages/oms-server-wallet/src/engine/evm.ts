@@ -447,6 +447,8 @@ export class EvmEngine {
     // Reload state after the debit gate in case gate refreshes advanced the nonce or rotated credentials.
     state = await this.core.load();
     await this.core.ensure(state, ['evm']);
+    // Re-check expiry after debit gate / re-auth I/O so an expired quote is never sent to Execute.
+    await this.core.expireBeforeSubmit(op);
     op.status = 'submitting';
     op.submitted = true;
     await this.core.writeOperation(op);

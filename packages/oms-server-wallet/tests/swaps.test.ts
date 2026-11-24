@@ -855,4 +855,78 @@ describe('settled funding and recovery operations', () => {
       }
     });
   });
+
+  it('escalates and resolves an ambiguous recovery owner deployment past grace, releasing the chain', async () => {
+    const h = await swapHarness();
+    await funded(h);
+    h.intent.status = 'FAILED';
+    h.receipt.status = 'FAILED';
+    h.flags.intentBalance = '1000';
+    h.flags.deployed = false;
+    const view = await h.swaps.prepareRecovery({
+      swapId: 'swap-test-0001',
+      idempotencyKey: 'recovery-deploy-ambig',
+      source: 'origin'
+    });
+    await h.swaps.confirmRecovery({
+      swapId: view.id,
+      recoveryId: 'recovery-deploy-ambig',
+      reviewId: view.recoveries[0].reviewId
+    });
+    h.waas.remote.failExecute = true;
+    await h.tick();
+    const recovery = (await h.record()).recoveries[0];
+    expect(recovery.deployment?.status).toBe('unknown');
+
+    // Age past grace and return TransactionExpired -> escalates to RECONCILIATION_REQUIRED
+    h.waas.remote.evmStatusError = 7309;
+    await editOperation(h, recovery.deploymentId, (op) => {
+      op.quote.expiresAt = new Date(Date.now() - 121_000).toISOString();
+    });
+    await h.tick();
+    const stuckView = await h.swaps.get('swap-test-0001');
+    expect(stuckView.phase).toBe('attention');
+    expect(stuckView.error).toBe('RECONCILIATION_REQUIRED');
+    expect(stuckView.recoveries[0]).toMatchObject({
+      error: 'RECONCILIATION_REQUIRED',
+      deployment: {
+        status: 'unknown',
+        txnId: recovery.deployment?.quote?.txnId,
+        error: 'RECONCILIATION_REQUIRED'
+      }
+    });
+    // Chain 137 is blocked until resolved.
+    await expect(
+      h.wallet.evm.prepareTransfer({
+        idempotencyKey: 'blocked-by-deploy-recon',
+        chainId: 137,
+        to: '0x2222222222222222222222222222222222222222',
+        asset: 'native',
+        amount: '1'
+      })
+    ).rejects.toMatchObject({ code: 'DEBIT_PENDING' });
+
+    // Operator resolves deployment as not-broadcast -> clears activeRecoveryId & frees chain 137.
+    const resolved = await h.swaps.resolveReconciliation({
+      swapId: 'swap-test-0001',
+      txnId: recovery.deployment!.quote!.txnId,
+      resolution: 'not-broadcast'
+    });
+    expect(resolved.phase).toBe('attention');
+    expect(resolved.error).toBe('RECOVERY_EXPIRED');
+    expect(resolved.canRecover).toBe(true);
+    expect(resolved.recoveries[0]).toMatchObject({
+      status: 'expired',
+      error: 'RECOVERY_EXPIRED'
+    });
+    await expect(
+      h.wallet.evm.prepareTransfer({
+        idempotencyKey: 'unblocked-after-deploy-recon',
+        chainId: 137,
+        to: '0x2222222222222222222222222222222222222222',
+        asset: 'native',
+        amount: '1'
+      })
+    ).resolves.toMatchObject({ status: 'quoted' });
+  });
 });

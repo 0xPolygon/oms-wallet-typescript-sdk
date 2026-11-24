@@ -125,7 +125,16 @@ export class EncryptedStore implements StateStore {
     secret: string,
     private readonly context: string
   ) {
-    const bytes = base64DecodeBytes(secret);
+    let bytes: Uint8Array<ArrayBuffer>;
+    try {
+      bytes = base64DecodeBytes(secret);
+    } catch {
+      throw new WalletError(
+        'CONFIGURATION',
+        'ENCRYPTION_KEY must contain 32 base64-encoded bytes.',
+        503
+      );
+    }
     if (bytes.length !== 32)
       throw new WalletError(
         'CONFIGURATION',

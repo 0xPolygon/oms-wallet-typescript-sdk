@@ -1262,4 +1262,130 @@ describe('deep systems hardening (Dot + Opus 5.5 audit)', () => {
     expect(waited.outcome).toBe('reconciliation-required');
     expect(h.remote.calls).toHaveLength(0);
   });
+
+  it('recovers when a durable cached credential was revoked server-side before adding a family', async () => {
+    const h = sdkHarness();
+    const first = await h.client.createOrRestore({ families: ['evm'] });
+    h.remote.revoked.add(first.credentialId!);
+    const second = await h.client.createOrRestore({ families: ['evm', 'solana'] });
+    expect(second.credentialId).not.toBe(first.credentialId);
+    expect(second.wallets.evm?.address).toBe(first.wallets.evm?.address);
+    expect(second.wallets.solana?.address).toBeDefined();
+  });
+
+  it('re-checks quote expiry after re-auth so a quote expiring mid-execute is never sent to WaaS', async () => {
+    let now = Date.parse('2026-06-01T00:00:00.000Z');
+    const store = new MemoryStore();
+    const remote = new FakeWaas();
+    let advanceOnAuth = false;
+    const client = createServerWalletInternal(
+      {
+        publishableKey: TEST_PUBLISHABLE_KEY,
+        oidc: {
+          subject: 'customer-1',
+          issuer: 'https://issuer.example',
+          audience: 'oms-server-wallet',
+          getIdToken: async () => {
+            if (advanceOnAuth) now += 600_000; // Quote expires while fetching fresh ID token
+            return { token: `tok-${crypto.randomUUID()}`, expiresAt: Math.floor(now / 1000) + 300 };
+          }
+        },
+        store: { encryptedStore: store },
+        executor: createSingleProcessExecutor()
+      },
+      { transport: remote, clock: () => now }
+    );
+    await client.createOrRestore({ families: ['evm', 'solana'] });
+
+    // Prepare EVM and Solana transfers whose quotes expire at now + 120s.
+    const evmPrep = await client.evm.prepareTransfer({
+      idempotencyKey: 'recheck-evm-1',
+      chainId: 137,
+      to: '0x2222222222222222222222222222222222222222',
+      asset: 'native',
+      amount: '10'
+    });
+    const solPrep = await client.solana.prepareTransfer({
+      idempotencyKey: 'recheck-sol-1',
+      network: 'solana:devnet',
+      to: '11111111111111111111111111111111',
+      asset: 'native',
+      amount: '1000'
+    });
+    // Set both quotes to expire at now + 120s, and force re-auth during execute by clearing expiresAt.
+    for (const key of ['operation:recheck-evm-1', 'operation:recheck-sol-1']) {
+      const op = JSON.parse((await store.read(key))!);
+      op.quote.expiresAt = new Date(now + 120_000).toISOString();
+      await store.write(key, JSON.stringify(op));
+    }
+    const clearCredExpiry = async () => {
+      const walletState = JSON.parse((await store.read('wallet'))!);
+      walletState.credential.expiresAt = new Date(now - 1_000).toISOString();
+      await store.write('wallet', JSON.stringify(walletState));
+    };
+
+    const executesBefore = remote.calls.filter((c) => c.method === 'Execute').length;
+    advanceOnAuth = true;
+    await clearCredExpiry();
+    await expect(
+      client.evm.execute({ idempotencyKey: 'recheck-evm-1', reviewId: evmPrep.reviewId! })
+    ).rejects.toMatchObject({ code: 'QUOTE_EXPIRED' });
+    expect(await client.evm.getOperation('recheck-evm-1')).toMatchObject({
+      status: 'expired',
+      error: 'QUOTE_EXPIRED',
+      provenUnsent: true
+    });
+
+    // Reset clock so Solana quote is still valid before re-auth, then expires during re-auth.
+    now = Date.parse('2026-06-01T00:00:00.000Z');
+    await clearCredExpiry();
+    await expect(
+      client.solana.execute({ idempotencyKey: 'recheck-sol-1', reviewId: solPrep.reviewId! })
+    ).rejects.toMatchObject({ code: 'QUOTE_EXPIRED' });
+    expect(await client.solana.getOperation('recheck-sol-1')).toMatchObject({
+      status: 'expired',
+      error: 'QUOTE_EXPIRED',
+      provenUnsent: true
+    });
+    expect(remote.calls.filter((c) => c.method === 'Execute')).toHaveLength(executesBefore);
+  });
+
+  it('rejects non-string subject and malformed getIdToken results as typed WalletErrors', async () => {
+    const store = new MemoryStore();
+    expect(() =>
+      createServerWalletInternal(
+        {
+          publishableKey: TEST_PUBLISHABLE_KEY,
+          oidc: {
+            subject: 123 as unknown as string,
+            issuer: 'https://issuer.example',
+            audience: 'oms-server-wallet',
+            getIdToken: async () => ({ token: 't', expiresAt: 1 })
+          },
+          store: { encryptedStore: store },
+          executor: createSingleProcessExecutor()
+        },
+        { transport: new FakeWaas() }
+      )
+    ).toThrow(expect.objectContaining({ code: 'INVALID_IDENTITY' }));
+
+    const client = createServerWalletInternal(
+      {
+        publishableKey: TEST_PUBLISHABLE_KEY,
+        oidc: {
+          subject: 'customer-1',
+          issuer: 'https://issuer.example',
+          audience: 'oms-server-wallet',
+          getIdToken: async () => ({ token: '', expiresAt: Number.NaN })
+        },
+        store: { encryptedStore: store },
+        executor: createSingleProcessExecutor()
+      },
+      { transport: new FakeWaas() }
+    );
+    await expect(client.createOrRestore()).rejects.toMatchObject({
+      code: 'CONFIGURATION',
+      status: 503
+    });
+  });
 });
