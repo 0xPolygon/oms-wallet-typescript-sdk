@@ -14,7 +14,8 @@
 // transactions only: a sponsored zero-value call on Polygon Amoy (plus LIVE_EVM_AMOUNT wei of POL
 // when set),
 // LIVE_SOLANA_AMOUNT lamports on Solana devnet (default 0.001 SOL, enough to open a new account)
-// and LIVE_TRON_AMOUNT sun on Tron Nile (default 1 sun, paying TRX only up to LIVE_TRON_MAX_FEE).
+// and LIVE_TRON_AMOUNT sun on Tron Nile (default 1 sun, paying TRX only up to LIVE_TRON_MAX_FEE),
+// plus LIVE_TRC20_AMOUNT base units of Nile USDT (default 1, fee cap LIVE_TRC20_MAX_FEE sun).
 // Recipients default to the separate lifecycle identity's wallets, so funds stay in test wallets;
 // LIVE_EVM_RECIPIENT, LIVE_SOLANA_RECIPIENT and LIVE_TRON_RECIPIENT override them. Mainnet
 // transfers are never sent. Credential rotation and disabling use the lifecycle identity, so they
@@ -507,36 +508,65 @@ await check('Tron TIP-712 signing, verified by WaaS', () =>
     }
   })
 );
-await check(
-  'observation: Tron TRC-20 transfer call is accepted and quoted (quote only)',
-  async () => {
-    // Nile USDT. The wallet may hold none, so a balance refusal is reported, not treated as failure.
-    try {
-      const op = await wallet.tron.prepareContractCall({
-        idempotencyKey: id('live-trc20-quote'),
-        network: 'tron:nile',
-        contract: process.env.LIVE_TRON_TOKEN ?? 'TXYZopYRdj2D9XRtbG411XZZ3kM5VkAeBf',
-        method: 'transfer',
-        args: [
-          { type: 'address', value: lifecycleWallets.tron!.address },
-          { type: 'uint256', value: '1' }
-        ],
-        maxFee: process.env.LIVE_TRON_MAX_FEE ?? '20000000'
+const trc20 = {
+  network: 'tron:nile',
+  contract: process.env.LIVE_TRON_TOKEN ?? 'TXYZopYRdj2D9XRtbG411XZZ3kM5VkAeBf', // Nile USDT
+  method: 'transfer',
+  args: [
+    { type: 'address', value: lifecycleWallets.tron!.address },
+    { type: 'uint256', value: process.env.LIVE_TRC20_AMOUNT ?? '1' }
+  ],
+  // A first TRC-20 transfer to an account burns more energy than a TRX transfer.
+  maxFee: process.env.LIVE_TRC20_MAX_FEE ?? '30000000'
+} as const;
+if (!execute)
+  await check(
+    'observation: Tron TRC-20 transfer call is accepted and quoted (quote only)',
+    async () => {
+      try {
+        const op = await wallet.tron.prepareContractCall({
+          idempotencyKey: id('live-trc20-quote'),
+          ...trc20
+        });
+        return {
+          status: op.status,
+          sponsored: op.quote?.sponsored,
+          quoteLifetimeMs: op.quote
+            ? Date.parse(op.quote.expiresAt) - Date.parse(op.createdAt)
+            : null
+        };
+      } catch (error) {
+        // The wallet may hold none of the token; a reverting simulation is reported, not failed.
+        if (!(error instanceof WalletError)) throw error;
+        return {
+          refused: error.code,
+          ...('upstreamCode' in error ? { upstreamCode: error.upstreamCode } : {})
+        };
+      }
+    }
+  );
+else
+  await check(
+    'Tron TRC-20 (USDT) transfer executes within maxFee; getTransactionStatus agrees',
+    async () => {
+      const op = await wallet.tron.sendContractCall({
+        idempotencyKey: id('live-trc20-send'),
+        ...trc20
       });
+      const done = await executed(() => wallet.tron.refreshOperation(op.id));
+      const status = await wallet.tron.getTransactionStatus(op.quote!.txnId);
+      if (status.status !== 'executed' || status.txnHash !== done.txnHash)
+        throw new Error(`getTransactionStatus returned ${JSON.stringify(status)}`);
       return {
-        status: op.status,
+        to: trc20.args[0].value,
+        amount: trc20.args[1].value,
         sponsored: op.quote?.sponsored,
-        quoteLifetimeMs: op.quote ? Date.parse(op.quote.expiresAt) - Date.parse(op.createdAt) : null
-      };
-    } catch (error) {
-      if (!(error instanceof WalletError)) throw error;
-      return {
-        refused: error.code,
-        ...('upstreamCode' in error ? { upstreamCode: error.upstreamCode } : {})
+        fee: op.fee ? `${op.fee.value} sun` : 'none',
+        txnHash: done.txnHash,
+        explorer: `https://nile.tronscan.org/#/transaction/${done.txnHash}`
       };
     }
-  }
-);
+  );
 await check('Tron Nile balances', () =>
   balances(wallet.indexer.getTronBalances({ networks: ['tron:nile'] }))
 );
