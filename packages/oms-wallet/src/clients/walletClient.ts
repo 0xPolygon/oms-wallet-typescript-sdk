@@ -3082,8 +3082,10 @@ export class WalletClientImpl implements WalletClient {
     for (let attempt = 0; attempt <= resendBackoffMs.length && !executed; attempt += 1) {
       if (attempt > 0) {
         await this.delay(resendBackoffMs[attempt - 1]);
-        // A resend must not run under a session that ended or replaced the one that sent first.
+        // A resend must not run under a session that ended or replaced the one that sent first,
+        // nor for a wallet that is no longer the active one.
         if (this.sessionRevision !== revision) break;
+        if (params.wallet && this.walletId !== params.wallet.id) break;
       }
       // Records whether the Execute request reached `fetch`; it aborts with nothing else.
       const executeSignal = new AbortController().signal;
@@ -3121,8 +3123,16 @@ export class WalletClientImpl implements WalletClient {
         lastUnconfirmed = sdkError;
         // After an earlier send a refusal settles only this request: that send may still land.
         // 7309 on the first send is an expired quote; on a resend, a WaaS without idempotent
-        // Execute may be reporting the earlier send's claim.
-        if (refused || isCredentialEndedError(sdkError) || waasCode === '7309') break;
+        // Execute may be reporting the earlier send's claim. 7200 on a resend: the session's
+        // permissions changed since the first send, so WaaS refuses every resend.
+        if (
+          refused ||
+          isCredentialEndedError(sdkError) ||
+          waasCode === '7309' ||
+          (attempt > 0 && waasCode === '7200')
+        ) {
+          break;
+        }
       }
     }
     if (!executed) {

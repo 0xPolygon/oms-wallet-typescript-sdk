@@ -1540,7 +1540,8 @@ describe('WalletClient request deadline', () => {
     ['TransactionSimulationFailed', 7314, 400],
     ['InvalidSignature', 7201, 401],
     ['Unauthorized', 7207, 403],
-    ['KeyNotFound', 7202, 401]
+    ['KeyNotFound', 7202, 401],
+    ['InvalidRequest', 7200, 400]
   ])(
     'keeps an Execute unconfirmed when WaaS answers its resend with %s',
     async (name, code, status) => {
@@ -1584,6 +1585,29 @@ describe('WalletClient request deadline', () => {
     const result = sendTransaction(wallet);
     await vi.waitFor(() => expect(requestCount(fetchMock, '/Execute')).toBe(1));
     await wallet.signOut();
+    await vi.advanceTimersByTimeAsync(7_000);
+
+    expect(await result).toMatchObject({
+      code: 'OMS_TRANSACTION_EXECUTION_UNCONFIRMED',
+      txnId: 'txn-1'
+    });
+    expect(requestCount(fetchMock, '/Execute')).toBe(1);
+  });
+
+  it('stops resending an Execute once the active wallet changes', async () => {
+    vi.useFakeTimers();
+    const fetchMock = stubWaasWithSignal({
+      '/PrepareEthereumTransaction': () => sponsoredPrepareResponse(),
+      '/Execute': () => waasExecuteError('TransactionBroadcastFailed', 7311, 502)
+    });
+    const wallet = createWalletWithSession(walletAddress);
+
+    const result = sendTransaction(wallet);
+    await vi.waitFor(() => expect(requestCount(fetchMock, '/Execute')).toBe(1));
+    (wallet as any).activeWalletAccount = testWalletAccount(
+      'other-id',
+      '0x2222222222222222222222222222222222222222'
+    );
     await vi.advanceTimersByTimeAsync(7_000);
 
     expect(await result).toMatchObject({
