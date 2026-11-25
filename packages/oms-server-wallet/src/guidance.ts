@@ -23,7 +23,7 @@ export function describeOperation(operation: WalletOperation): OperationGuidance
         action: 'done',
         reason: operation.txnHash
           ? 'Transaction executed on WaaS. Verify the chain receipt before treating payment as settled.'
-          : 'Transaction reported executed without a transaction hash; verify the upstream/on-chain outcome.'
+          : 'Transaction executed on WaaS, but its transaction hash has not been reported yet. Call refreshOperation on this same ID to obtain it; never submit a replacement.'
       };
 
     case 'signed':
@@ -34,26 +34,29 @@ export function describeOperation(operation: WalletOperation): OperationGuidance
       };
 
     case 'quoted':
-      if (!operation.reviewId)
-        return {
-          ...base,
-          action: 'safe-to-reprepare',
-          reason:
-            'Quoted operation has no reviewId and cannot be executed. Prepare and review a new operation under a fresh idempotencyKey.'
-        };
       return {
         ...base,
         action: 'await-review',
         reason:
-          'Prepared and quoted, not submitted. Review the terms and call execute with idempotencyKey and reviewId before expiry.'
+          'Prepared and quoted, not submitted. Review the terms and call execute with idempotencyKey and reviewId before expiry, or cancel it to prepare a replacement.'
       };
 
     case 'preparing':
       return {
         ...base,
+        action: 'resume-original',
+        reason:
+          operation.submissionMode === 'immediate'
+            ? 'Preparation was interrupted before a quote was stored; nothing was submitted. Repeat the same send* call with the same idempotencyKey and input, or cancel it. Do not start a new idempotencyKey while this one can still be resumed.'
+            : 'Preparation was interrupted before a quote was stored; nothing was submitted. Repeat the same prepare* call with the same idempotencyKey and input, or cancel it. Do not start a new idempotencyKey while this one can still be resumed.'
+      };
+
+    case 'cancelled':
+      return {
+        ...base,
         action: 'safe-to-reprepare',
         reason:
-          'Preparation was interrupted before a quote was persisted; nothing was submitted. Retry prepare with the same idempotencyKey or start a new one.'
+          'Cancelled before submission; nothing was broadcast and this operation can no longer execute. Prepare a replacement under a new idempotencyKey if still wanted.'
       };
 
     case 'pending':

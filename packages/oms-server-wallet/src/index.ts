@@ -22,6 +22,7 @@ export { describeOperation } from './guidance.js';
 
 export type {
   ApprovalMode,
+  CancelInput,
   AttestationOptions,
   ChainBalance,
   ChainBalances,

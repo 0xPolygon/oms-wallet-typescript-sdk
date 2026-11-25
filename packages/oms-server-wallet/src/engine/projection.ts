@@ -11,9 +11,10 @@ import type {
 } from '../types.js';
 
 import { WalletError } from '../errors.js';
+import { operationStateProblem } from '../state.js';
 
 export function computeProvenUnsent(op: StoredOperationRecord): boolean {
-  if (op.status === 'preparing') return true;
+  if (op.status === 'preparing' || op.status === 'cancelled') return true;
   if (op.status === 'expired') return op.preSubmitExpired === true;
   if (op.status === 'failed') {
     if (op.kind === 'sign' || op.kind === 'signTypedData') return false;
@@ -23,7 +24,14 @@ export function computeProvenUnsent(op: StoredOperationRecord): boolean {
   return false;
 }
 
+/** Fail closed if a record breaks its status guarantees before casting it to the public type. */
+function assertOperationState(op: StoredOperationRecord): void {
+  const problem = operationStateProblem(op);
+  if (problem) throw new WalletError('INVALID_STATE', problem, 500);
+}
+
 export function projectEvmOperation(op: StoredEvmOperation): EvmOperation {
+  assertOperationState(op);
   return {
     id: op.id,
     family: 'evm',
@@ -43,10 +51,11 @@ export function projectEvmOperation(op: StoredEvmOperation): EvmOperation {
     ...(op.status === 'signed' && op.verified === true ? { verified: true as const } : {}),
     ...(op.txnHash ? { txnHash: op.txnHash } : {}),
     ...(op.error ? { error: op.error } : {})
-  };
+  } as EvmOperation;
 }
 
 export function projectSolanaOperation(op: StoredChainOperation): SolanaOperation {
+  assertOperationState(op);
   return {
     id: op.id,
     family: 'solana',
@@ -74,10 +83,11 @@ export function projectSolanaOperation(op: StoredChainOperation): SolanaOperatio
     ...(op.status === 'signed' && op.verified === true ? { verified: true as const } : {}),
     ...(op.txnHash ? { txnHash: op.txnHash } : {}),
     ...(op.error ? { error: op.error } : {})
-  };
+  } as SolanaOperation;
 }
 
 export function projectTronOperation(op: StoredChainOperation): TronOperation {
+  assertOperationState(op);
   return {
     id: op.id,
     family: 'tron',
@@ -117,7 +127,7 @@ export function projectTronOperation(op: StoredChainOperation): TronOperation {
     ...(op.status === 'signed' && op.verified === true ? { verified: true as const } : {}),
     ...(op.txnHash ? { txnHash: op.txnHash } : {}),
     ...(op.error ? { error: op.error } : {})
-  };
+  } as TronOperation;
 }
 
 export function parseListOptions(options: ListOperationsOptions = {}): {

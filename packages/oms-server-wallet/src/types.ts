@@ -191,7 +191,9 @@ export type OperationStatus =
   | 'failed'
   | 'unknown'
   | 'signed'
-  | 'expired';
+  | 'expired'
+  /** Cancelled with `cancel` before it was submitted; nothing was sent. */
+  | 'cancelled';
 
 export type SubmissionMode = 'review' | 'immediate';
 
@@ -351,10 +353,7 @@ export interface OperationBase {
   readonly id: string;
   readonly inputHash: string;
   readonly createdAt: string;
-  readonly status: OperationStatus;
   readonly submissionMode: SubmissionMode;
-  /** Opaque revision binding the reviewed quote and normalized terms; required by `execute`. */
-  readonly reviewId?: string;
   /** True only when the SDK has durable proof that no broadcast/claim occurred. */
   readonly provenUnsent: boolean;
   /**
@@ -362,33 +361,78 @@ export interface OperationBase {
    * `resolveReconciliation`. An operator assertion, not SDK proof, so `provenUnsent` stays false.
    */
   readonly operatorResolved?: true;
-  readonly signature?: string;
-  readonly verified?: true;
-  readonly txnHash?: string;
   readonly error?: WalletErrorCode;
 }
 
+/**
+ * Fields an operation's `status` guarantees. Narrowing on `status` narrows these: a `quoted`
+ * operation always has its `quote` and the `reviewId` that `execute` requires; a submitted one
+ * (`submitting`, `pending`, `executed`) always has its `quote`; a `signed` one always has its
+ * verified `signature`. `reviewId` binds the reviewed terms; `txnHash` is the chain transaction
+ * reference (a Solana signature or a Tron transaction ID on those chains), which can arrive after
+ * `executed`.
+ */
+export type OperationState<TQuote> =
+  | {
+      readonly status: 'preparing';
+      readonly quote?: undefined;
+      readonly reviewId?: undefined;
+      readonly txnHash?: undefined;
+      readonly signature?: undefined;
+      readonly verified?: undefined;
+    }
+  | {
+      readonly status: 'quoted';
+      readonly quote: TQuote;
+      readonly reviewId: string;
+      readonly txnHash?: undefined;
+      readonly signature?: undefined;
+      readonly verified?: undefined;
+    }
+  | {
+      readonly status: 'submitting' | 'pending' | 'executed';
+      readonly quote: TQuote;
+      readonly reviewId?: string;
+      readonly txnHash?: string;
+      readonly signature?: undefined;
+      readonly verified?: undefined;
+    }
+  | {
+      readonly status: 'unknown' | 'failed' | 'expired' | 'cancelled';
+      readonly quote?: TQuote;
+      readonly reviewId?: string;
+      readonly txnHash?: string;
+      readonly signature?: undefined;
+      readonly verified?: undefined;
+    }
+  | {
+      readonly status: 'signed';
+      readonly signature: string;
+      readonly verified: true;
+      readonly quote?: undefined;
+      readonly reviewId?: undefined;
+      readonly txnHash?: undefined;
+    };
+
 /** Persisted EVM operation view. */
-export interface EvmOperation extends OperationBase {
+export type EvmOperation = OperationBase & {
   readonly family: 'evm';
   readonly kind: 'transfer' | 'call' | 'sign' | 'signTypedData';
   readonly chainId: number;
   readonly transfer?: EvmTransfer;
   readonly transaction?: { readonly to: string; readonly data: string; readonly value: string };
-  readonly quote?: Quote;
-}
+} & OperationState<Quote>;
 
 /** Persisted Solana operation view. */
-export interface SolanaOperation extends OperationBase {
+export type SolanaOperation = OperationBase & {
   readonly family: 'solana';
   readonly kind: 'transfer' | 'sign';
   readonly network?: SolanaNetwork;
   readonly transfer?: SolanaTransfer;
-  readonly quote?: ChainQuote;
-}
+} & OperationState<ChainQuote>;
 
 /** Persisted Tron operation view. */
-export interface TronOperation extends OperationBase {
+export type TronOperation = OperationBase & {
   readonly family: 'tron';
   readonly kind: 'transaction' | 'contractCall' | 'sign' | 'signTypedData';
   readonly network?: TronNetwork;
@@ -403,9 +447,8 @@ export interface TronOperation extends OperationBase {
     readonly args?: readonly TronAbiArg[];
   };
   readonly maxFee?: string;
-  readonly quote?: ChainQuote;
   readonly fee?: FeeOption;
-}
+} & OperationState<ChainQuote>;
 
 /** Union of all public wallet operation types across families. */
 export type WalletOperation = EvmOperation | SolanaOperation | TronOperation;
@@ -430,30 +473,51 @@ export interface OperationPage<TOperation extends WalletOperation> {
 export interface WaitForOperationOptions {
   /** Maximum total wall-clock wait duration in milliseconds (1–300,000). */
   readonly timeoutMs: number;
-  /** Delay between remote refresh turns in milliseconds (default 2,000, clamped to 250–30,000). */
+  /** Delay between remote refresh turns in milliseconds (default 2,000; a finite number, clamped to 250–30,000). */
   readonly pollIntervalMs?: number;
-  /** Stops local waiting only; never cancels an already-submitted transaction. */
+  /** Stops local waiting only (outcome `aborted`); never cancels a transaction. Use `cancel` for that. */
   readonly signal?: AbortSignal;
 }
 
 /**
- * Outcome of `waitForOperation`. A finished operation reports its terminal status as the outcome:
- * only `executed` means WaaS executed the transaction, while `failed` and `expired` mean it did not
- * (check `operation.provenUnsent` before preparing a replacement), and `signed` ends a signing
- * operation. `reconciliation-required`, `timed-out` and `cancelled` mean the wait ended first.
+ * Outcome of `waitForOperation`. A finished operation reports its terminal status as the outcome,
+ * and `operation` is narrowed to that status: only `executed` means WaaS executed the
+ * transaction (its `txnHash` can still be missing; refresh to obtain it), while `failed`,
+ * `expired` and `cancelled` mean it did not (check `operation.provenUnsent` before preparing a
+ * replacement), and `signed` ends a signing operation. `reconciliation-required` needs an
+ * operator. `timed-out` and `aborted` mean the wait itself ended first; `operation` is the last
+ * view read, absent if even the first read did not finish in time.
  */
 export type WaitResult<TOperation extends WalletOperation> =
-  | { readonly outcome: 'executed'; readonly operation: TOperation }
-  | { readonly outcome: 'failed'; readonly operation: TOperation }
-  | { readonly outcome: 'expired'; readonly operation: TOperation }
-  | { readonly outcome: 'signed'; readonly operation: TOperation }
-  | { readonly outcome: 'reconciliation-required'; readonly operation: TOperation }
-  | { readonly outcome: 'timed-out'; readonly operation: TOperation }
-  | { readonly outcome: 'cancelled'; readonly operation: TOperation };
+  | {
+      readonly outcome: 'executed';
+      readonly operation: TOperation & { readonly status: 'executed' };
+    }
+  | { readonly outcome: 'failed'; readonly operation: TOperation & { readonly status: 'failed' } }
+  | { readonly outcome: 'expired'; readonly operation: TOperation & { readonly status: 'expired' } }
+  | { readonly outcome: 'signed'; readonly operation: TOperation & { readonly status: 'signed' } }
+  | {
+      readonly outcome: 'cancelled';
+      readonly operation: TOperation & { readonly status: 'cancelled' };
+    }
+  | {
+      readonly outcome: 'reconciliation-required';
+      readonly operation: TOperation & { readonly status: 'unknown' };
+    }
+  | { readonly outcome: 'timed-out' | 'aborted'; readonly operation?: TOperation };
 
 /** Derived next-action classification returned by `describeOperation`. */
+/**
+ * Next safe action from `describeOperation`. Only `safe-to-reprepare` allows a new idempotency
+ * key for the same payment; `resume-original` means repeat the original call with the same key.
+ */
 export type OperationNextAction =
-  'await-review' | 'poll-original' | 'reconcile-original' | 'safe-to-reprepare' | 'done';
+  | 'await-review'
+  | 'resume-original'
+  | 'poll-original'
+  | 'reconcile-original'
+  | 'safe-to-reprepare'
+  | 'done';
 
 /** Pure derived decision guidance for orchestrators and agents. */
 export interface OperationGuidance {
@@ -495,6 +559,12 @@ export interface ServiceIndexerFacet {
   getTronBalances(address: string, options?: GetTronBalancesOptions): Promise<ChainBalances>;
 }
 
+/** Input to `cancel` on the EVM, Solana and Tron facets. */
+export interface CancelInput {
+  /** The operation to cancel; it must be `preparing` or `quoted` (not yet submitted). */
+  readonly idempotencyKey: string;
+}
+
 /** WaaS status of a transaction, read by `getTransactionStatus`. */
 export interface TransactionStatusView {
   readonly txnId: string;
@@ -529,6 +599,13 @@ export interface EvmFacetBase {
   resolveReconciliation(input: ResolveReconciliationInput): Promise<EvmOperation>;
   /** Bounded local listing of persisted EVM operations. */
   listOperations(options?: ListOperationsOptions): Promise<OperationPage<EvmOperation>>;
+  /**
+   * Cancel a transaction that has not been submitted (`preparing` or `quoted`). It becomes
+   * terminal `cancelled` with `provenUnsent: true`, and `execute` refuses it from then on, so a
+   * replacement can be prepared under a new key. Cancelling again is a no-op; any later status
+   * is refused with `INVALID_STATE`.
+   */
+  cancel(input: CancelInput): Promise<EvmOperation>;
   /**
    * Read-only WaaS status of a transaction by its `txnId` (`operation.quote.txnId`). Never changes
    * a stored operation; use `refreshOperation` to settle one. A `quoted` answer, or a
@@ -576,6 +653,13 @@ export interface SolanaFacetBase {
   resolveReconciliation(input: ResolveReconciliationInput): Promise<SolanaOperation>;
   listOperations(options?: ListOperationsOptions): Promise<OperationPage<SolanaOperation>>;
   /**
+   * Cancel a transaction that has not been submitted (`preparing` or `quoted`). It becomes
+   * terminal `cancelled` with `provenUnsent: true`, and `execute` refuses it from then on, so a
+   * replacement can be prepared under a new key. Cancelling again is a no-op; any later status
+   * is refused with `INVALID_STATE`.
+   */
+  cancel(input: CancelInput): Promise<SolanaOperation>;
+  /**
    * Read-only WaaS status of a transaction by its `txnId` (`operation.quote.txnId`). Never changes
    * a stored operation; use `refreshOperation` to settle one. A `quoted` answer, or a
    * `TransactionExpired` error, does not prove nothing was broadcast while WaaS reads are still
@@ -616,6 +700,13 @@ export interface TronFacetBase {
   /** Resolve an operation in `unknown` / `RECONCILIATION_REQUIRED` after out-of-band verification. */
   resolveReconciliation(input: ResolveReconciliationInput): Promise<TronOperation>;
   listOperations(options?: ListOperationsOptions): Promise<OperationPage<TronOperation>>;
+  /**
+   * Cancel a transaction that has not been submitted (`preparing` or `quoted`). It becomes
+   * terminal `cancelled` with `provenUnsent: true`, and `execute` refuses it from then on, so a
+   * replacement can be prepared under a new key. Cancelling again is a no-op; any later status
+   * is refused with `INVALID_STATE`.
+   */
+  cancel(input: CancelInput): Promise<TronOperation>;
   /**
    * Read-only WaaS status of a transaction by its `txnId` (`operation.quote.txnId`). Never changes
    * a stored operation; use `refreshOperation` to settle one. A `quoted` answer, or a

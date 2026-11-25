@@ -5,6 +5,7 @@ import type { NetworkFamily } from './protocol.js';
 import type { RpcTransport } from './transport.js';
 import type {
   ApprovalMode,
+  CancelInput,
   CreateOrRestoreOptions,
   EphemeralServerWallet,
   EphemeralServerWalletOptions,
@@ -70,12 +71,13 @@ import {
 } from './storage.js';
 import { WaasTransport } from './transport.js';
 
-type TerminalOutcome = 'executed' | 'failed' | 'expired' | 'signed';
+type TerminalOutcome = 'executed' | 'failed' | 'expired' | 'signed' | 'cancelled';
 const TERMINAL_OUTCOMES: ReadonlySet<string> = new Set<TerminalOutcome>([
   'executed',
   'failed',
   'expired',
-  'signed'
+  'signed',
+  'cancelled'
 ]);
 /** The operation's terminal status as a wait outcome, or undefined while it is still open. */
 const terminalOutcome = (status: string): TerminalOutcome | undefined =>
@@ -184,7 +186,7 @@ function sleepAbortable(ms: number, signal?: AbortSignal): Promise<boolean> {
 async function waitFor<TOperation extends WalletOperation>(
   id: string,
   getLocal: (id: string) => Promise<TOperation | null>,
-  refresh: (id: string) => Promise<TOperation | null>,
+  refresh: (id: string, skip: () => boolean) => Promise<TOperation | null>,
   options: WaitForOperationOptions,
   now: () => number = () => Date.now()
 ): Promise<WaitResult<TOperation>> {
@@ -199,46 +201,104 @@ async function waitFor<TOperation extends WalletOperation>(
       'INVALID_INPUT',
       'waitForOperation requires timeoutMs as an integer between 1 and 300,000.'
     );
+  if (
+    options.pollIntervalMs !== undefined &&
+    (typeof options.pollIntervalMs !== 'number' || !Number.isFinite(options.pollIntervalMs))
+  )
+    throw new WalletError(
+      'INVALID_INPUT',
+      'pollIntervalMs must be a finite number of milliseconds.'
+    );
   const pollMs = Math.max(250, Math.min(options.pollIntervalMs ?? 2_000, 30_000));
   const deadline = now() + options.timeoutMs;
+  const signal = options.signal;
+  // Set once the wait gives up, so work still queued behind the lock skips its remote refresh.
+  let abandoned = false;
+  const skip = () => abandoned;
 
-  // Start with a local read so already-settled, reconciliation-required, or pre-aborted callers
-  // never trigger unnecessary remote WaaS polling.
-  let last = await getLocal(id);
-  if (!last) throw new WalletError('NOT_FOUND', 'Operation not found.', 404);
-  const finished = terminalOutcome(last.status);
-  if (finished) return { outcome: finished, operation: last };
-  if (
-    last.status === 'unknown' &&
-    (last.error === 'RECONCILIATION_REQUIRED' ||
-      last.kind === 'sign' ||
-      last.kind === 'signTypedData')
-  )
-    return { outcome: 'reconciliation-required', operation: last };
-  if (options.signal?.aborted) return { outcome: 'cancelled', operation: last };
+  /**
+   * Race one read against the deadline and the abort signal. Work that already started keeps
+   * running under the lock and persists its result; its late rejection is observed here.
+   */
+  const bounded = <V>(
+    work: Promise<V>
+  ): Promise<
+    | { readonly done: true; readonly value: V }
+    | { readonly done: false; readonly why: 'timed-out' | 'aborted' }
+  > =>
+    new Promise((resolve, reject) => {
+      let settled = false;
+      const finish = (
+        result: { done: true; value: V } | { done: false; why: 'timed-out' | 'aborted' }
+      ) => {
+        if (settled) return;
+        settled = true;
+        clearTimeout(timer);
+        signal?.removeEventListener('abort', onAbort);
+        if (!result.done) abandoned = true;
+        resolve(result);
+      };
+      const onAbort = () => finish({ done: false, why: 'aborted' });
+      const timer = setTimeout(
+        () => finish({ done: false, why: 'timed-out' }),
+        Math.max(0, deadline - now())
+      );
+      if (signal?.aborted) onAbort();
+      else signal?.addEventListener('abort', onAbort, { once: true });
+      work.then(
+        (value) => finish({ done: true, value }),
+        (error: unknown) => {
+          if (settled) return;
+          settled = true;
+          clearTimeout(timer);
+          signal?.removeEventListener('abort', onAbort);
+          reject(error);
+        }
+      );
+    });
+
+  const finished = (operation: TOperation): WaitResult<TOperation> | undefined => {
+    const outcome = terminalOutcome(operation.status);
+    if (outcome) return { outcome, operation } as WaitResult<TOperation>;
+    if (
+      operation.status === 'unknown' &&
+      (operation.error === 'RECONCILIATION_REQUIRED' ||
+        operation.kind === 'sign' ||
+        operation.kind === 'signTypedData')
+    )
+      return { outcome: 'reconciliation-required', operation } as WaitResult<TOperation>;
+    return undefined;
+  };
+
+  // Start with a local read so already-settled or reconciliation-required operations never
+  // trigger remote WaaS polling.
+  const first = await bounded(getLocal(id));
+  if (!first.done) return { outcome: first.why };
+  if (!first.value) throw new WalletError('NOT_FOUND', 'Operation not found.', 404);
+  let last: TOperation = first.value;
+  const settledFirst = finished(last);
+  if (settledFirst) return settledFirst;
 
   for (;;) {
-    if (options.signal?.aborted) return { outcome: 'cancelled', operation: last };
+    if (signal?.aborted) return { outcome: 'aborted', operation: last };
     if (now() >= deadline) return { outcome: 'timed-out', operation: last };
-    let current: TOperation | null;
+    let read: Awaited<ReturnType<typeof bounded<TOperation | null>>>;
     try {
-      current = await refresh(id);
+      read = await bounded(refresh(id, skip));
     } catch (error) {
       // A stale TransactionExpired read inside the grace window: keep the last view and poll again.
       if (!isStaleExpiryRead(error)) throw error;
-      current = last;
+      read = { done: true, value: last };
     }
-    if (!current) throw new WalletError('NOT_FOUND', 'Operation not found.', 404);
-    last = current;
-    const done = terminalOutcome(current.status);
-    if (done) return { outcome: done, operation: current };
-    if (current.status === 'unknown' && current.error === 'RECONCILIATION_REQUIRED')
-      return { outcome: 'reconciliation-required', operation: current };
-    if (options.signal?.aborted) return { outcome: 'cancelled', operation: current };
+    if (!read.done) return { outcome: read.why, operation: last };
+    if (!read.value) throw new WalletError('NOT_FOUND', 'Operation not found.', 404);
+    last = read.value;
+    const settled = finished(last);
+    if (settled) return settled;
     const remaining = deadline - now();
-    if (remaining <= 0) return { outcome: 'timed-out', operation: current };
-    const waited = await sleepAbortable(Math.min(pollMs, remaining), options.signal);
-    if (!waited) return { outcome: 'cancelled', operation: current };
+    if (remaining <= 0) return { outcome: 'timed-out', operation: last };
+    const waited = await sleepAbortable(Math.min(pollMs, remaining), signal);
+    if (!waited) return { outcome: 'aborted', operation: last };
   }
 }
 
@@ -297,14 +357,15 @@ function buildWalletFacade<
       waitFor<EvmOperation>(
         id,
         (opId) => engine.evm.getEvmOperationLocal(opId),
-        (opId) => engine.evm.refreshEvmOperation(opId),
+        (opId, skip) => engine.evm.refreshEvmOperation(opId, skip),
         options,
         clock
       ),
     resolveReconciliation: (input: ResolveReconciliationInput) =>
       engine.evm.resolveEvmReconciliation(input),
     listOperations: (options?: ListOperationsOptions) => engine.evm.listEvmOperations(options),
-    getTransactionStatus: (txnId: string) => engine.evm.getTransactionStatus(txnId)
+    getTransactionStatus: (txnId: string) => engine.evm.getTransactionStatus(txnId),
+    cancel: (input: CancelInput) => engine.evm.cancelEvm(input?.idempotencyKey)
   };
   const evmImmediate: EvmImmediateFacet = {
     sendTransfer: (input: EvmTransferInput) => engine.evm.sendEvmTransfer(input),
@@ -331,14 +392,15 @@ function buildWalletFacade<
       waitFor<SolanaOperation>(
         id,
         (opId) => engine.chain.getSolanaOperationLocal(opId),
-        (opId) => engine.chain.refreshSolanaOperation(opId),
+        (opId, skip) => engine.chain.refreshSolanaOperation(opId, skip),
         options,
         clock
       ),
     resolveReconciliation: (input: ResolveReconciliationInput) =>
       engine.chain.resolveSolanaReconciliation(input),
     listOperations: (options?: ListOperationsOptions) => engine.chain.listSolanaOperations(options),
-    getTransactionStatus: (txnId: string) => engine.chain.getSolanaTransactionStatus(txnId)
+    getTransactionStatus: (txnId: string) => engine.chain.getSolanaTransactionStatus(txnId),
+    cancel: (input: CancelInput) => engine.chain.cancelSolana(input?.idempotencyKey)
   };
   const solanaImmediate: SolanaImmediateFacet = {
     sendTransfer: (input: SolanaTransferInput) => engine.chain.sendSolanaTransfer(input)
@@ -363,14 +425,15 @@ function buildWalletFacade<
       waitFor<TronOperation>(
         id,
         (opId) => engine.chain.getTronOperationLocal(opId),
-        (opId) => engine.chain.refreshTronOperation(opId),
+        (opId, skip) => engine.chain.refreshTronOperation(opId, skip),
         options,
         clock
       ),
     resolveReconciliation: (input: ResolveReconciliationInput) =>
       engine.chain.resolveTronReconciliation(input),
     listOperations: (options?: ListOperationsOptions) => engine.chain.listTronOperations(options),
-    getTransactionStatus: (txnId: string) => engine.chain.getTronTransactionStatus(txnId)
+    getTransactionStatus: (txnId: string) => engine.chain.getTronTransactionStatus(txnId),
+    cancel: (input: CancelInput) => engine.chain.cancelTron(input?.idempotencyKey)
   };
   const tronImmediate: TronImmediateFacet = {
     sendTransaction: (input: TronTransactionInput) => engine.chain.sendTronTransaction(input),

@@ -183,11 +183,24 @@ export class EvmEngine {
     });
   }
 
-  refreshEvmOperation(id: string): Promise<EvmOperation | null> {
+  /** `skip` lets an abandoned wait return the stored view without a remote call once queued. */
+  refreshEvmOperation(id: string, skip?: () => boolean): Promise<EvmOperation | null> {
     return this.core.config.executor.run(async () => {
       const op = await this.core.readEvmOperation(id);
       if (!op || isInternalEvmOperation(op)) return null;
+      if (skip?.()) return projectEvmOperation(op);
       return projectEvmOperation(await this.refreshEvm(op));
+    });
+  }
+
+  async cancelEvm(idempotencyKey: string): Promise<EvmOperation> {
+    const id = validateIdempotencyKey(idempotencyKey);
+    return this.core.config.executor.run(async () => {
+      const op = await this.core.readEvmOperation(id);
+      if (!op || isInternalEvmOperation(op) || !PUBLIC_EVM_TX_KINDS.includes(op.kind))
+        throw new WalletError('NOT_FOUND', 'Prepared transaction not found.', 404);
+      await this.core.cancelOperation(op);
+      return projectEvmOperation(op);
     });
   }
 
@@ -432,6 +445,7 @@ export class EvmEngine {
     const op = await this.core.readEvmOperation(id);
     if (!op || !kinds.includes(op.kind))
       throw new WalletError('NOT_FOUND', 'Prepared transaction not found.', 404);
+    this.core.assertNotCancelled(op);
     if (!options.bypassReviewId) assertReviewId(op, reviewId);
     if (op.status !== 'quoted') return this.refreshEvm(op);
     if (!op.quote?.sponsored)
@@ -463,6 +477,7 @@ export class EvmEngine {
   }
 
   async refreshEvm(op: StoredEvmOperation): Promise<StoredEvmOperation> {
+    if (await this.core.expireIfStale(op)) return op;
     if (
       !['transfer', 'call', 'deployment', 'recovery'].includes(op.kind) ||
       !op.quote ||

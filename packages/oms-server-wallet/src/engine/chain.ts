@@ -113,10 +113,11 @@ export class ChainEngine {
     });
   }
 
-  refreshSolanaOperation(id: string): Promise<SolanaOperation | null> {
+  refreshSolanaOperation(id: string, skip?: () => boolean): Promise<SolanaOperation | null> {
     return this.core.config.executor.run(async () => {
       const op = await this.core.readChainOperation(id, 'solana');
-      return op ? projectSolanaOperation(await this.refreshChain(op)) : null;
+      if (!op) return null;
+      return projectSolanaOperation(skip?.() ? op : await this.refreshChain(op));
     });
   }
 
@@ -127,6 +128,10 @@ export class ChainEngine {
         await this.resolveChainReconciliationInternal('solana', idempotencyKey, txnId)
       )
     );
+  }
+
+  cancelSolana(idempotencyKey: string): Promise<SolanaOperation> {
+    return this.cancelChain('solana', idempotencyKey).then(projectSolanaOperation);
   }
 
   getSolanaTransactionStatus(txnId: string): Promise<TransactionStatusView> {
@@ -271,10 +276,11 @@ export class ChainEngine {
     });
   }
 
-  refreshTronOperation(id: string): Promise<TronOperation | null> {
+  refreshTronOperation(id: string, skip?: () => boolean): Promise<TronOperation | null> {
     return this.core.config.executor.run(async () => {
       const op = await this.core.readChainOperation(id, 'tron');
-      return op ? projectTronOperation(await this.refreshChain(op)) : null;
+      if (!op) return null;
+      return projectTronOperation(skip?.() ? op : await this.refreshChain(op));
     });
   }
 
@@ -285,6 +291,10 @@ export class ChainEngine {
         await this.resolveChainReconciliationInternal('tron', idempotencyKey, txnId)
       )
     );
+  }
+
+  cancelTron(idempotencyKey: string): Promise<TronOperation> {
+    return this.cancelChain('tron', idempotencyKey).then(projectTronOperation);
   }
 
   getTronTransactionStatus(txnId: string): Promise<TransactionStatusView> {
@@ -519,6 +529,7 @@ export class ChainEngine {
     const op = await this.core.readChainOperation(id, family);
     if (!op || !kinds.includes(op.kind) || !op.quote)
       throw new WalletError('NOT_FOUND', 'Prepared transaction not found.', 404);
+    this.core.assertNotCancelled(op);
     assertReviewId(op, reviewId);
     if (op.status !== 'quoted') return this.refreshChain(op);
     if (!op.quote.sponsored && !op.fee)
@@ -554,6 +565,7 @@ export class ChainEngine {
   }
 
   private async refreshChain(op: StoredChainOperation): Promise<StoredChainOperation> {
+    if (await this.core.expireIfStale(op)) return op;
     if (!op.quote || !needsRefresh(op)) return op;
     const state = await this.core.load();
     await refreshStatus(op, () => this.chainTransactionStatus(state, op), this.core.now());
@@ -570,6 +582,20 @@ export class ChainEngine {
         .refine(valid)
         .optional()
         .or(z.literal('').transform(() => undefined))
+    });
+  }
+
+  private async cancelChain(
+    family: 'solana' | 'tron',
+    idempotencyKey: string
+  ): Promise<StoredChainOperation> {
+    const id = validateIdempotencyKey(idempotencyKey);
+    return this.core.config.executor.run(async () => {
+      const op = await this.core.readChainOperation(id, family);
+      if (!op || op.kind === 'sign' || op.kind === 'signTypedData')
+        throw new WalletError('NOT_FOUND', 'Prepared transaction not found.', 404);
+      await this.core.cancelOperation(op);
+      return op;
     });
   }
 

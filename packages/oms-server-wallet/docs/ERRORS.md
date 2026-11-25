@@ -94,6 +94,7 @@ so the outcome survives a restart. Settlement codes such as `SUBMISSION_UNCERTAI
 | `STALE_REVIEW` | The `reviewId` (or `txnId`) does not match the prepared operation. | Review the current operation, then execute. |
 | `STALE_QUOTE` | The swap `reviewId` does not match the current quote. | Review the current swap quote. |
 | `STALE_RECOVERY` | The recovery `reviewId` does not match the prepared recovery. | Review the current recovery. |
+| `OPERATION_CANCELLED` | `execute` was called on an operation cancelled with `cancel`; nothing was sent. | Prepare a replacement under a new key if still wanted. |
 | `QUOTE_EXPIRED` | The quote expired before submission; nothing was sent. | Prepare again under a new key. |
 | `SPONSORSHIP_REQUIRED` | The transaction is not sponsored (and, on Tron, no `maxFee` allows paying). | Enable sponsorship, or set `maxFee` on Tron. |
 | `FEE_LIMIT_EXCEEDED` | The quoted Tron fee exceeds `maxFee`. | Raise `maxFee` or retry later. |

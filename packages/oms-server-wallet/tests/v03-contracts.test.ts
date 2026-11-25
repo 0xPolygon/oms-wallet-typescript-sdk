@@ -474,9 +474,9 @@ describe('observation, waitForOperation, describeOperation, indexer facet, and e
       pollIntervalMs: 250
     });
     expect(timedOut.outcome).toBe('timed-out');
-    expect(timedOut.operation.id).toBe('wait-op-1');
+    expect(timedOut.operation?.id).toBe('wait-op-1');
 
-    // Cancelled via pre-aborted AbortSignal makes ZERO remote WaaS calls
+    // A pre-aborted AbortSignal ends the wait as 'aborted' with ZERO remote WaaS calls
     const beforeAbortCalls = h.remote.calls.length;
     const controller = new AbortController();
     controller.abort();
@@ -484,8 +484,7 @@ describe('observation, waitForOperation, describeOperation, indexer facet, and e
       timeoutMs: 5_000,
       signal: controller.signal
     });
-    expect(cancelled.outcome).toBe('cancelled');
-    expect(cancelled.operation.id).toBe('wait-op-1');
+    expect(cancelled.outcome).toBe('aborted');
     expect(h.remote.calls.length).toBe(beforeAbortCalls);
 
     // Escalation to reconciliation-required stops wait with distinct outcome
@@ -517,7 +516,9 @@ describe('observation, waitForOperation, describeOperation, indexer facet, and e
       pollIntervalMs: 250
     });
     expect(settled.outcome).toBe('executed');
-    expect(settled.operation.status).toBe('executed');
+    // The 'executed' outcome narrows the operation to its executed status.
+    if (settled.outcome === 'executed') expect(settled.operation.quote.txnId).toBeTruthy();
+    expect(settled.operation?.status).toBe('executed');
   });
 
   it('keeps waiting through a stale TransactionExpired read and guides re-prepare after operator resolution', async () => {
@@ -648,6 +649,135 @@ describe('observation, waitForOperation, describeOperation, indexer facet, and e
         resolution: 'not-broadcast'
       })
     ).toMatchObject({ status: 'expired', operatorResolved: true });
+  });
+
+  it('cancels an unsubmitted operation so it can never execute, and refuses to cancel a submitted one', async () => {
+    const h = sdkHarness();
+    const transfer = {
+      chainId: 137,
+      to: '0x2222222222222222222222222222222222222222',
+      asset: 'native',
+      amount: '1000'
+    } as const;
+    const quoted = await h.client.evm.prepareTransfer({
+      idempotencyKey: 'cancel-me-1',
+      ...transfer
+    });
+    const cancelled = await h.client.evm.cancel({ idempotencyKey: 'cancel-me-1' });
+    expect(cancelled).toMatchObject({ status: 'cancelled', provenUnsent: true });
+    expect(describeOperation(cancelled).action).toBe('safe-to-reprepare');
+    // Idempotent, and the same key keeps returning the cancelled record.
+    expect((await h.client.evm.cancel({ idempotencyKey: 'cancel-me-1' })).status).toBe('cancelled');
+    expect(
+      (await h.client.evm.prepareTransfer({ idempotencyKey: 'cancel-me-1', ...transfer })).status
+    ).toBe('cancelled');
+    const executes = h.remote.calls.filter((call) => call.method === 'Execute').length;
+    await expect(
+      h.client.evm.execute({ idempotencyKey: 'cancel-me-1', reviewId: quoted.reviewId! })
+    ).rejects.toMatchObject({ code: 'OPERATION_CANCELLED' });
+    expect(h.remote.calls.filter((call) => call.method === 'Execute')).toHaveLength(executes);
+
+    await h.client.evm.sendTransfer({ idempotencyKey: 'cancel-late-1', ...transfer });
+    await expect(h.client.evm.cancel({ idempotencyKey: 'cancel-late-1' })).rejects.toMatchObject({
+      code: 'INVALID_STATE'
+    });
+    await expect(h.client.evm.cancel({ idempotencyKey: 'missing-key-1' })).rejects.toMatchObject({
+      code: 'NOT_FOUND'
+    });
+
+    const sol = await h.client.solana.prepareTransfer({
+      idempotencyKey: 'cancel-sol-1',
+      network: 'solana:devnet',
+      to: SOLANA_RECIPIENT,
+      asset: 'native',
+      amount: '1000'
+    });
+    expect(sol.status).toBe('quoted');
+    expect(await h.client.solana.cancel({ idempotencyKey: 'cancel-sol-1' })).toMatchObject({
+      status: 'cancelled'
+    });
+  });
+
+  it('marks an expired, unsent quote as expired on refresh without calling execute', async () => {
+    const h = sdkHarness();
+    await h.client.evm.prepareTransfer({
+      idempotencyKey: 'stale-quote-1',
+      chainId: 137,
+      to: '0x2222222222222222222222222222222222222222',
+      asset: 'native',
+      amount: '1000'
+    });
+    const stored = JSON.parse((await h.store.read('operation:stale-quote-1'))!);
+    stored.quote.expiresAt = new Date(Date.now() - 1_000).toISOString();
+    await h.store.write('operation:stale-quote-1', JSON.stringify(stored));
+    const refreshed = await h.client.evm.refreshOperation('stale-quote-1');
+    expect(refreshed).toMatchObject({
+      status: 'expired',
+      error: 'QUOTE_EXPIRED',
+      provenUnsent: true
+    });
+    expect(describeOperation(refreshed!).action).toBe('safe-to-reprepare');
+    expect(h.remote.calls.filter((call) => call.method === 'Execute')).toHaveLength(0);
+  });
+
+  it('bounds waitForOperation by its deadline and abort signal, even behind a busy lock or slow refresh', async () => {
+    const h = sdkHarness();
+    await h.client.evm.sendTransfer({
+      idempotencyKey: 'bounded-wait-1',
+      chainId: 137,
+      to: '0x2222222222222222222222222222222222222222',
+      asset: 'native',
+      amount: '1000'
+    });
+    await expect(
+      h.client.evm.waitForOperation('bounded-wait-1', {
+        timeoutMs: 1_000,
+        pollIntervalMs: Number.NaN
+      })
+    ).rejects.toMatchObject({ code: 'INVALID_INPUT' });
+
+    // Queued behind a long task: the wait ends at its deadline without the first read.
+    let release!: () => void;
+    const busy = h.executor.run(() => new Promise<void>((resolve) => (release = resolve)));
+    const started = Date.now();
+    const queued = await h.client.evm.waitForOperation('bounded-wait-1', { timeoutMs: 50 });
+    expect(queued).toEqual({ outcome: 'timed-out' });
+    expect(Date.now() - started).toBeLessThan(1_000);
+    release();
+    await busy;
+
+    // A slow refresh is abandoned on abort; its later failure is observed, not unhandled.
+    const request = h.remote.request.bind(h.remote);
+    h.remote.request = async (method, body, credential) => {
+      if (method !== 'TransactionStatus') return request(method, body, credential);
+      await new Promise((resolve) => setTimeout(resolve, 150));
+      throw new Error('late failure after the caller gave up');
+    };
+    const controller = new AbortController();
+    setTimeout(() => controller.abort(), 20);
+    const aborted = await h.client.evm.waitForOperation('bounded-wait-1', {
+      timeoutMs: 5_000,
+      signal: controller.signal
+    });
+    expect(aborted).toMatchObject({ outcome: 'aborted', operation: { id: 'bounded-wait-1' } });
+    await new Promise((resolve) => setTimeout(resolve, 200));
+  });
+
+  it('fails closed on a stored record that breaks its status guarantees', async () => {
+    const h = sdkHarness();
+    await h.client.evm.prepareTransfer({
+      idempotencyKey: 'broken-quoted-1',
+      chainId: 137,
+      to: '0x2222222222222222222222222222222222222222',
+      asset: 'native',
+      amount: '1000'
+    });
+    const stored = JSON.parse((await h.store.read('operation:broken-quoted-1'))!);
+    delete stored.reviewId;
+    await h.store.write('operation:broken-quoted-1', JSON.stringify(stored));
+    await expect(h.client.evm.getOperation('broken-quoted-1')).rejects.toMatchObject({
+      code: 'INVALID_STATE'
+    });
   });
 
   it('exports the supported networks and guards for chain IDs and error codes', async () => {
@@ -1119,7 +1249,7 @@ describe('review-audit boundary regressions', () => {
   });
 });
 
-describe('deep systems hardening (Dot + Opus 5.5 audit)', () => {
+describe('deep systems hardening', () => {
   it('prevents a second worker with an empty swap store from clearing or bypassing an active reservation via quote() or confirm()', async () => {
     const h = await swapHarness();
     await h.confirm(); // Reserves chain 137 under swap-test-0001 in wallet state.
@@ -1396,19 +1526,37 @@ describe('deep systems hardening (Dot + Opus 5.5 audit)', () => {
     expect(settled).toMatchObject({ status: 'executed', txnHash: `0x${'ab'.repeat(32)}` });
   });
 
-  it('returns safe-to-reprepare for a quoted op missing reviewId and reconciliation-required immediately on unknown signatures', async () => {
+  it('guides an interrupted preparation back to its own key and reports unknown signatures as reconciliation-required', async () => {
+    const base = {
+      id: 'interrupted-1',
+      family: 'evm' as const,
+      kind: 'transfer' as const,
+      chainId: 137 as const,
+      inputHash: 'h',
+      createdAt: new Date().toISOString(),
+      provenUnsent: true
+    };
+    // Never 'safe-to-reprepare': the original key can still resume and execute.
     expect(
       describeOperation({
-        id: 'missing-rev-1',
-        family: 'evm',
-        kind: 'transfer',
-        chainId: 137 as const,
-        inputHash: 'h',
-        createdAt: new Date().toISOString(),
-        status: 'quoted',
-        submissionMode: 'review',
-        provenUnsent: false
-      })
+        ...base,
+        status: 'preparing',
+        submissionMode: 'review'
+      } as WalletOperation)
+    ).toMatchObject({ action: 'resume-original', reason: expect.stringContaining('prepare*') });
+    expect(
+      describeOperation({
+        ...base,
+        status: 'preparing',
+        submissionMode: 'immediate'
+      } as WalletOperation)
+    ).toMatchObject({ action: 'resume-original', reason: expect.stringContaining('send*') });
+    expect(
+      describeOperation({
+        ...base,
+        status: 'cancelled',
+        submissionMode: 'review'
+      } as WalletOperation)
     ).toMatchObject({ action: 'safe-to-reprepare' });
 
     // Unknown signature operation returns reconciliation-required immediately from waitForOperation without polling.

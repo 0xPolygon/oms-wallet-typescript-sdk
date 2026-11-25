@@ -153,6 +153,44 @@ export class EngineCore {
   }
 
   /**
+   * Mark a quoted operation whose quote has expired as `expired` (`provenUnsent`) without throwing,
+   * so a refresh can report the expiry before anyone calls `execute`. Returns whether it expired.
+   */
+  async expireIfStale(op: StoredOperationRecord): Promise<boolean> {
+    if (op.status !== 'quoted' || !op.quote || Date.parse(op.quote.expiresAt) > this.now())
+      return false;
+    op.status = 'expired';
+    op.error = 'QUOTE_EXPIRED';
+    op.preSubmitExpired = true;
+    await this.writeOperation(op);
+    return true;
+  }
+
+  /**
+   * Cancel an operation that has not been submitted: `preparing` or `quoted` becomes terminal
+   * `cancelled`, and `execute` refuses it from then on. Cancelling again is a no-op. Any other
+   * status may already have been sent, so it is refused.
+   */
+  async cancelOperation(op: StoredOperationRecord): Promise<void> {
+    if (op.status === 'cancelled') return;
+    if (op.status !== 'preparing' && op.status !== 'quoted')
+      throw new WalletError(
+        'INVALID_STATE',
+        `Only a preparing or quoted operation can be cancelled; this one is ${op.status}.`,
+        409
+      );
+    op.status = 'cancelled';
+    op.error = 'OPERATION_CANCELLED';
+    await this.writeOperation(op);
+  }
+
+  /** Refuse to execute an operation that was cancelled. */
+  assertNotCancelled(op: StoredOperationRecord): void {
+    if (op.status === 'cancelled')
+      throw new WalletError('OPERATION_CANCELLED', 'This operation was cancelled.', 409);
+  }
+
+  /**
    * Mark a still-quoted operation whose quote has expired as `expired` before anything is sent,
    * persist it, and throw `QUOTE_EXPIRED`. Returns normally while the quote is still valid.
    */
