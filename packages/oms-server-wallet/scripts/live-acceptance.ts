@@ -33,7 +33,8 @@ import {
   createServerWallet,
   createSingleProcessExecutor,
   WalletError,
-  type StateStore
+  type StateStore,
+  type TypedDataSigningRequest
 } from '../src/index.js';
 
 const env = (name: string, fallback?: string) => {
@@ -149,6 +150,12 @@ const recording: typeof fetch = async (input, init) => {
   return response;
 };
 
+// Typed-data signing is opt-in. This policy approves only the acceptance run's own 'Check' payloads.
+const signing = {
+  authorizeTypedData: (request: TypedDataSigningRequest) =>
+    request.typedData.primaryType === 'Check'
+};
+
 const open = (identity: string, prefix = '') =>
   createServerWallet({
     publishableKey: key,
@@ -163,6 +170,7 @@ const open = (identity: string, prefix = '') =>
     executor: createSingleProcessExecutor(),
     attestation: { trustedPcr0s: pcr0s, allowDebugEnclave },
     approval: 'allow-immediate',
+    signing,
     fetch: recording
   });
 // Each identity's records live under its own key prefix, so a different subject never reads them.
@@ -614,6 +622,7 @@ const ephemeral = (getIdToken: () => ReturnType<typeof idToken> = () => idToken(
     origin,
     oidc: { subject, issuer, audience, getIdToken },
     attestation: { trustedPcr0s: pcr0s, allowDebugEnclave },
+    signing,
     fetch: recording
   });
 await check('ephemeral handles restore the same wallets and sign in parallel', async () => {

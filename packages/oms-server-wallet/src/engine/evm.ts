@@ -38,6 +38,7 @@ import {
 import { projectEvmOperation, parseListOptions } from './projection.js';
 import {
   assertNotSelfVerifying,
+  authorizeTypedData,
   assertPublicTypedData,
   requestEvmMessageSignature,
   requestEvmTypedDataSignature
@@ -161,7 +162,7 @@ export class EvmEngine {
     return this.core.config.executor.run(async () =>
       projectEvmOperation(
         await this.signEvmTypedDataValidated(id, chainId, validated.typedData, validated.digest, {
-          rejectSelfVerifyingContract: true
+          publicRequest: true
         })
       )
     );
@@ -534,7 +535,8 @@ export class EvmEngine {
     chainId: number,
     typedData: ReturnType<typeof validateTypedData>['typedData'],
     digest: `0x${string}`,
-    options: { allowSwapsPrefix?: boolean; rejectSelfVerifyingContract?: boolean } = {}
+    /** `publicRequest`: refuse a self-verifying domain and ask the signing policy first. */
+    options: { allowSwapsPrefix?: boolean; publicRequest?: boolean } = {}
   ): Promise<StoredEvmOperation> {
     const { operation, hash } = await this.core.existingEvm(
       id,
@@ -546,8 +548,17 @@ export class EvmEngine {
     if (operation) return operation;
     const state = await this.core.load();
     await this.core.ensure(state, ['evm']);
-    if (options.rejectSelfVerifyingContract)
+    if (options.publicRequest) {
       assertNotSelfVerifying(typedData, state.wallets.evm!.address);
+      await authorizeTypedData(this.core, {
+        family: 'evm',
+        chainId,
+        walletAddress: state.wallets.evm!.address,
+        idempotencyKey: id,
+        digest,
+        typedData
+      });
+    }
     const op: StoredEvmOperation = {
       id,
       kind: 'signTypedData',

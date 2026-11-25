@@ -23,6 +23,7 @@ import type { NormalizedTronCall } from './inputs.js';
 import type { ChainSignRequest } from './signing.js';
 
 import { WalletError } from '../errors.js';
+import { tronToHex } from '../internal/protocol/addresses.js';
 import { TRON_CHAIN_IDS } from '../internal/protocol/networks.js';
 import { chainQuoteSchema } from '../protocol.js';
 import { refreshStatus, resolveNotBroadcast, settleExecuteError } from '../settlement.js';
@@ -44,6 +45,8 @@ import {
 } from './inputs.js';
 import { projectSolanaOperation, projectTronOperation, parseListOptions } from './projection.js';
 import {
+  assertNotSelfVerifying,
+  authorizeTypedData,
   requestChainSignature,
   solanaMessageRequest,
   tronMessageRequest,
@@ -247,7 +250,19 @@ export class ChainEngine {
         'signTypedData',
         { network: validNetwork, digest },
         tronTypedDataRequest(typedData),
-        { network: validNetwork }
+        { network: validNetwork },
+        async (wallet) => {
+          assertNotSelfVerifying(typedData, tronToHex(wallet.address));
+          await authorizeTypedData(this.core, {
+            family: 'tron',
+            chainId,
+            network: validNetwork,
+            walletAddress: wallet.address,
+            idempotencyKey: id,
+            digest,
+            typedData
+          });
+        }
       );
       return projectTronOperation(op);
     });
@@ -652,12 +667,14 @@ export class ChainEngine {
     kind: 'sign' | 'signTypedData',
     input: Record<string, unknown>,
     request: ChainSignRequest,
-    stored: Partial<StoredChainOperation> = {}
+    stored: Partial<StoredChainOperation> = {},
+    authorize?: (wallet: RemoteWallet) => Promise<void>
   ): Promise<StoredChainOperation> {
     const { operation, hash } = await this.core.existingAny(id, kind, input, family, 'review');
     if (operation) return operation as StoredChainOperation;
     const state = await this.core.load();
     await this.core.ensure(state, [family]);
+    await authorize?.(state.wallets[family]!);
     const op: StoredChainOperation = {
       id,
       family,

@@ -112,8 +112,48 @@ export type ServiceStorageOption =
       readonly encryptionKey?: never;
     };
 
-/** Base options shared by all `createServerWallet` configurations. */
-export interface ServerWalletOptionsBase {
+/**
+ * What a typed-data signing policy is asked to approve. Built after the SDK has validated the
+ * request and before WaaS is called; every field is a frozen copy, so the policy reads exactly
+ * what will be signed.
+ */
+export interface TypedDataSigningRequest {
+  readonly family: 'evm' | 'tron';
+  /** The EVM chain ID, or the chain ID of the Tron network. */
+  readonly chainId: number;
+  /** The Tron network, for `family: 'tron'`. */
+  readonly network?: TronNetwork;
+  /** The OIDC subject of the wallet identity. */
+  readonly subject: string;
+  /** The signing wallet's address (`0x…` on EVM, `T…` on Tron). */
+  readonly walletAddress: string;
+  /** The durable operation's idempotency key; absent on the ephemeral signer. */
+  readonly idempotencyKey?: string;
+  /** The EIP-712 digest that will be signed. */
+  readonly digest: `0x${string}`;
+  /**
+   * The normalized typed data: only the fields its types declare (the signed fields), the domain
+   * bound to `chainId`, and on Tron every address in 20-byte hex form, as signed.
+   */
+  readonly typedData: TypedDataInput;
+}
+
+/**
+ * Opt-in for `signTypedData`. Typed data can authorize anything a contract accepts (permits,
+ * orders, approvals), so `signTypedData` exists only on wallets configured with this policy.
+ */
+export interface SigningOptions {
+  /**
+   * Called for every public typed-data signature, while the wallet's executor is held, after SDK
+   * validation and before WaaS is called. Only a literal `true` lets the signature proceed; any
+   * other result refuses it with `TYPED_DATA_REFUSED` and records nothing. A thrown error passes
+   * through unchanged. Keep it fast: other calls for this wallet wait for it.
+   */
+  authorizeTypedData(request: TypedDataSigningRequest): boolean | Promise<boolean>;
+}
+
+/** Options for `createServerWallet`. */
+export interface ServerWalletOptions {
   readonly publishableKey: string;
   /** Application Origin allowed by your OMS project (sent as the HTTP `Origin` header). */
   readonly origin?: string;
@@ -121,25 +161,19 @@ export interface ServerWalletOptionsBase {
   readonly storage: WalletStorageOption;
   /** Required exclusive ownership boundary for this wallet identity. */
   readonly executor: ExclusiveExecutor;
+  /** `'allow-immediate'` adds the one-shot `send*` methods. Default `'two-phase'`. */
+  readonly approval?: ApprovalMode;
+  /** `trails(...)` from `/trails` with `scope: 'wallet'` adds `swaps`. */
+  readonly swaps?: SwapsConfig<'wallet', unknown>;
+  /** Adds `evm.signTypedData` and `tron.signTypedData`, gated by the policy. */
+  readonly signing?: SigningOptions;
   readonly attestation?: AttestationOptions;
   /** Optional `fetch` override for instrumentation/testing; never bypasses Nitro attestation. */
   readonly fetch?: typeof fetch;
 }
 
-/** Options for `createServerWallet`. */
-export type ServerWalletOptions<
-  TApproval extends ApprovalMode = 'two-phase',
-  TSwaps extends SwapsConfig<'wallet', unknown> | undefined = undefined
-> = ServerWalletOptionsBase &
-  (TApproval extends 'allow-immediate'
-    ? { readonly approval: 'allow-immediate' }
-    : { readonly approval?: 'two-phase' }) &
-  (TSwaps extends SwapsConfig<'wallet', unknown>
-    ? { readonly swaps: TSwaps }
-    : { readonly swaps?: undefined });
-
-/** Base options shared by all `createServerWalletService` configurations. */
-export interface ServerWalletServiceOptionsBase {
+/** Options for `createServerWalletService`. */
+export interface ServerWalletServiceOptions {
   readonly publishableKey: string;
   /** Application Origin allowed by your OMS project (sent as the HTTP `Origin` header). */
   readonly origin?: string;
@@ -147,22 +181,16 @@ export interface ServerWalletServiceOptionsBase {
   readonly storage: ServiceStorageOption;
   /** Required per-namespace exclusive ownership provider. */
   readonly executor: ExecutorProvider;
+  /** `'allow-immediate'` adds the one-shot `send*` methods. Default `'two-phase'`. */
+  readonly approval?: ApprovalMode;
+  /** `trails(...)` from `/trails` with `scope: 'service'` adds `swaps`. */
+  readonly swaps?: SwapsConfig<'service', unknown>;
+  /** Adds `evm.signTypedData` and `tron.signTypedData`, gated by the policy. */
+  readonly signing?: SigningOptions;
   readonly attestation?: AttestationOptions;
   /** Optional `fetch` override for instrumentation/testing; never bypasses Nitro attestation. */
   readonly fetch?: typeof fetch;
 }
-
-/** Options for `createServerWalletService`. */
-export type ServerWalletServiceOptions<
-  TApproval extends ApprovalMode = 'two-phase',
-  TSwaps extends SwapsConfig<'service', unknown> | undefined = undefined
-> = ServerWalletServiceOptionsBase &
-  (TApproval extends 'allow-immediate'
-    ? { readonly approval: 'allow-immediate' }
-    : { readonly approval?: 'two-phase' }) &
-  (TSwaps extends SwapsConfig<'service', unknown>
-    ? { readonly swaps: TSwaps }
-    : { readonly swaps?: undefined });
 
 /** Public snapshot of a wallet identity's persisted state. */
 export interface WalletSnapshot {
@@ -620,7 +648,6 @@ export interface EvmFacetBase {
   /** Submit a previously prepared transfer or call bound to its exact `reviewId`. */
   execute(input: ExecuteInput): Promise<EvmOperation>;
   signMessage(input: EvmSignMessageInput): Promise<EvmOperation>;
-  signTypedData(input: EvmSignTypedDataInput): Promise<EvmOperation>;
   /** Read the persisted EVM operation locally without authenticating or polling WaaS. */
   getOperation(id: string): Promise<EvmOperation | null>;
   /** Poll WaaS status for an unsettled EVM operation and persist the updated record. */
@@ -662,16 +689,31 @@ export interface EvmImmediateFacet {
   ): Promise<EvmOperation>;
 }
 
+/** EVM typed-data signing, present only when the factory receives `signing`. */
+export interface EvmTypedDataFacet {
+  /**
+   * Sign EIP-712 data after `signing.authorizeTypedData` returns `true`. Refuses Sequence wallet
+   * `Calls` and typed data whose `verifyingContract` is the wallet.
+   */
+  signTypedData(input: EvmSignTypedDataInput): Promise<EvmOperation>;
+}
+
 /**
- * EVM operations. `sendTransfer` and `sendCall` exist only with `approval: 'allow-immediate'`.
- * Flattened so declaration emit never needs the internal building-block interfaces.
+ * EVM operations. `sendTransfer` and `sendCall` exist only with `approval: 'allow-immediate'`;
+ * `signTypedData` only with `signing`. Flattened so declaration emit never needs the internal
+ * building-block interfaces.
  */
-export type EvmFacet<TApproval extends ApprovalMode = 'two-phase'> = {
+export type EvmFacet<
+  TApproval extends ApprovalMode = 'two-phase',
+  TTypedData extends boolean = false
+> = {
   [
-    K in keyof (TApproval extends 'allow-immediate'
-      ? EvmFacetBase & EvmImmediateFacet
-      : EvmFacetBase)
-  ]: (TApproval extends 'allow-immediate' ? EvmFacetBase & EvmImmediateFacet : EvmFacetBase)[K];
+    K in keyof (EvmFacetBase &
+      (TApproval extends 'allow-immediate' ? EvmImmediateFacet : unknown) &
+      (TTypedData extends true ? EvmTypedDataFacet : unknown))
+  ]: (EvmFacetBase &
+    (TApproval extends 'allow-immediate' ? EvmImmediateFacet : unknown) &
+    (TTypedData extends true ? EvmTypedDataFacet : unknown))[K];
 };
 
 /** Base Solana operations available in both two-phase and immediate approval modes. */
@@ -726,7 +768,6 @@ export interface TronFacetBase {
   prepareCall(input: TronCallInput): Promise<TronOperation>;
   execute(input: ExecuteInput): Promise<TronOperation>;
   signMessage(input: TronSignMessageInput): Promise<TronOperation>;
-  signTypedData(input: TronSignTypedDataInput): Promise<TronOperation>;
   getOperation(id: string): Promise<TronOperation | null>;
   refreshOperation(id: string): Promise<TronOperation | null>;
   waitForOperation(
@@ -758,17 +799,37 @@ export interface TronImmediateFacet {
   sendCall(input: TronCallInput): Promise<TronOperation>;
 }
 
-/** Tron operations. `sendTransfer` and `sendCall` exist only with `approval: 'allow-immediate'`. */
-export type TronFacet<TApproval extends ApprovalMode = 'two-phase'> = {
+/** Tron typed-data signing, present only when the factory receives `signing`. */
+export interface TronTypedDataFacet {
+  /**
+   * Sign TIP-712 data after `signing.authorizeTypedData` returns `true`. Refuses typed data whose
+   * `verifyingContract` is the wallet.
+   */
+  signTypedData(input: TronSignTypedDataInput): Promise<TronOperation>;
+}
+
+/**
+ * Tron operations. `sendTransfer` and `sendCall` exist only with `approval: 'allow-immediate'`;
+ * `signTypedData` only with `signing`.
+ */
+export type TronFacet<
+  TApproval extends ApprovalMode = 'two-phase',
+  TTypedData extends boolean = false
+> = {
   [
-    K in keyof (TApproval extends 'allow-immediate'
-      ? TronFacetBase & TronImmediateFacet
-      : TronFacetBase)
-  ]: (TApproval extends 'allow-immediate' ? TronFacetBase & TronImmediateFacet : TronFacetBase)[K];
+    K in keyof (TronFacetBase &
+      (TApproval extends 'allow-immediate' ? TronImmediateFacet : unknown) &
+      (TTypedData extends true ? TronTypedDataFacet : unknown))
+  ]: (TronFacetBase &
+    (TApproval extends 'allow-immediate' ? TronImmediateFacet : unknown) &
+    (TTypedData extends true ? TronTypedDataFacet : unknown))[K];
 };
 
 /** Base handle for a single OIDC identity's attested server wallet. */
-export interface ServerWalletBase<TApproval extends ApprovalMode = 'two-phase'> {
+export interface ServerWalletBase<
+  TApproval extends ApprovalMode = 'two-phase',
+  TTypedData extends boolean = false
+> {
   /** Pure local snapshot of persisted state; does not authenticate, poll WaaS, or mutate storage. */
   inspect(): Promise<WalletSnapshot>;
   /** Authenticate if needed and create or restore one wallet per requested family (default EVM). */
@@ -779,9 +840,9 @@ export interface ServerWalletBase<TApproval extends ApprovalMode = 'two-phase'> 
   disable(): Promise<WalletSnapshot>;
   /** Re-enable the wallet and authenticate a fresh credential for every held family. */
   enable(): Promise<WalletSnapshot>;
-  readonly evm: EvmFacet<TApproval>;
+  readonly evm: EvmFacet<TApproval, TTypedData>;
   readonly solana: SolanaFacet<TApproval>;
-  readonly tron: TronFacet<TApproval>;
+  readonly tron: TronFacet<TApproval, TTypedData>;
   /** Explicitly unattested indexer reads for this wallet's initialized addresses. */
   readonly indexer: WalletIndexerFacet;
 }
@@ -789,16 +850,18 @@ export interface ServerWalletBase<TApproval extends ApprovalMode = 'two-phase'> 
 /** Single-identity server wallet handle, with `swaps` present only when `swaps: trails(...)` is configured. */
 export type ServerWallet<
   TApproval extends ApprovalMode = 'two-phase',
-  TSwaps extends SwapsConfig<'wallet', unknown> | undefined = undefined
+  TSwaps extends SwapsConfig<'wallet', unknown> | undefined = undefined,
+  TTypedData extends boolean = false
 > =
   TSwaps extends SwapsConfig<'wallet', infer TFacet>
-    ? ServerWalletBase<TApproval> & { readonly swaps: TFacet }
-    : ServerWalletBase<TApproval>;
+    ? ServerWalletBase<TApproval, TTypedData> & { readonly swaps: TFacet }
+    : ServerWalletBase<TApproval, TTypedData>;
 
 /** Multi-tenant server wallet service factory. */
 export interface ServerWalletService<
   TApproval extends ApprovalMode = 'two-phase',
-  TSwaps extends SwapsConfig<'service', unknown> | undefined = undefined
+  TSwaps extends SwapsConfig<'service', unknown> | undefined = undefined,
+  TTypedData extends boolean = false
 > {
   /**
    * Obtain the wallet handle for a host-authenticated OIDC subject.
@@ -807,8 +870,8 @@ export interface ServerWalletService<
   forSubject(
     subject: string
   ): TSwaps extends SwapsConfig<'service', infer TFacet>
-    ? ServerWalletBase<TApproval> & { readonly swaps: TFacet }
-    : ServerWalletBase<TApproval>;
+    ? ServerWalletBase<TApproval, TTypedData> & { readonly swaps: TFacet }
+    : ServerWalletBase<TApproval, TTypedData>;
   /** Unattested indexer reads for arbitrary addresses. */
   readonly indexer: ServiceIndexerFacet;
 }
@@ -820,6 +883,8 @@ export interface EphemeralServerWalletOptions {
   readonly origin?: string;
   /** OIDC identity. `sessionLifetimeSeconds` defaults to 900 (15 minutes) for ephemeral handles. */
   readonly oidc: WalletOidcOptions;
+  /** Adds `evm.signTypedData` and `tron.signTypedData`, gated by the policy. */
+  readonly signing?: SigningOptions;
   readonly attestation?: AttestationOptions;
   readonly fetch?: typeof fetch;
 }
@@ -842,7 +907,7 @@ export interface SignatureResult {
  * balances; it cannot prepare or send transactions, keeps no operation records, and never creates
  * wallets. Not assignable to `ServerWallet`. Call `close()` when done.
  */
-export interface EphemeralServerWallet {
+export interface EphemeralServerWallet<TTypedData extends boolean = false> {
   /**
    * Sign in and bind wallets that already exist on WaaS. With `families`, each must exist;
    * without, every existing family is bound. Throws `WALLET_NOT_INITIALIZED` when none exists:
@@ -862,21 +927,34 @@ export interface EphemeralServerWallet {
       readonly chainId: SupportedEvmChainId;
       readonly message: string;
     }): Promise<SignatureResult>;
-    /** Refuses Sequence wallet `Calls` and typed data whose `verifyingContract` is the wallet. */
-    signTypedData(input: {
-      readonly chainId: SupportedEvmChainId;
-      readonly typedData: TypedDataInput;
-    }): Promise<SignatureResult>;
-  };
+  } & (TTypedData extends true
+    ? {
+        /**
+         * Sign EIP-712 data after `signing.authorizeTypedData` returns `true`. Refuses Sequence
+         * wallet `Calls` and typed data whose `verifyingContract` is the wallet.
+         */
+        signTypedData(input: {
+          readonly chainId: SupportedEvmChainId;
+          readonly typedData: TypedDataInput;
+        }): Promise<SignatureResult>;
+      }
+    : unknown);
   readonly solana: {
     signMessage(input: { readonly message: string }): Promise<SignatureResult>;
   };
   readonly tron: {
     signMessage(input: { readonly message: string }): Promise<SignatureResult>;
-    signTypedData(input: {
-      readonly network: TronNetwork;
-      readonly typedData: TypedDataInput;
-    }): Promise<SignatureResult>;
-  };
+  } & (TTypedData extends true
+    ? {
+        /**
+         * Sign TIP-712 data after `signing.authorizeTypedData` returns `true`. Refuses typed data
+         * whose `verifyingContract` is the wallet.
+         */
+        signTypedData(input: {
+          readonly network: TronNetwork;
+          readonly typedData: TypedDataInput;
+        }): Promise<SignatureResult>;
+      }
+    : unknown);
   readonly indexer: WalletIndexerFacet;
 }

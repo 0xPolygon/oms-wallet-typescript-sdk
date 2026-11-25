@@ -10,12 +10,14 @@ import type { EngineCore } from './core.js';
 
 import { requireChain } from '../environment.js';
 import { WalletError } from '../errors.js';
+import { tronToHex } from '../internal/protocol/addresses.js';
 import { TRON_CHAIN_IDS } from '../internal/protocol/networks.js';
 import { NETWORK_FAMILIES } from '../protocol.js';
 import { validateTronTypedData, validateTypedData } from '../typed-data.js';
 import { requireMessage, requireTronNetwork } from './inputs.js';
 import {
   assertNotSelfVerifying,
+  authorizeTypedData,
   assertPublicTypedData,
   requestChainSignature,
   requestEvmMessageSignature,
@@ -130,12 +132,19 @@ export class EphemeralEngine {
 
   async signEvmTypedData(chainId: number, input: TypedDataInput): Promise<SignatureResult> {
     // Snapshot synchronously so callers cannot mutate an authorization while it is queued.
-    const { typedData } = validateTypedData(input, chainId);
+    const { typedData, digest } = validateTypedData(input, chainId);
     assertPublicTypedData(typedData);
     return this.run(async (state) => {
       const wallet = this.requireWallet(state, 'evm');
       assertNotSelfVerifying(typedData, wallet.address);
       await this.core.ensure(state, ['evm']);
+      await authorizeTypedData(this.core, {
+        family: 'evm',
+        chainId,
+        walletAddress: wallet.address,
+        digest,
+        typedData
+      });
       return verified(await requestEvmTypedDataSignature(this.core, state, chainId, typedData));
     });
   }
@@ -172,10 +181,20 @@ export class EphemeralEngine {
 
   async signTronTypedData(network: TronNetwork, input: TypedDataInput): Promise<SignatureResult> {
     const validNetwork = requireTronNetwork(network);
-    const { typedData } = validateTronTypedData(input, TRON_CHAIN_IDS[validNetwork]);
+    const chainId = TRON_CHAIN_IDS[validNetwork];
+    const { typedData, digest } = validateTronTypedData(input, chainId);
     return this.run(async (state) => {
-      this.requireWallet(state, 'tron');
+      const wallet = this.requireWallet(state, 'tron');
+      assertNotSelfVerifying(typedData, tronToHex(wallet.address));
       await this.core.ensure(state, ['tron']);
+      await authorizeTypedData(this.core, {
+        family: 'tron',
+        chainId,
+        network: validNetwork,
+        walletAddress: wallet.address,
+        digest,
+        typedData
+      });
       const signature = await requestChainSignature(
         this.core,
         state,

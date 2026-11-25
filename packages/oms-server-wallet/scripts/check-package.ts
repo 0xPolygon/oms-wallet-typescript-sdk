@@ -120,7 +120,8 @@ writeFileSync(
   parseAmount,
   type NamespacedStateStore,
   type ServerWallet,
-  type StateStore
+  type StateStore,
+  type TypedDataSigningRequest
 } from '@polygonlabs/oms-server-wallet-sdk';
 import {
   trails,
@@ -274,6 +275,48 @@ void eph.disable;
 createEphemeralServerWallet({ publishableKey: key, oidc, storage: { adapter: state, encryptionKey } });
 void asDurable;
 
+// Typed-data signing exists only with a signing policy, on durable, service and ephemeral handles.
+// @ts-expect-error signTypedData needs signing.authorizeTypedData
+void wTwoPhase.evm.signTypedData;
+// @ts-expect-error signTypedData needs signing.authorizeTypedData
+void wImmediate.tron.signTypedData;
+// @ts-expect-error signTypedData needs signing.authorizeTypedData
+void eph.evm.signTypedData;
+const signing = { authorizeTypedData: (request: TypedDataSigningRequest) => request.family === 'evm' };
+const wSigning = createServerWallet({ publishableKey: key, oidc, storage: { adapter: state, encryptionKey }, executor: createSingleProcessExecutor(), signing });
+void wSigning.evm.signTypedData;
+void wSigning.tron.signTypedData;
+// @ts-expect-error signing does not enable immediate send
+void wSigning.evm.sendTransfer;
+const svcSigning = createServerWalletService({ publishableKey: key, oidc: { issuer: oidc.issuer, audience: oidc.audience, getIdToken: oidc.getIdToken }, storage: { adapter: nsState, encryptionKey }, executor: createSingleProcessExecutorPool(), signing });
+void svcSigning.forSubject('alice').evm.signTypedData;
+const ephSigning = createEphemeralServerWallet({ publishableKey: key, oidc, signing });
+void ephSigning.tron.signTypedData;
+// A wallet with signing still satisfies the plain ServerWallet type.
+const plain: ServerWallet = wSigning;
+void plain;
+
+// Unknown option keys are compile errors even though the factories infer their options.
+// @ts-expect-error misspelled approval
+createServerWallet({ publishableKey: key, oidc, storage: { adapter: state, encryptionKey }, executor: createSingleProcessExecutor(), aproval: 'allow-immediate' });
+// @ts-expect-error store was renamed to storage
+createServerWallet({ publishableKey: key, oidc, store: { adapter: state, encryptionKey }, executor: createSingleProcessExecutor() });
+
+// Tron transfers and calls mirror EVM: prepareTransfer / prepareCall, with maxQuotedFee.
+void wImmediate.tron.sendTransfer({ idempotencyKey: 'consumer-trc20', network: 'tron:nile', to: 'TXYZopYRdj2D9XRtbG411XZZ3kM5VkAeBf', asset: 'TXYZopYRdj2D9XRtbG411XZZ3kM5VkAeBf', amount: '1', maxQuotedFee: '1000000' });
+void wTwoPhase.tron.prepareCall({ idempotencyKey: 'consumer-tron-abi', network: 'tron:nile', to: 'TXYZopYRdj2D9XRtbG411XZZ3kM5VkAeBf', method: 'approve', args: [] });
+void wTwoPhase.tron.prepareCall({ idempotencyKey: 'consumer-tron-raw', network: 'tron:nile', to: 'TXYZopYRdj2D9XRtbG411XZZ3kM5VkAeBf', data: '0x', value: '1' });
+// @ts-expect-error an ABI call takes no calldata
+void wTwoPhase.tron.prepareCall({ idempotencyKey: 'consumer-tron-both', network: 'tron:nile', to: 'TXYZopYRdj2D9XRtbG411XZZ3kM5VkAeBf', method: 'approve', data: '0x' });
+// @ts-expect-error maxFee was renamed to maxQuotedFee
+void wTwoPhase.tron.prepareTransfer({ idempotencyKey: 'consumer-tron-fee', network: 'tron:nile', to: 'TXYZopYRdj2D9XRtbG411XZZ3kM5VkAeBf', asset: 'native', amount: '1', maxFee: '1' });
+// @ts-expect-error prepareTransaction was replaced by prepareTransfer and prepareCall
+void wTwoPhase.tron.prepareTransaction;
+type Snapshot = Awaited<ReturnType<typeof wTwoPhase.inspect>>;
+// @ts-expect-error snapshots list wallets by family
+type RemovedWallet = Snapshot['wallet'];
+export type SnapshotEvm = Snapshot['wallets']['evm'];
+
 // Declaration emit: inferred public types must be nameable from the package entry points (TS4023).
 export const declTwoPhase = wTwoPhase;
 export const declImmediate = wImmediate;
@@ -288,6 +331,9 @@ export const declWalletSwaps = walletSwaps;
 export const declServiceSwaps = serviceSwaps;
 export const declEphemeral = eph;
 export const declEphemeralEvm = eph.evm;
+export const declSigning = wSigning;
+export const declSigningService = svcSigning;
+export const declEphemeralSigning = ephSigning;
 `
 );
 

@@ -109,6 +109,7 @@ so the outcome survives a restart. Settlement codes such as `SUBMISSION_UNCERTAI
 | `PREPARATION_FAILED` | Preparing failed with an error that is not a `WalletError` (recorded on the operation). | Inspect logs; prepare again. |
 | `SIGNING_FAILED` | Signing failed with an error that is not a `WalletError` (recorded on the operation). | Inspect logs; sign again under a new key. |
 | `SIGNATURE_INVALID` | WaaS returned a signature that did not verify. | Do not use it; retry or investigate. |
+| `TYPED_DATA_REFUSED` | `signing.authorizeTypedData` did not return `true`, or typed-data signing is not configured. Nothing was signed or recorded. | Treat as a policy refusal; the same key can be retried. |
 | `DEBIT_PENDING` | Another debit on the chain is pending or uncertain (including a swap reservation). | Settle or reconcile it first. |
 | `SWAPS_COORDINATION_REQUIRED` | The wallet has swaps coordination, but this handle was created without `swaps`. | Create the wallet with `swaps: trails(...)`. |
 

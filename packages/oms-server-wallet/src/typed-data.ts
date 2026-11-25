@@ -143,7 +143,22 @@ function normalize(json: unknown, chainId: number) {
   )
     throw new Error('Domain type must bind the selected chain and contract');
   const types: typeof data.types = { ...data.types, EIP712Domain: domainTypes };
-  const normalized = { ...data, domain: { ...data.domain, chainId }, types };
+  // Keep only the fields the types declare: those are what the digest signs, so WaaS and a
+  // signing policy see exactly the signed content and nothing a reader could mistake for it.
+  const signed = (type: string, value: unknown): unknown => {
+    const array = /^(.*)\[[0-9]*\]$/.exec(type);
+    if (array) return Array.isArray(value) ? value.map((v) => signed(array[1], v)) : value;
+    if (!Object.hasOwn(types, type) || !value || typeof value !== 'object' || Array.isArray(value))
+      return value;
+    const struct = value as Record<string, unknown>;
+    return Object.fromEntries(
+      types[type]
+        .filter((field) => Object.hasOwn(struct, field.name))
+        .map((field) => [field.name, signed(field.type, struct[field.name])])
+    );
+  };
+  const message = signed(data.primaryType, data.message) as Record<string, unknown>;
+  const normalized = { ...data, domain: { ...data.domain, chainId }, types, message };
   const digest = hashTypedData(normalized);
   return { typedData: normalized, digest };
 }

@@ -17,19 +17,20 @@ import type {
   EvmSignMessageInput,
   EvmSignTypedDataInput,
   EvmTransferInput,
+  EvmTypedDataFacet,
   ExecuteInput,
   GetEvmBalancesOptions,
   GetSolanaBalancesOptions,
   GetTronBalancesOptions,
   ListOperationsOptions,
   ResolveReconciliationInput,
+  ServerWallet,
   ServerWalletBase,
   ServerWalletOptions,
-  ServerWalletOptionsBase,
   ServerWalletService,
   ServerWalletServiceOptions,
-  ServerWalletServiceOptionsBase,
   ServiceIndexerFacet,
+  SigningOptions,
   SolanaFacet,
   SolanaFacetBase,
   SolanaImmediateFacet,
@@ -45,7 +46,9 @@ import type {
   TronSignMessageInput,
   TronSignTypedDataInput,
   TronTransferInput,
+  TronTypedDataFacet,
   TypedDataInput,
+  TypedDataSigningRequest,
   WaitForOperationOptions,
   WaitResult,
   WalletIndexerFacet,
@@ -70,6 +73,50 @@ import {
   scopeNamespacedStore
 } from './storage.js';
 import { WaasTransport } from './transport.js';
+
+type Overrides = { transport?: RpcTransport; clock?: () => number; indexer?: IndexerClient };
+
+/** Makes any option key the factory does not know a compile-time error (no excess-key check on generics). */
+type ExactOptions<TOptions, TKnown> = {
+  readonly [K in Exclude<keyof TOptions, keyof TKnown>]: never;
+};
+
+type ApprovalFrom<TOptions> = TOptions extends { readonly approval: 'allow-immediate' }
+  ? 'allow-immediate'
+  : 'two-phase';
+type TypedDataFrom<TOptions> = TOptions extends { readonly signing: SigningOptions } ? true : false;
+
+/** The handle `createServerWallet` returns for these options. */
+type ServerWalletFrom<TOptions extends ServerWalletOptions> = ServerWallet<
+  ApprovalFrom<TOptions>,
+  TOptions extends { readonly swaps: infer TSwaps extends SwapsConfig<'wallet', unknown> }
+    ? TSwaps
+    : undefined,
+  TypedDataFrom<TOptions>
+>;
+
+/** The service `createServerWalletService` returns for these options. */
+type ServerWalletServiceFrom<TOptions extends ServerWalletServiceOptions> = ServerWalletService<
+  ApprovalFrom<TOptions>,
+  TOptions extends { readonly swaps: infer TSwaps extends SwapsConfig<'service', unknown> }
+    ? TSwaps
+    : undefined,
+  TypedDataFrom<TOptions>
+>;
+
+/** Validate `signing` and bind its policy to the options object it came from. */
+function resolveSigning(
+  signing: SigningOptions | undefined
+): ((request: TypedDataSigningRequest) => boolean | Promise<boolean>) | undefined {
+  if (signing === undefined) return undefined;
+  if (!signing || typeof signing.authorizeTypedData !== 'function')
+    throw new WalletError(
+      'CONFIGURATION',
+      'Configure signing as { authorizeTypedData(request) }, or omit it to disable typed-data signing.',
+      503
+    );
+  return signing.authorizeTypedData.bind(signing);
+}
 
 type TerminalOutcome = 'executed' | 'failed' | 'expired' | 'signed' | 'cancelled';
 const TERMINAL_OUTCOMES: ReadonlySet<string> = new Set<TerminalOutcome>([
@@ -322,20 +369,18 @@ function buildIndexerFacet(
   });
 }
 
-function buildWalletFacade<
-  TApproval extends ApprovalMode,
-  TSwaps extends SwapsConfig<'wallet' | 'service', unknown> | undefined
->(params: {
+/** Every facade shape at runtime; the public factories narrow it from their options. */
+type AnyServerWallet = ServerWalletBase<ApprovalMode, boolean> & { readonly swaps?: unknown };
+
+function buildWalletFacade(params: {
   engine: WalletEngine;
   indexer: IndexerClient;
-  approval: TApproval;
+  approval: ApprovalMode;
+  typedData: boolean;
   swapsFacet?: unknown;
   clock?: () => number;
-}): ServerWalletBase<TApproval> &
-  (TSwaps extends SwapsConfig<'wallet' | 'service', infer TFacet>
-    ? { readonly swaps: TFacet }
-    : Record<string, never>) {
-  const { engine, indexer, approval, swapsFacet, clock } = params;
+}): AnyServerWallet {
+  const { engine, indexer, approval, typedData, swapsFacet, clock } = params;
   const allowImmediate = approval === 'allow-immediate';
 
   const evmBase: EvmFacetBase = {
@@ -349,8 +394,6 @@ function buildWalletFacade<
     execute: (input: ExecuteInput) => engine.evm.executeEvm(input?.idempotencyKey, input?.reviewId),
     signMessage: (input: EvmSignMessageInput) =>
       engine.evm.signEvmMessage(input?.idempotencyKey, input?.chainId, input?.message),
-    signTypedData: (input: EvmSignTypedDataInput) =>
-      engine.evm.signEvmTypedData(input?.idempotencyKey, input?.chainId, input?.typedData),
     getOperation: (id: string) => engine.evm.getEvmOperationLocal(id),
     refreshOperation: (id: string) => engine.evm.refreshEvmOperation(id),
     waitForOperation: (id: string, options: WaitForOperationOptions) =>
@@ -376,9 +419,15 @@ function buildWalletFacade<
       input: EvmCallInput<abi, functionName>
     ) => engine.evm.sendEvmCall(input)
   };
-  const evm = Object.freeze(
-    allowImmediate ? { ...evmBase, ...evmImmediate } : { ...evmBase }
-  ) as EvmFacet<TApproval>;
+  const evmTypedData: EvmTypedDataFacet = {
+    signTypedData: (input: EvmSignTypedDataInput) =>
+      engine.evm.signEvmTypedData(input?.idempotencyKey, input?.chainId, input?.typedData)
+  };
+  const evm = Object.freeze({
+    ...evmBase,
+    ...(allowImmediate ? evmImmediate : {}),
+    ...(typedData ? evmTypedData : {})
+  }) as EvmFacet<ApprovalMode, boolean>;
 
   const solanaBase: SolanaFacetBase = {
     prepareTransfer: (input: SolanaTransferInput) => engine.chain.prepareSolanaTransfer(input),
@@ -407,7 +456,7 @@ function buildWalletFacade<
   };
   const solana = Object.freeze(
     allowImmediate ? { ...solanaBase, ...solanaImmediate } : { ...solanaBase }
-  ) as SolanaFacet<TApproval>;
+  ) as SolanaFacet<ApprovalMode>;
 
   const tronBase: TronFacetBase = {
     prepareTransfer: (input: TronTransferInput) => engine.chain.prepareTronTransfer(input),
@@ -416,8 +465,6 @@ function buildWalletFacade<
       engine.chain.executeTron(input?.idempotencyKey, input?.reviewId),
     signMessage: (input: TronSignMessageInput) =>
       engine.chain.signTronMessage(input?.idempotencyKey, input?.message),
-    signTypedData: (input: TronSignTypedDataInput) =>
-      engine.chain.signTronTypedData(input?.idempotencyKey, input?.network, input?.typedData),
     getOperation: (id: string) => engine.chain.getTronOperationLocal(id),
     refreshOperation: (id: string) => engine.chain.refreshTronOperation(id),
     waitForOperation: (id: string, options: WaitForOperationOptions) =>
@@ -438,9 +485,15 @@ function buildWalletFacade<
     sendTransfer: (input: TronTransferInput) => engine.chain.sendTronTransfer(input),
     sendCall: (input: TronCallInput) => engine.chain.sendTronCall(input)
   };
-  const tron = Object.freeze(
-    allowImmediate ? { ...tronBase, ...tronImmediate } : { ...tronBase }
-  ) as TronFacet<TApproval>;
+  const tronTypedData: TronTypedDataFacet = {
+    signTypedData: (input: TronSignTypedDataInput) =>
+      engine.chain.signTronTypedData(input?.idempotencyKey, input?.network, input?.typedData)
+  };
+  const tron = Object.freeze({
+    ...tronBase,
+    ...(allowImmediate ? tronImmediate : {}),
+    ...(typedData ? tronTypedData : {})
+  }) as TronFacet<ApprovalMode, boolean>;
 
   const indexerFacet = buildIndexerFacet(indexer, async (family) => {
     const address = await engine.core.snapshotAddress(family);
@@ -453,7 +506,7 @@ function buildWalletFacade<
     return address;
   });
 
-  const base: ServerWalletBase<TApproval> = {
+  const base: ServerWalletBase<ApprovalMode, boolean> = {
     inspect: () => engine.core.inspect(),
     createOrRestore: (options?: CreateOrRestoreOptions) =>
       engine.core.createOrRestore(options?.families),
@@ -466,26 +519,19 @@ function buildWalletFacade<
     indexer: indexerFacet
   };
 
-  return Object.freeze(
-    swapsFacet !== undefined ? { ...base, swaps: swapsFacet } : base
-  ) as ServerWalletBase<TApproval> &
-    (TSwaps extends SwapsConfig<'wallet' | 'service', infer TFacet>
-      ? { readonly swaps: TFacet }
-      : Record<string, never>);
+  return Object.freeze(swapsFacet !== undefined ? { ...base, swaps: swapsFacet } : base);
 }
 
 function instantiateServerWallet(
-  options: ServerWalletOptionsBase & {
-    readonly approval?: ApprovalMode;
-    readonly swaps?: SwapsConfig<'wallet', unknown>;
-  },
-  overrides: { transport?: RpcTransport; clock?: () => number; indexer?: IndexerClient } = {}
-): ServerWalletBase<ApprovalMode> & { readonly swaps?: unknown } {
+  options: ServerWalletOptions,
+  overrides: Overrides = {}
+): AnyServerWallet {
   if (!options || typeof options !== 'object')
     throw new WalletError('CONFIGURATION', 'Configure createServerWallet options.', 503);
   const environment = environmentFromKey(options.publishableKey);
   const origin = normalizeOrigin(options.origin);
   const approval = validateApproval(options.approval);
+  const authorizeTypedData = resolveSigning(options.signing);
   validateOidcCore(
     options.oidc?.issuer,
     options.oidc?.audience,
@@ -531,7 +577,8 @@ function instantiateServerWallet(
     store,
     executor: options.executor,
     transport,
-    clock: overrides.clock
+    clock: overrides.clock,
+    authorizeTypedData
   });
 
   let swapsFacet: unknown;
@@ -541,112 +588,47 @@ function instantiateServerWallet(
     swapsFacet = bound.facet;
   }
 
-  return buildWalletFacade<ApprovalMode, SwapsConfig<'wallet', unknown> | undefined>({
+  return buildWalletFacade({
     engine,
     indexer,
     approval,
+    typedData: authorizeTypedData !== undefined,
     swapsFacet,
     clock: overrides.clock
-  }) as unknown as ServerWalletBase<ApprovalMode> & { readonly swaps?: unknown };
+  });
 }
 
 /** Package-private test seam: runs the exact public factory wiring over a custom `RpcTransport` and clock. */
-export function createServerWalletInternal(
-  options: ServerWalletOptionsBase & {
-    readonly approval?: 'two-phase';
-    readonly swaps?: undefined;
-  },
-  overrides?: { transport?: RpcTransport; clock?: () => number; indexer?: IndexerClient }
-): ServerWalletBase<'two-phase'>;
-export function createServerWalletInternal<TFacet>(
-  options: ServerWalletOptionsBase & {
-    readonly approval?: 'two-phase';
-    readonly swaps: SwapsConfig<'wallet', TFacet>;
-  },
-  overrides?: { transport?: RpcTransport; clock?: () => number; indexer?: IndexerClient }
-): ServerWalletBase<'two-phase'> & { readonly swaps: TFacet };
-export function createServerWalletInternal(
-  options: ServerWalletOptionsBase & {
-    readonly approval: 'allow-immediate';
-    readonly swaps?: undefined;
-  },
-  overrides?: { transport?: RpcTransport; clock?: () => number; indexer?: IndexerClient }
-): ServerWalletBase<'allow-immediate'>;
-export function createServerWalletInternal<TFacet>(
-  options: ServerWalletOptionsBase & {
-    readonly approval: 'allow-immediate';
-    readonly swaps: SwapsConfig<'wallet', TFacet>;
-  },
-  overrides?: { transport?: RpcTransport; clock?: () => number; indexer?: IndexerClient }
-): ServerWalletBase<'allow-immediate'> & { readonly swaps: TFacet };
-export function createServerWalletInternal<TApproval extends ApprovalMode = 'two-phase'>(
-  options: ServerWalletOptionsBase & {
-    readonly approval?: TApproval;
-    readonly swaps?: undefined;
-  },
-  overrides?: { transport?: RpcTransport; clock?: () => number; indexer?: IndexerClient }
-): ServerWalletBase<TApproval>;
-export function createServerWalletInternal(
-  options: ServerWalletOptionsBase & {
-    readonly approval?: ApprovalMode;
-    readonly swaps?: SwapsConfig<'wallet', unknown>;
-  },
-  overrides?: { transport?: RpcTransport; clock?: () => number; indexer?: IndexerClient }
-): ServerWalletBase<ApprovalMode> & { readonly swaps?: unknown } {
-  return instantiateServerWallet(options, overrides);
+/** Package-private test seam: runs the exact public factory wiring over a custom `RpcTransport` and clock. */
+export function createServerWalletInternal<const TOptions extends ServerWalletOptions>(
+  options: TOptions & ExactOptions<TOptions, ServerWalletOptions>,
+  overrides?: Overrides
+): ServerWalletFrom<TOptions> {
+  return instantiateServerWallet(options, overrides) as unknown as ServerWalletFrom<TOptions>;
 }
 
 /**
  * Create a single-identity attested server wallet (ideal for one Cloudflare Durable Object per
- * wallet, or hosts managing per-identity storage and execution directly).
+ * wallet, or hosts managing per-identity storage and execution directly). The handle's methods
+ * follow the options: `approval: 'allow-immediate'` adds `send*`, `swaps` adds `swaps`, and
+ * `signing` adds `signTypedData`.
  */
-export function createServerWallet(
-  options: ServerWalletOptionsBase & {
-    readonly approval?: 'two-phase';
-    readonly swaps?: undefined;
-  }
-): ServerWalletBase<'two-phase'>;
-export function createServerWallet<TFacet>(
-  options: ServerWalletOptionsBase & {
-    readonly approval?: 'two-phase';
-    readonly swaps: SwapsConfig<'wallet', TFacet>;
-  }
-): ServerWalletBase<'two-phase'> & { readonly swaps: TFacet };
-export function createServerWallet(
-  options: ServerWalletOptionsBase & {
-    readonly approval: 'allow-immediate';
-    readonly swaps?: undefined;
-  }
-): ServerWalletBase<'allow-immediate'>;
-export function createServerWallet<TFacet>(
-  options: ServerWalletOptionsBase & {
-    readonly approval: 'allow-immediate';
-    readonly swaps: SwapsConfig<'wallet', TFacet>;
-  }
-): ServerWalletBase<'allow-immediate'> & { readonly swaps: TFacet };
-export function createServerWallet(
-  options: ServerWalletOptions<ApprovalMode, SwapsConfig<'wallet', unknown> | undefined>
-): ServerWalletBase<ApprovalMode> & { readonly swaps?: unknown } {
-  return instantiateServerWallet(
-    options as ServerWalletOptionsBase & {
-      readonly approval?: ApprovalMode;
-      readonly swaps?: SwapsConfig<'wallet', unknown>;
-    }
-  );
+export function createServerWallet<const TOptions extends ServerWalletOptions>(
+  options: TOptions & ExactOptions<TOptions, ServerWalletOptions>
+): ServerWalletFrom<TOptions> {
+  return instantiateServerWallet(options) as unknown as ServerWalletFrom<TOptions>;
 }
 
 function instantiateServerWalletService(
-  options: ServerWalletServiceOptionsBase & {
-    readonly approval?: ApprovalMode;
-    readonly swaps?: SwapsConfig<'service', unknown>;
-  },
-  overrides: { transport?: RpcTransport; clock?: () => number; indexer?: IndexerClient } = {}
-): ServerWalletService<ApprovalMode, SwapsConfig<'service', unknown> | undefined> {
+  options: ServerWalletServiceOptions,
+  overrides: Overrides = {}
+): { forSubject(subject: string): AnyServerWallet; readonly indexer: ServiceIndexerFacet } {
   if (!options || typeof options !== 'object')
     throw new WalletError('CONFIGURATION', 'Configure createServerWalletService options.', 503);
   const environment = environmentFromKey(options.publishableKey);
   const origin = normalizeOrigin(options.origin);
   const approval = validateApproval(options.approval);
+  const authorizeTypedData = resolveSigning(options.signing);
   validateOidcCore(
     options.oidc?.issuer,
     options.oidc?.audience,
@@ -761,7 +743,8 @@ function instantiateServerWalletService(
         store,
         executor,
         transport,
-        clock: overrides.clock
+        clock: overrides.clock,
+        authorizeTypedData
       });
       let swapsFacet: unknown;
       if (swapsBinder) {
@@ -769,101 +752,47 @@ function instantiateServerWalletService(
         engine.attachGate(bound.gate);
         swapsFacet = bound.facet;
       }
-      return buildWalletFacade<ApprovalMode, SwapsConfig<'service', unknown> | undefined>({
+      return buildWalletFacade({
         engine,
         indexer,
         approval,
+        typedData: authorizeTypedData !== undefined,
         swapsFacet,
         clock: overrides.clock
       });
     },
     indexer: serviceIndexer
-  }) as unknown as ServerWalletService<ApprovalMode, SwapsConfig<'service', unknown> | undefined>;
+  });
 }
 
 /** Package-private test seam for `createServerWalletService`. */
-export function createServerWalletServiceInternal(
-  options: ServerWalletServiceOptionsBase & {
-    readonly approval?: 'two-phase';
-    readonly swaps?: undefined;
-  },
-  overrides?: { transport?: RpcTransport; clock?: () => number; indexer?: IndexerClient }
-): ServerWalletService<'two-phase', undefined>;
-export function createServerWalletServiceInternal<TFacet>(
-  options: ServerWalletServiceOptionsBase & {
-    readonly approval?: 'two-phase';
-    readonly swaps: SwapsConfig<'service', TFacet>;
-  },
-  overrides?: { transport?: RpcTransport; clock?: () => number; indexer?: IndexerClient }
-): ServerWalletService<'two-phase', SwapsConfig<'service', TFacet>>;
-export function createServerWalletServiceInternal(
-  options: ServerWalletServiceOptionsBase & {
-    readonly approval: 'allow-immediate';
-    readonly swaps?: undefined;
-  },
-  overrides?: { transport?: RpcTransport; clock?: () => number; indexer?: IndexerClient }
-): ServerWalletService<'allow-immediate', undefined>;
-export function createServerWalletServiceInternal<TFacet>(
-  options: ServerWalletServiceOptionsBase & {
-    readonly approval: 'allow-immediate';
-    readonly swaps: SwapsConfig<'service', TFacet>;
-  },
-  overrides?: { transport?: RpcTransport; clock?: () => number; indexer?: IndexerClient }
-): ServerWalletService<'allow-immediate', SwapsConfig<'service', TFacet>>;
-export function createServerWalletServiceInternal(
-  options: ServerWalletServiceOptionsBase & {
-    readonly approval?: ApprovalMode;
-    readonly swaps?: SwapsConfig<'service', unknown>;
-  },
-  overrides?: { transport?: RpcTransport; clock?: () => number; indexer?: IndexerClient }
-): ServerWalletService<ApprovalMode, SwapsConfig<'service', unknown> | undefined> {
-  return instantiateServerWalletService(options, overrides);
+export function createServerWalletServiceInternal<
+  const TOptions extends ServerWalletServiceOptions
+>(
+  options: TOptions & ExactOptions<TOptions, ServerWalletServiceOptions>,
+  overrides?: Overrides
+): ServerWalletServiceFrom<TOptions> {
+  return instantiateServerWalletService(
+    options,
+    overrides
+  ) as unknown as ServerWalletServiceFrom<TOptions>;
 }
 
 /**
  * Create a multi-tenant server wallet service for backends operating many identities.
  * Computes canonical identity namespaces from the routed WaaS origin, project, issuer, audience,
- * and subject.
+ * and subject. Handles from `forSubject` follow the options like `createServerWallet`.
  */
-export function createServerWalletService(
-  options: ServerWalletServiceOptionsBase & {
-    readonly approval?: 'two-phase';
-    readonly swaps?: undefined;
-  }
-): ServerWalletService<'two-phase', undefined>;
-export function createServerWalletService<TFacet>(
-  options: ServerWalletServiceOptionsBase & {
-    readonly approval?: 'two-phase';
-    readonly swaps: SwapsConfig<'service', TFacet>;
-  }
-): ServerWalletService<'two-phase', SwapsConfig<'service', TFacet>>;
-export function createServerWalletService(
-  options: ServerWalletServiceOptionsBase & {
-    readonly approval: 'allow-immediate';
-    readonly swaps?: undefined;
-  }
-): ServerWalletService<'allow-immediate', undefined>;
-export function createServerWalletService<TFacet>(
-  options: ServerWalletServiceOptionsBase & {
-    readonly approval: 'allow-immediate';
-    readonly swaps: SwapsConfig<'service', TFacet>;
-  }
-): ServerWalletService<'allow-immediate', SwapsConfig<'service', TFacet>>;
-export function createServerWalletService(
-  options: ServerWalletServiceOptions<ApprovalMode, SwapsConfig<'service', unknown> | undefined>
-): ServerWalletService<ApprovalMode, SwapsConfig<'service', unknown> | undefined> {
-  return instantiateServerWalletService(
-    options as ServerWalletServiceOptionsBase & {
-      readonly approval?: ApprovalMode;
-      readonly swaps?: SwapsConfig<'service', unknown>;
-    }
-  );
+export function createServerWalletService<const TOptions extends ServerWalletServiceOptions>(
+  options: TOptions & ExactOptions<TOptions, ServerWalletServiceOptions>
+): ServerWalletServiceFrom<TOptions> {
+  return instantiateServerWalletService(options) as unknown as ServerWalletServiceFrom<TOptions>;
 }
 
 function instantiateEphemeralServerWallet(
   options: EphemeralServerWalletOptions,
-  overrides: { transport?: RpcTransport; clock?: () => number; indexer?: IndexerClient } = {}
-): EphemeralServerWallet {
+  overrides: Overrides = {}
+): EphemeralServerWallet<boolean> {
   if (!options || typeof options !== 'object')
     throw new WalletError('CONFIGURATION', 'Configure createEphemeralServerWallet options.', 503);
   for (const key of ['store', 'storage', 'executor', 'swaps', 'approval'])
@@ -875,6 +804,7 @@ function instantiateEphemeralServerWallet(
       );
   const environment = environmentFromKey(options.publishableKey);
   const origin = normalizeOrigin(options.origin);
+  const authorizeTypedData = resolveSigning(options.signing);
   validateOidcCore(
     options.oidc?.issuer,
     options.oidc?.audience,
@@ -910,7 +840,8 @@ function instantiateEphemeralServerWallet(
       executor: createSingleProcessExecutor(),
       transport,
       clock: overrides.clock,
-      createWallets: false
+      createWallets: false,
+      authorizeTypedData
     })
   );
 
@@ -922,39 +853,56 @@ function instantiateEphemeralServerWallet(
     evm: Object.freeze({
       signMessage: (input: { readonly chainId: number; readonly message: string }) =>
         engine.signEvmMessage(input?.chainId, input?.message),
-      signTypedData: (input: { readonly chainId: number; readonly typedData: TypedDataInput }) =>
-        engine.signEvmTypedData(input?.chainId, input?.typedData)
+      ...(authorizeTypedData
+        ? {
+            signTypedData: (input: {
+              readonly chainId: number;
+              readonly typedData: TypedDataInput;
+            }) => engine.signEvmTypedData(input?.chainId, input?.typedData)
+          }
+        : {})
     }),
     solana: Object.freeze({
       signMessage: (input: { readonly message: string }) => engine.signSolanaMessage(input?.message)
     }),
     tron: Object.freeze({
       signMessage: (input: { readonly message: string }) => engine.signTronMessage(input?.message),
-      signTypedData: (input: {
-        readonly network: TronNetwork;
-        readonly typedData: TypedDataInput;
-      }) => engine.signTronTypedData(input?.network, input?.typedData)
+      ...(authorizeTypedData
+        ? {
+            signTypedData: (input: {
+              readonly network: TronNetwork;
+              readonly typedData: TypedDataInput;
+            }) => engine.signTronTypedData(input?.network, input?.typedData)
+          }
+        : {})
     }),
     indexer: buildIndexerFacet(indexer, (family) => engine.address(family))
   });
 }
 
 /** Package-private test seam for `createEphemeralServerWallet`. */
-export function createEphemeralServerWalletInternal(
-  options: EphemeralServerWalletOptions,
-  overrides?: { transport?: RpcTransport; clock?: () => number; indexer?: IndexerClient }
-): EphemeralServerWallet {
-  return instantiateEphemeralServerWallet(options, overrides);
+export function createEphemeralServerWalletInternal<
+  const TOptions extends EphemeralServerWalletOptions
+>(
+  options: TOptions & ExactOptions<TOptions, EphemeralServerWalletOptions>,
+  overrides?: Overrides
+): EphemeralServerWallet<TOptions extends { readonly signing: SigningOptions } ? true : false> {
+  return instantiateEphemeralServerWallet(options, overrides) as EphemeralServerWallet<
+    TOptions extends { readonly signing: SigningOptions } ? true : false
+  >;
 }
 
 /**
  * Create a memory-only signer for one OIDC identity. It needs no storage, encryption key or
  * distributed lock: each handle holds its own credential, so run one handle per concurrent
  * worker. It signs and reads balances but cannot send, keeps no records and never creates
- * wallets; provision wallets with `createServerWallet` first. Call `close()` when done.
+ * wallets; provision wallets with `createServerWallet` first. `signing` adds `signTypedData`.
+ * Call `close()` when done.
  */
-export function createEphemeralServerWallet(
-  options: EphemeralServerWalletOptions
-): EphemeralServerWallet {
-  return instantiateEphemeralServerWallet(options);
+export function createEphemeralServerWallet<const TOptions extends EphemeralServerWalletOptions>(
+  options: TOptions & ExactOptions<TOptions, EphemeralServerWalletOptions>
+): EphemeralServerWallet<TOptions extends { readonly signing: SigningOptions } ? true : false> {
+  return instantiateEphemeralServerWallet(options) as EphemeralServerWallet<
+    TOptions extends { readonly signing: SigningOptions } ? true : false
+  >;
 }

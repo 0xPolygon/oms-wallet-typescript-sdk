@@ -1,5 +1,6 @@
 import type { RemoteWallet } from '../protocol.js';
 import type { State } from '../state.js';
+import type { TypedDataSigningRequest } from '../types.js';
 import type { EngineCore } from './core.js';
 
 import { WalletError } from '../errors.js';
@@ -71,6 +72,38 @@ export async function requestEvmTypedDataSignature(
     })
   );
   return { signature, valid: isValid };
+}
+
+function deepFreeze<T>(value: T): T {
+  if (value && typeof value === 'object') {
+    for (const child of Object.values(value)) deepFreeze(child);
+    Object.freeze(value);
+  }
+  return value;
+}
+
+/**
+ * Ask the configured `signing.authorizeTypedData` policy to approve a public typed-data signature.
+ * Throws `TYPED_DATA_REFUSED` unless it returns literal `true`; errors it throws pass through.
+ */
+export async function authorizeTypedData(
+  core: EngineCore,
+  request: Omit<TypedDataSigningRequest, 'subject'>
+): Promise<void> {
+  const policy = core.config.authorizeTypedData;
+  if (!policy)
+    throw new WalletError(
+      'TYPED_DATA_REFUSED',
+      'Typed-data signing is not enabled for this wallet. Configure signing.authorizeTypedData.',
+      403
+    );
+  const frozen = deepFreeze(structuredClone({ ...request, subject: core.config.subject }));
+  if ((await policy(frozen)) !== true)
+    throw new WalletError(
+      'TYPED_DATA_REFUSED',
+      'The typed-data signing policy refused this request.',
+      403
+    );
 }
 
 /** Refuse Sequence wallet `Calls` authorizations on the public typed-data signing paths. */

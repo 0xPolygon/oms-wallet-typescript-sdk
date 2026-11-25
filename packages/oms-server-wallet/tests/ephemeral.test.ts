@@ -32,7 +32,8 @@ const ephemeral = (remote: FakeWaas, oidc: { sessionLifetimeSeconds?: number } =
           expiresAt: Math.floor(Date.now() / 1000) + 300
         }),
         ...oidc
-      }
+      },
+      signing: { authorizeTypedData: () => true }
     },
     { transport: remote }
   );

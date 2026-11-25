@@ -2,6 +2,7 @@ import {
   createSingleProcessExecutor,
   UpstreamError,
   type ApprovalMode,
+  type SigningOptions,
   type StateStore
 } from '@polygonlabs/oms-server-wallet-sdk';
 import type { Credential } from '../src/protocol.js';
@@ -265,9 +266,14 @@ export class FakeWaas implements RpcTransport {
   }
 }
 
+/**
+ * Durable wallet over the fake WaaS. Typed-data signing is enabled with an allow-all policy unless
+ * `signing` replaces it; tests of the opt-in itself construct wallets without it.
+ */
 export function sdkHarness<TApproval extends ApprovalMode = 'allow-immediate'>(
-  options: { approval?: TApproval; clock?: () => number } = {}
+  options: { approval?: TApproval; clock?: () => number; signing?: SigningOptions } = {}
 ) {
+  const signing: SigningOptions = options.signing ?? { authorizeTypedData: () => true };
   const store = new MemoryStore();
   const remote = new FakeWaas();
   const executor = createSingleProcessExecutor();
@@ -287,7 +293,8 @@ export function sdkHarness<TApproval extends ApprovalMode = 'allow-immediate'>(
         },
         storage: { encryptedStore: store },
         executor,
-        approval: (overrideApproval ?? approval) as M
+        approval: (overrideApproval ?? approval) as M,
+        signing
       },
       { transport: remote, clock: options.clock }
     );

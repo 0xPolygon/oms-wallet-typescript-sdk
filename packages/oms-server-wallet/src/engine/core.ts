@@ -15,6 +15,7 @@ import type {
   OperationPage,
   ResolveReconciliationInput,
   SubmissionMode,
+  TypedDataSigningRequest,
   WalletOperation,
   WalletSnapshot
 } from '../types.js';
@@ -71,6 +72,8 @@ export interface WalletEngineConfig {
    * could otherwise lead to a second wallet for the identity.
    */
   readonly createWallets?: boolean;
+  /** `signing.authorizeTypedData`, bound to its options object; absent when not configured. */
+  readonly authorizeTypedData?: (request: TypedDataSigningRequest) => boolean | Promise<boolean>;
 }
 
 /**
