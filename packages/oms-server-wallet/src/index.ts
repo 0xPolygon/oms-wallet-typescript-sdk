@@ -1,9 +1,4 @@
-export {
-  createEphemeralServerWallet,
-  createEphemeralServerWalletService,
-  createServerWallet,
-  createServerWalletService
-} from './wallet.js';
+export { createServerWallet, createServerWalletService } from './wallet.js';
 export { parseAmount } from './engine.js';
 export { createSingleProcessExecutor, createSingleProcessExecutorPool } from './storage.js';
 export {
@@ -29,12 +24,6 @@ export type {
   ChainBalances,
   ChainQuote,
   CreateOrRestoreOptions,
-  EphemeralServerWallet,
-  EphemeralCacheOptions,
-  EphemeralServerWalletOptions,
-  EphemeralServerWalletService,
-  EphemeralServerWalletServiceOptions,
-  EphemeralWalletLifecycle,
   EvmBalance,
   EvmBalances,
   EvmCallInput,
@@ -52,6 +41,10 @@ export type {
   GetSolanaBalancesOptions,
   GetTronBalancesOptions,
   IdentityWallet,
+  InMemoryCacheOptions,
+  InMemoryServerWallet,
+  InMemoryServerWalletService,
+  InMemoryWalletLifecycle,
   ListOperationsOptions,
   NamespacedStateStore,
   NetworkFamily,

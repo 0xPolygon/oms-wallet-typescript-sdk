@@ -210,7 +210,7 @@ export interface TrailsOptions<TStorage extends TrailsStorageOption = TrailsStor
   readonly enabled?: boolean;
   /** Optional Trails API HTTPS base origin override. */
   readonly baseUrl?: string;
-  /** Optional HTTP Origin override (defaults to the wallet's `origin`). */
+  /** Optional HTTP Origin header for Trails keys restricted to an allowed origin. */
   readonly origin?: string;
   /** Request timeout in milliseconds (1–60,000; default 20,000). */
   readonly timeoutMs?: number;

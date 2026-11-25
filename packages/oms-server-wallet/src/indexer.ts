@@ -166,8 +166,11 @@ export class IndexerClient {
       );
     const requested = [...new Set(networks)];
     const fetcher = this.fetcher;
+    const unavailable = (cause: unknown) =>
+      new WalletError('INDEXER_UNAVAILABLE', 'Balance service request did not complete.', 502, {
+        cause
+      });
     let response: Response;
-    let body: string;
     try {
       response = await fetcher(url, {
         method: 'POST',
@@ -180,15 +183,19 @@ export class IndexerClient {
         redirect: 'manual',
         signal: AbortSignal.timeout(20_000)
       });
+    } catch (error) {
+      throw unavailable(error);
+    }
+    let body: string;
+    try {
       body = await boundedText(response);
     } catch (error) {
-      if (error instanceof WalletError) throw error;
-      throw new WalletError(
-        'INDEXER_UNAVAILABLE',
-        'Balance service request did not complete.',
-        502,
-        { cause: error }
-      );
+      if (
+        error instanceof WalletError &&
+        (error.code === 'RESPONSE_TOO_LARGE' || error.code === 'INVALID_RESPONSE')
+      )
+        throw error;
+      throw unavailable(error);
     }
     if (!response.ok)
       throw new WalletError(
@@ -271,8 +278,11 @@ export class IndexerClient {
     const requestedSet = new Set<number>(requestedChainIds);
 
     const fetcher = this.fetcher;
+    const unavailable = (cause: unknown) =>
+      new WalletError('INDEXER_UNAVAILABLE', 'Balance service request did not complete.', 502, {
+        cause
+      });
     let response: Response;
-    let body: string;
     try {
       response = await fetcher(this.environment.indexerUrl, {
         method: 'POST',
@@ -290,15 +300,19 @@ export class IndexerClient {
         redirect: 'manual',
         signal: AbortSignal.timeout(20_000)
       });
+    } catch (error) {
+      throw unavailable(error);
+    }
+    let body: string;
+    try {
       body = await boundedText(response);
     } catch (error) {
-      if (error instanceof WalletError) throw error;
-      throw new WalletError(
-        'INDEXER_UNAVAILABLE',
-        'Balance service request did not complete.',
-        502,
-        { cause: error }
-      );
+      if (
+        error instanceof WalletError &&
+        (error.code === 'RESPONSE_TOO_LARGE' || error.code === 'INVALID_RESPONSE')
+      )
+        throw error;
+      throw unavailable(error);
     }
     if (!response.ok)
       throw new WalletError(

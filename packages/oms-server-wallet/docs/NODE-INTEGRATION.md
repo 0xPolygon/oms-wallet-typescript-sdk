@@ -35,7 +35,6 @@ await writeFile(
     'OIDC_ISSUER=https://wallet-api.example.com',
     'OIDC_AUDIENCE=replace-with-your-registered-audience',
     'OMS_PUBLISHABLE_KEY=replace-with-your-project-key',
-    'APP_ORIGIN=https://wallet-api.example.com',
     'DATABASE_PATH=.data/wallets.sqlite',
     ''
   ].join('\n'),
@@ -141,7 +140,6 @@ const storage: NamespacedStateStore = {
 
 export const wallets = createServerWalletService({
   publishableKey: required('OMS_PUBLISHABLE_KEY'),
-  origin: required('APP_ORIGIN'),
   oidc: {
     issuer,
     audience,
@@ -160,29 +158,34 @@ export const wallets = createServerWalletService({
 
 The SDK automatically computes the canonical storage namespace (`[waasOrigin, projectId, issuer, audience, subject]`), encrypts every record with AES-256-GCM bound to that namespace and key, advances monotonic nonces before dispatch, and verifies AWS Nitro attestation on every WaaS response.
 
-### Signing-only workers: `createEphemeralServerWallet`
+### Stateless workers: `storage: 'memory'`
 
-A worker that only signs, such as a webhook signer or a login challenge, needs no storage or lock. Provision the identity's wallets with the durable service once, then sign from memory-only handles:
+A stateless worker or service that keeps its own records needs no `StateStore`, encryption key, or distributed lock. Pass `storage: 'memory'` (and omit `executor`) to `createServerWallet` or `createServerWalletService`:
 
 ```ts
-import { createEphemeralServerWallet } from '@polygonlabs/oms-server-wallet-sdk';
+import { randomUUID } from 'node:crypto';
+import { createServerWallet } from '@polygonlabs/oms-server-wallet-sdk';
 
 export async function signChallenge(subject: string, message: string) {
-  const signer = createEphemeralServerWallet({
+  const wallet = createServerWallet({
     publishableKey: required('OMS_PUBLISHABLE_KEY'),
-    origin: required('APP_ORIGIN'),
-    oidc: { issuer, audience, subject, getIdToken: () => issueIdToken(subject) }
+    oidc: { issuer, audience, subject, getIdToken: () => issueIdToken(subject) },
+    storage: 'memory'
   });
   try {
-    await signer.restore({ families: ['evm'] });
-    return await signer.evm.signMessage({ chainId: 137, message });
+    await wallet.restore({ families: ['evm'] });
+    return await wallet.evm.signMessage({
+      idempotencyKey: randomUUID(),
+      chainId: 137,
+      message
+    });
   } finally {
-    await signer.close();
+    await wallet.close();
   }
 }
 ```
 
-Each handle signs in, so for steady traffic keep a small pool of long-lived handles instead of one per request. Ephemeral handles cannot send transactions; see the README section "Ephemeral signer" for the full contract.
+Each handle signs in, so for steady multi-user traffic use `createServerWalletService({ ..., storage: 'memory', cache: { maxHandles, idleTimeoutMs } })` to reuse handles across requests. In-memory handles support the full wallet API (transfers, calls, signing, balances, and swaps); see the README section "In-memory storage (`storage: 'memory'`)" for the full contract.
 
 ## 4. Create, sign, prepare, review, execute, and observe
 
@@ -267,6 +270,6 @@ try {
 | `STALE_REVIEW` | `reviewId` does not match the prepared operation | Re-read and review the current operation before executing. |
 | `APPROVAL_REQUIRED` | Immediate `send*` called on an ID prepared for review | Review and call `execute({ idempotencyKey, reviewId })` instead. |
 
-Use `describeOperation(operation)` to map any persisted operation to an explicit next action (`await-review`, `resume-original`, `poll-original`, `reconcile-original`, `safe-to-reprepare`, or `done`).
+Use `describeOperation(operation)` to map any persisted operation to an explicit next action (`await-review`, `resume-original`, `poll-original`, `reconcile-original`, `safe-to-reprepare`, `investigate`, or `done`).
 
 See [API.md](../API.md) for the complete root API reference.

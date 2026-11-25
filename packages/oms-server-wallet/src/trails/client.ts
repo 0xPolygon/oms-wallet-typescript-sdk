@@ -102,8 +102,18 @@ export class TrailsClient {
     const body = canonicalJson(params);
     const timeout = AbortSignal.timeout(this.timeoutMs);
     const combined = signal ? AbortSignal.any([signal, timeout]) : timeout;
+    const unavailable = (cause: unknown) =>
+      new WalletError(
+        signal?.aborted
+          ? 'TRAILS_ABORTED'
+          : timeout.aborted
+            ? 'TRAILS_TIMEOUT'
+            : 'TRAILS_UNAVAILABLE',
+        'Trails request did not complete. Reconcile mutations before retrying.',
+        502,
+        { cause }
+      );
     let response: Response;
-    let text: string;
     try {
       // Native Workers fetch rejects a client instance as its `this` receiver.
       const fetcher = this.fetcher;
@@ -114,23 +124,23 @@ export class TrailsClient {
         redirect: 'manual',
         signal: combined
       });
-      if (response.status >= 300 && response.status < 400) {
-        await response.body?.cancel().catch(() => undefined);
-        throw new WalletError('UPSTREAM_REDIRECT', 'Trails redirects are not permitted.', 502);
-      }
+    } catch (error) {
+      throw unavailable(error);
+    }
+    if (response.status >= 300 && response.status < 400) {
+      await response.body?.cancel().catch(() => undefined);
+      throw new WalletError('UPSTREAM_REDIRECT', 'Trails redirects are not permitted.', 502);
+    }
+    let text: string;
+    try {
       text = await boundedText(response);
     } catch (error) {
-      if (error instanceof WalletError) throw error;
-      throw new WalletError(
-        signal?.aborted
-          ? 'TRAILS_ABORTED'
-          : timeout.aborted
-            ? 'TRAILS_TIMEOUT'
-            : 'TRAILS_UNAVAILABLE',
-        'Trails request did not complete. Reconcile mutations before retrying.',
-        502,
-        { cause: error }
-      );
+      if (
+        error instanceof WalletError &&
+        (error.code === 'RESPONSE_TOO_LARGE' || error.code === 'INVALID_RESPONSE')
+      )
+        throw error;
+      throw unavailable(error);
     }
     let result: unknown;
     try {

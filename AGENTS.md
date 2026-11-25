@@ -60,8 +60,8 @@ Repo-local agent skills live under `.agents/skills/` (agent-neutral); `.claude/s
   build) fails if the public declarations name the provider or import anything but the SDK and viem.
 - `packages/oms-server-wallet/`: ESM-only `@polygonlabs/oms-server-wallet-sdk` package, versioned independently of the
   fixed group. Backend wallets with OIDC ID-token auth, encrypted durable state behind a caller-supplied `StateStore`
-  and `ExclusiveExecutor`, EVM/Solana/Tron wallets, sponsored transfers and contract calls, a memory-only signer
-  (`createEphemeralServerWallet`), and Trails swaps and recovery under the `./trails` entry point. Every WaaS
+  and `ExclusiveExecutor`, EVM/Solana/Tron wallets, sponsored transfers and contract calls, in-memory storage
+  (`storage: 'memory'`), and Trails swaps and recovery under the `./trails` entry point. Every WaaS
   response is attested. `docs/ERRORS.md` is the error contract; `tests/error-docs.test.ts` fails if a
   `WalletErrorCode` is undocumented. `scripts/check-package.ts`
   (`test:package`) installs the packed archive into a clean consumer; `scripts/live-acceptance.ts` (`test:live`)

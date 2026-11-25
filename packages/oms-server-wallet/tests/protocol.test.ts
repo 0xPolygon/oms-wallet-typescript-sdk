@@ -9,10 +9,7 @@ import {
 import { UpstreamError } from '../src/errors.js';
 import { WaasTransport, boundedText } from '../src/transport.js';
 import { IndexerClient } from '../src/indexer.js';
-import { omsFetch } from '../src/http.js';
 import { EVM_NETWORKS } from '../src/internal/protocol/networks.js';
-
-const requestOrigin = 'https://app.example';
 
 describe('WaaS request protocol', () => {
   it('accepts null token fields in fee options, as live WaaS sends them for TRX', () => {
@@ -101,7 +98,7 @@ describe('WaaS request protocol', () => {
     const client = new WaasTransport(
       'pk_dev_live_test_key',
       { trustedPcr0s: ['0'.repeat(96)], allowDebugEnclave: true },
-      omsFetch(`${requestOrigin}/`, fetcher)
+      fetcher
     );
     const credential = await generateCredential();
     credential.nonce = '1';
@@ -109,7 +106,7 @@ describe('WaaS request protocol', () => {
       code: 'ATTESTATION_FAILED'
     });
     expect(requestHeaders?.get('Api-Key')).toBe('pk_dev_live_test_key');
-    expect(requestHeaders?.get('Origin')).toBe(requestOrigin);
+    expect(requestHeaders?.get('Origin')).toBeNull();
     expect(requestHeaders?.get('OMS-Wallet-Signature')).toContain('scope="prj_test"');
     expect(requestHeaders?.get('X-Attestation-Nonce')).toHaveLength(24);
     expect(
@@ -190,48 +187,45 @@ describe('indexer gateway', () => {
     const address = '0x1111111111111111111111111111111111111111';
     let sent: Record<string, unknown> = {};
     let requestHeaders: Headers | undefined;
-    const client = new IndexerClient(
-      'pk_dev_live_test_key',
-      omsFetch(`${requestOrigin}/`, async (_url, init) => {
-        requestHeaders = new Headers(init?.headers);
-        sent = JSON.parse(String(init?.body));
-        return Response.json({
-          nativeBalances: [
-            {
-              chainId: 137 as const,
-              results: [
-                {
-                  chainId: 137 as const,
-                  accountAddress: address,
-                  balanceWei: '1000000000000000001',
-                  name: 'Polygon',
-                  symbol: 'POL'
-                }
-              ]
-            },
-            { chainId: 1 as const, errorReason: 'Indexer unavailable' }
-          ],
-          balances: [
-            {
-              chainId: 137 as const,
-              results: [
-                {
-                  chainId: 137 as const,
-                  accountAddress: address,
-                  contractAddress: '0x2222222222222222222222222222222222222222',
-                  contractType: 'ERC20',
-                  balance: '1234567890123456789012345',
-                  contractInfo: { name: 'USD Coin', symbol: 'USDC', decimals: 6 }
-                }
-              ]
-            }
-          ],
-          page: { page: 0, pageSize: 40, more: true }
-        });
-      })
-    );
+    const client = new IndexerClient('pk_dev_live_test_key', async (_url, init) => {
+      requestHeaders = new Headers(init?.headers);
+      sent = JSON.parse(String(init?.body));
+      return Response.json({
+        nativeBalances: [
+          {
+            chainId: 137 as const,
+            results: [
+              {
+                chainId: 137 as const,
+                accountAddress: address,
+                balanceWei: '1000000000000000001',
+                name: 'Polygon',
+                symbol: 'POL'
+              }
+            ]
+          },
+          { chainId: 1 as const, errorReason: 'Indexer unavailable' }
+        ],
+        balances: [
+          {
+            chainId: 137 as const,
+            results: [
+              {
+                chainId: 137 as const,
+                accountAddress: address,
+                contractAddress: '0x2222222222222222222222222222222222222222',
+                contractType: 'ERC20',
+                balance: '1234567890123456789012345',
+                contractInfo: { name: 'USD Coin', symbol: 'USDC', decimals: 6 }
+              }
+            ]
+          }
+        ],
+        page: { page: 0, pageSize: 40, more: true }
+      });
+    });
     const result = await client.getBalances(address);
-    expect(requestHeaders?.get('Origin')).toBe(requestOrigin);
+    expect(requestHeaders?.get('Origin')).toBeNull();
     expect(requestHeaders?.get('Api-Key')).toBe('pk_dev_live_test_key');
     expect(result.items[0].balance).toBe('1000000000000000001');
     expect(result.items[1].decimals).toBe(6);

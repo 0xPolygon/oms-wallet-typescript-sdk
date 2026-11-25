@@ -11,10 +11,10 @@ Requires Web Crypto and Fetch (**Node 22+** or Cloudflare Workers with `nodejs_c
 
 ## Choose a mode
 
-| | Durable (`createServerWallet`, `createServerWalletService`) | In-memory (`createEphemeralServerWallet`, `createEphemeralServerWalletService`) |
+| | Durable (`storage: { adapter, encryptionKey }` or `{ encryptedStore }`) | In-memory (`storage: 'memory'`) |
 | --- | --- | --- |
 | For | Backends that want the SDK to keep operation records, idempotency and reconciliation across restarts | Stateless backends and workers that keep their own records (payout rows and so on) |
-| You provide | A `StateStore`, an encryption key and a lock per user (`executor`) | Nothing besides OIDC; each handle signs in and keeps its credential in memory |
+| You provide | A `StateStore`, an encryption key and a lock per user (`executor`) | `storage: 'memory'` and OIDC (no `executor`); each handle signs in and keeps its credential in memory |
 | Parallelism | One call at a time per user, across every process | One call at a time per handle; handles in different processes run in parallel |
 | Records and `idempotencyKey` | Survive restarts | Last as long as the handle; recover by `txnId` (`onPrepared`, `waitForTransaction`) |
 | Kill switch | `disable()` / `enable()` | `close()` per handle; stop minting ID tokens for the user |
@@ -44,7 +44,6 @@ declare const persistence: StateStore;
 
 const wallet = createServerWallet({
   publishableKey: process.env.OMS_PUBLISHABLE_KEY!,
-  origin: process.env.APP_ORIGIN!, // Allowed Origin for your OMS project
   oidc: {
     issuer: process.env.OIDC_ISSUER!,
     audience: process.env.OIDC_AUDIENCE!,
@@ -105,7 +104,6 @@ declare const storage: NamespacedStateStore;
 
 const wallets = createServerWalletService({
   publishableKey: process.env.OMS_PUBLISHABLE_KEY!,
-  origin: process.env.APP_ORIGIN!,
   oidc: {
     issuer: process.env.OIDC_ISSUER!,
     audience: process.env.OIDC_AUDIENCE!,
@@ -266,7 +264,6 @@ declare const swapStore: SwapStore;
 
 const wallet = createServerWallet({
   publishableKey: process.env.OMS_PUBLISHABLE_KEY!,
-  origin: process.env.APP_ORIGIN!,
   oidc: { issuer, audience, subject, getIdToken },
   storage: { adapter: persistence, encryptionKey: process.env.ENCRYPTION_KEY! },
   executor: createSingleProcessExecutor(),
@@ -297,17 +294,17 @@ await wallet.swaps.tick();
 
 See [docs/SWAPS-INTEGRATION.md](docs/SWAPS-INTEGRATION.md) and [TRAILS-API.md](TRAILS-API.md) for service-scoped stores (`scope: 'service'`), durable alarm scheduling, and separately reviewed recovery.
 
-## In-memory wallets (`createEphemeralServerWallet`)
+## In-memory storage (`storage: 'memory'`)
 
-The full wallet with nothing to store: no `StateStore`, encryption key or lock. Each handle signs in with its own credential and keeps it, its wallets and its operation records in memory, so handles in different processes run in parallel; calls on one handle run one at a time.
+Pass `storage: 'memory'` (and omit `executor`) to `createServerWallet` or `createServerWalletService` for the full wallet API with nothing to store: no `StateStore`, encryption key or lock. Each handle signs in with its own credential and keeps it, its wallets and its operation records in memory, so handles in different processes run in parallel; calls on one handle run one at a time.
 
 ```ts
-import { createEphemeralServerWallet } from '@polygonlabs/oms-server-wallet-sdk';
+import { createServerWallet } from '@polygonlabs/oms-server-wallet-sdk';
 
-const wallet = createEphemeralServerWallet({
+const wallet = createServerWallet({
   publishableKey,
-  origin: appOrigin,
   oidc: { issuer, audience, subject, getIdToken }, // sessionLifetimeSeconds defaults to 3600
+  storage: 'memory',
   approval: 'allow-immediate'
 });
 await wallet.restore({ families: ['evm'] }); // in signup, call create() instead
@@ -331,12 +328,13 @@ await wallet.close(); // revokes this handle's credential
 - **`close()`** revokes the credential and makes every later or queued call throw `WALLET_CLOSED`. A crashed process cannot close, so keep `sessionLifetimeSeconds` modest. There is no `disable()`: to stop a user everywhere, stop minting their ID tokens and close their handles.
 - **Fresh ID tokens.** Every handle signs in, and WaaS rejects an ID token that another sign-in already used, so `getIdToken` must mint a new token on each call.
 
-For many users, `createEphemeralServerWalletService` keeps one handle per user in a bounded cache, so a request reuses its credential instead of signing in again:
+For many users, `createServerWalletService({ ..., storage: 'memory' })` keeps one handle per user in a bounded cache, so a request reuses its credential instead of signing in again:
 
 ```ts
-const wallets = createEphemeralServerWalletService({
+const wallets = createServerWalletService({
   publishableKey,
   oidc: { issuer, audience, getIdToken: (subject) => issueIdToken(subject) },
+  storage: 'memory',
   approval: 'allow-immediate',
   cache: { maxHandles: 1000, idleTimeoutMs: 600_000 }
 });
@@ -355,7 +353,7 @@ Every error the SDK raises is a `WalletError` with a stable `code`, a safe `mess
 - `StateStore.write` / `NamespacedStateStore.write` must complete durable persistence before resolving.
 - `ExclusiveExecutor.run` must hold exclusive ownership for the entire async task, including remote I/O. `createSingleProcessExecutor` / `createSingleProcessExecutorPool` are sufficient only within one Node process or a single per-wallet Durable Object. Construct one wallet (and executor) per Durable Object instance — never a fresh `createSingleProcessExecutor()` per HTTP request — and never call back into the wallet from `getIdToken`, store adapters, or custom `fetch` hooks (which would deadlock the executor).
 - Once swaps are enabled and confirmed on a wallet, keep `swaps: trails({ ..., enabled: false })` if you later pause new swaps rather than removing `swaps` entirely, so existing reservations stay coordinated.
-- The SDK computes the canonical namespace (`JSON.stringify([waasOrigin, projectId, issuer, audience, subject])`) from the routed **WaaS API origin** (never `APP_ORIGIN`), ignoring a trailing slash on the issuer, and binds AES-256-GCM AAD to it. Unrecognized or corrupted state fails closed with `INVALID_STATE` or `STORAGE_INTEGRITY`.
+- The SDK computes the canonical namespace (`JSON.stringify([waasOrigin, projectId, issuer, audience, subject])`) from the routed **WaaS API origin**, ignoring a trailing slash on the issuer, and binds AES-256-GCM AAD to it. Unrecognized or corrupted state fails closed with `STORAGE_INTEGRITY`.
 - Restoring a database backup after newer nonces or submissions have been sent requires upstream reconciliation — a backup alone is not a safe rollback.
 
 ### Distributed executors

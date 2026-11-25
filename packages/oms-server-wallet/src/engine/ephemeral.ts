@@ -10,7 +10,7 @@ import { createSingleProcessExecutor } from '../storage.js';
 import { validateFamilies, validateSelection } from './core.js';
 
 const closedError = () =>
-  new WalletError('WALLET_CLOSED', 'This ephemeral wallet handle has been closed.', 409);
+  new WalletError('WALLET_CLOSED', 'This in-memory wallet handle has been closed.', 409);
 
 /**
  * Wallet creations in flight in this process, by identity namespace. A handle creating wallets for
@@ -93,6 +93,7 @@ export class EphemeralLifecycle {
     families: readonly NetworkFamily[] = ['evm'],
     selection?: unknown
   ): Promise<WalletSnapshot> {
+    if (this.executor.closed) throw closedError();
     const requested = validateFamilies(families);
     const pins = validateSelection(selection);
     const key = this.core.config.namespace;

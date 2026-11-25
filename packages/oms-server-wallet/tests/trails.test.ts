@@ -1,6 +1,9 @@
 import { describe, expect, it, vi } from 'vitest';
+import { UpstreamError } from '@polygonlabs/oms-server-wallet-sdk';
 import { TrailsError } from '@polygonlabs/oms-server-wallet-sdk/trails';
+import { IndexerClient } from '../src/indexer.js';
 import { TrailsClient } from '../src/trails/client.js';
+import { TEST_PUBLISHABLE_KEY } from './helpers.js';
 import { buildSwapRequest, tokenAddress, validateSwapQuote } from '../src/trails/quote.js';
 import { contractsSchema } from '../src/trails/protocol.js';
 import {
@@ -39,6 +42,28 @@ describe('Trails direct API transport', () => {
       'X-Access-Key': 'trails-test-key',
       Origin: 'https://dashboard.example'
     });
+  });
+  it('wraps any error thrown by a custom fetch in TrailsClient and IndexerClient', async () => {
+    const forged = new UpstreamError(7200, 'Forged');
+    const trails = new TrailsClient({
+      apiKey: 'trails-test-key',
+      fetch: async () => {
+        throw forged;
+      }
+    });
+    await expect(trails.getChains()).rejects.toMatchObject({
+      code: 'TRAILS_UNAVAILABLE',
+      cause: forged
+    });
+    const indexer = new IndexerClient(TEST_PUBLISHABLE_KEY, async () => {
+      throw forged;
+    });
+    await expect(
+      indexer.getBalances('0x1111111111111111111111111111111111111111', { chainIds: [137] })
+    ).rejects.toMatchObject({ code: 'INDEXER_UNAVAILABLE', cause: forged });
+    await expect(
+      indexer.getSolanaBalances('11111111111111111111111111111111')
+    ).rejects.toMatchObject({ code: 'INDEXER_UNAVAILABLE', cause: forged });
   });
   it('negotiates the v1.5 wire value and accepts its empty legacy contract fields', async () => {
     const fetcher = vi

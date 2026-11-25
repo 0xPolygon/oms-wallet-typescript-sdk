@@ -1,14 +1,14 @@
 // Live acceptance for the server wallet SDK against a WaaS v1.2.0 deployment: sign-in, wallet
 // restore across restarts, credential rotation and disabling, EVM signing and quoting, Solana
-// devnet, Tron Nile and Polygon Amoy wallets, ephemeral signers, and the attestation format WaaS
+// devnet, Tron Nile and Polygon Amoy wallets, in-memory handles, and the attestation format WaaS
 // sends.
 //
 //   node --import tsx --env-file=.env scripts/live-acceptance.ts
 //
 // Reads the same variables as the demo dashboard's acceptance: OMS_PUBLISHABLE_KEY,
-// TRUSTED_PCR0S, ENCRYPTION_KEY, OIDC_PRIVATE_JWK, OIDC_ISSUER, OIDC_AUDIENCE and OMS_ORIGIN (the
-// Origin the project allows). Secrets are never printed. Set LIVE_SUBJECT to a fixed identity to
-// keep funded testnet wallets across runs (the default subject changes daily).
+// TRUSTED_PCR0S, ENCRYPTION_KEY, OIDC_PRIVATE_JWK, OIDC_ISSUER and OIDC_AUDIENCE. Secrets are
+// never printed. Set LIVE_SUBJECT to a fixed identity to keep funded testnet wallets across runs
+// (the default subject changes daily).
 //
 // By default nothing is sent: transfers are only quoted. LIVE_EXECUTE=1 sends small testnet
 // transactions only: a sponsored zero-value call on Polygon Amoy (plus LIVE_EVM_AMOUNT wei of POL
@@ -29,7 +29,6 @@ import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { Decoder, Tag } from 'cbor-x';
 
 import {
-  createEphemeralServerWallet,
   createServerWallet,
   createSingleProcessExecutor,
   WalletError,
@@ -50,7 +49,6 @@ const pcr0s = env('TRUSTED_PCR0S')
 const allowDebugEnclave = pcr0s.includes('0'.repeat(96));
 const issuer = env('OIDC_ISSUER').replace(/\/$/, '');
 const audience = env('OIDC_AUDIENCE');
-const origin = env('OMS_ORIGIN');
 const subject = env('LIVE_SUBJECT', `acceptance-chains-${new Date().toISOString().slice(0, 10)}`);
 const execute = process.env.LIVE_EXECUTE === '1';
 
@@ -159,7 +157,6 @@ const signing = {
 const open = (identity: string, prefix = '') =>
   createServerWallet({
     publishableKey: key,
-    origin,
     oidc: {
       subject: identity,
       issuer,
@@ -622,10 +619,10 @@ const tronRecipient = process.env.LIVE_TRON_RECIPIENT ?? lifecycleWallets.tron!.
 }
 
 const ephemeral = (getIdToken: () => ReturnType<typeof idToken> = () => idToken(subject)) =>
-  createEphemeralServerWallet({
+  createServerWallet({
     publishableKey: key,
-    origin,
     oidc: { subject, issuer, audience, getIdToken },
+    storage: 'memory',
     attestation: { trustedPcr0s: pcr0s, allowDebugEnclave },
     signing,
     fetch: recording
@@ -704,10 +701,10 @@ await check('observation: two ephemeral handles signing in with the same ID toke
 });
 
 const sender = () =>
-  createEphemeralServerWallet({
+  createServerWallet({
     publishableKey: key,
-    origin,
     oidc: { subject, issuer, audience, getIdToken: () => idToken(subject) },
+    storage: 'memory',
     attestation: { trustedPcr0s: pcr0s, allowDebugEnclave },
     approval: 'allow-immediate',
     fetch: recording

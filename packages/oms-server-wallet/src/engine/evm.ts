@@ -214,9 +214,10 @@ export class EvmEngine {
     });
   }
 
-  async getTransactionStatus(txnId: string): Promise<TransactionStatusView> {
+  async getTransactionStatus(txnId: string, skip?: () => boolean): Promise<TransactionStatusView> {
     const id = validateTxnId(txnId);
     return this.core.config.executor.run(async () => {
+      if (skip?.()) return { txnId: id, status: 'unknown' };
       const state = await this.core.load();
       return statusView(id, () =>
         this.core.statusCall(state, id).then((raw) => parseWaas(statusSchema, raw))

@@ -77,10 +77,14 @@ export interface ServiceOidcOptions {
 }
 
 /**
- * Storage configuration for a single server wallet.
- * Choose either `{ adapter, encryptionKey }` (SDK-managed AES-256-GCM bound to this wallet's
- * namespace) or `{ encryptedStore }` (caller-managed authenticated encryption, isolation, and
- * durability).
+ * Storage configuration for a single server wallet:
+ *
+ * - `{ adapter, encryptionKey }`: durable storage with SDK-managed AES-256-GCM bound to this
+ *   wallet's namespace (requires `executor`).
+ * - `{ encryptedStore }`: durable storage with caller-managed authenticated encryption, isolation,
+ *   and durability (requires `executor`).
+ * - `'memory'`: in-memory credential, bound wallets, and operation records with no persistence or
+ *   distributed lock (returns `InMemoryServerWallet`; `executor` must be omitted).
  */
 export type WalletStorageOption =
   | {
@@ -92,13 +96,18 @@ export type WalletStorageOption =
       readonly encryptedStore: StateStore;
       readonly adapter?: never;
       readonly encryptionKey?: never;
-    };
+    }
+  | 'memory';
 
 /**
- * Storage configuration for a multi-tenant server wallet service.
- * Choose either `{ adapter, encryptionKey }` (SDK-managed AES-256-GCM bound per computed
- * namespace) or `{ encryptedStore }` (caller-managed authenticated encryption, isolation, and
- * durability).
+ * Storage configuration for a multi-tenant server wallet service:
+ *
+ * - `{ adapter, encryptionKey }`: durable storage with SDK-managed AES-256-GCM bound per computed
+ *   namespace (requires `executor`).
+ * - `{ encryptedStore }`: durable storage with caller-managed authenticated encryption, isolation,
+ *   and durability (requires `executor`).
+ * - `'memory'`: bounded in-memory handle cache per subject with no persistence or distributed lock
+ *   (returns `InMemoryServerWalletService`; `executor` must be omitted, optional `cache`).
  */
 export type ServiceStorageOption =
   | {
@@ -110,7 +119,8 @@ export type ServiceStorageOption =
       readonly encryptedStore: NamespacedStateStore;
       readonly adapter?: never;
       readonly encryptionKey?: never;
-    };
+    }
+  | 'memory';
 
 /**
  * What a typed-data signing policy is asked to approve. Built after the SDK has validated the
@@ -153,14 +163,13 @@ export interface SigningOptions {
 }
 
 /** Options for `createServerWallet`. */
-export interface ServerWalletOptions {
+export type ServerWalletOptions = {
   readonly publishableKey: string;
-  /** Application Origin allowed by your OMS project (sent as the HTTP `Origin` header). */
-  readonly origin?: string;
+  /**
+   * OIDC identity. `sessionLifetimeSeconds` defaults to 21,600 (6 hours) for durable storage and
+   * 3,600 (1 hour) for `storage: 'memory'`.
+   */
   readonly oidc: WalletOidcOptions;
-  readonly storage: WalletStorageOption;
-  /** Required exclusive ownership boundary for this wallet identity. */
-  readonly executor: ExclusiveExecutor;
   /** `'allow-immediate'` adds the one-shot `send*` methods. Default `'two-phase'`. */
   readonly approval?: ApprovalMode;
   /** `trails(...)` from `/trails` with `scope: 'wallet'` adds `swaps`. */
@@ -170,17 +179,29 @@ export interface ServerWalletOptions {
   readonly attestation?: AttestationOptions;
   /** Optional `fetch` override for instrumentation/testing; never bypasses Nitro attestation. */
   readonly fetch?: typeof fetch;
-}
+} & (
+  | {
+      readonly storage: Exclude<WalletStorageOption, 'memory'>;
+      /** Required exclusive ownership boundary for this wallet identity. */
+      readonly executor: ExclusiveExecutor;
+    }
+  | {
+      /** Keep the credential, bound wallets and operation records in this handle's memory only. */
+      readonly storage: 'memory';
+      /** In-memory handles queue their own calls and do not take an `executor`. */
+      readonly executor?: never;
+    }
+);
 
 /** Options for `createServerWalletService`. */
-export interface ServerWalletServiceOptions {
+export type ServerWalletServiceOptions = {
   readonly publishableKey: string;
-  /** Application Origin allowed by your OMS project (sent as the HTTP `Origin` header). */
-  readonly origin?: string;
+  /**
+   * OIDC configuration (`getIdToken(subject)` must mint a fresh ID token on every call).
+   * `sessionLifetimeSeconds` defaults to 21,600 (6 hours) for durable storage and 3,600 (1 hour)
+   * for `storage: 'memory'`.
+   */
   readonly oidc: ServiceOidcOptions;
-  readonly storage: ServiceStorageOption;
-  /** Required per-namespace exclusive ownership provider. */
-  readonly executor: ExecutorProvider;
   /** `'allow-immediate'` adds the one-shot `send*` methods. Default `'two-phase'`. */
   readonly approval?: ApprovalMode;
   /** `trails(...)` from `/trails` with `scope: 'service'` adds `swaps`. */
@@ -190,7 +211,23 @@ export interface ServerWalletServiceOptions {
   readonly attestation?: AttestationOptions;
   /** Optional `fetch` override for instrumentation/testing; never bypasses Nitro attestation. */
   readonly fetch?: typeof fetch;
-}
+} & (
+  | {
+      readonly storage: Exclude<ServiceStorageOption, 'memory'>;
+      /** Required per-namespace exclusive ownership provider. */
+      readonly executor: ExecutorProvider;
+      /** Durable services do not cache in-memory handles. */
+      readonly cache?: never;
+    }
+  | {
+      /** Keep each subject's credential, bound wallets and operation records in a bounded handle cache. */
+      readonly storage: 'memory';
+      /** In-memory handles queue their own calls and do not take an `executor`. */
+      readonly executor?: never;
+      /** Bounded handle cache settings (default `maxHandles: 1000`, `idleTimeoutMs: 600_000`). */
+      readonly cache?: InMemoryCacheOptions;
+    }
+);
 
 /** Public snapshot of a wallet identity's persisted state. */
 export interface WalletSnapshot {
@@ -606,7 +643,6 @@ export type TransactionWaitResult =
       readonly status?: TransactionStatusView;
     };
 
-/** Derived next-action classification returned by `describeOperation`. */
 /**
  * Next safe action from `describeOperation`. Only `safe-to-reprepare` allows a new idempotency
  * key for the same payment; `resume-original` means repeat the original call with the same key.
@@ -727,7 +763,6 @@ export interface EvmFacetBase {
   ): Promise<TransactionWaitResult>;
 }
 
-/** Immediate one-shot EVM shortcuts, present only when `approval: 'allow-immediate'` is enabled. */
 /** Options every `send*` takes besides its transfer or call. */
 export interface SendHooks<TOperation extends WalletOperation> {
   /**
@@ -962,60 +997,19 @@ export interface ServerWalletService<
   readonly indexer: ServiceIndexerFacet;
 }
 
-/**
- * Options for `createEphemeralServerWallet`: those of `createServerWallet` without `storage` and
- * `executor`. The handle keeps its credential and records in memory and queues its own calls.
- */
-export interface EphemeralServerWalletOptions {
-  readonly publishableKey: string;
-  /** Application origin sent to WaaS, when the project restricts origins. */
-  readonly origin?: string;
-  /** OIDC identity. `sessionLifetimeSeconds` defaults to 3600 (one hour) for ephemeral handles. */
-  readonly oidc: WalletOidcOptions;
-  /** `'allow-immediate'` adds the one-shot `send*` methods. Default `'two-phase'`. */
-  readonly approval?: ApprovalMode;
-  /**
-   * `trails(...)` from `/trails` with `scope: 'wallet'` adds `swaps`. Swap records live in its
-   * durable `storage`, which every process of the wallet shares (see the swaps guide).
-   */
-  readonly swaps?: SwapsConfig<'wallet', unknown>;
-  /** Adds `evm.signTypedData` and `tron.signTypedData`, gated by the policy. */
-  readonly signing?: SigningOptions;
-  readonly attestation?: AttestationOptions;
-  readonly fetch?: typeof fetch;
-}
-
-/** Handle cache of `createEphemeralServerWalletService`. */
-export interface EphemeralCacheOptions {
+/** Handle cache of `createServerWalletService({ ..., storage: 'memory' })`. */
+export interface InMemoryCacheOptions {
   /** Most handles kept; the least recently used is dropped first. Default 1000. */
   readonly maxHandles?: number;
   /** A handle unused for this long is dropped. Default 600,000 (10 minutes). */
   readonly idleTimeoutMs?: number;
 }
 
-/** Options for `createEphemeralServerWalletService`. */
-export interface EphemeralServerWalletServiceOptions {
-  readonly publishableKey: string;
-  /** Application origin sent to WaaS, when the project restricts origins. */
-  readonly origin?: string;
-  /** `getIdToken(subject)` mints a fresh ID token for that subject on every call. */
-  readonly oidc: ServiceOidcOptions;
-  /** `'allow-immediate'` adds the one-shot `send*` methods. Default `'two-phase'`. */
-  readonly approval?: ApprovalMode;
-  /** `trails(...)` from `/trails` with `scope: 'service'` adds `swaps`. */
-  readonly swaps?: SwapsConfig<'service', unknown>;
-  /** Adds `evm.signTypedData` and `tron.signTypedData`, gated by the policy. */
-  readonly signing?: SigningOptions;
-  readonly cache?: EphemeralCacheOptions;
-  readonly attestation?: AttestationOptions;
-  readonly fetch?: typeof fetch;
-}
-
 /**
- * In-memory wallets for many identities, from `createEphemeralServerWalletService`. Handles from
- * `forSubject` have no `close()`: the service owns their lifetime.
+ * In-memory wallets for many identities, from `createServerWalletService({ ..., storage: 'memory' })`.
+ * Handles from `forSubject` have no `close()`: the service owns their lifetime.
  */
-export interface EphemeralServerWalletService<
+export interface InMemoryServerWalletService<
   TApproval extends ApprovalMode = 'two-phase',
   TSwaps extends SwapsConfig<'service', unknown> | undefined = undefined,
   TTypedData extends boolean = false
@@ -1027,7 +1021,7 @@ export interface EphemeralServerWalletService<
    */
   forSubject(
     subject: string
-  ): Omit<EphemeralServerWallet<TApproval, undefined, TTypedData>, 'close'> &
+  ): Omit<InMemoryServerWallet<TApproval, undefined, TTypedData>, 'close'> &
     (TSwaps extends SwapsConfig<'service', infer TFacet> ? { readonly swaps: TFacet } : unknown);
   /** Drop the subject's handle and revoke its credential (for example when the user signs out). */
   evict(subject: string): Promise<void>;
@@ -1037,8 +1031,8 @@ export interface EphemeralServerWalletService<
   readonly indexer: ServiceIndexerFacet;
 }
 
-/** Lifecycle of an in-memory handle (`createEphemeralServerWallet`). */
-export interface EphemeralWalletLifecycle {
+/** Lifecycle of an in-memory handle (`createServerWallet({ ..., storage: 'memory' })`). */
+export interface InMemoryWalletLifecycle {
   /**
    * Sign in and bind wallets that already exist on WaaS; never creates one. With `families`, each
    * must exist; without, every existing family is bound. Throws `WALLET_NOT_INITIALIZED` when
@@ -1071,20 +1065,20 @@ export interface EphemeralWalletLifecycle {
 }
 
 /**
- * In-memory wallet for one OIDC identity, from `createEphemeralServerWallet`: the same transfers,
- * calls, signing, waits, balances and swaps as `createServerWallet`, with its credential and
- * records held in this handle only. Records and `idempotencyKey` protection last as long as the
- * handle: after a restart, recover a transaction by the `txnId` your app saved (see `onPrepared`)
- * with `getTransactionStatus` or `waitForTransaction`. Each handle signs in with its own
- * credential, so handles in different processes run in parallel without a lock; calls on one
- * handle run one at a time. There is no `disable()`: stop with `close()`. Not assignable to
+ * In-memory wallet handle for one OIDC identity, from `createServerWallet({ ..., storage: 'memory' })`:
+ * the same transfers, calls, signing, waits, balances and swaps as a durable `ServerWallet`, with
+ * its credential and records held in this handle only. Records and `idempotencyKey` protection
+ * last as long as the handle: after a restart, recover a transaction by the `txnId` your app saved
+ * (see `onPrepared`) with `getTransactionStatus` or `waitForTransaction`. Each handle signs in
+ * with its own credential, so handles in different processes run in parallel without a lock; calls
+ * on one handle run one at a time. There is no `disable()`: stop with `close()`. Not assignable to
  * `ServerWallet`.
  */
-export type EphemeralServerWallet<
+export type InMemoryServerWallet<
   TApproval extends ApprovalMode = 'two-phase',
   TSwaps extends SwapsConfig<'wallet', unknown> | undefined = undefined,
   TTypedData extends boolean = false
-> = EphemeralWalletLifecycle & {
+> = InMemoryWalletLifecycle & {
   readonly evm: EvmFacet<TApproval, TTypedData>;
   readonly solana: SolanaFacet<TApproval>;
   readonly tron: TronFacet<TApproval, TTypedData>;

@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest';
 
 import type { TypedDataInput } from '@polygonlabs/oms-server-wallet-sdk';
 
-import { createEphemeralServerWalletInternal } from '../src/wallet.js';
+import { createServerWalletInternal } from '../src/wallet.js';
 import { FakeWaas, TEST_PUBLISHABLE_KEY, sdkHarness } from './helpers.js';
 
 const usdt = 'TXYZopYRdj2D9XRtbG411XZZ3kM5VkAeBf';
@@ -20,7 +20,7 @@ const evmTypedData = (verifyingContract: string): TypedDataInput => ({
 });
 
 const ephemeral = (remote: FakeWaas, oidc: { sessionLifetimeSeconds?: number } = {}) =>
-  createEphemeralServerWalletInternal(
+  createServerWalletInternal(
     {
       publishableKey: TEST_PUBLISHABLE_KEY,
       oidc: {
@@ -33,6 +33,7 @@ const ephemeral = (remote: FakeWaas, oidc: { sessionLifetimeSeconds?: number } =
         }),
         ...oidc
       },
+      storage: 'memory',
       signing: { authorizeTypedData: () => true }
     },
     { transport: remote }
@@ -47,7 +48,7 @@ async function provisioned() {
 const calls = (remote: FakeWaas, method: string) =>
   remote.calls.filter((call) => call.method === method);
 
-describe('createEphemeralServerWallet', () => {
+describe('createServerWallet({ storage: "memory" })', () => {
   it('never creates wallets: restore and signing need an existing wallet', async () => {
     const remote = new FakeWaas();
     const wallet = ephemeral(remote);
@@ -248,7 +249,7 @@ describe('createEphemeralServerWallet', () => {
 
   it('does not persist or attempt to revoke a credential when getIdToken fails before sign-in', async () => {
     const remote = await provisioned();
-    const wallet = createEphemeralServerWalletInternal(
+    const wallet = createServerWalletInternal(
       {
         publishableKey: TEST_PUBLISHABLE_KEY,
         oidc: {
@@ -258,7 +259,8 @@ describe('createEphemeralServerWallet', () => {
           getIdToken: async () => {
             throw new Error('IdP down');
           }
-        }
+        },
+        storage: 'memory'
       },
       { transport: remote }
     );
@@ -269,16 +271,28 @@ describe('createEphemeralServerWallet', () => {
     expect(calls(remote, 'RevokeCredential')).toHaveLength(revokesBefore);
   });
 
-  it('rejects durable-only options at runtime', () => {
-    for (const extra of [
-      { store: {} },
-      { executor: {} },
-      { swaps: {} },
-      { approval: 'allow-immediate' },
-      { storage: {} }
-    ])
+  it('rejects durable-only and malformed options at runtime', () => {
+    const remote = new FakeWaas();
+    for (const extra of [{ store: {} }, { executor: {} }, { swaps: {} }])
       expect(() =>
-        createEphemeralServerWalletInternal({
+        createServerWalletInternal(
+          {
+            publishableKey: TEST_PUBLISHABLE_KEY,
+            oidc: {
+              subject: 'customer-1',
+              issuer: 'https://issuer.example',
+              audience: 'oms-server-wallet',
+              getIdToken: async () => ({ token: 't', expiresAt: 1 })
+            },
+            storage: 'memory',
+            ...extra
+          } as never,
+          { transport: remote }
+        )
+      ).toThrow(expect.objectContaining({ code: 'CONFIGURATION' }));
+    expect(() =>
+      createServerWalletInternal(
+        {
           publishableKey: TEST_PUBLISHABLE_KEY,
           oidc: {
             subject: 'customer-1',
@@ -286,15 +300,17 @@ describe('createEphemeralServerWallet', () => {
             audience: 'oms-server-wallet',
             getIdToken: async () => ({ token: 't', expiresAt: 1 })
           },
-          ...extra
-        } as never)
-      ).toThrow(expect.objectContaining({ code: 'CONFIGURATION' }));
+          storage: {}
+        } as never,
+        { transport: remote }
+      )
+    ).toThrow(expect.objectContaining({ code: 'CONFIGURATION' }));
   });
 });
 
 describe('transactions on in-memory handles', () => {
   const immediate = (remote: FakeWaas) =>
-    createEphemeralServerWalletInternal(
+    createServerWalletInternal(
       {
         publishableKey: TEST_PUBLISHABLE_KEY,
         oidc: {
@@ -306,6 +322,7 @@ describe('transactions on in-memory handles', () => {
             expiresAt: Math.floor(Date.now() / 1000) + 300
           })
         },
+        storage: 'memory',
         approval: 'allow-immediate'
       },
       { transport: remote }

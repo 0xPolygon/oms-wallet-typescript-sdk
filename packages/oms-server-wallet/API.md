@@ -6,15 +6,24 @@
 
 ### `createServerWallet`
 
-Create a single-identity attested server wallet (ideal for one Cloudflare Durable Object per
-wallet, or hosts managing per-identity storage and execution directly). The handle's methods
-follow the options: `approval: 'allow-immediate'` adds `send*`, `swaps` adds `swaps`, and
-`signing` adds `signTypedData`.
+Create a single-identity attested server wallet. Pass durable `storage` (`{ adapter, encryptionKey }`
+or `{ encryptedStore }`) with an `executor` for persisted state and cross-restart idempotency, or
+`storage: 'memory'` (no `executor`) for an in-memory handle (`restore`, `create`, `close`). The
+handle's methods follow the options: `approval: 'allow-immediate'` adds `send*`, `swaps` adds
+`swaps`, and `signing` adds `signTypedData`.
 
 ```typescript
 export declare function createServerWallet<const TOptions extends ServerWalletOptions>(options: TOptions & {
-    readonly [K in Exclude<keyof TOptions, keyof ServerWalletOptions>]: never;
-}): ServerWallet<TOptions extends {
+    readonly [K in Exclude<keyof TOptions, ServerWalletOptions extends unknown ? keyof ServerWalletOptions : never>]: never;
+}): TOptions extends {
+    readonly storage: "memory";
+} ? InMemoryServerWallet<TOptions extends {
+    readonly approval: "allow-immediate";
+} ? "allow-immediate" : "two-phase", TOptions extends {
+    readonly swaps: infer TSwaps extends SwapsConfig<"wallet", unknown>;
+} ? TSwaps : undefined, TOptions extends {
+    readonly signing: SigningOptions;
+} ? true : false> : ServerWallet<TOptions extends {
     readonly approval: "allow-immediate";
 } ? "allow-immediate" : "two-phase", TOptions extends {
     readonly swaps: infer TSwaps extends SwapsConfig<"wallet", unknown>;
@@ -26,13 +35,23 @@ export declare function createServerWallet<const TOptions extends ServerWalletOp
 ### `createServerWalletService`
 
 Create a multi-tenant server wallet service for backends operating many identities.
-Computes canonical identity namespaces from the routed WaaS origin, project, issuer, audience,
-and subject. Handles from `forSubject` follow the options like `createServerWallet`.
+Pass durable `storage` (`{ adapter, encryptionKey }` or `{ encryptedStore }`) with an `executor`
+provider, or `storage: 'memory'` (with optional `cache`, no `executor`) to keep one handle per
+subject in a bounded cache with `evict(subject)` and `close()`. Handles from `forSubject` follow
+the options like `createServerWallet`.
 
 ```typescript
 export declare function createServerWalletService<const TOptions extends ServerWalletServiceOptions>(options: TOptions & {
-    readonly [K in Exclude<keyof TOptions, keyof ServerWalletServiceOptions>]: never;
-}): ServerWalletService<TOptions extends {
+    readonly [K in Exclude<keyof TOptions, ServerWalletServiceOptions extends unknown ? keyof ServerWalletServiceOptions : never>]: never;
+}): TOptions extends {
+    readonly storage: "memory";
+} ? InMemoryServerWalletService<TOptions extends {
+    readonly approval: "allow-immediate";
+} ? "allow-immediate" : "two-phase", TOptions extends {
+    readonly swaps: infer TSwaps extends SwapsConfig<"service", unknown>;
+} ? TSwaps : undefined, TOptions extends {
+    readonly signing: SigningOptions;
+} ? true : false> : ServerWalletService<TOptions extends {
     readonly approval: "allow-immediate";
 } ? "allow-immediate" : "two-phase", TOptions extends {
     readonly swaps: infer TSwaps extends SwapsConfig<"service", unknown>;
@@ -46,18 +65,21 @@ export declare function createServerWalletService<const TOptions extends ServerW
 Options for `createServerWallet`.
 
 ```typescript
-export interface ServerWalletOptions {
+export type ServerWalletOptions = {
     readonly publishableKey: string;
-    readonly origin?: string;
     readonly oidc: WalletOidcOptions;
-    readonly storage: WalletStorageOption;
-    readonly executor: ExclusiveExecutor;
     readonly approval?: ApprovalMode;
     readonly swaps?: SwapsConfig<"wallet", unknown>;
     readonly signing?: SigningOptions;
     readonly attestation?: AttestationOptions;
     readonly fetch?: typeof fetch;
-}
+} & ({
+    readonly storage: Exclude<WalletStorageOption, "memory">;
+    readonly executor: ExclusiveExecutor;
+} | {
+    readonly storage: "memory";
+    readonly executor?: never;
+});
 ```
 
 ### `SigningOptions`
@@ -95,18 +117,23 @@ export interface TypedDataSigningRequest {
 Options for `createServerWalletService`.
 
 ```typescript
-export interface ServerWalletServiceOptions {
+export type ServerWalletServiceOptions = {
     readonly publishableKey: string;
-    readonly origin?: string;
     readonly oidc: ServiceOidcOptions;
-    readonly storage: ServiceStorageOption;
-    readonly executor: ExecutorProvider;
     readonly approval?: ApprovalMode;
     readonly swaps?: SwapsConfig<"service", unknown>;
     readonly signing?: SigningOptions;
     readonly attestation?: AttestationOptions;
     readonly fetch?: typeof fetch;
-}
+} & ({
+    readonly storage: Exclude<ServiceStorageOption, "memory">;
+    readonly executor: ExecutorProvider;
+    readonly cache?: never;
+} | {
+    readonly storage: "memory";
+    readonly executor?: never;
+    readonly cache?: InMemoryCacheOptions;
+});
 ```
 
 ### `WalletOidcOptions`
@@ -338,60 +365,21 @@ Whether a value is a supported EVM chain ID; narrows config or request input wit
 export declare function isSupportedEvmChainId(chainId: unknown): chainId is SupportedEvmChainId;
 ```
 
-## In-memory wallet
+## In-memory handles
 
-### `createEphemeralServerWallet`
+### `InMemoryServerWallet`
 
-Create an in-memory wallet for one OIDC identity: the full wallet API of `createServerWallet`
-without storage, an encryption key or a distributed lock. Each handle signs in with its own
-credential and keeps it, its wallets and its operation records in memory, so handles in
-different processes run in parallel; calls on one handle run one at a time. `create()` creates
-an identity's wallets where they are first set up; `restore()` binds them everywhere else.
-Records and `idempotencyKey` protection last as long as the handle. Call `close()` when done.
-
-```typescript
-export declare function createEphemeralServerWallet<const TOptions extends EphemeralServerWalletOptions>(options: TOptions & {
-    readonly [K in Exclude<keyof TOptions, keyof EphemeralServerWalletOptions>]: never;
-}): EphemeralServerWallet<TOptions extends {
-    readonly approval: "allow-immediate";
-} ? "allow-immediate" : "two-phase", TOptions extends {
-    readonly swaps: infer TSwaps extends SwapsConfig<"wallet", unknown>;
-} ? TSwaps : undefined, TOptions extends {
-    readonly signing: SigningOptions;
-} ? true : false>;
-```
-
-### `EphemeralServerWalletOptions`
-
-Options for `createEphemeralServerWallet`: those of `createServerWallet` without `storage` and
-`executor`. The handle keeps its credential and records in memory and queues its own calls.
-
-```typescript
-export interface EphemeralServerWalletOptions {
-    readonly publishableKey: string;
-    readonly origin?: string;
-    readonly oidc: WalletOidcOptions;
-    readonly approval?: ApprovalMode;
-    readonly swaps?: SwapsConfig<"wallet", unknown>;
-    readonly signing?: SigningOptions;
-    readonly attestation?: AttestationOptions;
-    readonly fetch?: typeof fetch;
-}
-```
-
-### `EphemeralServerWallet`
-
-In-memory wallet for one OIDC identity, from `createEphemeralServerWallet`: the same transfers,
-calls, signing, waits, balances and swaps as `createServerWallet`, with its credential and
-records held in this handle only. Records and `idempotencyKey` protection last as long as the
-handle: after a restart, recover a transaction by the `txnId` your app saved (see `onPrepared`)
-with `getTransactionStatus` or `waitForTransaction`. Each handle signs in with its own
-credential, so handles in different processes run in parallel without a lock; calls on one
-handle run one at a time. There is no `disable()`: stop with `close()`. Not assignable to
+In-memory wallet handle for one OIDC identity, from `createServerWallet({ ..., storage: 'memory' })`:
+the same transfers, calls, signing, waits, balances and swaps as a durable `ServerWallet`, with
+its credential and records held in this handle only. Records and `idempotencyKey` protection
+last as long as the handle: after a restart, recover a transaction by the `txnId` your app saved
+(see `onPrepared`) with `getTransactionStatus` or `waitForTransaction`. Each handle signs in
+with its own credential, so handles in different processes run in parallel without a lock; calls
+on one handle run one at a time. There is no `disable()`: stop with `close()`. Not assignable to
 `ServerWallet`.
 
 ```typescript
-export type EphemeralServerWallet<TApproval extends ApprovalMode = "two-phase", TSwaps extends SwapsConfig<"wallet", unknown> | undefined = undefined, TTypedData extends boolean = false> = EphemeralWalletLifecycle & {
+export type InMemoryServerWallet<TApproval extends ApprovalMode = "two-phase", TSwaps extends SwapsConfig<"wallet", unknown> | undefined = undefined, TTypedData extends boolean = false> = InMemoryWalletLifecycle & {
     readonly evm: EvmFacet<TApproval, TTypedData>;
     readonly solana: SolanaFacet<TApproval>;
     readonly tron: TronFacet<TApproval, TTypedData>;
@@ -401,12 +389,12 @@ export type EphemeralServerWallet<TApproval extends ApprovalMode = "two-phase", 
 } : unknown);
 ```
 
-### `EphemeralWalletLifecycle`
+### `InMemoryWalletLifecycle`
 
-Lifecycle of an in-memory handle (`createEphemeralServerWallet`).
+Lifecycle of an in-memory handle (`createServerWallet({ ..., storage: 'memory' })`).
 
 ```typescript
-export interface EphemeralWalletLifecycle {
+export interface InMemoryWalletLifecycle {
     restore(options?: CreateOrRestoreOptions): Promise<WalletSnapshot>;
     create(options?: CreateOrRestoreOptions): Promise<WalletSnapshot>;
     listWallets(): Promise<readonly IdentityWallet[]>;
@@ -416,53 +404,14 @@ export interface EphemeralWalletLifecycle {
 }
 ```
 
-### `createEphemeralServerWalletService`
+### `InMemoryServerWalletService`
 
-In-memory wallets for many identities, for backends serving many users: `forSubject(subject)`
-returns that user's in-memory handle (see `createEphemeralServerWallet`), kept in a bounded
-cache so requests reuse its credential instead of signing in each time. A handle evicted for
-size or idleness is dropped without revoking its credential, so a request still using it
-finishes; `evict(subject)` and `close()` revoke. Like `forSubject` on the durable service, it is
-a lookup, not an authorization check.
+In-memory wallets for many identities, from `createServerWalletService({ ..., storage: 'memory' })`.
+Handles from `forSubject` have no `close()`: the service owns their lifetime.
 
 ```typescript
-export declare function createEphemeralServerWalletService<const TOptions extends EphemeralServerWalletServiceOptions>(options: TOptions & {
-    readonly [K in Exclude<keyof TOptions, keyof EphemeralServerWalletServiceOptions>]: never;
-}): EphemeralServerWalletService<TOptions extends {
-    readonly approval: "allow-immediate";
-} ? "allow-immediate" : "two-phase", TOptions extends {
-    readonly swaps: infer TSwaps extends SwapsConfig<"service", unknown>;
-} ? TSwaps : undefined, TOptions extends {
-    readonly signing: SigningOptions;
-} ? true : false>;
-```
-
-### `EphemeralServerWalletServiceOptions`
-
-Options for `createEphemeralServerWalletService`.
-
-```typescript
-export interface EphemeralServerWalletServiceOptions {
-    readonly publishableKey: string;
-    readonly origin?: string;
-    readonly oidc: ServiceOidcOptions;
-    readonly approval?: ApprovalMode;
-    readonly swaps?: SwapsConfig<"service", unknown>;
-    readonly signing?: SigningOptions;
-    readonly cache?: EphemeralCacheOptions;
-    readonly attestation?: AttestationOptions;
-    readonly fetch?: typeof fetch;
-}
-```
-
-### `EphemeralServerWalletService`
-
-In-memory wallets for many identities, from `createEphemeralServerWalletService`. Handles from
-`forSubject` have no `close()`: the service owns their lifetime.
-
-```typescript
-export interface EphemeralServerWalletService<TApproval extends ApprovalMode = "two-phase", TSwaps extends SwapsConfig<"service", unknown> | undefined = undefined, TTypedData extends boolean = false> {
-    forSubject(subject: string): Omit<EphemeralServerWallet<TApproval, undefined, TTypedData>, "close"> & (TSwaps extends SwapsConfig<"service", infer TFacet> ? {
+export interface InMemoryServerWalletService<TApproval extends ApprovalMode = "two-phase", TSwaps extends SwapsConfig<"service", unknown> | undefined = undefined, TTypedData extends boolean = false> {
+    forSubject(subject: string): Omit<InMemoryServerWallet<TApproval, undefined, TTypedData>, "close"> & (TSwaps extends SwapsConfig<"service", infer TFacet> ? {
         readonly swaps: TFacet;
     } : unknown);
     evict(subject: string): Promise<void>;
@@ -471,12 +420,12 @@ export interface EphemeralServerWalletService<TApproval extends ApprovalMode = "
 }
 ```
 
-### `EphemeralCacheOptions`
+### `InMemoryCacheOptions`
 
-Handle cache of `createEphemeralServerWalletService`.
+Handle cache of `createServerWalletService({ ..., storage: 'memory' })`.
 
 ```typescript
-export interface EphemeralCacheOptions {
+export interface InMemoryCacheOptions {
     readonly maxHandles?: number;
     readonly idleTimeoutMs?: number;
 }
@@ -548,10 +497,14 @@ export interface NamespacedStateStore {
 
 ### `WalletStorageOption`
 
-Storage configuration for a single server wallet.
-Choose either `{ adapter, encryptionKey }` (SDK-managed AES-256-GCM bound to this wallet's
-namespace) or `{ encryptedStore }` (caller-managed authenticated encryption, isolation, and
-durability).
+Storage configuration for a single server wallet:
+
+- `{ adapter, encryptionKey }`: durable storage with SDK-managed AES-256-GCM bound to this
+  wallet's namespace (requires `executor`).
+- `{ encryptedStore }`: durable storage with caller-managed authenticated encryption, isolation,
+  and durability (requires `executor`).
+- `'memory'`: in-memory credential, bound wallets, and operation records with no persistence or
+  distributed lock (returns `InMemoryServerWallet`; `executor` must be omitted).
 
 ```typescript
 export type WalletStorageOption = {
@@ -562,15 +515,19 @@ export type WalletStorageOption = {
     readonly encryptedStore: StateStore;
     readonly adapter?: never;
     readonly encryptionKey?: never;
-};
+} | "memory";
 ```
 
 ### `ServiceStorageOption`
 
-Storage configuration for a multi-tenant server wallet service.
-Choose either `{ adapter, encryptionKey }` (SDK-managed AES-256-GCM bound per computed
-namespace) or `{ encryptedStore }` (caller-managed authenticated encryption, isolation, and
-durability).
+Storage configuration for a multi-tenant server wallet service:
+
+- `{ adapter, encryptionKey }`: durable storage with SDK-managed AES-256-GCM bound per computed
+  namespace (requires `executor`).
+- `{ encryptedStore }`: durable storage with caller-managed authenticated encryption, isolation,
+  and durability (requires `executor`).
+- `'memory'`: bounded in-memory handle cache per subject with no persistence or distributed lock
+  (returns `InMemoryServerWalletService`; `executor` must be omitted, optional `cache`).
 
 ```typescript
 export type ServiceStorageOption = {
@@ -581,7 +538,7 @@ export type ServiceStorageOption = {
     readonly encryptedStore: NamespacedStateStore;
     readonly adapter?: never;
     readonly encryptionKey?: never;
-};
+} | "memory";
 ```
 
 ## EVM
@@ -1571,7 +1528,7 @@ export declare function isUpstreamError(error: unknown): error is UpstreamError;
 Closed union of safe, machine-readable SDK error codes.
 
 ```typescript
-export type WalletErrorCode = "APPROVAL_REQUIRED" | "ATTESTATION_FAILED" | "CHAIN_READ_FAILED" | "CONFIGURATION" | "CREATION_UNCERTAIN" | "CREDENTIAL_CHANGED" | "DEBIT_PENDING" | "EXECUTE_REFUSED" | "FEE_ABOVE_QUOTE" | "FEE_LIMIT_EXCEEDED" | "FUNDING_FAILED" | "FUNDING_RECEIPT_UNVERIFIED" | "FUNDING_REVERTED" | "FUNDING_UNKNOWN" | "IDEMPOTENCY_CONFLICT" | "IDENTITY_MISMATCH" | "INDEXER_UNAVAILABLE" | "INSUFFICIENT_BALANCE" | "INTENT_ALREADY_TRACKED" | "INTENT_NOT_FUNDABLE" | "INVALID_ADDRESS" | "INVALID_AMOUNT" | "INVALID_CALL" | "INVALID_FAMILY" | "INVALID_FEE" | "INVALID_IDEMPOTENCY_KEY" | "INVALID_IDENTITY" | "INVALID_INPUT" | "INVALID_JSON" | "INVALID_MESSAGE" | "INVALID_METHOD" | "INVALID_PAGE" | "INVALID_RECOVERY" | "INVALID_RECOVERY_TRANSACTION" | "INVALID_RESPONSE" | "INVALID_STATE" | "INVALID_SWAP" | "INVALID_SWAP_QUOTE" | "INVALID_TRANSFER" | "INVALID_TYPED_DATA" | "NO_CREDENTIAL" | "NO_RECOVERABLE_BALANCE" | "NOT_FOUND" | "OPERATION_CANCELLED" | "PREPARATION_FAILED" | "QUOTE_EXPIRED" | "RECONCILIATION_REQUIRED" | "RECOVERY_CHANGED" | "RECOVERY_EVIDENCE_PENDING" | "RECOVERY_EXPIRED" | "RECOVERY_FAILED" | "RECOVERY_LIMIT" | "RECOVERY_NOT_READY" | "RECOVERY_PENDING" | "REFUND_REQUIRES_REVIEW" | "RESPONSE_TOO_LARGE" | "RPC_CONFIGURATION" | "SETTLEMENT_REQUIRES_REVIEW" | "SIGNATURE_INVALID" | "SIGNING_FAILED" | "SPONSORSHIP_REQUIRED" | "STALE_QUOTE" | "STALE_RECOVERY" | "STALE_REVIEW" | "STORAGE_INTEGRITY" | "SUBMISSION_UNCERTAIN" | "SWAP_CONFLICT" | "SWAP_ENVIRONMENT_CHANGED" | "SWAP_UNAVAILABLE" | "SWAPS_COORDINATION_REQUIRED" | "SWAPS_DISABLED" | "TRAILS_ABORTED" | "TRAILS_ERROR" | "TRAILS_TIMEOUT" | "TRAILS_UNAVAILABLE" | "TYPED_DATA_REFUSED" | "UNSUPPORTED_CHAIN" | "UNSUPPORTED_NETWORK" | "UNSUPPORTED_PROTOCOL" | "UPSTREAM_ERROR" | "UPSTREAM_REDIRECT" | "UPSTREAM_UNAVAILABLE" | "WALLET_BUSY" | "WALLET_CLOSED" | "WALLET_DISABLED" | "WALLET_MISMATCH" | "WALLET_NOT_INITIALIZED";
+export type WalletErrorCode = "APPROVAL_REQUIRED" | "ATTESTATION_FAILED" | "CHAIN_READ_FAILED" | "CONFIGURATION" | "CREATION_UNCERTAIN" | "CREDENTIAL_CHANGED" | "DEBIT_PENDING" | "EXECUTE_REFUSED" | "FEE_ABOVE_QUOTE" | "FEE_LIMIT_EXCEEDED" | "FUNDING_FAILED" | "FUNDING_RECEIPT_UNVERIFIED" | "FUNDING_REVERTED" | "FUNDING_UNKNOWN" | "IDEMPOTENCY_CONFLICT" | "IDENTITY_MISMATCH" | "INDEXER_UNAVAILABLE" | "INSUFFICIENT_BALANCE" | "INTENT_ALREADY_TRACKED" | "INTENT_NOT_FUNDABLE" | "INVALID_ADDRESS" | "INVALID_AMOUNT" | "INVALID_CALL" | "INVALID_FAMILY" | "INVALID_FEE" | "INVALID_IDEMPOTENCY_KEY" | "INVALID_IDENTITY" | "INVALID_INPUT" | "INVALID_JSON" | "INVALID_MESSAGE" | "INVALID_METHOD" | "INVALID_PAGE" | "INVALID_RECOVERY" | "INVALID_RECOVERY_TRANSACTION" | "INVALID_RESPONSE" | "INVALID_STATE" | "INVALID_SWAP" | "INVALID_SWAP_QUOTE" | "INVALID_TRANSFER" | "INVALID_TYPED_DATA" | "NO_CREDENTIAL" | "NO_RECOVERABLE_BALANCE" | "NOT_FOUND" | "OPERATION_CANCELLED" | "QUOTE_EXPIRED" | "RECONCILIATION_REQUIRED" | "RECOVERY_CHANGED" | "RECOVERY_EVIDENCE_PENDING" | "RECOVERY_EXPIRED" | "RECOVERY_FAILED" | "RECOVERY_LIMIT" | "RECOVERY_NOT_READY" | "RECOVERY_PENDING" | "REFUND_REQUIRES_REVIEW" | "RESPONSE_TOO_LARGE" | "RPC_CONFIGURATION" | "SETTLEMENT_REQUIRES_REVIEW" | "SIGNATURE_INVALID" | "SPONSORSHIP_REQUIRED" | "STALE_QUOTE" | "STALE_RECOVERY" | "STALE_REVIEW" | "STORAGE_INTEGRITY" | "SUBMISSION_UNCERTAIN" | "SWAP_CONFLICT" | "SWAP_ENVIRONMENT_CHANGED" | "SWAP_UNAVAILABLE" | "SWAPS_COORDINATION_REQUIRED" | "SWAPS_DISABLED" | "TRAILS_ABORTED" | "TRAILS_ERROR" | "TRAILS_TIMEOUT" | "TRAILS_UNAVAILABLE" | "TYPED_DATA_REFUSED" | "UNSUPPORTED_CHAIN" | "UNSUPPORTED_NETWORK" | "UNSUPPORTED_PROTOCOL" | "UPSTREAM_ERROR" | "UPSTREAM_REDIRECT" | "UPSTREAM_UNAVAILABLE" | "WALLET_BUSY" | "WALLET_CLOSED" | "WALLET_DISABLED" | "WALLET_MISMATCH" | "WALLET_NOT_INITIALIZED";
 ```
 
 ### `isWalletErrorCode`

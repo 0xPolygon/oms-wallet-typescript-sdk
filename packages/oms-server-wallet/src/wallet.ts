@@ -8,10 +8,6 @@ import type {
   ApprovalMode,
   CancelInput,
   CreateOrRestoreOptions,
-  EphemeralServerWallet,
-  EphemeralServerWalletOptions,
-  EphemeralServerWalletService,
-  EphemeralServerWalletServiceOptions,
   EvmCallInput,
   EvmFacet,
   EvmFacetBase,
@@ -25,6 +21,8 @@ import type {
   GetEvmBalancesOptions,
   GetSolanaBalancesOptions,
   GetTronBalancesOptions,
+  InMemoryServerWallet,
+  InMemoryServerWalletService,
   ListOperationsOptions,
   ResolveReconciliationInput,
   ServerWallet,
@@ -66,8 +64,8 @@ import { ClosableExecutor, EphemeralLifecycle } from './engine/ephemeral.js';
 import { validateTxnId } from './engine/inputs.js';
 import { environmentFromKey, resolveAttestationPolicy } from './environment.js';
 import { UpstreamError, WalletError } from './errors.js';
-import { omsFetch } from './http.js';
 import { IndexerClient } from './indexer.js';
+import { WaasErrorCode } from './internal/protocol/waasErrors.js';
 import { resolveSwapsBinder } from './internal/swapsBridge.js';
 import { CLAIM_GRACE_MS, isStaleExpiryRead } from './settlement.js';
 import {
@@ -85,9 +83,11 @@ type Overrides = {
   creationRecheckDelaysMs?: readonly number[];
 };
 
+type KeysOfUnion<T> = T extends unknown ? keyof T : never;
+
 /** Makes any option key the factory does not know a compile-time error (no excess-key check on generics). */
 type ExactOptions<TOptions, TKnown> = {
-  readonly [K in Exclude<keyof TOptions, keyof TKnown>]: never;
+  readonly [K in Exclude<keyof TOptions, KeysOfUnion<TKnown>>]: never;
 };
 
 type ApprovalFrom<TOptions> = TOptions extends { readonly approval: 'allow-immediate' }
@@ -96,22 +96,42 @@ type ApprovalFrom<TOptions> = TOptions extends { readonly approval: 'allow-immed
 type TypedDataFrom<TOptions> = TOptions extends { readonly signing: SigningOptions } ? true : false;
 
 /** The handle `createServerWallet` returns for these options. */
-type ServerWalletFrom<TOptions extends ServerWalletOptions> = ServerWallet<
-  ApprovalFrom<TOptions>,
-  TOptions extends { readonly swaps: infer TSwaps extends SwapsConfig<'wallet', unknown> }
-    ? TSwaps
-    : undefined,
-  TypedDataFrom<TOptions>
->;
+type ServerWalletFrom<TOptions extends ServerWalletOptions> = TOptions extends {
+  readonly storage: 'memory';
+}
+  ? InMemoryServerWallet<
+      ApprovalFrom<TOptions>,
+      TOptions extends { readonly swaps: infer TSwaps extends SwapsConfig<'wallet', unknown> }
+        ? TSwaps
+        : undefined,
+      TypedDataFrom<TOptions>
+    >
+  : ServerWallet<
+      ApprovalFrom<TOptions>,
+      TOptions extends { readonly swaps: infer TSwaps extends SwapsConfig<'wallet', unknown> }
+        ? TSwaps
+        : undefined,
+      TypedDataFrom<TOptions>
+    >;
 
 /** The service `createServerWalletService` returns for these options. */
-type ServerWalletServiceFrom<TOptions extends ServerWalletServiceOptions> = ServerWalletService<
-  ApprovalFrom<TOptions>,
-  TOptions extends { readonly swaps: infer TSwaps extends SwapsConfig<'service', unknown> }
-    ? TSwaps
-    : undefined,
-  TypedDataFrom<TOptions>
->;
+type ServerWalletServiceFrom<TOptions extends ServerWalletServiceOptions> = TOptions extends {
+  readonly storage: 'memory';
+}
+  ? InMemoryServerWalletService<
+      ApprovalFrom<TOptions>,
+      TOptions extends { readonly swaps: infer TSwaps extends SwapsConfig<'service', unknown> }
+        ? TSwaps
+        : undefined,
+      TypedDataFrom<TOptions>
+    >
+  : ServerWalletService<
+      ApprovalFrom<TOptions>,
+      TOptions extends { readonly swaps: infer TSwaps extends SwapsConfig<'service', unknown> }
+        ? TSwaps
+        : undefined,
+      TypedDataFrom<TOptions>
+    >;
 
 /** Validate `signing` and bind its policy to the options object it came from. */
 function resolveSigning(
@@ -138,22 +158,6 @@ const TERMINAL_OUTCOMES: ReadonlySet<string> = new Set<TerminalOutcome>([
 /** The operation's terminal status as a wait outcome, or undefined while it is still open. */
 const terminalOutcome = (status: string): TerminalOutcome | undefined =>
   TERMINAL_OUTCOMES.has(status) ? (status as TerminalOutcome) : undefined;
-
-function normalizeOrigin(origin: string | undefined): string | undefined {
-  if (origin === undefined) return undefined;
-  try {
-    const parsed = new URL(origin);
-    if (!['http:', 'https:'].includes(parsed.protocol) || parsed.origin !== origin)
-      throw new Error('Invalid origin');
-    return parsed.origin;
-  } catch {
-    throw new WalletError(
-      'CONFIGURATION',
-      'Configure origin as an exact http(s) origin without a path or trailing slash.',
-      503
-    );
-  }
-}
 
 function validateOidcCore(issuer: unknown, audience: unknown, sessionLifetimeSeconds?: number) {
   if (typeof issuer !== 'string' || !issuer.trim())
@@ -184,11 +188,11 @@ function validateApproval(approval: unknown): ApprovalMode {
   return approval;
 }
 
-function resolveWalletStore(store: WalletStorageOption, namespace: string) {
+function resolveWalletStore(store: Exclude<WalletStorageOption, 'memory'>, namespace: string) {
   if (!store || typeof store !== 'object')
     throw new WalletError(
       'CONFIGURATION',
-      'Configure storage as { adapter, encryptionKey } or { encryptedStore }.',
+      'Configure storage as "memory", { adapter, encryptionKey }, or { encryptedStore }.',
       503
     );
   const hasAdapter = 'adapter' in store && store.adapter !== undefined;
@@ -279,24 +283,18 @@ function waitBounds(
   };
 }
 
-async function waitFor<TOperation extends WalletOperation>(
-  id: string,
-  getLocal: (id: string) => Promise<TOperation | null>,
-  refresh: (id: string, skip: () => boolean) => Promise<TOperation | null>,
-  options: WaitForOperationOptions,
-  now: () => number = () => Date.now()
-): Promise<WaitResult<TOperation>> {
-  const { pollMs, deadline } = waitBounds(options, now);
-  const signal = options.signal;
-  // Set once the wait gives up, so work still queued behind the lock skips its remote refresh.
-  let abandoned = false;
-  const skip = () => abandoned;
-
-  /**
-   * Race one read against the deadline and the abort signal. Work that already started keeps
-   * running under the lock and persists its result; its late rejection is observed here.
-   */
-  const bounded = <V>(
+/**
+ * Race an async read against the wait deadline and abort signal. Work that already started keeps
+ * running under the lock; its late rejection is observed here, and `onAbandon` lets still-queued
+ * work skip remote I/O once it reaches the front of the lock.
+ */
+function createBoundedRunner(
+  deadline: number,
+  signal: AbortSignal | undefined,
+  now: () => number,
+  onAbandon: () => void
+) {
+  return <V>(
     work: Promise<V>
   ): Promise<
     | { readonly done: true; readonly value: V }
@@ -311,7 +309,7 @@ async function waitFor<TOperation extends WalletOperation>(
         settled = true;
         clearTimeout(timer);
         signal?.removeEventListener('abort', onAbort);
-        if (!result.done) abandoned = true;
+        if (!result.done) onAbandon();
         resolve(result);
       };
       const onAbort = () => finish({ done: false, why: 'aborted' });
@@ -332,6 +330,23 @@ async function waitFor<TOperation extends WalletOperation>(
         }
       );
     });
+}
+
+async function waitFor<TOperation extends WalletOperation>(
+  id: string,
+  getLocal: (id: string) => Promise<TOperation | null>,
+  refresh: (id: string, skip: () => boolean) => Promise<TOperation | null>,
+  options: WaitForOperationOptions,
+  now: () => number = () => Date.now()
+): Promise<WaitResult<TOperation>> {
+  const { pollMs, deadline } = waitBounds(options, now);
+  const signal = options.signal;
+  // Set once the wait gives up, so work still queued behind the lock skips its remote refresh.
+  let abandoned = false;
+  const skip = () => abandoned;
+  const bounded = createBoundedRunner(deadline, signal, now, () => {
+    abandoned = true;
+  });
 
   const finished = (operation: TOperation): WaitResult<TOperation> | undefined => {
     const outcome = terminalOutcome(operation.status);
@@ -380,12 +395,14 @@ async function waitFor<TOperation extends WalletOperation>(
 
 /**
  * Wait for a transaction by `txnId`: `executed` and `failed` end the wait; a transaction WaaS
- * still shows as unclaimed (or answers without information, or no longer knows) past the quote's
- * expiry plus the grace window ends it with `reconciliation-required`.
+ * never showed as claimed (`pending` or a `txnHash`) past the quote's expiry plus the grace window
+ * ends it with `reconciliation-required`. Once claimed, later stale or inconclusive reads keep
+ * waiting instead of regressing. Both lock waits and in-flight reads are bounded by `timeoutMs`
+ * and `signal`.
  */
 async function waitForTxn(
   transaction: TransactionRef,
-  read: (txnId: string) => Promise<TransactionStatusView>,
+  read: (txnId: string, skip: () => boolean) => Promise<TransactionStatusView>,
   options: WaitForOperationOptions,
   now: () => number = () => Date.now()
 ): Promise<TransactionWaitResult> {
@@ -397,22 +414,37 @@ async function waitForTxn(
     throw new WalletError('INVALID_INPUT', 'expiresAt must be the quote expiry as an ISO date.');
   const { pollMs, deadline } = waitBounds(options, now);
   const signal = options.signal;
+  let abandoned = false;
+  const skip = () => abandoned;
+  const bounded = createBoundedRunner(deadline, signal, now, () => {
+    abandoned = true;
+  });
   let last: TransactionStatusView | undefined;
+  let claimed = false;
   for (;;) {
     if (signal?.aborted) return { outcome: 'aborted', status: last };
     if (now() >= deadline) return { outcome: 'timed-out', status: last };
     let status: TransactionStatusView | undefined;
     try {
-      status = await read(txnId);
+      const result = await bounded(read(txnId, skip));
+      if (!result.done) return { outcome: result.why, status: last };
+      status = result.value;
     } catch (error) {
-      // TransactionExpired / TransactionNotFound: WaaS no longer shows the transaction.
-      if (!(error instanceof UpstreamError) || ![7308, 7309].includes(error.upstreamCode))
-        throw error;
+      const expired =
+        error instanceof UpstreamError && error.upstreamCode === WaasErrorCode.TransactionExpired;
+      const notFoundAfterExpiry =
+        error instanceof UpstreamError &&
+        error.upstreamCode === WaasErrorCode.TransactionNotFound &&
+        now() >= expiresAt;
+      if (!expired && !notFoundAfterExpiry) throw error;
     }
-    if (status) last = status;
+    if (status) {
+      last = status;
+      if (status.status === 'pending' || status.txnHash) claimed = true;
+    }
     if (status?.status === 'executed' || status?.status === 'failed')
       return { outcome: status.status, status };
-    if (status?.status !== 'pending' && now() >= expiresAt + CLAIM_GRACE_MS)
+    if (!claimed && now() >= expiresAt + CLAIM_GRACE_MS)
       return { outcome: 'reconciliation-required', status: last };
     const remaining = deadline - now();
     if (remaining <= 0) return { outcome: 'timed-out', status: last };
@@ -481,7 +513,12 @@ function buildWalletFacade(params: {
     listOperations: (options?: ListOperationsOptions) => engine.evm.listEvmOperations(options),
     getTransactionStatus: (txnId: string) => engine.evm.getTransactionStatus(txnId),
     waitForTransaction: (transaction: TransactionRef, options: WaitForOperationOptions) =>
-      waitForTxn(transaction, (txnId) => engine.evm.getTransactionStatus(txnId), options, clock),
+      waitForTxn(
+        transaction,
+        (txnId, skip) => engine.evm.getTransactionStatus(txnId, skip),
+        options,
+        clock
+      ),
     cancel: (input: CancelInput) => engine.evm.cancelEvm(input?.idempotencyKey)
   };
   const evmImmediate: EvmImmediateFacet = {
@@ -527,7 +564,7 @@ function buildWalletFacade(params: {
     waitForTransaction: (transaction: TransactionRef, options: WaitForOperationOptions) =>
       waitForTxn(
         transaction,
-        (txnId) => engine.chain.getSolanaTransactionStatus(txnId),
+        (txnId, skip) => engine.chain.getSolanaTransactionStatus(txnId, skip),
         options,
         clock
       ),
@@ -565,7 +602,7 @@ function buildWalletFacade(params: {
     waitForTransaction: (transaction: TransactionRef, options: WaitForOperationOptions) =>
       waitForTxn(
         transaction,
-        (txnId) => engine.chain.getTronTransactionStatus(txnId),
+        (txnId, skip) => engine.chain.getTronTransactionStatus(txnId, skip),
         options,
         clock
       ),
@@ -615,14 +652,92 @@ function buildWalletFacade(params: {
   return Object.freeze(swapsFacet !== undefined ? { ...base, swaps: swapsFacet } : base);
 }
 
+type AnyInMemoryWallet = InMemoryServerWallet<ApprovalMode, undefined, boolean> & {
+  readonly swaps?: unknown;
+};
+
+/** One in-memory handle for one identity, shared by the single-identity factory and the service. */
+function buildInMemoryHandle(params: {
+  environment: ReturnType<typeof environmentFromKey>;
+  approval: ApprovalMode;
+  authorizeTypedData: ReturnType<typeof resolveSigning>;
+  subject: string;
+  oidc: {
+    readonly issuer: string;
+    readonly audience: string;
+    readonly sessionLifetimeSeconds?: number;
+  };
+  getIdToken: () => Promise<{ readonly token: string; readonly expiresAt: number }>;
+  swapsBinder: ReturnType<typeof resolveSwapsBinder> | undefined;
+  transport: RpcTransport;
+  indexer: IndexerClient;
+  overrides: Overrides;
+}): AnyInMemoryWallet {
+  const { environment, approval, authorizeTypedData, swapsBinder, transport, indexer, overrides } =
+    params;
+  const namespace = computeIdentityNamespace({
+    waasOrigin: environment.origin,
+    projectId: environment.projectId,
+    issuer: params.oidc.issuer,
+    audience: params.oidc.audience,
+    subject: params.subject
+  });
+
+  const executor = new ClosableExecutor();
+  const engine = new WalletEngine({
+    namespace,
+    subject: params.subject,
+    issuer: params.oidc.issuer,
+    audience: params.oidc.audience,
+    getIdToken: params.getIdToken,
+    sessionLifetimeSeconds: params.oidc.sessionLifetimeSeconds ?? 3600,
+    store: new MemoryStateStore(),
+    executor,
+    transport,
+    clock: overrides.clock,
+    creationRecheckDelaysMs: overrides.creationRecheckDelaysMs,
+    createWallets: false,
+    authorizeTypedData
+  });
+  let swapsFacet: unknown;
+  if (swapsBinder) {
+    const bound = swapsBinder.bind(engine.lockedPrimitives());
+    engine.attachGate(bound.gate);
+    swapsFacet = bound.facet;
+  }
+  const facade = buildWalletFacade({
+    engine,
+    indexer,
+    approval,
+    typedData: authorizeTypedData !== undefined,
+    swapsFacet,
+    clock: overrides.clock
+  });
+  const lifecycle = new EphemeralLifecycle(engine.core, executor);
+  return Object.freeze({
+    restore: (restoreOptions?: CreateOrRestoreOptions) =>
+      lifecycle.restore(restoreOptions?.families, restoreOptions?.wallets),
+    create: (createOptions?: CreateOrRestoreOptions) =>
+      lifecycle.create(createOptions?.families, createOptions?.wallets),
+    listWallets: () => lifecycle.listWallets(),
+    inspect: () => lifecycle.inspect(),
+    rotateCredential: () => lifecycle.rotateCredential(),
+    close: () => lifecycle.close(),
+    evm: facade.evm,
+    solana: facade.solana,
+    tron: facade.tron,
+    indexer: facade.indexer,
+    ...(swapsFacet !== undefined ? { swaps: swapsFacet } : {})
+  });
+}
+
 function instantiateServerWallet(
   options: ServerWalletOptions,
   overrides: Overrides = {}
-): AnyServerWallet {
+): AnyServerWallet | AnyInMemoryWallet {
   if (!options || typeof options !== 'object')
     throw new WalletError('CONFIGURATION', 'Configure createServerWallet options.', 503);
   const environment = environmentFromKey(options.publishableKey);
-  const origin = normalizeOrigin(options.origin);
   const approval = validateApproval(options.approval);
   const authorizeTypedData = resolveSigning(options.signing);
   validateOidcCore(
@@ -632,15 +747,45 @@ function instantiateServerWallet(
   );
   if (typeof options.oidc?.getIdToken !== 'function')
     throw new WalletError('CONFIGURATION', 'Configure oidc.getIdToken.', 503);
+
+  // Resolve attestation policy eagerly so misconfiguration fails immediately at construction time.
+  if (!overrides.transport) resolveAttestationPolicy(environment, options.attestation);
+
+  const fetcher = options.fetch ?? fetch;
+  const transport =
+    overrides.transport ?? new WaasTransport(options.publishableKey, options.attestation, fetcher);
+  const indexer = overrides.indexer ?? new IndexerClient(options.publishableKey, fetcher);
+  const swapsBinder =
+    options.swaps !== undefined ? resolveSwapsBinder(options.swaps, 'wallet') : undefined;
+
+  if (options.storage === 'memory') {
+    for (const key of ['store', 'executor'])
+      if ((options as unknown as Record<string, unknown>)[key] !== undefined)
+        throw new WalletError(
+          'CONFIGURATION',
+          `storage: "memory" does not take "${key}": its credential and records live in memory and it queues its own calls. Pass durable storage to use an executor.`,
+          503
+        );
+    return buildInMemoryHandle({
+      environment,
+      approval,
+      authorizeTypedData,
+      subject: options.oidc.subject,
+      oidc: options.oidc,
+      getIdToken: options.oidc.getIdToken,
+      swapsBinder,
+      transport,
+      indexer,
+      overrides
+    });
+  }
+
   if (!options.executor || typeof options.executor.run !== 'function')
     throw new WalletError(
       'CONFIGURATION',
       'Configure an ExclusiveExecutor (use createSingleProcessExecutor() for a single process/DO).',
       503
     );
-
-  // Resolve attestation policy eagerly so misconfiguration fails immediately at construction time.
-  if (!overrides.transport) resolveAttestationPolicy(environment, options.attestation);
 
   const namespace = computeIdentityNamespace({
     waasOrigin: environment.origin,
@@ -650,18 +795,9 @@ function instantiateServerWallet(
     subject: options.oidc.subject
   });
   const store = resolveWalletStore(options.storage, namespace);
-  const baseFetch = options.fetch ?? fetch;
-  const fetcher = origin ? omsFetch(origin, baseFetch) : baseFetch;
-  const transport =
-    overrides.transport ?? new WaasTransport(options.publishableKey, options.attestation, fetcher);
-  const indexer = overrides.indexer ?? new IndexerClient(options.publishableKey, fetcher);
-
-  const swapsBinder =
-    options.swaps !== undefined ? resolveSwapsBinder(options.swaps, 'wallet') : undefined;
 
   const engine = new WalletEngine({
     namespace,
-    origin,
     subject: options.oidc.subject,
     issuer: options.oidc.issuer,
     audience: options.oidc.audience,
@@ -693,7 +829,6 @@ function instantiateServerWallet(
 }
 
 /** Package-private test seam: runs the exact public factory wiring over a custom `RpcTransport` and clock. */
-/** Package-private test seam: runs the exact public factory wiring over a custom `RpcTransport` and clock. */
 export function createServerWalletInternal<const TOptions extends ServerWalletOptions>(
   options: TOptions & ExactOptions<TOptions, ServerWalletOptions>,
   overrides?: Overrides
@@ -702,10 +837,11 @@ export function createServerWalletInternal<const TOptions extends ServerWalletOp
 }
 
 /**
- * Create a single-identity attested server wallet (ideal for one Cloudflare Durable Object per
- * wallet, or hosts managing per-identity storage and execution directly). The handle's methods
- * follow the options: `approval: 'allow-immediate'` adds `send*`, `swaps` adds `swaps`, and
- * `signing` adds `signTypedData`.
+ * Create a single-identity attested server wallet. Pass durable `storage` (`{ adapter, encryptionKey }`
+ * or `{ encryptedStore }`) with an `executor` for persisted state and cross-restart idempotency, or
+ * `storage: 'memory'` (no `executor`) for an in-memory handle (`restore`, `create`, `close`). The
+ * handle's methods follow the options: `approval: 'allow-immediate'` adds `send*`, `swaps` adds
+ * `swaps`, and `signing` adds `signTypedData`.
  */
 export function createServerWallet<const TOptions extends ServerWalletOptions>(
   options: TOptions & ExactOptions<TOptions, ServerWalletOptions>
@@ -716,11 +852,17 @@ export function createServerWallet<const TOptions extends ServerWalletOptions>(
 function instantiateServerWalletService(
   options: ServerWalletServiceOptions,
   overrides: Overrides = {}
-): { forSubject(subject: string): AnyServerWallet; readonly indexer: ServiceIndexerFacet } {
+):
+  | { forSubject(subject: string): AnyServerWallet; readonly indexer: ServiceIndexerFacet }
+  | {
+      forSubject(subject: string): Omit<AnyInMemoryWallet, 'close'>;
+      evict(subject: string): Promise<void>;
+      close(): Promise<void>;
+      readonly indexer: ServiceIndexerFacet;
+    } {
   if (!options || typeof options !== 'object')
     throw new WalletError('CONFIGURATION', 'Configure createServerWalletService options.', 503);
   const environment = environmentFromKey(options.publishableKey);
-  const origin = normalizeOrigin(options.origin);
   const approval = validateApproval(options.approval);
   const authorizeTypedData = resolveSigning(options.signing);
   validateOidcCore(
@@ -730,6 +872,119 @@ function instantiateServerWalletService(
   );
   if (typeof options.oidc?.getIdToken !== 'function')
     throw new WalletError('CONFIGURATION', 'Configure oidc.getIdToken(subject).', 503);
+  if (!overrides.transport) resolveAttestationPolicy(environment, options.attestation);
+
+  const fetcher = options.fetch ?? fetch;
+  const transport =
+    overrides.transport ?? new WaasTransport(options.publishableKey, options.attestation, fetcher);
+  const indexer = overrides.indexer ?? new IndexerClient(options.publishableKey, fetcher);
+  const swapsBinder =
+    options.swaps !== undefined ? resolveSwapsBinder(options.swaps, 'service') : undefined;
+
+  const serviceIndexer: ServiceIndexerFacet = Object.freeze({
+    getEvmBalances: (address: string, opts?: GetEvmBalancesOptions) =>
+      indexer.getBalances(address, opts),
+    getSolanaBalances: (address: string, opts?: GetSolanaBalancesOptions) =>
+      indexer.getSolanaBalances(address, opts?.networks),
+    getTronBalances: (address: string, opts?: GetTronBalancesOptions) =>
+      indexer.getTronBalances(address, opts?.networks)
+  });
+
+  if (options.storage === 'memory') {
+    for (const key of ['store', 'executor'])
+      if ((options as unknown as Record<string, unknown>)[key] !== undefined)
+        throw new WalletError(
+          'CONFIGURATION',
+          `storage: "memory" does not take "${key}": handles keep their credentials and records in memory. Pass durable storage to use an executor.`,
+          503
+        );
+    const maxHandles = options.cache?.maxHandles ?? 1000;
+    const idleMs = options.cache?.idleTimeoutMs ?? 600_000;
+    if (!Number.isInteger(maxHandles) || maxHandles < 1)
+      throw new WalletError('CONFIGURATION', 'cache.maxHandles must be a positive integer.', 503);
+    if (!Number.isInteger(idleMs) || idleMs < 1)
+      throw new WalletError(
+        'CONFIGURATION',
+        'cache.idleTimeoutMs must be a positive integer.',
+        503
+      );
+    const now = overrides.clock ?? (() => Date.now());
+    // Most recently used last; an evicted handle is dropped, not revoked, so a request still using
+    // it finishes, and its credential expires on its own.
+    const cache = new Map<string, { handle: AnyInMemoryWallet; usedAt: number }>();
+    let closed = false;
+
+    const dropIdle = () => {
+      for (const [subject, entry] of cache)
+        if (now() - entry.usedAt > idleMs) cache.delete(subject);
+    };
+
+    return Object.freeze({
+      forSubject(subject: string) {
+        if (closed)
+          throw new WalletError('WALLET_CLOSED', 'This in-memory wallet service is closed.', 409);
+        if (typeof subject !== 'string' || !subject || subject.length > 128)
+          throw new WalletError(
+            'INVALID_IDENTITY',
+            'Wallet identifiers must contain 1–128 characters.'
+          );
+        dropIdle();
+        let entry = cache.get(subject);
+        if (entry) cache.delete(subject);
+        else
+          entry = {
+            handle: buildInMemoryHandle({
+              environment,
+              approval,
+              authorizeTypedData,
+              subject,
+              oidc: options.oidc,
+              getIdToken: () => options.oidc.getIdToken(subject),
+              swapsBinder,
+              transport,
+              indexer,
+              overrides
+            }),
+            usedAt: 0
+          };
+        entry.usedAt = now();
+        cache.set(subject, entry);
+        while (cache.size > maxHandles) cache.delete(cache.keys().next().value!);
+        // The service owns each handle's lifetime: callers use evict(subject) or close().
+        const { close: _close, ...handle } = entry.handle;
+        void _close;
+        return Object.freeze(handle);
+      },
+      async evict(subject: string) {
+        const entry = cache.get(subject);
+        cache.delete(subject);
+        if (entry) await entry.handle.close();
+      },
+      async close() {
+        closed = true;
+        const entries = [...cache.values()];
+        cache.clear();
+        const failures: unknown[] = [];
+        // A few at a time, continuing past failures so one slow revoke never strands the rest.
+        for (let i = 0; i < entries.length; i += 8) {
+          const results = await Promise.allSettled(
+            entries.slice(i, i + 8).map((entry) => entry.handle.close())
+          );
+          for (const result of results)
+            if (result.status === 'rejected') failures.push(result.reason);
+        }
+        if (failures.length) throw failures[0];
+      },
+      indexer: serviceIndexer
+    });
+  }
+
+  if ((options as unknown as Record<string, unknown>).cache !== undefined)
+    throw new WalletError(
+      'CONFIGURATION',
+      'cache is only supported when storage is "memory".',
+      503
+    );
   if (typeof options.executor !== 'function')
     throw new WalletError(
       'CONFIGURATION',
@@ -741,7 +996,7 @@ function instantiateServerWalletService(
   if (!storage || typeof storage !== 'object')
     throw new WalletError(
       'CONFIGURATION',
-      'Configure storage as { adapter, encryptionKey } or { encryptedStore }.',
+      'Configure storage as "memory", { adapter, encryptionKey }, or { encryptedStore }.',
       503
     );
   const hasAdapter = 'adapter' in storage && storage.adapter !== undefined;
@@ -781,23 +1036,6 @@ function instantiateServerWalletService(
     );
   }
 
-  const baseFetch = options.fetch ?? fetch;
-  const fetcher = origin ? omsFetch(origin, baseFetch) : baseFetch;
-  const transport =
-    overrides.transport ?? new WaasTransport(options.publishableKey, options.attestation, fetcher);
-  const indexer = overrides.indexer ?? new IndexerClient(options.publishableKey, fetcher);
-  const swapsBinder =
-    options.swaps !== undefined ? resolveSwapsBinder(options.swaps, 'service') : undefined;
-
-  const serviceIndexer: ServiceIndexerFacet = Object.freeze({
-    getEvmBalances: (address: string, opts?: GetEvmBalancesOptions) =>
-      indexer.getBalances(address, opts),
-    getSolanaBalances: (address: string, opts?: GetSolanaBalancesOptions) =>
-      indexer.getSolanaBalances(address, opts?.networks),
-    getTronBalances: (address: string, opts?: GetTronBalancesOptions) =>
-      indexer.getTronBalances(address, opts?.networks)
-  });
-
   return Object.freeze({
     forSubject(subject: string) {
       if (typeof subject !== 'string' || !subject || subject.length > 128)
@@ -828,7 +1066,6 @@ function instantiateServerWalletService(
         );
       const engine = new WalletEngine({
         namespace,
-        origin,
         subject,
         issuer: options.oidc.issuer,
         audience: options.oidc.audience,
@@ -875,346 +1112,13 @@ export function createServerWalletServiceInternal<
 
 /**
  * Create a multi-tenant server wallet service for backends operating many identities.
- * Computes canonical identity namespaces from the routed WaaS origin, project, issuer, audience,
- * and subject. Handles from `forSubject` follow the options like `createServerWallet`.
+ * Pass durable `storage` (`{ adapter, encryptionKey }` or `{ encryptedStore }`) with an `executor`
+ * provider, or `storage: 'memory'` (with optional `cache`, no `executor`) to keep one handle per
+ * subject in a bounded cache with `evict(subject)` and `close()`. Handles from `forSubject` follow
+ * the options like `createServerWallet`.
  */
 export function createServerWalletService<const TOptions extends ServerWalletServiceOptions>(
   options: TOptions & ExactOptions<TOptions, ServerWalletServiceOptions>
 ): ServerWalletServiceFrom<TOptions> {
   return instantiateServerWalletService(options) as unknown as ServerWalletServiceFrom<TOptions>;
-}
-
-type AnyEphemeralWallet = EphemeralServerWallet<ApprovalMode, undefined, boolean> & {
-  readonly swaps?: unknown;
-};
-
-function instantiateEphemeralServerWallet(
-  options: EphemeralServerWalletOptions,
-  overrides: Overrides = {}
-): AnyEphemeralWallet {
-  if (!options || typeof options !== 'object')
-    throw new WalletError('CONFIGURATION', 'Configure createEphemeralServerWallet options.', 503);
-  for (const key of ['store', 'storage', 'executor'])
-    if ((options as unknown as Record<string, unknown>)[key] !== undefined)
-      throw new WalletError(
-        'CONFIGURATION',
-        `createEphemeralServerWallet does not take "${key}": its credential and records live in memory and it queues its own calls. Use createServerWallet to keep them in storage.`,
-        503
-      );
-  const environment = environmentFromKey(options.publishableKey);
-  const origin = normalizeOrigin(options.origin);
-  const approval = validateApproval(options.approval);
-  const authorizeTypedData = resolveSigning(options.signing);
-  validateOidcCore(
-    options.oidc?.issuer,
-    options.oidc?.audience,
-    options.oidc?.sessionLifetimeSeconds
-  );
-  if (typeof options.oidc?.getIdToken !== 'function')
-    throw new WalletError('CONFIGURATION', 'Configure oidc.getIdToken.', 503);
-  if (!overrides.transport) resolveAttestationPolicy(environment, options.attestation);
-
-  const swapsBinder =
-    options.swaps !== undefined ? resolveSwapsBinder(options.swaps, 'wallet') : undefined;
-  return buildEphemeralHandle({
-    environment,
-    origin,
-    approval,
-    authorizeTypedData,
-    subject: options.oidc.subject,
-    oidc: options.oidc,
-    getIdToken: options.oidc.getIdToken,
-    swapsBinder,
-    publishableKey: options.publishableKey,
-    attestation: options.attestation,
-    fetch: options.fetch,
-    overrides
-  });
-}
-
-/** One in-memory handle for one identity, shared by the single-identity factory and the service. */
-function buildEphemeralHandle(params: {
-  environment: ReturnType<typeof environmentFromKey>;
-  origin: string | undefined;
-  approval: ApprovalMode;
-  authorizeTypedData: ReturnType<typeof resolveSigning>;
-  subject: string;
-  oidc: {
-    readonly issuer: string;
-    readonly audience: string;
-    readonly sessionLifetimeSeconds?: number;
-  };
-  getIdToken: () => Promise<{ readonly token: string; readonly expiresAt: number }>;
-  swapsBinder: ReturnType<typeof resolveSwapsBinder> | undefined;
-  publishableKey: string;
-  attestation: EphemeralServerWalletOptions['attestation'];
-  fetch: typeof fetch | undefined;
-  overrides: Overrides;
-}): AnyEphemeralWallet {
-  const { environment, origin, approval, authorizeTypedData, swapsBinder, overrides } = params;
-  const namespace = computeIdentityNamespace({
-    waasOrigin: environment.origin,
-    projectId: environment.projectId,
-    issuer: params.oidc.issuer,
-    audience: params.oidc.audience,
-    subject: params.subject
-  });
-  const baseFetch = params.fetch ?? fetch;
-  const fetcher = origin ? omsFetch(origin, baseFetch) : baseFetch;
-  const transport =
-    overrides.transport ?? new WaasTransport(params.publishableKey, params.attestation, fetcher);
-  const indexer = overrides.indexer ?? new IndexerClient(params.publishableKey, fetcher);
-
-  const executor = new ClosableExecutor();
-  const engine = new WalletEngine({
-    namespace,
-    origin,
-    subject: params.subject,
-    issuer: params.oidc.issuer,
-    audience: params.oidc.audience,
-    getIdToken: params.getIdToken,
-    sessionLifetimeSeconds: params.oidc.sessionLifetimeSeconds ?? 3600,
-    store: new MemoryStateStore(),
-    executor,
-    transport,
-    clock: overrides.clock,
-    creationRecheckDelaysMs: overrides.creationRecheckDelaysMs,
-    createWallets: false,
-    authorizeTypedData
-  });
-  let swapsFacet: unknown;
-  if (swapsBinder) {
-    const bound = swapsBinder.bind(engine.lockedPrimitives());
-    engine.attachGate(bound.gate);
-    swapsFacet = bound.facet;
-  }
-  const facade = buildWalletFacade({
-    engine,
-    indexer,
-    approval,
-    typedData: authorizeTypedData !== undefined,
-    swapsFacet,
-    clock: overrides.clock
-  });
-  const lifecycle = new EphemeralLifecycle(engine.core, executor);
-  return Object.freeze({
-    restore: (restoreOptions?: CreateOrRestoreOptions) =>
-      lifecycle.restore(restoreOptions?.families, restoreOptions?.wallets),
-    create: (createOptions?: CreateOrRestoreOptions) =>
-      lifecycle.create(createOptions?.families, createOptions?.wallets),
-    listWallets: () => lifecycle.listWallets(),
-    inspect: () => lifecycle.inspect(),
-    rotateCredential: () => lifecycle.rotateCredential(),
-    close: () => lifecycle.close(),
-    evm: facade.evm,
-    solana: facade.solana,
-    tron: facade.tron,
-    indexer: facade.indexer,
-    ...(swapsFacet !== undefined ? { swaps: swapsFacet } : {})
-  });
-}
-
-function instantiateEphemeralServerWalletService(
-  options: EphemeralServerWalletServiceOptions,
-  overrides: Overrides = {}
-): {
-  forSubject(subject: string): Omit<AnyEphemeralWallet, 'close'>;
-  evict(subject: string): Promise<void>;
-  close(): Promise<void>;
-  readonly indexer: ServiceIndexerFacet;
-} {
-  if (!options || typeof options !== 'object')
-    throw new WalletError(
-      'CONFIGURATION',
-      'Configure createEphemeralServerWalletService options.',
-      503
-    );
-  for (const key of ['store', 'storage', 'executor'])
-    if ((options as unknown as Record<string, unknown>)[key] !== undefined)
-      throw new WalletError(
-        'CONFIGURATION',
-        `createEphemeralServerWalletService does not take "${key}": handles keep their credentials and records in memory. Use createServerWalletService to keep them in storage.`,
-        503
-      );
-  const environment = environmentFromKey(options.publishableKey);
-  const origin = normalizeOrigin(options.origin);
-  const approval = validateApproval(options.approval);
-  const authorizeTypedData = resolveSigning(options.signing);
-  validateOidcCore(
-    options.oidc?.issuer,
-    options.oidc?.audience,
-    options.oidc?.sessionLifetimeSeconds
-  );
-  if (typeof options.oidc?.getIdToken !== 'function')
-    throw new WalletError('CONFIGURATION', 'Configure oidc.getIdToken(subject).', 503);
-  const maxHandles = options.cache?.maxHandles ?? 1000;
-  const idleMs = options.cache?.idleTimeoutMs ?? 600_000;
-  if (!Number.isInteger(maxHandles) || maxHandles < 1)
-    throw new WalletError('CONFIGURATION', 'cache.maxHandles must be a positive integer.', 503);
-  if (!Number.isInteger(idleMs) || idleMs < 1)
-    throw new WalletError('CONFIGURATION', 'cache.idleTimeoutMs must be a positive integer.', 503);
-  if (!overrides.transport) resolveAttestationPolicy(environment, options.attestation);
-  const swapsBinder =
-    options.swaps !== undefined ? resolveSwapsBinder(options.swaps, 'service') : undefined;
-  const now = overrides.clock ?? (() => Date.now());
-  const baseFetch = options.fetch ?? fetch;
-  const indexer =
-    overrides.indexer ??
-    new IndexerClient(options.publishableKey, origin ? omsFetch(origin, baseFetch) : baseFetch);
-  // Most recently used last; an evicted handle is dropped, not revoked, so a request still using
-  // it finishes, and its credential expires on its own.
-  const cache = new Map<string, { handle: AnyEphemeralWallet; usedAt: number }>();
-  let closed = false;
-
-  const dropIdle = () => {
-    for (const [subject, entry] of cache) if (now() - entry.usedAt > idleMs) cache.delete(subject);
-  };
-
-  return Object.freeze({
-    forSubject(subject: string) {
-      if (closed)
-        throw new WalletError('WALLET_CLOSED', 'This ephemeral wallet service is closed.', 409);
-      if (typeof subject !== 'string' || !subject || subject.length > 128)
-        throw new WalletError(
-          'INVALID_IDENTITY',
-          'Wallet identifiers must contain 1–128 characters.'
-        );
-      dropIdle();
-      let entry = cache.get(subject);
-      if (entry) cache.delete(subject);
-      else
-        entry = {
-          handle: buildEphemeralHandle({
-            environment,
-            origin,
-            approval,
-            authorizeTypedData,
-            subject,
-            oidc: options.oidc,
-            getIdToken: () => options.oidc.getIdToken(subject),
-            swapsBinder,
-            publishableKey: options.publishableKey,
-            attestation: options.attestation,
-            fetch: options.fetch,
-            overrides
-          }),
-          usedAt: 0
-        };
-      entry.usedAt = now();
-      cache.set(subject, entry);
-      while (cache.size > maxHandles) cache.delete(cache.keys().next().value!);
-      // The service owns each handle's lifetime: callers use evict(subject) or close().
-      const { close: _close, ...handle } = entry.handle;
-      void _close;
-      return Object.freeze(handle);
-    },
-    async evict(subject: string) {
-      const entry = cache.get(subject);
-      cache.delete(subject);
-      if (entry) await entry.handle.close();
-    },
-    async close() {
-      closed = true;
-      const entries = [...cache.values()];
-      cache.clear();
-      const failures: unknown[] = [];
-      // A few at a time, continuing past failures so one slow revoke never strands the rest.
-      for (let i = 0; i < entries.length; i += 8) {
-        const results = await Promise.allSettled(
-          entries.slice(i, i + 8).map((entry) => entry.handle.close())
-        );
-        for (const result of results)
-          if (result.status === 'rejected') failures.push(result.reason);
-      }
-      if (failures.length) throw failures[0];
-    },
-    indexer: Object.freeze({
-      getEvmBalances: (address: string, opts?: GetEvmBalancesOptions) =>
-        indexer.getBalances(address, opts),
-      getSolanaBalances: (address: string, opts?: GetSolanaBalancesOptions) =>
-        indexer.getSolanaBalances(address, opts?.networks),
-      getTronBalances: (address: string, opts?: GetTronBalancesOptions) =>
-        indexer.getTronBalances(address, opts?.networks)
-    })
-  });
-}
-
-/** The service `createEphemeralServerWalletService` returns for these options. */
-type EphemeralServerWalletServiceFrom<TOptions extends EphemeralServerWalletServiceOptions> =
-  EphemeralServerWalletService<
-    ApprovalFrom<TOptions>,
-    TOptions extends { readonly swaps: infer TSwaps extends SwapsConfig<'service', unknown> }
-      ? TSwaps
-      : undefined,
-    TypedDataFrom<TOptions>
-  >;
-
-/** Package-private test seam for `createEphemeralServerWalletService`. */
-export function createEphemeralServerWalletServiceInternal<
-  const TOptions extends EphemeralServerWalletServiceOptions
->(
-  options: TOptions & ExactOptions<TOptions, EphemeralServerWalletServiceOptions>,
-  overrides?: Overrides
-): EphemeralServerWalletServiceFrom<TOptions> {
-  return instantiateEphemeralServerWalletService(
-    options,
-    overrides
-  ) as unknown as EphemeralServerWalletServiceFrom<TOptions>;
-}
-
-/**
- * In-memory wallets for many identities, for backends serving many users: `forSubject(subject)`
- * returns that user's in-memory handle (see `createEphemeralServerWallet`), kept in a bounded
- * cache so requests reuse its credential instead of signing in each time. A handle evicted for
- * size or idleness is dropped without revoking its credential, so a request still using it
- * finishes; `evict(subject)` and `close()` revoke. Like `forSubject` on the durable service, it is
- * a lookup, not an authorization check.
- */
-export function createEphemeralServerWalletService<
-  const TOptions extends EphemeralServerWalletServiceOptions
->(
-  options: TOptions & ExactOptions<TOptions, EphemeralServerWalletServiceOptions>
-): EphemeralServerWalletServiceFrom<TOptions> {
-  return instantiateEphemeralServerWalletService(
-    options
-  ) as unknown as EphemeralServerWalletServiceFrom<TOptions>;
-}
-
-/** The handle `createEphemeralServerWallet` returns for these options. */
-type EphemeralServerWalletFrom<TOptions extends EphemeralServerWalletOptions> =
-  EphemeralServerWallet<
-    ApprovalFrom<TOptions>,
-    TOptions extends { readonly swaps: infer TSwaps extends SwapsConfig<'wallet', unknown> }
-      ? TSwaps
-      : undefined,
-    TypedDataFrom<TOptions>
-  >;
-
-/** Package-private test seam for `createEphemeralServerWallet`. */
-export function createEphemeralServerWalletInternal<
-  const TOptions extends EphemeralServerWalletOptions
->(
-  options: TOptions & ExactOptions<TOptions, EphemeralServerWalletOptions>,
-  overrides?: Overrides
-): EphemeralServerWalletFrom<TOptions> {
-  return instantiateEphemeralServerWallet(
-    options,
-    overrides
-  ) as unknown as EphemeralServerWalletFrom<TOptions>;
-}
-
-/**
- * Create an in-memory wallet for one OIDC identity: the full wallet API of `createServerWallet`
- * without storage, an encryption key or a distributed lock. Each handle signs in with its own
- * credential and keeps it, its wallets and its operation records in memory, so handles in
- * different processes run in parallel; calls on one handle run one at a time. `create()` creates
- * an identity's wallets where they are first set up; `restore()` binds them everywhere else.
- * Records and `idempotencyKey` protection last as long as the handle. Call `close()` when done.
- */
-export function createEphemeralServerWallet<const TOptions extends EphemeralServerWalletOptions>(
-  options: TOptions & ExactOptions<TOptions, EphemeralServerWalletOptions>
-): EphemeralServerWalletFrom<TOptions> {
-  return instantiateEphemeralServerWallet(
-    options
-  ) as unknown as EphemeralServerWalletFrom<TOptions>;
 }

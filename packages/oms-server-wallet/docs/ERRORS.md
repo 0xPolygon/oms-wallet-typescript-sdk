@@ -57,7 +57,7 @@ so the outcome survives a restart. Settlement codes such as `SUBMISSION_UNCERTAI
 
 | Code | Meaning | What to do |
 | --- | --- | --- |
-| `CONFIGURATION` | Invalid factory options: publishable key, origin, OIDC, storage, executor, attestation, swaps, or an option an in-memory handle does not take (`storage`, `executor`). | Fix the configuration; the message names the field. |
+| `CONFIGURATION` | Invalid factory options: publishable key, OIDC, storage, executor, attestation, swaps, or cross-mode options (`executor` with `storage: 'memory'`, or `cache` with durable storage). | Fix the configuration; the message names the field. |
 | `RPC_CONFIGURATION` | A Trails chain has no valid HTTPS RPC endpoint. | Configure `chains` in `trails(...)`. |
 | `UNSUPPORTED_PROTOCOL` | The Trails endpoint does not speak the required protocol version. | Point Trails at a supported endpoint. |
 
@@ -121,8 +121,6 @@ so the outcome survives a restart. Settlement codes such as `SUBMISSION_UNCERTAI
 | `FEE_ABOVE_QUOTE` | WaaS re-priced the fee above the quote at `Execute`; nothing was sent. | Prepare again. |
 | `SUBMISSION_UNCERTAIN` | `Execute` may have been sent; its outcome is unknown. | Refresh or wait on the same operation; never send a replacement. |
 | `RECONCILIATION_REQUIRED` | Still unconfirmed after the post-expiry grace window. | Verify out of band, then `resolveReconciliation`. |
-| `PREPARATION_FAILED` | Preparing failed with an error that is not a `WalletError` (recorded on the operation). | Inspect logs; prepare again. |
-| `SIGNING_FAILED` | Signing failed with an error that is not a `WalletError` (recorded on the operation). | Inspect logs; sign again under a new key. |
 | `SIGNATURE_INVALID` | WaaS returned a signature that did not verify. | Do not use it; retry or investigate. |
 | `TYPED_DATA_REFUSED` | `signing.authorizeTypedData` did not return `true`, or typed-data signing is not configured. Nothing was signed or recorded. | Treat as a policy refusal; the same key can be retried. |
 | `DEBIT_PENDING` | Another debit on the chain is pending or uncertain (including a swap reservation). | Settle or reconcile it first. |

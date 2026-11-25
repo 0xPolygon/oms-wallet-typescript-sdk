@@ -14,8 +14,7 @@ import {
 } from './inputs.js';
 
 /**
- * WaaS signing requests shared by the durable engines, which record each signature as an
- * operation, and the ephemeral signer, which keeps no records. Every function assumes the caller
+ * WaaS signing requests shared by durable and in-memory wallets. Every function assumes the caller
  * holds the identity executor and has already ensured the family's wallet.
  */
 

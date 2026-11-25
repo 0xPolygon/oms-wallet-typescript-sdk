@@ -26,7 +26,6 @@ export interface SwapsConfig<
 /** Package-private locked wallet primitives passed to the swaps coordinator. Never reacquires the executor. */
 export interface LockedEnginePrimitives {
   readonly namespace: string;
-  readonly origin?: string;
   runLocked<T>(task: () => Promise<T>): Promise<T>;
   inspectLocked(): Promise<{
     wallet?: { id: string; address: string };

@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest';
 
 import { UpstreamError } from '@polygonlabs/oms-server-wallet-sdk';
 
-import { createEphemeralServerWalletInternal } from '../src/wallet.js';
+import { createServerWalletInternal } from '../src/wallet.js';
 import { TEST_PUBLISHABLE_KEY, sdkHarness } from './helpers.js';
 
 const transfer = {
@@ -77,7 +77,7 @@ describe('waitForTransaction', () => {
     const h = sdkHarness();
     const sent = await h.client.evm.sendTransfer({ idempotencyKey: 'wait-txn-1', ...transfer });
     // A fresh in-memory handle that never restored: the read binds existing wallets first.
-    const other = createEphemeralServerWalletInternal(
+    const other = createServerWalletInternal(
       {
         publishableKey: TEST_PUBLISHABLE_KEY,
         oidc: {
@@ -88,7 +88,8 @@ describe('waitForTransaction', () => {
             token: `fixture-${crypto.randomUUID()}`,
             expiresAt: Math.floor(Date.now() / 1000) + 300
           })
-        }
+        },
+        storage: 'memory'
       },
       { transport: h.remote }
     );
@@ -135,5 +136,66 @@ describe('waitForTransaction', () => {
     }, 30);
     expect((await waited).outcome).toBe('executed');
     expect(UpstreamError).toBeDefined();
+  });
+
+  it('bounds slow reads by timeoutMs and signal', async () => {
+    const h = sdkHarness();
+    await h.client.createOrRestore();
+    const request = h.remote.request.bind(h.remote);
+    h.remote.request = async (method, body, credential) => {
+      if (method === 'TransactionStatus') {
+        await new Promise((resolve) => setTimeout(resolve, 400));
+        return { status: 'pending' };
+      }
+      return request(method, body, credential);
+    };
+    const ac = new AbortController();
+    setTimeout(() => ac.abort(), 25);
+    const started = Date.now();
+    const aborted = await h.client.evm.waitForTransaction(
+      { txnId: 'tx-slow-1', expiresAt: new Date(Date.now() + 60_000).toISOString() },
+      { timeoutMs: 2000, signal: ac.signal }
+    );
+    expect(aborted.outcome).toBe('aborted');
+    expect(Date.now() - started).toBeLessThan(200);
+  });
+
+  it('keeps waiting after observing pending even if a later read past grace is inconclusive', async () => {
+    let now = Date.parse('2026-06-01T00:00:00.000Z');
+    const expiresAt = new Date(now + 10_000).toISOString();
+    const h = sdkHarness({ clock: () => now });
+    await h.client.createOrRestore();
+    let polls = 0;
+    const request = h.remote.request.bind(h.remote);
+    h.remote.request = async (method, body, credential) => {
+      if (method === 'TransactionStatus') {
+        polls++;
+        if (polls === 1) {
+          now += 150_000;
+          return { status: 'pending' };
+        }
+        if (polls === 2) throw new UpstreamError(7306, 'TransactionStatus');
+        return { status: 'executed', txnHash: `0x${'a'.repeat(64)}` };
+      }
+      return request(method, body, credential);
+    };
+    const res = await h.client.evm.waitForTransaction(
+      { txnId: 'tx-monotonic-1', expiresAt },
+      { timeoutMs: 300_000, pollIntervalMs: 250 }
+    );
+    expect(res.outcome).toBe('executed');
+    expect(polls).toBe(3);
+  });
+
+  it('throws TransactionNotFound before quote expiry instead of swallowing it until timeout', async () => {
+    const h = sdkHarness();
+    await h.client.createOrRestore();
+    h.remote.evmStatusError = 7308;
+    await expect(
+      h.client.evm.waitForTransaction(
+        { txnId: 'tx-missing-1', expiresAt: new Date(Date.now() + 600_000).toISOString() },
+        { timeoutMs: 2000, pollIntervalMs: 250 }
+      )
+    ).rejects.toMatchObject({ code: 'UPSTREAM_ERROR', upstreamCode: 7308 });
   });
 });

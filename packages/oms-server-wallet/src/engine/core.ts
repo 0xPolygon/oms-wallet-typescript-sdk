@@ -24,6 +24,7 @@ import type {
 import { sha256 } from '../encoding.js';
 import { UpstreamError, WalletError } from '../errors.js';
 import { nextWalletNonce } from '../internal/protocol/requestSigning.js';
+import { WaasErrorCode } from '../internal/protocol/waasErrors.js';
 import { canonicalJson } from '../json.js';
 import {
   authSchema,
@@ -57,7 +58,6 @@ import { paginate } from './projection.js';
 
 export interface WalletEngineConfig {
   readonly namespace: string;
-  readonly origin?: string;
   readonly subject: string;
   readonly issuer: string;
   readonly audience: string;
@@ -68,9 +68,9 @@ export interface WalletEngineConfig {
   readonly transport: RpcTransport;
   readonly clock?: () => number;
   /**
-   * Whether a missing family wallet may be created with CreateWallet (default true). The
-   * ephemeral signer sets false: it keeps no record of an uncertain create, so a lost response
-   * could otherwise lead to a second wallet for the identity.
+   * Whether a missing family wallet may be created with CreateWallet (default true). In-memory
+   * handles set false: they keep no record of an uncertain create across restarts, so wallet
+   * creation is explicit through `create()`.
    */
   readonly createWallets?: boolean;
   /**
@@ -83,9 +83,21 @@ export interface WalletEngineConfig {
 }
 
 /**
- * Core internal wallet engine owning identity state, credential nonces, WaaS authentication,
- * reviewId / submissionMode enforcement, and locked primitives shared with the Trails coordinator.
+ * Refusals WaaS returns before creating a wallet, proving nothing was created. Any other failure
+ * (5xx, network, timeout, malformed response) leaves wallet creation uncertain.
  */
+const PRE_CREATE_REFUSALS: ReadonlySet<number> = new Set([
+  WaasErrorCode.DataIntegrityError,
+  WaasErrorCode.InvalidRequest,
+  WaasErrorCode.InvalidSignature,
+  WaasErrorCode.KeyNotFound,
+  WaasErrorCode.KeyExpired,
+  WaasErrorCode.UsageLimitExceeded,
+  WaasErrorCode.PreconditionFailed,
+  WaasErrorCode.Unauthorized,
+  WaasErrorCode.UnsupportedNetwork,
+  WaasErrorCode.UnsupportedTransactionMode
+]);
 
 /**
  * Identity, credential and operation-store core shared by the EVM and Solana/Tron engines.
@@ -129,28 +141,30 @@ export class EngineCore {
   }
 
   /**
-   * Every wallet WaaS holds for this identity, signing in if needed. Unlike restore, it does not
-   * fail when a family has more than one wallet, so an operator can choose which one to use.
+   * Every wallet WaaS holds for this identity, signing in if needed. Unlike restore, it never
+   * fails when a family has more than one wallet or an uncertain create, so an operator can
+   * inspect them and choose which one to use.
    */
   listWallets(): Promise<readonly IdentityWallet[]> {
     return this.config.executor.run(async () => {
       const state = await this.load();
       if (state.disabled) throw new WalletError('WALLET_DISABLED', 'This wallet is disabled.', 409);
+      let all: RemoteWallet[];
       if (
         !state.credential?.expiresAt ||
         Date.parse(state.credential.expiresAt) <= this.now() + 60_000
-      )
-        await this.signIn(state, []);
-      let all: RemoteWallet[];
-      try {
-        all = await this.listAll(state, [], '');
-      } catch (error) {
-        if (!(error instanceof UpstreamError) || !credentialRejectedCodes.has(error.upstreamCode))
-          throw error;
-        state.credential = undefined;
-        await this.save(state);
-        await this.signIn(state, []);
-        all = await this.listAll(state, [], '');
+      ) {
+        all = await this.signInForListing(state);
+      } else {
+        try {
+          all = await this.listAll(state, [], '');
+        } catch (error) {
+          if (!(error instanceof UpstreamError) || !credentialRejectedCodes.has(error.upstreamCode))
+            throw error;
+          state.credential = undefined;
+          await this.save(state);
+          all = await this.signInForListing(state);
+        }
       }
       return all.flatMap((wallet) => {
         const family = walletFamily(wallet);
@@ -229,10 +243,6 @@ export class EngineCore {
       throw new WalletError('OPERATION_CANCELLED', 'This operation was cancelled.', 409);
   }
 
-  /**
-   * Mark a still-quoted operation whose quote has expired as `expired` before anything is sent,
-   * persist it, and throw `QUOTE_EXPIRED`. Returns normally while the quote is still valid.
-   */
   /**
    * The credential must outlive a quote for the same credential to execute it, so preparing
    * renews one with less than this left (16 minutes: quotes last up to about 15), or half the
@@ -370,11 +380,7 @@ export class EngineCore {
     return families.length ? families : ['evm'];
   }
 
-  private async signIn(
-    state: State,
-    discoverFamilies: readonly NetworkFamily[],
-    pins: WalletPins = {}
-  ): Promise<void> {
+  private async authenticate(state: State) {
     const idToken = await this.config.getIdToken();
     if (
       !idToken ||
@@ -426,6 +432,15 @@ export class EngineCore {
         'WaaS returned a different identity or credential.',
         502
       );
+    return authenticated;
+  }
+
+  private async signIn(
+    state: State,
+    discoverFamilies: readonly NetworkFamily[],
+    pins: WalletPins = {}
+  ): Promise<void> {
+    const authenticated = await this.authenticate(state);
     await this.discover(
       state,
       discoverFamilies,
@@ -433,8 +448,43 @@ export class EngineCore {
       authenticated.page?.cursor || undefined,
       pins
     );
-    state.credential.expiresAt = authenticated.credential.expiresAt;
+    state.credential!.expiresAt = authenticated.credential.expiresAt;
     await this.save(state);
+  }
+
+  /**
+   * Sign in and list every wallet without running `discover` on `state.creating` or failing on
+   * duplicates. Re-binds any already-stored wallets that are present so the new credential remains
+   * usable for subsequent calls.
+   */
+  private async signInForListing(state: State): Promise<RemoteWallet[]> {
+    const authenticated = await this.authenticate(state);
+    const all = await this.listAll(
+      state,
+      authenticated.wallets,
+      authenticated.page?.cursor || undefined
+    );
+    let allStoredBound = true;
+    for (const family of NETWORK_FAMILIES) {
+      const stored = state.wallets[family];
+      if (!stored) continue;
+      const match = all.find(
+        (wallet) =>
+          walletFamily(wallet) === family &&
+          wallet.id === stored.id &&
+          sameAddress(family, wallet.address, stored.address)
+      );
+      if (!match) {
+        allStoredBound = false;
+        continue;
+      }
+      await this.call(state, 'UseWallet', { walletId: match.id });
+    }
+    if (allStoredBound) {
+      state.credential!.expiresAt = authenticated.credential.expiresAt;
+      await this.save(state);
+    }
+    return all;
   }
 
   private async discoverWithRefresh(
@@ -541,14 +591,19 @@ export class EngineCore {
         state.creating = state.creating.filter((entry) => entry !== family);
         await this.save(state);
       } catch (error) {
-        // A WaaS refusal is a verified answer. Any other failure (network, timeout, malformed
-        // response) leaves the outcome unknown: never create again blindly, but look for the
-        // wallet the call may have created.
-        if (!(error instanceof UpstreamError) && (await this.recheckCreated(state, family)))
-          continue;
-        state.credential!.expiresAt = undefined;
+        // A verified pre-create WaaS refusal proves nothing was created: clear `creating` so a
+        // later retry can create it. Any other failure (5xx, network, timeout, malformed response)
+        // leaves the outcome unknown: never create again blindly, but re-check for the wallet it
+        // may have created.
+        if (error instanceof UpstreamError && PRE_CREATE_REFUSALS.has(error.upstreamCode)) {
+          state.creating = state.creating.filter((entry) => entry !== family);
+          if (state.credential) state.credential.expiresAt = undefined;
+          await this.save(state);
+          throw error;
+        }
+        if (await this.recheckCreated(state, family)) continue;
+        if (state.credential) state.credential.expiresAt = undefined;
         await this.save(state);
-        if (error instanceof UpstreamError) throw error;
         throw new WalletError(
           'CREATION_UNCERTAIN',
           `Creating the ${family} wallet has an unknown outcome. Call restore() later instead of creating again: a second create would give this identity two wallets.`,
@@ -909,7 +964,6 @@ export class EngineCore {
     return { items, ...(nextCursor !== undefined ? { nextCursor } : {}) };
   }
 
-  /** Page through open operations for one family, lazily pruning settled IDs left by a crash. */
   /**
    * Page through open operations. `project` returns the public view of a record, or null for a
    * record another family or an internal flow owns. Runs under the identity lock, so a missing

@@ -37,7 +37,6 @@ export class WalletEngine {
   lockedPrimitives(): LockedEnginePrimitives {
     return {
       namespace: this.core.config.namespace,
-      origin: this.core.config.origin,
       runLocked: (task) => this.core.config.executor.run(task),
       inspectLocked: async () => {
         const state = await this.core.load();
@@ -58,8 +57,15 @@ export class WalletEngine {
         for (const op of ops) {
           const local = await this.core.readEvmOperation(op.id);
           // The swap record's copy wins only when it shows more progress, for example another
-          // process journaled or executed the submission this store still holds as quoted.
-          if (!local || operationProgress(op) > operationProgress(local))
+          // process journaled, observed pending, or executed the submission this store lacks.
+          if (
+            !local ||
+            operationProgress(op) > operationProgress(local) ||
+            (op.status === 'executed' &&
+              local.status === 'executed' &&
+              !!op.txnHash &&
+              !local.txnHash)
+          )
             await this.core.writeOperation(op);
         }
       },
@@ -105,7 +111,7 @@ export class WalletEngine {
   }
 }
 
-/** How far an operation has got: preparing, quoted, submitting, in flight, settled. */
+/** How far an operation has got: preparing, quoted, submitting, unknown, pending, settled. */
 function operationProgress(op: StoredEvmOperation): number {
   switch (op.status) {
     case 'preparing':
@@ -114,10 +120,11 @@ function operationProgress(op: StoredEvmOperation): number {
       return 1;
     case 'submitting':
       return 2;
-    case 'pending':
     case 'unknown':
       return 3;
-    default:
+    case 'pending':
       return 4;
+    default:
+      return 5;
   }
 }

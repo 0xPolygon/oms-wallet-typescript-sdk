@@ -1,6 +1,8 @@
 import { describe, expect, it } from 'vitest';
 
-import { createEphemeralServerWalletInternal } from '../src/wallet.js';
+import { UpstreamError, WalletError } from '@polygonlabs/oms-server-wallet-sdk';
+
+import { createServerWalletInternal } from '../src/wallet.js';
 import { FakeWaas, TEST_PUBLISHABLE_KEY, sdkHarness } from './helpers.js';
 
 const oidc = {
@@ -13,8 +15,8 @@ const oidc = {
   })
 };
 const ephemeral = (remote: FakeWaas) =>
-  createEphemeralServerWalletInternal(
-    { publishableKey: TEST_PUBLISHABLE_KEY, oidc },
+  createServerWalletInternal(
+    { publishableKey: TEST_PUBLISHABLE_KEY, oidc, storage: 'memory' },
     { transport: remote, creationRecheckDelaysMs: [0, 0, 0] }
   );
 const creates = (remote: FakeWaas) => remote.calls.filter((call) => call.method === 'CreateWallet');
@@ -129,5 +131,91 @@ describe('identities with more than one wallet per family', () => {
     // Later calls need no selection: the bound wallet is stored.
     expect((await fresh.create().createOrRestore()).wallets.evm?.id).toBe('wallet-2');
     expect(creates(fresh.remote)).toHaveLength(0);
+  });
+
+  it('clears creating after a verified pre-create WaaS refusal so retries can create', async () => {
+    const h = sdkHarness();
+    const request = h.remote.request.bind(h.remote);
+    let createAttempts = 0;
+    h.remote.request = async (method, body, credential) => {
+      if (method === 'CreateWallet') {
+        createAttempts++;
+        if (createAttempts === 1) throw new UpstreamError(7200, 'CreateWallet');
+      }
+      return request(method, body, credential);
+    };
+    await expect(h.client.createOrRestore({ families: ['evm'] })).rejects.toMatchObject({
+      code: 'UPSTREAM_ERROR',
+      upstreamCode: 7200
+    });
+    const created = await h.client.createOrRestore({ families: ['evm'] });
+    expect(created.wallets.evm?.id).toBe('wallet-1');
+    expect(created.creationUncertain).toBe(false);
+    expect(createAttempts).toBe(2);
+    expect(creates(h.remote)).toHaveLength(1);
+  });
+
+  it('throws CREATION_UNCERTAIN (never TypeError) when recheck clears credential and getIdToken fails', async () => {
+    let tokens = 0;
+    const remote = new FakeWaas();
+    const request = remote.request.bind(remote);
+    remote.request = async (method, body, credential) => {
+      if (method === 'CreateWallet')
+        throw new WalletError('UPSTREAM_UNAVAILABLE', 'network lost', 502);
+      if (method === 'ListWallets') throw new UpstreamError(7202, 'ListWallets');
+      return request(method, body, credential);
+    };
+    const wallet = createServerWalletInternal(
+      {
+        publishableKey: TEST_PUBLISHABLE_KEY,
+        oidc: {
+          subject: 'customer-1',
+          issuer: 'https://issuer.example',
+          audience: 'oms-server-wallet',
+          getIdToken: async () => {
+            tokens++;
+            if (tokens > 1) throw new Error('IdP down');
+            return {
+              token: `fixture-${crypto.randomUUID()}`,
+              expiresAt: Math.floor(Date.now() / 1000) + 300
+            };
+          }
+        },
+        storage: 'memory'
+      },
+      { transport: remote, creationRecheckDelaysMs: [0] }
+    );
+    await expect(wallet.create({ families: ['evm'] })).rejects.toMatchObject({
+      code: 'CREATION_UNCERTAIN'
+    });
+  });
+
+  it('lists wallets even when creating is non-empty and duplicates exist on WaaS', async () => {
+    const h = sdkHarness();
+    const request = h.remote.request.bind(h.remote);
+    let lostOnce = false;
+    h.remote.request = async (method, body, credential) => {
+      if (method === 'CreateWallet' && !lostOnce) {
+        lostOnce = true;
+        throw new WalletError('UPSTREAM_UNAVAILABLE', 'lost create', 502);
+      }
+      return request(method, body, credential);
+    };
+    await expect(h.client.createOrRestore({ families: ['evm'] })).rejects.toMatchObject({
+      code: 'CREATION_UNCERTAIN'
+    });
+    h.remote.wallet = {
+      id: 'wallet-1',
+      address: '0x1111111111111111111111111111111111111111',
+      networkFamily: 'evm'
+    };
+    h.remote.others.push(duplicateEvm);
+    const listed = await h.client.listWallets();
+    expect(
+      listed
+        .filter((wallet) => wallet.family === 'evm')
+        .map((wallet) => wallet.id)
+        .sort()
+    ).toEqual(['wallet-1', 'wallet-2']);
   });
 });

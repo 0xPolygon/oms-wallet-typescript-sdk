@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 
-import { createEphemeralServerWalletServiceInternal } from '../src/wallet.js';
+import { createServerWalletServiceInternal } from '../src/wallet.js';
 import { FakeWaas, TEST_PUBLISHABLE_KEY } from './helpers.js';
 
 /** A FakeWaas that signs each ID token in as the subject encoded in it. */
@@ -26,7 +26,7 @@ const service = (
   cache?: { maxHandles?: number; idleTimeoutMs?: number },
   clock?: () => number
 ) =>
-  createEphemeralServerWalletServiceInternal(
+  createServerWalletServiceInternal(
     {
       publishableKey: TEST_PUBLISHABLE_KEY,
       oidc: {
@@ -37,6 +37,7 @@ const service = (
           expiresAt: Math.floor(Date.now() / 1000) + 300
         })
       },
+      storage: 'memory',
       approval: 'allow-immediate',
       ...(cache ? { cache } : {})
     },
@@ -45,7 +46,7 @@ const service = (
 const signIns = (remote: FakeWaas) =>
   remote.calls.filter((call) => call.method === 'CompleteAuth').length;
 
-describe('createEphemeralServerWalletService', () => {
+describe('createServerWalletService({ storage: "memory" })', () => {
   it('reuses a cached handle per subject, so a warm request does not sign in again', async () => {
     const remote = multiUserWaas();
     const wallets = service(remote);
@@ -111,17 +112,38 @@ describe('createEphemeralServerWalletService', () => {
     expect(sent.every((op) => op.status === 'pending')).toBe(true);
   });
 
-  it('rejects storage and executor options', () => {
+  it('rejects executor with storage: "memory" and cache with durable storage', () => {
+    const remote = new FakeWaas();
     expect(() =>
-      createEphemeralServerWalletServiceInternal({
-        publishableKey: TEST_PUBLISHABLE_KEY,
-        oidc: {
-          issuer: 'https://issuer.example',
-          audience: 'oms-server-wallet',
-          getIdToken: async () => ({ token: 't', expiresAt: 1 })
-        },
-        executor: (() => ({ run: async () => undefined })) as never
-      } as never)
+      createServerWalletServiceInternal(
+        {
+          publishableKey: TEST_PUBLISHABLE_KEY,
+          oidc: {
+            issuer: 'https://issuer.example',
+            audience: 'oms-server-wallet',
+            getIdToken: async () => ({ token: 't', expiresAt: 1 })
+          },
+          storage: 'memory',
+          executor: (() => ({ run: async () => undefined })) as never
+        } as never,
+        { transport: remote }
+      )
+    ).toThrow(expect.objectContaining({ code: 'CONFIGURATION' }));
+    expect(() =>
+      createServerWalletServiceInternal(
+        {
+          publishableKey: TEST_PUBLISHABLE_KEY,
+          oidc: {
+            issuer: 'https://issuer.example',
+            audience: 'oms-server-wallet',
+            getIdToken: async () => ({ token: 't', expiresAt: 1 })
+          },
+          storage: { encryptedStore: { read: async () => null, write: async () => undefined } },
+          executor: () => ({ run: async <T>(task: () => Promise<T>) => task() }),
+          cache: { maxHandles: 10 }
+        } as never,
+        { transport: remote }
+      )
     ).toThrow(expect.objectContaining({ code: 'CONFIGURATION' }));
   });
 });

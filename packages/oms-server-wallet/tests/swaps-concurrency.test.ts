@@ -125,6 +125,62 @@ describe('several processes advancing one swap', () => {
     await h.tick();
     expect((await h.record()).fundingConfirmed).toBe(true);
   });
+
+  it('never journals a bogus submitting status when taking over a foreign-credential quote', async () => {
+    const h = await swapHarness();
+    await h.confirm();
+    await h.tick(3);
+    const prepared = await h.record();
+    await h.wallet.rotateCredential();
+    h.advance(60_000);
+    const seenFundingStatuses: (string | undefined)[] = [];
+    const origSave = h.store.save.bind(h.store);
+    h.store.save = async (entry, opts) => {
+      const decoded = await h.store.codec!.decode(entry);
+      seenFundingStatuses.push(decoded.funding?.status);
+      return origSave(entry, opts);
+    };
+    await h.tick();
+    expect(seenFundingStatuses).not.toContain('submitting');
+    expect((await h.record()).fundingId).toBe(`${prepared.fundingId}_r1`);
+    expect((await h.record()).action).toBe('prepare-funding');
+    expect(executes(h)).toHaveLength(0);
+  });
+
+  it('adopts a swap record in pending over a local wallet-store copy stuck in unknown', async () => {
+    const h = await swapHarness();
+    await h.confirm();
+    await h.tick(3);
+    h.waas.remote.failExecute = true;
+    await h.tick();
+    const rec = await h.record();
+    expect(JSON.parse((await h.waas.store.read(`operation:${rec.fundingId}`))!).status).toBe(
+      'unknown'
+    );
+    const other = await h.worker();
+    h.waas.remote.failExecute = false;
+    h.waas.remote.txnStatus = 'pending';
+    h.advance(10_000);
+    await other.swaps.tick();
+    // Even when disabled (no remote refresh), adopting updates local wallet store from unknown -> pending.
+    await h.wallet.disable();
+    h.advance(10_000);
+    await h.tick();
+    expect(JSON.parse((await h.waas.store.read(`operation:${rec.fundingId}`))!).status).toBe(
+      'pending'
+    );
+  });
+
+  it('rejects an idempotent quote hit when the configured Trails environment changed', async () => {
+    const h = await swapHarness();
+    const q = await h.quote('swap-env-0001');
+    const rec = await h.store.getRecord(q.id);
+    rec!.environment = 'other-env';
+    await h.store.putRecord(rec!, null);
+    await expect(h.quote('swap-env-0001')).rejects.toMatchObject({
+      code: 'SWAP_ENVIRONMENT_CHANGED'
+    });
+  });
 });
 
 describe('swaps on in-memory handles', () => {

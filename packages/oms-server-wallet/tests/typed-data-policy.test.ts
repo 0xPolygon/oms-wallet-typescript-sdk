@@ -9,11 +9,7 @@ import {
 } from '@polygonlabs/oms-server-wallet-sdk';
 
 import { tronToHex } from '../src/internal/protocol/addresses.js';
-import {
-  createEphemeralServerWalletInternal,
-  createServerWalletInternal,
-  createServerWalletServiceInternal
-} from '../src/wallet.js';
+import { createServerWalletInternal, createServerWalletServiceInternal } from '../src/wallet.js';
 import {
   FakeWaas,
   MemoryStore,
@@ -65,8 +61,8 @@ describe('typed-data signing is opt-in', () => {
       },
       { transport: remote }
     );
-    const ephemeral = createEphemeralServerWalletInternal(
-      { publishableKey: TEST_PUBLISHABLE_KEY, oidc },
+    const ephemeral = createServerWalletInternal(
+      { publishableKey: TEST_PUBLISHABLE_KEY, oidc, storage: 'memory' },
       { transport: remote }
     );
     for (const handle of [wallet, service.forSubject('customer-2'), ephemeral]) {
@@ -245,10 +241,11 @@ describe('typed-data signing is opt-in', () => {
     await h.client.createOrRestore({ families: ['evm', 'tron'] });
     const seen: TypedDataSigningRequest[] = [];
     let allow = false;
-    const ephemeral = createEphemeralServerWalletInternal(
+    const ephemeral = createServerWalletInternal(
       {
         publishableKey: TEST_PUBLISHABLE_KEY,
         oidc,
+        storage: 'memory',
         signing: {
           authorizeTypedData: (request) => {
             seen.push(request);

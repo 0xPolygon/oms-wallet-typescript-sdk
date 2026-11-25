@@ -396,6 +396,7 @@ export class TrailsCoordinator {
       const existingEntry = await this.config.store.get(id);
       if (existingEntry) {
         const existing = await this.config.codec.decode(existingEntry, id);
+        this.checkEnvironment(existing);
         if (existing.requestHash !== requestHash || existing.owner !== owner)
           throw new WalletError(
             'IDEMPOTENCY_CONFLICT',
@@ -951,23 +952,35 @@ export class TrailsCoordinator {
         'Funding operation is missing; reconcile before proceeding.',
         409
       );
+    if (record.funding.status === 'failed' && record.funding.error === 'CREDENTIAL_CHANGED') {
+      record.fundingId = retryId(record.fundingId);
+      record.funding = undefined;
+      record.phase = 'preparing';
+      record.action = 'prepare-funding';
+      return;
+    }
     if (record.funding.status === 'quoted') {
       await this.enabledLocked();
       this.sponsored(record.funding);
-      // Prepared moments ago by another process's credential: only that one can execute it, so
-      // give it time to, rather than racing it with a new preparation.
       const { credentialId } = await this.config.primitives.inspectLocked();
-      if (
-        record.funding.credentialId &&
-        record.funding.credentialId !== credentialId &&
-        this.now() - Date.parse(record.funding.createdAt) < FOREIGN_FUNDING_GRACE_MS
-      )
-        // Write nothing: saving would bump the version and refuse the owner's own next write.
-        throw new WalletError(
-          'SWAP_CONFLICT',
-          'Another process prepared this funding and is executing it.',
-          409
-        );
+      if (record.funding.credentialId && record.funding.credentialId !== credentialId) {
+        // Prepared moments ago by another process's credential: only that one can execute it, so
+        // give it time to, rather than racing it with a new preparation.
+        if (this.now() - Date.parse(record.funding.createdAt) < FOREIGN_FUNDING_GRACE_MS)
+          // Write nothing: saving would bump the version and refuse the owner's own next write.
+          throw new WalletError(
+            'SWAP_CONFLICT',
+            'Another process prepared this funding and is executing it.',
+            409
+          );
+        // Only the preparing credential can execute this quote, so nothing was sent; transition
+        // directly to a fresh funding attempt in one CAS write without journaling `submitting`.
+        record.fundingId = retryId(record.fundingId);
+        record.funding = undefined;
+        record.phase = 'preparing';
+        record.action = 'prepare-funding';
+        return;
+      }
       await this.availableLocked(record.request.originChainId, record.id, [record.fundingId]);
       await this.funds(record);
       const receipt = await this.receipt(record);
@@ -1378,6 +1391,12 @@ export class TrailsCoordinator {
     }
     if (op.status === 'quoted') {
       this.sponsored(op);
+      const { credentialId } = await this.config.primitives.inspectLocked();
+      if (op.credentialId && op.credentialId !== credentialId) {
+        recovery.deploymentId = retryId(recovery.deploymentId);
+        recovery.deployment = undefined;
+        return;
+      }
       // Journal the submission before Execute (see fundLocked).
       recovery.deployment = { ...op, status: 'submitting', submitted: true };
       await this.saveLocked(record);
@@ -1527,6 +1546,12 @@ export class TrailsCoordinator {
       op = await this.config.primitives.prepareRecoveryLocked(recovery.transactionId, permit);
     }
     this.sponsored(op);
+    const { credentialId } = await this.config.primitives.inspectLocked();
+    if (op.credentialId && op.credentialId !== credentialId) {
+      recovery.transactionId = retryId(recovery.transactionId);
+      recovery.transaction = undefined;
+      return;
+    }
     // Journal the submission before Execute (see fundLocked).
     recovery.transaction = { ...op, status: 'submitting', submitted: true };
     recovery.status = 'submitting';
@@ -1759,7 +1784,7 @@ export function trailsInternal<TStorage extends TrailsStorageOption>(
         new TrailsClient({
           apiKey,
           baseUrl,
-          origin: configuredOrigin ?? primitives.origin,
+          origin: configuredOrigin,
           fetch: configuredFetch,
           timeoutMs
         });

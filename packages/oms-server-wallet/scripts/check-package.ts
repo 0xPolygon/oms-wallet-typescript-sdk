@@ -109,8 +109,6 @@ verifyRootRuntimeGraph(installedPkgDir);
 writeFileSync(
   join(directory, 'consumer.ts'),
   `import {
-  createEphemeralServerWallet,
-  createEphemeralServerWalletService,
   createServerWallet,
   createServerWalletService,
   createSingleProcessExecutor,
@@ -263,50 +261,56 @@ const waitOutcome = (result: Awaited<ReturnType<typeof wTwoPhase.evm.waitForOper
 };
 void waitOutcome;
 
-// In-memory wallet: the same API as createServerWallet, no store or executor, no disable(), and
-// not substitutable for a durable wallet.
-const eph = createEphemeralServerWallet({ publishableKey: key, oidc });
-void eph.evm.signMessage({ idempotencyKey: 'consumer-eph-sign', chainId: 80002, message: 'hi' });
-void eph.evm.prepareTransfer({ idempotencyKey: 'consumer-eph-1', chainId: 80002, to: '0x2222222222222222222222222222222222222222', asset: 'native', amount: '1' });
+// In-memory handles (storage: 'memory'): the same wallet API, no executor, no disable(), and
+// not substitutable for a durable ServerWallet.
+const mem = createServerWallet({ publishableKey: key, oidc, storage: 'memory' });
+void mem.evm.signMessage({ idempotencyKey: 'consumer-mem-sign', chainId: 80002, message: 'hi' });
+void mem.evm.prepareTransfer({ idempotencyKey: 'consumer-mem-1', chainId: 80002, to: '0x2222222222222222222222222222222222222222', asset: 'native', amount: '1' });
 // @ts-expect-error two-phase in-memory handles have no send*
-void eph.evm.sendTransfer;
-const ephImmediate = createEphemeralServerWallet({ publishableKey: key, oidc, approval: 'allow-immediate', swaps: walletSwaps });
-void ephImmediate.evm.sendTransfer({ idempotencyKey: 'consumer-eph-2', chainId: 80002, to: '0x2222222222222222222222222222222222222222', asset: 'native', amount: '1', onPrepared: async (op) => void op.quote.txnId });
-void ephImmediate.swaps.tick;
-void ephImmediate.evm.waitForTransaction({ txnId: 'txn_1', expiresAt: new Date().toISOString() }, { timeoutMs: 1000 });
-const ephService = createEphemeralServerWalletService({ publishableKey: key, oidc: { issuer: oidc.issuer, audience: oidc.audience, getIdToken: oidc.getIdToken }, approval: 'allow-immediate', swaps: serviceSwaps, cache: { maxHandles: 100 } });
-void ephService.forSubject('alice').evm.sendTransfer;
-void ephService.forSubject('alice').swaps.tick;
+void mem.evm.sendTransfer;
+const memImmediate = createServerWallet({ publishableKey: key, oidc, storage: 'memory', approval: 'allow-immediate', swaps: walletSwaps });
+void memImmediate.evm.sendTransfer({ idempotencyKey: 'consumer-mem-2', chainId: 80002, to: '0x2222222222222222222222222222222222222222', asset: 'native', amount: '1', onPrepared: async (op) => void op.quote.txnId });
+void memImmediate.swaps.tick;
+void memImmediate.evm.waitForTransaction({ txnId: 'txn_1', expiresAt: new Date().toISOString() }, { timeoutMs: 1000 });
+const memService = createServerWalletService({ publishableKey: key, oidc: { issuer: oidc.issuer, audience: oidc.audience, getIdToken: oidc.getIdToken }, storage: 'memory', approval: 'allow-immediate', swaps: serviceSwaps, cache: { maxHandles: 100 } });
+void memService.forSubject('alice').evm.sendTransfer;
+void memService.forSubject('alice').swaps.tick;
 // @ts-expect-error the service owns its handles' lifetime
-void ephService.forSubject('alice').close;
+void memService.forSubject('alice').close;
 // @ts-expect-error wallet-scoped trails cannot be passed to the in-memory service
-createEphemeralServerWalletService({ publishableKey: key, oidc: { issuer: oidc.issuer, audience: oidc.audience, getIdToken: oidc.getIdToken }, swaps: walletSwaps });
+createServerWalletService({ publishableKey: key, oidc: { issuer: oidc.issuer, audience: oidc.audience, getIdToken: oidc.getIdToken }, storage: 'memory', swaps: walletSwaps });
 // @ts-expect-error an in-memory handle is not a durable ServerWallet
-const asDurable: ServerWallet = eph;
+const asDurable: ServerWallet = mem;
 // @ts-expect-error in-memory handles have no disable()
-void eph.disable;
-// @ts-expect-error ephemeral handles take no store
-createEphemeralServerWallet({ publishableKey: key, oidc, storage: { adapter: state, encryptionKey } });
+void mem.disable;
+// @ts-expect-error storage: 'memory' takes no executor
+createServerWallet({ publishableKey: key, oidc, storage: 'memory', executor: createSingleProcessExecutor() });
+// @ts-expect-error storage is required (no implicit memory default)
+createServerWallet({ publishableKey: key, oidc });
+// @ts-expect-error storage: 'memory' service takes no executor
+createServerWalletService({ publishableKey: key, oidc: { issuer: oidc.issuer, audience: oidc.audience, getIdToken: oidc.getIdToken }, storage: 'memory', executor: createSingleProcessExecutorPool() });
+// @ts-expect-error durable service takes no cache
+createServerWalletService({ publishableKey: key, oidc: { issuer: oidc.issuer, audience: oidc.audience, getIdToken: oidc.getIdToken }, storage: { adapter: nsState, encryptionKey }, executor: createSingleProcessExecutorPool(), cache: { maxHandles: 10 } });
 void asDurable;
 
-// Wallet creation and selection: explicit create() on ephemeral handles, wallets option, listWallets.
-void eph.create({ families: ['evm', 'tron'] });
-void eph.restore({ wallets: { evm: '0x2222222222222222222222222222222222222222' } });
-void eph.listWallets();
+// Wallet creation and selection: explicit create() on in-memory handles, wallets option, listWallets.
+void mem.create({ families: ['evm', 'tron'] });
+void mem.restore({ wallets: { evm: '0x2222222222222222222222222222222222222222' } });
+void mem.listWallets();
 void wTwoPhase.createOrRestore({ families: ['evm'], wallets: { evm: '0x2222222222222222222222222222222222222222' } });
 void wTwoPhase.listWallets();
-// @ts-expect-error ephemeral handles create with create(), not createOrRestore()
-void eph.createOrRestore;
+// @ts-expect-error in-memory handles create with create(), not createOrRestore()
+void mem.createOrRestore;
 // @ts-expect-error wallet selection is keyed by family
-void eph.restore({ wallets: { bitcoin: 'x' } });
+void mem.restore({ wallets: { bitcoin: 'x' } });
 
-// Typed-data signing exists only with a signing policy, on durable, service and ephemeral handles.
+// Typed-data signing exists only with a signing policy, on durable, service and in-memory handles.
 // @ts-expect-error signTypedData needs signing.authorizeTypedData
 void wTwoPhase.evm.signTypedData;
 // @ts-expect-error signTypedData needs signing.authorizeTypedData
 void wImmediate.tron.signTypedData;
 // @ts-expect-error signTypedData needs signing.authorizeTypedData
-void eph.evm.signTypedData;
+void mem.evm.signTypedData;
 const signing = { authorizeTypedData: (request: TypedDataSigningRequest) => request.family === 'evm' };
 const wSigning = createServerWallet({ publishableKey: key, oidc, storage: { adapter: state, encryptionKey }, executor: createSingleProcessExecutor(), signing });
 void wSigning.evm.signTypedData;
@@ -315,8 +319,8 @@ void wSigning.tron.signTypedData;
 void wSigning.evm.sendTransfer;
 const svcSigning = createServerWalletService({ publishableKey: key, oidc: { issuer: oidc.issuer, audience: oidc.audience, getIdToken: oidc.getIdToken }, storage: { adapter: nsState, encryptionKey }, executor: createSingleProcessExecutorPool(), signing });
 void svcSigning.forSubject('alice').evm.signTypedData;
-const ephSigning = createEphemeralServerWallet({ publishableKey: key, oidc, signing });
-void ephSigning.tron.signTypedData;
+const memSigning = createServerWallet({ publishableKey: key, oidc, storage: 'memory', signing });
+void memSigning.tron.signTypedData;
 // A wallet with signing still satisfies the plain ServerWallet type.
 const plain: ServerWallet = wSigning;
 void plain;
@@ -324,8 +328,12 @@ void plain;
 // Unknown option keys are compile errors even though the factories infer their options.
 // @ts-expect-error misspelled approval
 createServerWallet({ publishableKey: key, oidc, storage: { adapter: state, encryptionKey }, executor: createSingleProcessExecutor(), aproval: 'allow-immediate' });
+// @ts-expect-error misspelled approval on storage: 'memory'
+createServerWallet({ publishableKey: key, oidc, storage: 'memory', aproval: 'allow-immediate' });
 // @ts-expect-error store was renamed to storage
 createServerWallet({ publishableKey: key, oidc, store: { adapter: state, encryptionKey }, executor: createSingleProcessExecutor() });
+// @ts-expect-error server wallets do not take an HTTP origin
+createServerWallet({ publishableKey: key, origin: 'https://app.example', oidc, storage: 'memory' });
 
 // Tron transfers and calls mirror EVM: prepareTransfer / prepareCall, with maxQuotedFee.
 void wImmediate.tron.sendTransfer({ idempotencyKey: 'consumer-trc20', network: 'tron:nile', to: 'TXYZopYRdj2D9XRtbG411XZZ3kM5VkAeBf', asset: 'TXYZopYRdj2D9XRtbG411XZZ3kM5VkAeBf', amount: '1', maxQuotedFee: '1000000' });
@@ -354,13 +362,13 @@ export const declTronTwoPhase = wTwoPhase.tron;
 export const declSwapsFacet = wTwoPhaseSwaps.swaps;
 export const declWalletSwaps = walletSwaps;
 export const declServiceSwaps = serviceSwaps;
-export const declEphemeral = eph;
-export const declEphemeralEvm = eph.evm;
-export const declEphemeralImmediate = ephImmediate;
-export const declEphemeralService = ephService;
+export const declInMemory = mem;
+export const declInMemoryEvm = mem.evm;
+export const declInMemoryImmediate = memImmediate;
+export const declInMemoryService = memService;
 export const declSigning = wSigning;
 export const declSigningService = svcSigning;
-export const declEphemeralSigning = ephSigning;
+export const declInMemorySigning = memSigning;
 `
 );
 
@@ -385,7 +393,6 @@ writeFileSync(
   join(directory, 'smoke.mjs'),
   `import assert from 'node:assert/strict';
 import {
-  createEphemeralServerWallet,
   createServerWallet,
   createServerWalletService,
   createSingleProcessExecutor,
@@ -440,19 +447,21 @@ assert.throws(
   }),
   (err) => isWalletError(err) && err.code === 'CONFIGURATION'
 );
-const ephemeral = createEphemeralServerWallet({
+const inMemory = createServerWallet({
   publishableKey: key,
-  oidc: { issuer: 'https://issuer.example', audience: 'oms', subject: 'smoke-3', getIdToken: async () => ({ token: 't', expiresAt: 1 }) }
+  oidc: { issuer: 'https://issuer.example', audience: 'oms', subject: 'smoke-3', getIdToken: async () => ({ token: 't', expiresAt: 1 }) },
+  storage: 'memory'
 });
-assert.equal(typeof ephemeral.evm.prepareTransfer, 'function');
-assert.equal('sendTransfer' in ephemeral.evm, false);
-assert.equal('disable' in ephemeral, false);
-await ephemeral.close();
-await assert.rejects(ephemeral.inspect(), (err) => isWalletError(err) && err.code === 'WALLET_CLOSED');
+assert.equal(typeof inMemory.evm.prepareTransfer, 'function');
+assert.equal('sendTransfer' in inMemory.evm, false);
+assert.equal('disable' in inMemory, false);
+await inMemory.close();
+await assert.rejects(inMemory.inspect(), (err) => isWalletError(err) && err.code === 'WALLET_CLOSED');
 assert.throws(
-  () => createEphemeralServerWallet({
+  () => createServerWallet({
     publishableKey: key,
     oidc: { issuer: 'https://issuer.example', audience: 'oms', subject: 'smoke-4', getIdToken: async () => ({ token: 't', expiresAt: 1 }) },
+    storage: 'memory',
     executor: createSingleProcessExecutor()
   }),
   (err) => isWalletError(err) && err.code === 'CONFIGURATION'

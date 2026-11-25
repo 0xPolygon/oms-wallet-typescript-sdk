@@ -1068,17 +1068,16 @@ describe('observation, waitForOperation, describeOperation, indexer facet, and e
     expect(isUpstreamError(w)).toBe(false);
   });
 
-  it('keeps storage encryption AAD independent of the HTTP Origin header', async () => {
+  it('derives the storage encryption namespace solely from WaaS route and OIDC identity', async () => {
     const raw = new MemoryStore();
     const remote = new FakeWaas();
-    const make = (origin: string) =>
+    const make = (issuer: string) =>
       createServerWalletInternal(
         {
           publishableKey: TEST_PUBLISHABLE_KEY,
-          origin,
           oidc: {
             subject: 'customer-1',
-            issuer: 'https://issuer.example',
+            issuer,
             audience: 'oms',
             getIdToken: async () => ({
               token: `tok-${crypto.randomUUID()}`,
@@ -1090,8 +1089,8 @@ describe('observation, waitForOperation, describeOperation, indexer facet, and e
         },
         { transport: remote }
       );
-    const created = await make('https://app-a.example').createOrRestore();
-    const restored = await make('https://app-b.example').inspect();
+    const created = await make('https://issuer.example').createOrRestore();
+    const restored = await make('https://issuer.example/').inspect();
     expect(restored.wallets.evm).toEqual(created.wallets.evm);
   });
 });

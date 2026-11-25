@@ -14,7 +14,7 @@ import type { SwapGateway, SwapRecord } from '../src/trails/types.js';
 
 import { type SwapRecordCodec, trailsInternal } from '../src/trails/coordinator.js';
 import { executeAbi } from '../src/trails/recovery-transaction.js';
-import { createEphemeralServerWalletInternal, createServerWalletInternal } from '../src/wallet.js';
+import { createServerWalletInternal } from '../src/wallet.js';
 import {
   contracts,
   intentId,
@@ -284,9 +284,9 @@ export async function swapHarness(native = false) {
     get swaps() {
       return wallet.swaps;
     },
-    /** An in-memory handle (createEphemeralServerWallet) for the same identity and swap store. */
+    /** An in-memory handle (`storage: 'memory'`) for the same identity and swap store. */
     async ephemeralWorker() {
-      const handle = createEphemeralServerWalletInternal(
+      const handle = createServerWalletInternal(
         {
           publishableKey: TEST_PUBLISHABLE_KEY,
           oidc: {
@@ -298,6 +298,7 @@ export async function swapHarness(native = false) {
               expiresAt: Math.floor(Date.now() / 1000) + 300
             })
           },
+          storage: 'memory',
           approval: 'allow-immediate',
           swaps: trailsInternal(
             {

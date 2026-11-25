@@ -148,8 +148,8 @@ export class ChainEngine {
     return this.cancelChain('solana', idempotencyKey).then(projectSolanaOperation);
   }
 
-  getSolanaTransactionStatus(txnId: string): Promise<TransactionStatusView> {
-    return this.transactionStatusByTxnId('solana', txnId);
+  getSolanaTransactionStatus(txnId: string, skip?: () => boolean): Promise<TransactionStatusView> {
+    return this.transactionStatusByTxnId('solana', txnId, skip);
   }
 
   listSolanaOperations(options?: ListOperationsOptions): Promise<OperationPage<SolanaOperation>> {
@@ -316,8 +316,8 @@ export class ChainEngine {
     return this.cancelChain('tron', idempotencyKey).then(projectTronOperation);
   }
 
-  getTronTransactionStatus(txnId: string): Promise<TransactionStatusView> {
-    return this.transactionStatusByTxnId('tron', txnId);
+  getTronTransactionStatus(txnId: string, skip?: () => boolean): Promise<TransactionStatusView> {
+    return this.transactionStatusByTxnId('tron', txnId, skip);
   }
 
   listTronOperations(options?: ListOperationsOptions): Promise<OperationPage<TronOperation>> {
@@ -661,10 +661,12 @@ export class ChainEngine {
 
   private async transactionStatusByTxnId(
     family: 'solana' | 'tron',
-    txnId: string
+    txnId: string,
+    skip?: () => boolean
   ): Promise<TransactionStatusView> {
     const id = validateTxnId(txnId);
     return this.core.config.executor.run(async () => {
+      if (skip?.()) return { txnId: id, status: 'unknown' };
       const state = await this.core.load();
       return statusView(id, () =>
         this.core

@@ -21,7 +21,6 @@ declare const swapStore: SwapStore;
 
 const wallet = createServerWallet({
   publishableKey: env.OMS_PUBLISHABLE_KEY,
-  origin: env.APP_ORIGIN,
   oidc: { issuer, audience, subject, getIdToken },
   storage: { adapter: stateStore, encryptionKey: env.ENCRYPTION_KEY },
   executor: createSingleProcessExecutor(),
@@ -58,7 +57,6 @@ declare const swapStorage: NamespacedSwapStore;
 
 const wallets = createServerWalletService({
   publishableKey: process.env.OMS_PUBLISHABLE_KEY!,
-  origin: process.env.APP_ORIGIN!,
   oidc: { issuer, audience, getIdToken },
   storage: { adapter: stateStorage, encryptionKey: process.env.ENCRYPTION_KEY! },
   executor: createSingleProcessExecutorPool(),
@@ -145,7 +143,7 @@ UPDATE swaps SET version = ?, active = ?, next_at = ?, reserved_chain_id = ?, pa
 WHERE namespace = ? AND id = ? AND version = ?;
 ```
 
-With that contract, several processes can drive the same wallet's swaps (`tick()`, `confirm`, recovery) without a shared lock: each step is saved before it reaches money, so when two workers race, one gets `SWAP_CONFLICT` and backs off (`tick()` skips it), and every transaction is journaled before `Execute`, so a worker that takes over polls it instead of sending it again.
+With that contract, several processes can safely drive the **same** swap (`tick()`, `reconcile()`, recovery) without a shared lock: each step is saved before it reaches money, so when two workers race on one swap, one gets `SWAP_CONFLICT` and backs off (`tick()` skips it), and every transaction is journaled before `Execute`, so a worker that takes over polls it instead of sending it again. Note that per-row CAS only serializes updates to one `swapId`: if multiple processes without a shared lock can call `confirm()` concurrently on two **different** swaps on the same chain, serialize confirmations per wallet/chain (or add a partial unique index on `(namespace, reserved_chain_id)` where `reserved_chain_id IS NOT NULL`).
 
 `storage.encryptionKey` is 32 base64-encoded bytes. It may be the wallet state key: swap records use a key derived separately for each wallet namespace. The SDK cannot detect a store that returns an older authentic version of an entry, so `save` must never be rolled back (restore a backup only together with the matching wallet state).
 

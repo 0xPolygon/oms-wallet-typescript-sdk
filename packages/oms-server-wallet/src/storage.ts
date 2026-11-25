@@ -74,10 +74,10 @@ export function createSingleProcessExecutorPool(): ExecutorProvider {
 }
 
 /**
- * Compute the canonical storage namespace and AES-GCM encryption context.
- * Uses the routed WaaS API origin (never the application's HTTP Origin header). A trailing slash on
- * the issuer is ignored, as when WaaS-authenticated identities are compared, so one identity always
- * maps to one namespace, executor and set of swap reservations.
+ * Compute the canonical storage namespace and AES-GCM encryption context from the routed WaaS API
+ * origin, project ID, and OIDC identity. A trailing slash on the issuer is ignored, as when
+ * WaaS-authenticated identities are compared, so one identity always maps to one namespace,
+ * executor and set of swap reservations.
  */
 export function computeIdentityNamespace(params: {
   waasOrigin: string;
@@ -104,8 +104,8 @@ export function scopeNamespacedStore(store: NamespacedStateStore, namespace: str
 }
 
 /**
- * Process-memory `StateStore` for the ephemeral signer. Internal: it is not exported, so callers
- * cannot pass non-durable storage to the durable factories. Never logged or persisted.
+ * Process-memory `StateStore` for `storage: 'memory'`. Internal: it is not exported, so callers
+ * cannot pass non-durable storage as an `adapter`. Never logged or persisted.
  */
 export class MemoryStateStore implements StateStore {
   private readonly values = new Map<string, string>();
