@@ -51,6 +51,7 @@ export type {
   NamespacedStateStore,
   NetworkFamily,
   OperationBase,
+  OperationState,
   OperationGuidance,
   OperationNextAction,
   OperationPage,

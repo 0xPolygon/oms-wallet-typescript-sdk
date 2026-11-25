@@ -1,0 +1,17 @@
+---
+'@polygonlabs/oms-server-wallet-sdk': minor
+---
+
+Finalize the 0.3.0 API: opt-in typed-data signing, Tron methods that mirror EVM, cancellation, and encrypted swap records.
+
+- **Typed-data signing is opt-in:** `evm.signTypedData` and `tron.signTypedData` exist (in types and at runtime, on durable, service and ephemeral handles) only when the factory receives `signing: { authorizeTypedData(request) }`. The policy sees a frozen copy of exactly what will be signed (digest, subject, wallet address, chain, and the typed data reduced to its declared fields); only a literal `true` approves, anything else throws `TYPED_DATA_REFUSED`. Tron now also refuses a domain whose `verifyingContract` is the wallet.
+- **Factories infer their options:** the handle's methods follow the options passed (`approval`, `swaps`, `signing`), and an unknown option key is a compile error. `createServerWallet` takes `storage` (was `store`), matching `createServerWalletService`; `WalletStoreOption` is now `WalletStorageOption`.
+- **Tron mirrors EVM:** `tron.prepareTransfer` / `sendTransfer` move TRX or a TRC-20 token (`asset: 'native' | <token contract>`), and `tron.prepareCall` / `sendCall` take a function name with typed arguments or calldata. `maxFee` is now `maxQuotedFee`. `prepareTransaction`, `prepareContractCall`, `sendTransaction` and `sendContractCall` are removed, and Tron operation kinds are `transfer | call | sign | signTypedData`.
+- **Cancel:** `cancel({ idempotencyKey })` on each chain facet makes a `preparing` or `quoted` operation terminal `cancelled` (`provenUnsent: true`); `execute` then refuses it with `OPERATION_CANCELLED`.
+- **Resume guidance:** `describeOperation` returns `'resume-original'` for an interrupted `preparing` operation: call the same method with the same key and input, never a new key.
+- **Settlement:** an `executed` operation stays `executed` whatever a later status read says, and a `TransactionNotFound` read past the post-expiry grace window escalates to `RECONCILIATION_REQUIRED` like `TransactionExpired`. A quoted operation whose quote has expired becomes `expired` on refresh.
+- **Waits:** `waitForOperation`'s deadline and `AbortSignal` also bound a wait for the lock and a status read in progress.
+- **Encrypted swap records:** `trails({ storage: { scope, adapter, encryptionKey } })` (was `store`) encrypts each `StoredSwapEntry` payload with a key derived per wallet namespace and authenticates it with every metadata field; an edited entry fails with `STORAGE_INTEGRITY`. A swap's debit reservation is released only by a swap record newer than the reservation.
+- **Swap outcome evidence:** `succeeded` and `refunded` swaps carry `outcomeEvidence`: `'provider-reported'` (from the Trails receipt) or `'chain-verified'` (a recovery the SDK read on chain).
+- **Removed:** `snapshot.wallet` (use `snapshot.wallets.evm`) and the unused `INVALID_TRANSACTION` code.
+- **Errors:** a custom `fetch` failure is always wrapped (`UPSTREAM_UNAVAILABLE`, original as `cause`), so a WaaS refusal can only come from a verified response; errors thrown by `getIdToken`, store adapters, executors and the signing policy pass through unchanged.

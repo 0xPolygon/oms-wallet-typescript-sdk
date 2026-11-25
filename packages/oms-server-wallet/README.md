@@ -125,7 +125,24 @@ Every WaaS response is verified against AWS Nitro attestation (root certificate,
 By default (`approval: 'two-phase'`), one-shot `send*` shortcuts are omitted at **both the TypeScript type and runtime surface** so review-gated integrations cannot accidentally bypass approval.
 
 - `execute({ idempotencyKey, reviewId })` requires the opaque `reviewId` returned by `prepare*`, binding execution to the exact reviewed terms, fee/sponsor policy, quote ID, and expiry. `reviewId` binds terms — it is **not** caller authorization; expose `execute` only to your trusted backend approver.
-- Pass `approval: 'allow-immediate'` when your backend enforces authorization before calling one-shot `sendTransfer` / `sendCall` / `sendTransaction` / `sendContractCall`. Even in immediate mode, `submissionMode` is persisted before quoting so a `send*` call can never adopt or execute a quote prepared for manual review (`APPROVAL_REQUIRED`).
+- Pass `approval: 'allow-immediate'` when your backend enforces authorization before calling one-shot `sendTransfer` / `sendCall`. Even in immediate mode, `submissionMode` is persisted before quoting so a `send*` call can never adopt or execute a quote prepared for manual review (`APPROVAL_REQUIRED`).
+
+## Typed-data signing is opt-in
+
+`signTypedData` exists on `wallet.evm` and `wallet.tron` (and on the ephemeral signer) only when the factory receives a `signing` policy, at both the type and runtime level. Typed data can authorize anything a contract accepts, such as permits, orders and approvals, so the policy decides each request:
+
+```ts
+const wallet = createServerWallet({
+  // ...
+  signing: {
+    // Runs under the wallet's lock, after SDK validation and before WaaS is called.
+    authorizeTypedData: ({ typedData, family, chainId }) =>
+      family === 'evm' && chainId === 137 && typedData.primaryType === 'Order'
+  }
+});
+```
+
+The request is a frozen copy of exactly what will be signed: the digest, the subject, the wallet address, the chain, and the typed data reduced to the fields its types declare (undeclared message fields are dropped before signing). Only a literal `true` approves; anything else throws `TYPED_DATA_REFUSED` and records nothing, so the same key can be retried. Both families refuse a domain whose `verifyingContract` is the wallet, and EVM refuses Sequence wallet `Calls`.
 
 ## Payout lifecycle: operations, attempts and approval
 
@@ -144,7 +161,9 @@ Model one business payout as a series of **attempts**, each with its own key, fo
 1. `prepare*` under the current attempt key and store the `reviewId` and `quote.expiresAt` with your payout.
 2. Approve, then `execute({ idempotencyKey, reviewId })` before the quote expires.
 3. Wait with `waitForOperation`. Only the `'executed'` outcome means the transaction went through.
-4. Start a new attempt only when `describeOperation(operation).action` is `'safe-to-reprepare'` (for example a quote that expired before `execute`, or a refusal with `provenUnsent: true`). For `'poll-original'` or `'reconcile-original'`, keep waiting on or reconciling the same operation: a new attempt could pay twice.
+4. Start a new attempt only when `describeOperation(operation).action` is `'safe-to-reprepare'` (a quote that expired before `execute`, a cancelled operation, or a refusal with `provenUnsent: true`). For `'resume-original'` (`preparing`: a `prepare*` or `send*` that did not finish), call the same method again with the same key and input. For `'poll-original'` or `'reconcile-original'`, keep waiting on or reconciling the same operation. Any other choice could pay twice.
+
+To replace a quoted operation, for example after the business terms changed, `cancel({ idempotencyKey })` it first: it becomes terminal `cancelled` with `provenUnsent: true`, `execute` refuses it from then on (`OPERATION_CANCELLED`), and the next attempt key is safe. Only `preparing` and `quoted` operations can be cancelled.
 
 Approval that can take longer than the quote lifetime should approve the business terms (recipient, asset, amount, limits) rather than a specific quote: after approval, prepare and execute right away, re-approving only if the new terms differ. On Solana this is the only practical pattern.
 
@@ -153,9 +172,9 @@ Approval that can take longer than the quote lifetime should approve the busines
 | Surface | Methods |
 | --- | --- |
 | `wallet` | `inspect()`, `createOrRestore({ families? })`, `rotateCredential()`, `disable()`, `enable()` |
-| `wallet.evm` | `prepareTransfer`, `prepareCall`, `execute`, `signMessage`, `signTypedData`, `getOperation`, `refreshOperation`, `waitForOperation`, `resolveReconciliation`, `listOperations`, `getTransactionStatus` (+ `sendTransfer`, `sendCall` in `allow-immediate` mode) |
-| `wallet.solana` | `prepareTransfer`, `execute`, `signMessage`, `getOperation`, `refreshOperation`, `waitForOperation`, `resolveReconciliation`, `listOperations`, `getTransactionStatus` (+ `sendTransfer` in `allow-immediate` mode) |
-| `wallet.tron` | `prepareTransaction`, `prepareContractCall`, `execute`, `signMessage`, `signTypedData`, `getOperation`, `refreshOperation`, `waitForOperation`, `resolveReconciliation`, `listOperations`, `getTransactionStatus` (+ `sendTransaction`, `sendContractCall` in `allow-immediate` mode) |
+| `wallet.evm` | `prepareTransfer`, `prepareCall`, `execute`, `cancel`, `signMessage`, `getOperation`, `refreshOperation`, `waitForOperation`, `resolveReconciliation`, `listOperations`, `getTransactionStatus` (+ `sendTransfer`, `sendCall` in `allow-immediate` mode; + `signTypedData` with `signing`) |
+| `wallet.solana` | `prepareTransfer`, `execute`, `cancel`, `signMessage`, `getOperation`, `refreshOperation`, `waitForOperation`, `resolveReconciliation`, `listOperations`, `getTransactionStatus` (+ `sendTransfer` in `allow-immediate` mode) |
+| `wallet.tron` | `prepareTransfer`, `prepareCall`, `execute`, `cancel`, `signMessage`, `getOperation`, `refreshOperation`, `waitForOperation`, `resolveReconciliation`, `listOperations`, `getTransactionStatus` (+ `sendTransfer`, `sendCall` in `allow-immediate` mode; + `signTypedData` with `signing`) |
 | `wallet.indexer` | Unattested `getEvmBalances({ chainIds?, page? })`, `getSolanaBalances({ networks? })`, `getTronBalances({ networks? })` |
 | `wallet.swaps` | Present only when `swaps: trails(...)` is passed: `quote`, `confirm`, `get`, `list`, `reconcile`, `tick`, `prepareRecovery`, `confirmRecovery`, `resolveReconciliation` |
 
@@ -187,33 +206,34 @@ Never build `to`, `data`, `abi`, `functionName`, `args`, or `typedData` from unt
 ### Solana & Tron
 
 - **Solana** (`solana:mainnet`, `solana:devnet`): Ed25519 account with mandatory fee-payer sponsorship (`SPONSORSHIP_REQUIRED`). Quotes expire in ~1 minute with their blockhash.
-- **Tron** (`tron:mainnet`, `tron:nile`): secp256k1 account (`T…`). Sponsored-only by default (delegated resources); set `maxFee` in sun to allow paying up to a quoted TRX cap (`FEE_LIMIT_EXCEEDED` / `FEE_ABOVE_QUOTE`). Note that `maxFee` applies to the quote and execution-time re-check; on-chain contract calls are capped by WaaS's sealed energy limit (1.2× estimate).
+- **Tron** (`tron:mainnet`, `tron:nile`): secp256k1 account (`T…`). Sponsored-only by default (delegated energy and bandwidth). Set `maxQuotedFee` in sun to allow paying TRX when the quote is not sponsored.
 
-A TRC-20 transfer, such as USDT, is a contract call. `method` is the bare function name, and each argument is an ABI type with its value; pass integers as decimal strings in base units:
+`maxQuotedFee` bounds the **quoted** fee, not energy burned on chain. The SDK refuses a quote whose TRX fee option is above it (`FEE_LIMIT_EXCEEDED`) and pays that option at `execute`; WaaS refuses `Execute` if the transaction was re-priced above the quote (`FEE_ABOVE_QUOTE`, nothing sent). The fee actually burned is what the chain charges for the sealed transaction, and the SDK does not verify any energy limit WaaS sets.
+
+Tron mirrors EVM: `prepareTransfer` moves TRX (`asset: 'native'`, amount in sun) or a TRC-20 token (`asset` is the token contract, amount in its base units), and the SDK builds the token's `transfer(address,uint256)` call:
 
 ```ts
-const prepared = await wallet.tron.prepareContractCall({
+const prepared = await wallet.tron.prepareTransfer({
   idempotencyKey: 'payout-123-a1',
   network: 'tron:mainnet',
-  contract: 'TR7NHqjeKQxGTCi8q8ZY4pL8otSzgjLj6t', // USDT on Tron
-  method: 'transfer', // not 'transfer(address,uint256)'
-  args: [
-    { type: 'address', value: recipient }, // T… address
-    { type: 'uint256', value: parseAmount('25', 6) } // '25000000'
-  ],
-  maxFee: '20000000' // pay up to 20 TRX when delegated energy does not cover it
+  to: recipient, // T… address
+  asset: 'TR7NHqjeKQxGTCi8q8ZY4pL8otSzgjLj6t', // USDT on Tron
+  amount: parseAmount('25', 6), // '25000000'
+  maxQuotedFee: '20000000' // pay up to 20 TRX when delegated energy does not cover it
 });
 ```
+
+`prepareCall` makes any other contract call, either with a function name and typed arguments (`{ to, method: 'approve', args: [{ type: 'address', value }, { type: 'uint256', value: '1' }] }`, where `method` is the bare name, not a signature) or with calldata (`{ to, data, value? }`).
 
 WaaS simulates the call while quoting; a call that would revert (for example, an insufficient token balance) is refused with `UPSTREAM_ERROR` (`upstreamCode` 7200).
 
 ### Observation, settlement & `describeOperation`
 
-- `getOperation(id)` is a **local read** (never authenticates or polls WaaS). Use `refreshOperation(id)` for one remote status poll, or `waitForOperation(id, { timeoutMs, pollIntervalMs?, signal? })` to poll outside exclusive ownership with distinct outcomes: a finished operation reports its terminal status (`'executed' | 'failed' | 'expired' | 'signed'`), and `'reconciliation-required' | 'timed-out' | 'cancelled'` mean the wait ended first. Only `'executed'` means the transaction went through.
+- `getOperation(id)` is a **local read** (never authenticates or polls WaaS). Use `refreshOperation(id)` for one remote status poll, or `waitForOperation(id, { timeoutMs, pollIntervalMs?, signal? })` to poll outside exclusive ownership with distinct outcomes: a finished operation reports its terminal status (`'executed' | 'failed' | 'expired' | 'signed' | 'cancelled'`), and `'reconciliation-required' | 'timed-out' | 'aborted'` mean the wait ended first (`'aborted'` is your `AbortSignal`). Only `'executed'` means the transaction went through. The deadline and the signal also bound a wait for the lock or a status read in progress.
 - **Pre-submit quote expiry** marks the operation terminal `expired` (`QUOTE_EXPIRED`, `provenUnsent: true`) and never calls WaaS `Execute`.
 - **Ambiguous `Execute` (lost response)** stays **open** (`status: 'unknown'`). If WaaS still answers `TransactionExpired` two minutes past quote expiry without claim evidence, the operation escalates to `error: 'RECONCILIATION_REQUIRED'` while remaining open (`status: 'unknown'`) and retaining swap debit reservations — because an eventually-consistent negative read is a heuristic, not proof nothing was broadcast. Once an operator verifies out of band that nothing was broadcast, call `resolveReconciliation({ idempotencyKey, txnId, resolution: 'not-broadcast' })` (or `wallet.swaps.resolveReconciliation({ swapId, txnId, resolution: 'not-broadcast' })` for swap funding/recovery), which re-checks WaaS under lock before releasing reservations and marks the operation `expired` with `operatorResolved: true`. A stale `TransactionExpired` read inside the grace window leaves the operation unchanged, so `waitForOperation` keeps polling.
 - `getTransactionStatus(txnId)` reads the current WaaS status of a transaction by the `txnId` from its quote, for operators reconciling from their own records. It never changes a stored operation and never creates a wallet. Like any status read, a `quoted` or `TransactionExpired` answer is not proof that nothing was broadcast while WaaS is still catching up after the quote expired.
-- `describeOperation(op)` derives a pure next-action recommendation (`await-review`, `poll-original`, `reconcile-original`, `safe-to-reprepare`, or `done`) strictly from validated evidence, with original IDs.
+- `describeOperation(op)` derives a pure next-action recommendation (`await-review`, `resume-original`, `poll-original`, `reconcile-original`, `safe-to-reprepare`, or `done`) strictly from validated evidence, with original IDs.
 
 ### Unattested indexer reads (`wallet.indexer` / `service.indexer`)
 
@@ -286,13 +306,13 @@ try {
 - **Never creates wallets.** Provision each identity once with `createServerWallet(...).createOrRestore(...)`. `restore()` binds what exists and throws `WALLET_NOT_INITIALIZED` otherwise; call it before signing or reading balances.
 - **`close()`** revokes the credential and makes every later or queued call throw `WALLET_CLOSED`. It is idempotent, and calling it again retries a revoke that failed. A crashed process cannot close, so keep `sessionLifetimeSeconds` short.
 - **No kill switch per identity.** There is no `disable()`: it would only affect one handle. To stop an identity, block it at your OIDC issuer and let credentials expire, or close every handle.
-- **Typed data:** `evm.signTypedData` refuses Sequence wallet `Calls` and typed data whose `verifyingContract` is the wallet. Other typed data, such as an ERC-20 permit, can still authorize spending, and an ephemeral handle cannot see swap reservations held by a durable wallet for the same identity. Do not sign spending authorizations for an identity with swaps in flight.
+- **Typed data:** `signTypedData` exists only with a `signing` policy, as on durable wallets. An ephemeral handle cannot see swap reservations held by a durable wallet for the same identity, so the policy should refuse spending authorizations (such as an ERC-20 permit) for an identity with swaps in flight.
 - **Fresh ID tokens.** Every handle signs in, and WaaS rejects an ID token that another sign-in already used, so `getIdToken` must mint a new token on each call; never share a cached token between handles.
 - Every handle signs in, which counts against OIDC and WaaS rate limits. Reuse a small pool of handles rather than creating one per request.
 
 ## Errors
 
-Every thrown error is a `WalletError` with a stable `code`, a safe `message` and an HTTP-style `status`. WaaS refusals are `UpstreamError` (`upstreamCode`, `method`), Trails refusals are `TrailsError` from `/trails`, and malformed upstream responses are `INVALID_RESPONSE`, never a raw validation error. Use `isWalletError` / `isUpstreamError` and branch on `code`. [docs/ERRORS.md](docs/ERRORS.md) lists every code with what it means and what to do.
+Every error the SDK raises is a `WalletError` with a stable `code`, a safe `message` and an HTTP-style `status`. WaaS refusals are `UpstreamError` (`upstreamCode`, `method`), Trails refusals are `TrailsError` from `/trails`, and malformed upstream responses are `INVALID_RESPONSE`, never a raw validation error. Errors thrown by your own hooks (`getIdToken`, store adapters, executors, `signing.authorizeTypedData`) pass through unchanged. Use `isWalletError` / `isUpstreamError` and branch on `code`. [docs/ERRORS.md](docs/ERRORS.md) lists every code with what it means and what to do.
 
 ## Storage & concurrency
 
@@ -306,8 +326,9 @@ Every thrown error is a `WalletError` with a stable `code`, a safe `message` and
 
 A clustered backend supplies an `ExecutorProvider` backed by a distributed lock, one lock per namespace. One `run` can make several sequential WaaS requests, each with a 20-second timeout (for example, a sign-in and wallet discovery followed by `Execute`), so:
 
-- Hold the lock for the whole task and renew it while the task runs (a heartbeat), with a lease of minutes, not seconds.
-- If the lease is lost, stop the task and fail the call; never let two holders run tasks for the same namespace at once. The store contract has no compare-and-set, so the lock is the only guard against two workers interleaving credential nonces and operation records.
+- The SDK requires a single active owner per namespace for the whole task. In 0.3.0 it has no fencing token or ownership-loss signal, so it cannot stop a task whose lock was lost: once started, a task runs to completion.
+- Hold the lock for the whole task and renew it while the task runs (a heartbeat), with a lease of minutes, not seconds, so it cannot expire under a live task.
+- Treat a lost lease as an incident: do not let another holder start on that namespace until the previous process is known to have stopped. The store contract has no compare-and-set, so the lock is the only guard against two workers interleaving credential nonces and operation records.
 - Never run wallet calls from inside `getIdToken`, a store adapter or a custom `fetch`: the lock is not re-entrant.
 
 ## Custody: protect the OIDC signing key

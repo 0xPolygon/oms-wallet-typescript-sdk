@@ -98,11 +98,13 @@
       "label": "Execution, observation and guidance",
       "symbols": [
         "ExecuteInput",
+        "CancelInput",
         "ResolveReconciliationInput",
         "TypedDataInput",
         "TypedDataDomain",
         "TypedDataField",
         "OperationBase",
+        "OperationState",
         "OperationStatus",
         "SubmissionMode",
         "WalletOperation",

@@ -1,7 +1,13 @@
 # Error contract
 
-Every error the SDK throws is a `WalletError`, including WaaS refusals, Trails failures and
+Every error the SDK raises is a `WalletError`, including WaaS refusals, Trails failures and
 malformed upstream responses. Branch on `code`, never on `message`.
+
+Errors thrown by code you supply pass through unchanged, so your own error types reach your
+handler: `oidc.getIdToken`, store adapters (`StateStore`, `NamespacedStateStore`, `SwapStore`,
+`NamespacedSwapStore`), executors (`ExclusiveExecutor`, `ExecutorProvider`) and
+`signing.authorizeTypedData`. A custom `fetch` is the exception: whatever it throws is wrapped as
+below, because a WaaS refusal (`UpstreamError`) can only come from a verified WaaS response.
 
 ```ts
 import { isUpstreamError, isWalletError } from '@polygonlabs/oms-server-wallet-sdk';
@@ -23,7 +29,16 @@ try {
 | `UpstreamError` | `UPSTREAM_ERROR` | `upstreamCode` (WaaS error code), `method` (WaaS RPC) |
 | `TrailsError` (`/trails`) | `TRAILS_ERROR` | `method`, `httpStatus`, optional `upstreamCode` |
 
-When the SDK wraps a lower-level failure, such as a network timeout or TLS error, the original error is kept as the standard `cause` property for logging.
+When a request does not complete (network error, timeout, TLS failure or an error thrown by a
+custom `fetch`), each client wraps it with its own code and keeps the original as the standard
+`cause` property for logging:
+
+| Client | Code |
+| --- | --- |
+| WaaS | `UPSTREAM_UNAVAILABLE` |
+| Balance indexer | `INDEXER_UNAVAILABLE` |
+| Trails API | `TRAILS_UNAVAILABLE`, or `TRAILS_TIMEOUT` / `TRAILS_ABORTED` |
+| Chain RPC (Trails verification) | `CHAIN_READ_FAILED` |
 
 `isWalletErrorCode(value)` tells whether a string is a `WalletErrorCode`, for example to narrow a swap's `error`, which can also hold upstream Trails statuses. `isWalletError` matches all three; `isUpstreamError` matches `UpstreamError` only. `status` is an
 HTTP-style hint: 400 for invalid input, 404 for an unknown ID, 409 for a state conflict, 502 for an
@@ -58,7 +73,7 @@ so the outcome survives a restart. Settlement codes such as `SUBMISSION_UNCERTAI
 | `INVALID_AMOUNT` | An amount is not a base-unit integer in range, or exceeds the token's precision. | Pass base units (see `parseAmount`). |
 | `INVALID_TRANSFER` | A transfer is missing a chain, recipient, asset or positive amount. | Complete the transfer input. |
 | `INVALID_CALL` | A contract call is malformed, targets the wallet itself, or its ABI arguments do not encode. | Fix the call. |
-| `INVALID_FEE` | `maxFee` is not a positive amount of sun. | Fix `maxFee`. |
+| `INVALID_FEE` | `maxQuotedFee` is not a positive amount of sun. | Fix `maxQuotedFee`. |
 | `INVALID_MESSAGE` | A message is empty or larger than 16,384 UTF-8 bytes. | Shorten the message. |
 | `INVALID_TYPED_DATA` | Typed data is malformed, bound to another chain, a Sequence wallet `Calls` authorization, or names the wallet as `verifyingContract`. | Fix the typed data; the last two are refused by design. |
 | `INVALID_PAGE` | Pagination options are out of range. | Fix `limit`, `offset`, `page` or `cursor`. |
@@ -95,8 +110,8 @@ so the outcome survives a restart. Settlement codes such as `SUBMISSION_UNCERTAI
 | `STALE_RECOVERY` | The recovery `reviewId` does not match the prepared recovery. | Review the current recovery. |
 | `OPERATION_CANCELLED` | `execute` was called on an operation cancelled with `cancel`; nothing was sent. | Prepare a replacement under a new key if still wanted. |
 | `QUOTE_EXPIRED` | The quote expired before submission; nothing was sent. | Prepare again under a new key. |
-| `SPONSORSHIP_REQUIRED` | The transaction is not sponsored (and, on Tron, no `maxFee` allows paying). | Enable sponsorship, or set `maxFee` on Tron. |
-| `FEE_LIMIT_EXCEEDED` | The quoted Tron fee exceeds `maxFee`. | Raise `maxFee` or retry later. |
+| `SPONSORSHIP_REQUIRED` | The transaction is not sponsored (and, on Tron, no `maxQuotedFee` allows paying). | Enable sponsorship, or set `maxQuotedFee` on Tron. |
+| `FEE_LIMIT_EXCEEDED` | The quoted Tron fee exceeds `maxQuotedFee`. | Raise `maxQuotedFee` or retry later. |
 
 ### Execution and settlement
 

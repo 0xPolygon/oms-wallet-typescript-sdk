@@ -105,6 +105,12 @@ const current = await wallet.swaps.get(quoted.id);
 const page = await wallet.swaps.list({ limit: 25 });
 ```
 
+`succeeded` and `refunded` carry `outcomeEvidence`. `'provider-reported'` means the Trails receipt
+reports the outcome and its recipient, token and amount match the quote, but the SDK did not read
+the destination or refund transfer on chain: verify it on chain before treating funds as
+delivered. `'chain-verified'` (a completed recovery) means the SDK read the received amounts on
+chain itself.
+
 ## 3. Persistence & alarm scheduling contract
 
 Implement `SwapStore` (or `NamespacedSwapStore`) over `StoredSwapEntry`:
@@ -128,12 +134,15 @@ Always arrange a durable wake-up (`nextAt`) before committing an action that can
 When a funded swap terminates without settling or stalls past the progress threshold:
 
 ```ts
+const recoveryKey = `${quoted.id}-recovery-1`; // store it before calling, like any idempotency key
 const prepared = await wallet.swaps.prepareRecovery({
   swapId: quoted.id,
-  idempotencyKey: crypto.randomUUID(),
+  idempotencyKey: recoveryKey,
   source: 'destination' // or 'origin'
 });
-const recovery = prepared.recoveries.at(-1)!;
+// A recovery's id is its idempotency key. Find it by key: the list also holds earlier recoveries.
+const recovery = prepared.recoveries.find((r) => r.id === recoveryKey);
+if (!recovery) throw new Error(`Recovery ${recoveryKey} missing from swap ${quoted.id}`);
 // Show recovery.assets, recovery.chainId, and recovery.requiresOwnerDeployment before confirming:
 await wallet.swaps.confirmRecovery({
   swapId: quoted.id,

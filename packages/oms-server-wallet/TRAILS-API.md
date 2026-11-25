@@ -7,19 +7,18 @@
 ### `trails`
 
 Enable durable Trails swaps and recovery on a server wallet via
-`createServerWallet({ ..., swaps: trails({ ..., store: { scope: 'wallet', adapter } }) })`
-or `createServerWalletService({ ..., swaps: trails({ ..., store: { scope: 'service', adapter } }) })`.
+`createServerWallet({ ..., swaps: trails({ ..., storage: { scope: 'wallet', adapter, encryptionKey } }) })`
+or `createServerWalletService({ ..., swaps: trails({ ..., storage: { scope: 'service', adapter, encryptionKey } }) })`.
+Swap records are encrypted and authenticated with a key derived from `encryptionKey` per wallet.
 Ordinary EVM debits and swaps automatically share one executor and one debit gate.
 
 ```typescript
-export declare function trails(options: TrailsOptions<{
+export declare function trails(options: TrailsOptions<Extract<TrailsStorageOption, {
     readonly scope: "wallet";
-    readonly adapter: SwapStore;
-}>): SwapsConfig<"wallet", SwapsFacet>;
-export declare function trails(options: TrailsOptions<{
+}>>): SwapsConfig<"wallet", SwapsFacet>;
+export declare function trails(options: TrailsOptions<Extract<TrailsStorageOption, {
     readonly scope: "service";
-    readonly adapter: NamespacedSwapStore;
-}>): SwapsConfig<"service", SwapsFacet>;
+}>>): SwapsConfig<"service", SwapsFacet>;
 ```
 
 ### `TrailsOptions`
@@ -27,11 +26,11 @@ export declare function trails(options: TrailsOptions<{
 Options for `trails(...)` from `@polygonlabs/oms-server-wallet-sdk/trails`.
 
 ```typescript
-export interface TrailsOptions<TStore extends TrailsStoreOption = TrailsStoreOption> {
+export interface TrailsOptions<TStorage extends TrailsStorageOption = TrailsStorageOption> {
     readonly apiKey: string;
     readonly chains: Readonly<Record<number, string>>;
     readonly assets: readonly SwapAsset[];
-    readonly store: TStore;
+    readonly storage: TStorage;
     readonly environment?: string;
     readonly enabled?: boolean;
     readonly baseUrl?: string;
@@ -41,17 +40,20 @@ export interface TrailsOptions<TStore extends TrailsStoreOption = TrailsStoreOpt
 }
 ```
 
-### `TrailsStoreOption`
+### `TrailsStorageOption`
 
-Explicit store scope passed to `trails(...)`.
+Swap record storage passed to `trails({ storage })`. `encryptionKey` is 32 base64-encoded bytes;
+it may be the wallet's own key (swap records use a separately derived key per wallet namespace).
 
 ```typescript
-export type TrailsStoreOption = {
+export type TrailsStorageOption = {
     readonly scope: "wallet";
     readonly adapter: SwapStore;
+    readonly encryptionKey: string;
 } | {
     readonly scope: "service";
     readonly adapter: NamespacedSwapStore;
+    readonly encryptionKey: string;
 };
 ```
 
@@ -241,8 +243,10 @@ export interface NamespacedSwapStore {
 ### `StoredSwapEntry`
 
 Opaque durable swap entry persisted by `SwapStore` / `NamespacedSwapStore`.
-Hosts index the metadata fields for queries and wake-up alarms; encrypt `payload` at rest and
-never return `payload` to browsers.
+Hosts index the metadata fields for queries and wake-up alarms and store `payload` as given:
+the SDK encrypts it (AES-256-GCM) and authenticates it together with every metadata field and
+the wallet namespace, so an edited entry fails with `STORAGE_INTEGRITY`. Replaying an older
+authentic entry is not detected; the store must not roll back.
 
 ```typescript
 export interface StoredSwapEntry {
@@ -279,6 +283,7 @@ export interface SwapView {
         };
     };
     readonly phase: SwapPhase;
+    readonly outcomeEvidence?: SwapOutcomeEvidence;
     readonly createdAt: string;
     readonly updatedAt: string;
     readonly confirmedAt?: string;
@@ -326,6 +331,16 @@ export interface SwapView {
 
 ```typescript
 export type SwapPhase = "quoted" | "preparing" | "activating" | "funding" | "settling" | "succeeded" | "expired" | "failed" | "attention" | "recovering" | "refunded";
+```
+
+### `SwapOutcomeEvidence`
+
+What a `succeeded` or `refunded` phase rests on. `'provider-reported'`: the Trails receipt says so
+and its addresses, token and amount match the quote, but the SDK did not read the destination or
+refund transfer on chain. `'chain-verified'`: the SDK read the outcome on chain itself (recovery).
+
+```typescript
+export type SwapOutcomeEvidence = "provider-reported" | "chain-verified";
 ```
 
 ### `RecoveryView`

@@ -504,7 +504,12 @@ await check('Tron TIP-712 signing, verified by WaaS', () =>
     idempotencyKey: id('live-trx-712'),
     network: 'tron:nile',
     typedData: {
-      domain: { name: 'Acceptance', version: '1', chainId: 3448148188, verifyingContract: tron },
+      domain: {
+        name: 'Acceptance',
+        version: '1',
+        chainId: 3448148188,
+        verifyingContract: 'TXYZopYRdj2D9XRtbG411XZZ3kM5VkAeBf'
+      },
       types: {
         Check: [
           { name: 'wallet', type: 'address' },

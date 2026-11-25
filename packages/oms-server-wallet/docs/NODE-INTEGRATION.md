@@ -233,10 +233,12 @@ switch (waited.outcome) {
   case 'executed': // WaaS executed it; confirm the receipt on-chain before marking it paid
     break;
   case 'failed':
-  case 'expired': // not executed; prepare a replacement only if describeOperation says safe-to-reprepare
+  case 'expired':
+  case 'cancelled': // not executed; prepare a replacement only if describeOperation says safe-to-reprepare
+    console.log(describeOperation(waited.operation).action);
     break;
-  default: // reconciliation-required, timed-out, cancelled: keep the original operation open
-    console.log(waited.outcome, describeOperation(waited.operation));
+  default: // reconciliation-required, timed-out, aborted: keep the original operation open
+    if (waited.operation) console.log(waited.outcome, describeOperation(waited.operation).action);
 }
 
 // 6. Unattested display balances (never use as proof of funds)
@@ -252,7 +254,8 @@ try {
 
 | Status / Error | Meaning | What to do |
 | --- | --- | --- |
-| `quoted` | Prepared and sponsored, not submitted | Review terms, then call `execute({ idempotencyKey, reviewId })` before expiry. |
+| `preparing` | `prepare*` or `send*` did not finish (crash or timeout) | Call the same method again with the same key and input (`resume-original`). Never start a new key. |
+| `quoted` | Prepared and sponsored, not submitted | Review terms, then call `execute({ idempotencyKey, reviewId })` before expiry, or `cancel({ idempotencyKey })` to drop it. |
 | `submitting` / `pending` | Claimed or in flight | Call `refreshOperation(id)` or `waitForOperation(id, ...)`. Never issue a replacement transfer. |
 | `unknown` (`SUBMISSION_UNCERTAIN`) | Response lost after submission | Keep refreshing the same operation ID. |
 | `unknown` (`RECONCILIATION_REQUIRED`) | Unconfirmed past the 2-minute post-expiry grace window | Stays open; reconcile the original operation and WaaS `txnId` before authorizing any replacement. |
@@ -260,9 +263,10 @@ try {
 | `expired` (`QUOTE_EXPIRED`, `provenUnsent: true`) | Quote expired locally before submission | Nothing was sent; prepare and review again under a new `idempotencyKey`. |
 | `expired` (`QUOTE_EXPIRED`, `operatorResolved: true`) | An operator resolved it with `resolveReconciliation` | Treated as not sent on the operator's word; prepare and review again under a new `idempotencyKey`. |
 | `failed` (`EXECUTE_REFUSED`, `provenUnsent: true`) | WaaS refused before claiming | Nothing was sent; inspect error and prepare under a new `idempotencyKey` if desired. |
+| `cancelled` (`OPERATION_CANCELLED`, `provenUnsent: true`) | Cancelled with `cancel` before submission | Nothing was sent; prepare under a new `idempotencyKey` if still wanted. |
 | `STALE_REVIEW` | `reviewId` does not match the prepared operation | Re-read and review the current operation before executing. |
 | `APPROVAL_REQUIRED` | Immediate `send*` called on an ID prepared for review | Review and call `execute({ idempotencyKey, reviewId })` instead. |
 
-Use `describeOperation(operation)` to map any persisted operation to an explicit next action (`await-review`, `poll-original`, `reconcile-original`, `safe-to-reprepare`, or `done`).
+Use `describeOperation(operation)` to map any persisted operation to an explicit next action (`await-review`, `resume-original`, `poll-original`, `reconcile-original`, `safe-to-reprepare`, or `done`).
 
 See [API.md](../API.md) for the complete root API reference.

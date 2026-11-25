@@ -7,54 +7,38 @@
 ### `createServerWallet`
 
 Create a single-identity attested server wallet (ideal for one Cloudflare Durable Object per
-wallet, or hosts managing per-identity storage and execution directly).
+wallet, or hosts managing per-identity storage and execution directly). The handle's methods
+follow the options: `approval: 'allow-immediate'` adds `send*`, `swaps` adds `swaps`, and
+`signing` adds `signTypedData`.
 
 ```typescript
-export declare function createServerWallet(options: ServerWalletOptionsBase & {
-    readonly approval?: "two-phase";
-    readonly swaps?: undefined;
-}): ServerWalletBase<"two-phase">;
-export declare function createServerWallet<TFacet>(options: ServerWalletOptionsBase & {
-    readonly approval?: "two-phase";
-    readonly swaps: SwapsConfig<"wallet", TFacet>;
-}): ServerWalletBase<"two-phase"> & {
-    readonly swaps: TFacet;
-};
-export declare function createServerWallet(options: ServerWalletOptionsBase & {
+export declare function createServerWallet<const TOptions extends ServerWalletOptions>(options: TOptions & {
+    readonly [K in Exclude<keyof TOptions, keyof ServerWalletOptions>]: never;
+}): ServerWallet<TOptions extends {
     readonly approval: "allow-immediate";
-    readonly swaps?: undefined;
-}): ServerWalletBase<"allow-immediate">;
-export declare function createServerWallet<TFacet>(options: ServerWalletOptionsBase & {
-    readonly approval: "allow-immediate";
-    readonly swaps: SwapsConfig<"wallet", TFacet>;
-}): ServerWalletBase<"allow-immediate"> & {
-    readonly swaps: TFacet;
-};
+} ? "allow-immediate" : "two-phase", TOptions extends {
+    readonly swaps: infer TSwaps extends SwapsConfig<"wallet", unknown>;
+} ? TSwaps : undefined, TOptions extends {
+    readonly signing: SigningOptions;
+} ? true : false>;
 ```
 
 ### `createServerWalletService`
 
 Create a multi-tenant server wallet service for backends operating many identities.
 Computes canonical identity namespaces from the routed WaaS origin, project, issuer, audience,
-and subject.
+and subject. Handles from `forSubject` follow the options like `createServerWallet`.
 
 ```typescript
-export declare function createServerWalletService(options: ServerWalletServiceOptionsBase & {
-    readonly approval?: "two-phase";
-    readonly swaps?: undefined;
-}): ServerWalletService<"two-phase", undefined>;
-export declare function createServerWalletService<TFacet>(options: ServerWalletServiceOptionsBase & {
-    readonly approval?: "two-phase";
-    readonly swaps: SwapsConfig<"service", TFacet>;
-}): ServerWalletService<"two-phase", SwapsConfig<"service", TFacet>>;
-export declare function createServerWalletService(options: ServerWalletServiceOptionsBase & {
+export declare function createServerWalletService<const TOptions extends ServerWalletServiceOptions>(options: TOptions & {
+    readonly [K in Exclude<keyof TOptions, keyof ServerWalletServiceOptions>]: never;
+}): ServerWalletService<TOptions extends {
     readonly approval: "allow-immediate";
-    readonly swaps?: undefined;
-}): ServerWalletService<"allow-immediate", undefined>;
-export declare function createServerWalletService<TFacet>(options: ServerWalletServiceOptionsBase & {
-    readonly approval: "allow-immediate";
-    readonly swaps: SwapsConfig<"service", TFacet>;
-}): ServerWalletService<"allow-immediate", SwapsConfig<"service", TFacet>>;
+} ? "allow-immediate" : "two-phase", TOptions extends {
+    readonly swaps: infer TSwaps extends SwapsConfig<"service", unknown>;
+} ? TSwaps : undefined, TOptions extends {
+    readonly signing: SigningOptions;
+} ? true : false>;
 ```
 
 ### `ServerWalletOptions`
@@ -62,30 +46,47 @@ export declare function createServerWalletService<TFacet>(options: ServerWalletS
 Options for `createServerWallet`.
 
 ```typescript
-export type ServerWalletOptions<TApproval extends ApprovalMode = "two-phase", TSwaps extends SwapsConfig<"wallet", unknown> | undefined = undefined> = ServerWalletOptionsBase & (TApproval extends "allow-immediate" ? {
-    readonly approval: "allow-immediate";
-} : {
-    readonly approval?: "two-phase";
-}) & (TSwaps extends SwapsConfig<"wallet", unknown> ? {
-    readonly swaps: TSwaps;
-} : {
-    readonly swaps?: undefined;
-});
-```
-
-### `ServerWalletOptionsBase`
-
-Base options shared by all `createServerWallet` configurations.
-
-```typescript
-export interface ServerWalletOptionsBase {
+export interface ServerWalletOptions {
     readonly publishableKey: string;
     readonly origin?: string;
     readonly oidc: WalletOidcOptions;
-    readonly store: WalletStoreOption;
+    readonly storage: WalletStorageOption;
     readonly executor: ExclusiveExecutor;
+    readonly approval?: ApprovalMode;
+    readonly swaps?: SwapsConfig<"wallet", unknown>;
+    readonly signing?: SigningOptions;
     readonly attestation?: AttestationOptions;
     readonly fetch?: typeof fetch;
+}
+```
+
+### `SigningOptions`
+
+Opt-in for `signTypedData`. Typed data can authorize anything a contract accepts (permits,
+orders, approvals), so `signTypedData` exists only on wallets configured with this policy.
+
+```typescript
+export interface SigningOptions {
+    authorizeTypedData(request: TypedDataSigningRequest): boolean | Promise<boolean>;
+}
+```
+
+### `TypedDataSigningRequest`
+
+What a typed-data signing policy is asked to approve. Built after the SDK has validated the
+request and before WaaS is called; every field is a frozen copy, so the policy reads exactly
+what will be signed.
+
+```typescript
+export interface TypedDataSigningRequest {
+    readonly family: "evm" | "tron";
+    readonly chainId: number;
+    readonly network?: TronNetwork;
+    readonly subject: string;
+    readonly walletAddress: string;
+    readonly idempotencyKey?: string;
+    readonly digest: `0x${string}`;
+    readonly typedData: TypedDataInput;
 }
 ```
 
@@ -94,28 +95,15 @@ export interface ServerWalletOptionsBase {
 Options for `createServerWalletService`.
 
 ```typescript
-export type ServerWalletServiceOptions<TApproval extends ApprovalMode = "two-phase", TSwaps extends SwapsConfig<"service", unknown> | undefined = undefined> = ServerWalletServiceOptionsBase & (TApproval extends "allow-immediate" ? {
-    readonly approval: "allow-immediate";
-} : {
-    readonly approval?: "two-phase";
-}) & (TSwaps extends SwapsConfig<"service", unknown> ? {
-    readonly swaps: TSwaps;
-} : {
-    readonly swaps?: undefined;
-});
-```
-
-### `ServerWalletServiceOptionsBase`
-
-Base options shared by all `createServerWalletService` configurations.
-
-```typescript
-export interface ServerWalletServiceOptionsBase {
+export interface ServerWalletServiceOptions {
     readonly publishableKey: string;
     readonly origin?: string;
     readonly oidc: ServiceOidcOptions;
     readonly storage: ServiceStorageOption;
     readonly executor: ExecutorProvider;
+    readonly approval?: ApprovalMode;
+    readonly swaps?: SwapsConfig<"service", unknown>;
+    readonly signing?: SigningOptions;
     readonly attestation?: AttestationOptions;
     readonly fetch?: typeof fetch;
 }
@@ -191,9 +179,9 @@ export interface SwapsConfig<TScope extends "wallet" | "service" = "wallet" | "s
 Single-identity server wallet handle, with `swaps` present only when `swaps: trails(...)` is configured.
 
 ```typescript
-export type ServerWallet<TApproval extends ApprovalMode = "two-phase", TSwaps extends SwapsConfig<"wallet", unknown> | undefined = undefined> = TSwaps extends SwapsConfig<"wallet", infer TFacet> ? ServerWalletBase<TApproval> & {
+export type ServerWallet<TApproval extends ApprovalMode = "two-phase", TSwaps extends SwapsConfig<"wallet", unknown> | undefined = undefined, TTypedData extends boolean = false> = TSwaps extends SwapsConfig<"wallet", infer TFacet> ? ServerWalletBase<TApproval, TTypedData> & {
     readonly swaps: TFacet;
-} : ServerWalletBase<TApproval>;
+} : ServerWalletBase<TApproval, TTypedData>;
 ```
 
 ### `ServerWalletBase`
@@ -201,15 +189,15 @@ export type ServerWallet<TApproval extends ApprovalMode = "two-phase", TSwaps ex
 Base handle for a single OIDC identity's attested server wallet.
 
 ```typescript
-export interface ServerWalletBase<TApproval extends ApprovalMode = "two-phase"> {
+export interface ServerWalletBase<TApproval extends ApprovalMode = "two-phase", TTypedData extends boolean = false> {
     inspect(): Promise<WalletSnapshot>;
     createOrRestore(options?: CreateOrRestoreOptions): Promise<WalletSnapshot>;
     rotateCredential(): Promise<WalletSnapshot>;
     disable(): Promise<WalletSnapshot>;
     enable(): Promise<WalletSnapshot>;
-    readonly evm: EvmFacet<TApproval>;
+    readonly evm: EvmFacet<TApproval, TTypedData>;
     readonly solana: SolanaFacet<TApproval>;
-    readonly tron: TronFacet<TApproval>;
+    readonly tron: TronFacet<TApproval, TTypedData>;
     readonly indexer: WalletIndexerFacet;
 }
 ```
@@ -219,10 +207,10 @@ export interface ServerWalletBase<TApproval extends ApprovalMode = "two-phase"> 
 Multi-tenant server wallet service factory.
 
 ```typescript
-export interface ServerWalletService<TApproval extends ApprovalMode = "two-phase", TSwaps extends SwapsConfig<"service", unknown> | undefined = undefined> {
-    forSubject(subject: string): TSwaps extends SwapsConfig<"service", infer TFacet> ? ServerWalletBase<TApproval> & {
+export interface ServerWalletService<TApproval extends ApprovalMode = "two-phase", TSwaps extends SwapsConfig<"service", unknown> | undefined = undefined, TTypedData extends boolean = false> {
+    forSubject(subject: string): TSwaps extends SwapsConfig<"service", infer TFacet> ? ServerWalletBase<TApproval, TTypedData> & {
         readonly swaps: TFacet;
-    } : ServerWalletBase<TApproval>;
+    } : ServerWalletBase<TApproval, TTypedData>;
     readonly indexer: ServiceIndexerFacet;
 }
 ```
@@ -233,7 +221,6 @@ Public snapshot of a wallet identity's persisted state.
 
 ```typescript
 export interface WalletSnapshot {
-    readonly wallet?: RemoteWallet;
     readonly wallets: Readonly<Partial<Record<NetworkFamily, RemoteWallet>>>;
     readonly disabled: boolean;
     readonly expiresAt?: string;
@@ -334,10 +321,15 @@ export declare function isSupportedEvmChainId(chainId: unknown): chainId is Supp
 Create a memory-only signer for one OIDC identity. It needs no storage, encryption key or
 distributed lock: each handle holds its own credential, so run one handle per concurrent
 worker. It signs and reads balances but cannot send, keeps no records and never creates
-wallets; provision wallets with `createServerWallet` first. Call `close()` when done.
+wallets; provision wallets with `createServerWallet` first. `signing` adds `signTypedData`.
+Call `close()` when done.
 
 ```typescript
-export declare function createEphemeralServerWallet(options: EphemeralServerWalletOptions): EphemeralServerWallet;
+export declare function createEphemeralServerWallet<const TOptions extends EphemeralServerWalletOptions>(options: TOptions & {
+    readonly [K in Exclude<keyof TOptions, keyof EphemeralServerWalletOptions>]: never;
+}): EphemeralServerWallet<TOptions extends {
+    readonly signing: SigningOptions;
+} ? true : false>;
 ```
 
 ### `EphemeralServerWalletOptions`
@@ -349,6 +341,7 @@ export interface EphemeralServerWalletOptions {
     readonly publishableKey: string;
     readonly origin?: string;
     readonly oidc: WalletOidcOptions;
+    readonly signing?: SigningOptions;
     readonly attestation?: AttestationOptions;
     readonly fetch?: typeof fetch;
 }
@@ -361,7 +354,7 @@ balances; it cannot prepare or send transactions, keeps no operation records, an
 wallets. Not assignable to `ServerWallet`. Call `close()` when done.
 
 ```typescript
-export interface EphemeralServerWallet {
+export interface EphemeralServerWallet<TTypedData extends boolean = false> {
     restore(options?: CreateOrRestoreOptions): Promise<EphemeralWalletSnapshot>;
     inspect(): Promise<EphemeralWalletSnapshot>;
     rotateCredential(): Promise<EphemeralWalletSnapshot>;
@@ -371,11 +364,12 @@ export interface EphemeralServerWallet {
             readonly chainId: SupportedEvmChainId;
             readonly message: string;
         }): Promise<SignatureResult>;
+    } & (TTypedData extends true ? {
         signTypedData(input: {
             readonly chainId: SupportedEvmChainId;
             readonly typedData: TypedDataInput;
         }): Promise<SignatureResult>;
-    };
+    } : unknown);
     readonly solana: {
         signMessage(input: {
             readonly message: string;
@@ -385,11 +379,12 @@ export interface EphemeralServerWallet {
         signMessage(input: {
             readonly message: string;
         }): Promise<SignatureResult>;
+    } & (TTypedData extends true ? {
         signTypedData(input: {
             readonly network: TronNetwork;
             readonly typedData: TypedDataInput;
         }): Promise<SignatureResult>;
-    };
+    } : unknown);
     readonly indexer: WalletIndexerFacet;
 }
 ```
@@ -400,7 +395,6 @@ Wallets and credential held by an ephemeral handle.
 
 ```typescript
 export interface EphemeralWalletSnapshot {
-    readonly wallet?: RemoteWallet;
     readonly wallets: Readonly<Partial<Record<NetworkFamily, RemoteWallet>>>;
     readonly expiresAt?: string;
     readonly credentialId?: string;
@@ -482,7 +476,7 @@ export interface NamespacedStateStore {
 }
 ```
 
-### `WalletStoreOption`
+### `WalletStorageOption`
 
 Storage configuration for a single server wallet.
 Choose either `{ adapter, encryptionKey }` (SDK-managed AES-256-GCM bound to this wallet's
@@ -490,7 +484,7 @@ namespace) or `{ encryptedStore }` (caller-managed authenticated encryption, iso
 durability).
 
 ```typescript
-export type WalletStoreOption = {
+export type WalletStorageOption = {
     readonly adapter: StateStore;
     readonly encryptionKey: string;
     readonly encryptedStore?: never;
@@ -524,66 +518,47 @@ export type ServiceStorageOption = {
 
 ### `EvmFacet`
 
-EVM operations. `sendTransfer` and `sendCall` exist only with `approval: 'allow-immediate'`.
-Flattened so declaration emit never needs the internal building-block interfaces.
+EVM operations. `sendTransfer` and `sendCall` exist only with `approval: 'allow-immediate'`;
+`signTypedData` only with `signing`. Flattened so declaration emit never needs the internal
+building-block interfaces.
 
 ```typescript
-export type EvmFacet<TApproval extends ApprovalMode = "two-phase"> = {
-    [K in keyof (TApproval extends "allow-immediate" ? {
+export type EvmFacet<TApproval extends ApprovalMode = "two-phase", TTypedData extends boolean = false> = {
+    [K in keyof ({
         prepareTransfer(input: EvmTransferInput): Promise<EvmOperation>;
         prepareCall<const abi extends Abi | readonly unknown[] = Abi, functionName extends ContractFunctionName<abi> = ContractFunctionName<abi>>(input: EvmCallInput<abi, functionName>): Promise<EvmOperation>;
         execute(input: ExecuteInput): Promise<EvmOperation>;
         signMessage(input: EvmSignMessageInput): Promise<EvmOperation>;
-        signTypedData(input: EvmSignTypedDataInput): Promise<EvmOperation>;
         getOperation(id: string): Promise<EvmOperation | null>;
         refreshOperation(id: string): Promise<EvmOperation | null>;
         waitForOperation(id: string, options: WaitForOperationOptions): Promise<WaitResult<EvmOperation>>;
         resolveReconciliation(input: ResolveReconciliationInput): Promise<EvmOperation>;
         listOperations(options?: ListOperationsOptions): Promise<OperationPage<EvmOperation>>;
+        cancel(input: CancelInput): Promise<EvmOperation>;
         getTransactionStatus(txnId: string): Promise<TransactionStatusView>;
-    } & {
+    } & (TApproval extends "allow-immediate" ? {
         sendTransfer(input: EvmTransferInput): Promise<EvmOperation>;
         sendCall<const abi extends Abi | readonly unknown[] = Abi, functionName extends ContractFunctionName<abi> = ContractFunctionName<abi>>(input: EvmCallInput<abi, functionName>): Promise<EvmOperation>;
-    } : {
+    } : unknown) & (TTypedData extends true ? {
+        signTypedData(input: EvmSignTypedDataInput): Promise<EvmOperation>;
+    } : unknown))]: ({
         prepareTransfer(input: EvmTransferInput): Promise<EvmOperation>;
         prepareCall<const abi extends Abi | readonly unknown[] = Abi, functionName extends ContractFunctionName<abi> = ContractFunctionName<abi>>(input: EvmCallInput<abi, functionName>): Promise<EvmOperation>;
         execute(input: ExecuteInput): Promise<EvmOperation>;
         signMessage(input: EvmSignMessageInput): Promise<EvmOperation>;
-        signTypedData(input: EvmSignTypedDataInput): Promise<EvmOperation>;
         getOperation(id: string): Promise<EvmOperation | null>;
         refreshOperation(id: string): Promise<EvmOperation | null>;
         waitForOperation(id: string, options: WaitForOperationOptions): Promise<WaitResult<EvmOperation>>;
         resolveReconciliation(input: ResolveReconciliationInput): Promise<EvmOperation>;
         listOperations(options?: ListOperationsOptions): Promise<OperationPage<EvmOperation>>;
+        cancel(input: CancelInput): Promise<EvmOperation>;
         getTransactionStatus(txnId: string): Promise<TransactionStatusView>;
-    })]: (TApproval extends "allow-immediate" ? {
-        prepareTransfer(input: EvmTransferInput): Promise<EvmOperation>;
-        prepareCall<const abi extends Abi | readonly unknown[] = Abi, functionName extends ContractFunctionName<abi> = ContractFunctionName<abi>>(input: EvmCallInput<abi, functionName>): Promise<EvmOperation>;
-        execute(input: ExecuteInput): Promise<EvmOperation>;
-        signMessage(input: EvmSignMessageInput): Promise<EvmOperation>;
-        signTypedData(input: EvmSignTypedDataInput): Promise<EvmOperation>;
-        getOperation(id: string): Promise<EvmOperation | null>;
-        refreshOperation(id: string): Promise<EvmOperation | null>;
-        waitForOperation(id: string, options: WaitForOperationOptions): Promise<WaitResult<EvmOperation>>;
-        resolveReconciliation(input: ResolveReconciliationInput): Promise<EvmOperation>;
-        listOperations(options?: ListOperationsOptions): Promise<OperationPage<EvmOperation>>;
-        getTransactionStatus(txnId: string): Promise<TransactionStatusView>;
-    } & {
+    } & (TApproval extends "allow-immediate" ? {
         sendTransfer(input: EvmTransferInput): Promise<EvmOperation>;
         sendCall<const abi extends Abi | readonly unknown[] = Abi, functionName extends ContractFunctionName<abi> = ContractFunctionName<abi>>(input: EvmCallInput<abi, functionName>): Promise<EvmOperation>;
-    } : {
-        prepareTransfer(input: EvmTransferInput): Promise<EvmOperation>;
-        prepareCall<const abi extends Abi | readonly unknown[] = Abi, functionName extends ContractFunctionName<abi> = ContractFunctionName<abi>>(input: EvmCallInput<abi, functionName>): Promise<EvmOperation>;
-        execute(input: ExecuteInput): Promise<EvmOperation>;
-        signMessage(input: EvmSignMessageInput): Promise<EvmOperation>;
+    } : unknown) & (TTypedData extends true ? {
         signTypedData(input: EvmSignTypedDataInput): Promise<EvmOperation>;
-        getOperation(id: string): Promise<EvmOperation | null>;
-        refreshOperation(id: string): Promise<EvmOperation | null>;
-        waitForOperation(id: string, options: WaitForOperationOptions): Promise<WaitResult<EvmOperation>>;
-        resolveReconciliation(input: ResolveReconciliationInput): Promise<EvmOperation>;
-        listOperations(options?: ListOperationsOptions): Promise<OperationPage<EvmOperation>>;
-        getTransactionStatus(txnId: string): Promise<TransactionStatusView>;
-    })[K];
+    } : unknown))[K];
 };
 ```
 
@@ -671,7 +646,7 @@ export interface EvmSignTypedDataInput {
 Persisted EVM operation view.
 
 ```typescript
-export interface EvmOperation extends OperationBase {
+export type EvmOperation = OperationBase & {
     readonly family: "evm";
     readonly kind: "transfer" | "call" | "sign" | "signTypedData";
     readonly chainId: number;
@@ -681,8 +656,7 @@ export interface EvmOperation extends OperationBase {
         readonly data: string;
         readonly value: string;
     };
-    readonly quote?: Quote;
-}
+} & OperationState<Quote>;
 ```
 
 ### `Quote`
@@ -723,6 +697,7 @@ export type SolanaFacet<TApproval extends ApprovalMode = "two-phase"> = {
         waitForOperation(id: string, options: WaitForOperationOptions): Promise<WaitResult<SolanaOperation>>;
         resolveReconciliation(input: ResolveReconciliationInput): Promise<SolanaOperation>;
         listOperations(options?: ListOperationsOptions): Promise<OperationPage<SolanaOperation>>;
+        cancel(input: CancelInput): Promise<SolanaOperation>;
         getTransactionStatus(txnId: string): Promise<TransactionStatusView>;
     } & {
         sendTransfer(input: SolanaTransferInput): Promise<SolanaOperation>;
@@ -735,6 +710,7 @@ export type SolanaFacet<TApproval extends ApprovalMode = "two-phase"> = {
         waitForOperation(id: string, options: WaitForOperationOptions): Promise<WaitResult<SolanaOperation>>;
         resolveReconciliation(input: ResolveReconciliationInput): Promise<SolanaOperation>;
         listOperations(options?: ListOperationsOptions): Promise<OperationPage<SolanaOperation>>;
+        cancel(input: CancelInput): Promise<SolanaOperation>;
         getTransactionStatus(txnId: string): Promise<TransactionStatusView>;
     })]: (TApproval extends "allow-immediate" ? {
         prepareTransfer(input: SolanaTransferInput): Promise<SolanaOperation>;
@@ -745,6 +721,7 @@ export type SolanaFacet<TApproval extends ApprovalMode = "two-phase"> = {
         waitForOperation(id: string, options: WaitForOperationOptions): Promise<WaitResult<SolanaOperation>>;
         resolveReconciliation(input: ResolveReconciliationInput): Promise<SolanaOperation>;
         listOperations(options?: ListOperationsOptions): Promise<OperationPage<SolanaOperation>>;
+        cancel(input: CancelInput): Promise<SolanaOperation>;
         getTransactionStatus(txnId: string): Promise<TransactionStatusView>;
     } & {
         sendTransfer(input: SolanaTransferInput): Promise<SolanaOperation>;
@@ -757,6 +734,7 @@ export type SolanaFacet<TApproval extends ApprovalMode = "two-phase"> = {
         waitForOperation(id: string, options: WaitForOperationOptions): Promise<WaitResult<SolanaOperation>>;
         resolveReconciliation(input: ResolveReconciliationInput): Promise<SolanaOperation>;
         listOperations(options?: ListOperationsOptions): Promise<OperationPage<SolanaOperation>>;
+        cancel(input: CancelInput): Promise<SolanaOperation>;
         getTransactionStatus(txnId: string): Promise<TransactionStatusView>;
     })[K];
 };
@@ -811,78 +789,58 @@ export interface SolanaSignMessageInput {
 Persisted Solana operation view.
 
 ```typescript
-export interface SolanaOperation extends OperationBase {
+export type SolanaOperation = OperationBase & {
     readonly family: "solana";
     readonly kind: "transfer" | "sign";
     readonly network?: SolanaNetwork;
     readonly transfer?: SolanaTransfer;
-    readonly quote?: ChainQuote;
-}
+} & OperationState<ChainQuote>;
 ```
 
 ## Tron
 
 ### `TronFacet`
 
-Tron operations. `sendTransaction` and `sendContractCall` exist only with `approval: 'allow-immediate'`.
+Tron operations. `sendTransfer` and `sendCall` exist only with `approval: 'allow-immediate'`;
+`signTypedData` only with `signing`.
 
 ```typescript
-export type TronFacet<TApproval extends ApprovalMode = "two-phase"> = {
-    [K in keyof (TApproval extends "allow-immediate" ? {
-        prepareTransaction(input: TronTransactionInput): Promise<TronOperation>;
-        prepareContractCall(input: TronContractCallInput): Promise<TronOperation>;
+export type TronFacet<TApproval extends ApprovalMode = "two-phase", TTypedData extends boolean = false> = {
+    [K in keyof ({
+        prepareTransfer(input: TronTransferInput): Promise<TronOperation>;
+        prepareCall(input: TronCallInput): Promise<TronOperation>;
         execute(input: ExecuteInput): Promise<TronOperation>;
         signMessage(input: TronSignMessageInput): Promise<TronOperation>;
-        signTypedData(input: TronSignTypedDataInput): Promise<TronOperation>;
         getOperation(id: string): Promise<TronOperation | null>;
         refreshOperation(id: string): Promise<TronOperation | null>;
         waitForOperation(id: string, options: WaitForOperationOptions): Promise<WaitResult<TronOperation>>;
         resolveReconciliation(input: ResolveReconciliationInput): Promise<TronOperation>;
         listOperations(options?: ListOperationsOptions): Promise<OperationPage<TronOperation>>;
+        cancel(input: CancelInput): Promise<TronOperation>;
         getTransactionStatus(txnId: string): Promise<TransactionStatusView>;
-    } & {
-        sendTransaction(input: TronTransactionInput): Promise<TronOperation>;
-        sendContractCall(input: TronContractCallInput): Promise<TronOperation>;
-    } : {
-        prepareTransaction(input: TronTransactionInput): Promise<TronOperation>;
-        prepareContractCall(input: TronContractCallInput): Promise<TronOperation>;
+    } & (TApproval extends "allow-immediate" ? {
+        sendTransfer(input: TronTransferInput): Promise<TronOperation>;
+        sendCall(input: TronCallInput): Promise<TronOperation>;
+    } : unknown) & (TTypedData extends true ? {
+        signTypedData(input: TronSignTypedDataInput): Promise<TronOperation>;
+    } : unknown))]: ({
+        prepareTransfer(input: TronTransferInput): Promise<TronOperation>;
+        prepareCall(input: TronCallInput): Promise<TronOperation>;
         execute(input: ExecuteInput): Promise<TronOperation>;
         signMessage(input: TronSignMessageInput): Promise<TronOperation>;
-        signTypedData(input: TronSignTypedDataInput): Promise<TronOperation>;
         getOperation(id: string): Promise<TronOperation | null>;
         refreshOperation(id: string): Promise<TronOperation | null>;
         waitForOperation(id: string, options: WaitForOperationOptions): Promise<WaitResult<TronOperation>>;
         resolveReconciliation(input: ResolveReconciliationInput): Promise<TronOperation>;
         listOperations(options?: ListOperationsOptions): Promise<OperationPage<TronOperation>>;
+        cancel(input: CancelInput): Promise<TronOperation>;
         getTransactionStatus(txnId: string): Promise<TransactionStatusView>;
-    })]: (TApproval extends "allow-immediate" ? {
-        prepareTransaction(input: TronTransactionInput): Promise<TronOperation>;
-        prepareContractCall(input: TronContractCallInput): Promise<TronOperation>;
-        execute(input: ExecuteInput): Promise<TronOperation>;
-        signMessage(input: TronSignMessageInput): Promise<TronOperation>;
+    } & (TApproval extends "allow-immediate" ? {
+        sendTransfer(input: TronTransferInput): Promise<TronOperation>;
+        sendCall(input: TronCallInput): Promise<TronOperation>;
+    } : unknown) & (TTypedData extends true ? {
         signTypedData(input: TronSignTypedDataInput): Promise<TronOperation>;
-        getOperation(id: string): Promise<TronOperation | null>;
-        refreshOperation(id: string): Promise<TronOperation | null>;
-        waitForOperation(id: string, options: WaitForOperationOptions): Promise<WaitResult<TronOperation>>;
-        resolveReconciliation(input: ResolveReconciliationInput): Promise<TronOperation>;
-        listOperations(options?: ListOperationsOptions): Promise<OperationPage<TronOperation>>;
-        getTransactionStatus(txnId: string): Promise<TransactionStatusView>;
-    } & {
-        sendTransaction(input: TronTransactionInput): Promise<TronOperation>;
-        sendContractCall(input: TronContractCallInput): Promise<TronOperation>;
-    } : {
-        prepareTransaction(input: TronTransactionInput): Promise<TronOperation>;
-        prepareContractCall(input: TronContractCallInput): Promise<TronOperation>;
-        execute(input: ExecuteInput): Promise<TronOperation>;
-        signMessage(input: TronSignMessageInput): Promise<TronOperation>;
-        signTypedData(input: TronSignTypedDataInput): Promise<TronOperation>;
-        getOperation(id: string): Promise<TronOperation | null>;
-        refreshOperation(id: string): Promise<TronOperation | null>;
-        waitForOperation(id: string, options: WaitForOperationOptions): Promise<WaitResult<TronOperation>>;
-        resolveReconciliation(input: ResolveReconciliationInput): Promise<TronOperation>;
-        listOperations(options?: ListOperationsOptions): Promise<OperationPage<TronOperation>>;
-        getTransactionStatus(txnId: string): Promise<TransactionStatusView>;
-    })[K];
+    } : unknown))[K];
 };
 ```
 
@@ -892,39 +850,73 @@ export type TronFacet<TApproval extends ApprovalMode = "two-phase"> = {
 export type TronNetwork = (typeof TRON_NETWORKS)[number];
 ```
 
-### `TronTransactionInput`
+### `TronTransferInput`
 
-Input to `wallet.tron.prepareTransaction` and `wallet.tron.sendTransaction`.
+Input to `wallet.tron.prepareTransfer` and `wallet.tron.sendTransfer`.
 
 ```typescript
-export interface TronTransactionInput {
+export interface TronTransferInput {
     readonly idempotencyKey: string;
     readonly network: TronNetwork;
     readonly to: string;
-    readonly value?: string;
-    readonly data?: `0x${string}`;
-    readonly maxFee?: string;
+    readonly asset: "native" | string;
+    readonly amount: string;
+    readonly maxQuotedFee?: TronMaxQuotedFee;
 }
 ```
 
-### `TronContractCallInput`
+### `TronTransfer`
 
-Input to `wallet.tron.prepareContractCall` and `wallet.tron.sendContractCall`.
+Normalized Tron transfer stored on a `TronOperation`.
 
 ```typescript
-export interface TronContractCallInput {
+export interface TronTransfer {
+    readonly network: TronNetwork;
+    readonly to: string;
+    readonly asset: "native" | string;
+    readonly amount: string;
+}
+```
+
+### `TronCallInput`
+
+Input to `wallet.tron.prepareCall` and `wallet.tron.sendCall`: either a function name with typed
+arguments (encoded by WaaS) or pre-encoded calldata with an optional TRX value.
+
+```typescript
+export type TronCallInput = {
     readonly idempotencyKey: string;
     readonly network: TronNetwork;
-    readonly contract: string;
+    readonly to: string;
+    readonly maxQuotedFee?: TronMaxQuotedFee;
+} & ({
     readonly method: string;
     readonly args?: readonly TronAbiArg[];
-    readonly maxFee?: string;
-}
+    readonly data?: never;
+    readonly value?: never;
+} | {
+    readonly data: `0x${string}`;
+    readonly value?: string;
+    readonly method?: never;
+    readonly args?: never;
+});
+```
+
+### `TronMaxQuotedFee`
+
+Highest TRX fee, in sun, a quote may carry when delegated energy and bandwidth do not cover the
+transaction. The SDK refuses a quote whose TRX fee option is above it and pays that option at
+Execute; WaaS refuses Execute if the transaction was re-priced above the quote. It is a bound on
+the quoted fee, not on energy actually burned. Omit it to require full sponsorship
+(`SPONSORSHIP_REQUIRED` otherwise).
+
+```typescript
+export type TronMaxQuotedFee = string;
 ```
 
 ### `TronAbiArg`
 
-Typed ABI argument for `wallet.tron.prepareContractCall` / `sendContractCall`.
+Typed ABI argument for `wallet.tron.prepareCall` / `sendCall`.
 
 ```typescript
 export interface TronAbiArg {
@@ -961,24 +953,24 @@ export interface TronSignTypedDataInput {
 Persisted Tron operation view.
 
 ```typescript
-export interface TronOperation extends OperationBase {
+export type TronOperation = OperationBase & {
     readonly family: "tron";
-    readonly kind: "transaction" | "contractCall" | "sign" | "signTypedData";
+    readonly kind: "transfer" | "call" | "sign" | "signTypedData";
     readonly network?: TronNetwork;
+    readonly transfer?: TronTransfer;
     readonly transaction?: {
         readonly to: string;
         readonly value: string;
-        readonly data?: `0x${string}`;
+        readonly data: `0x${string}`;
     };
     readonly call?: {
-        readonly contract: string;
+        readonly to: string;
         readonly method: string;
-        readonly args?: readonly TronAbiArg[];
+        readonly args: readonly TronAbiArg[];
     };
-    readonly maxFee?: string;
-    readonly quote?: ChainQuote;
+    readonly maxQuotedFee?: TronMaxQuotedFee;
     readonly fee?: FeeOption;
-}
+} & OperationState<ChainQuote>;
 ```
 
 ### `ChainQuote`
@@ -1021,6 +1013,16 @@ Input to `execute` on any wallet family.
 export interface ExecuteInput {
     readonly idempotencyKey: string;
     readonly reviewId: string;
+}
+```
+
+### `CancelInput`
+
+Input to `cancel` on the EVM, Solana and Tron facets.
+
+```typescript
+export interface CancelInput {
+    readonly idempotencyKey: string;
 }
 ```
 
@@ -1084,22 +1086,65 @@ export interface OperationBase {
     readonly id: string;
     readonly inputHash: string;
     readonly createdAt: string;
-    readonly status: OperationStatus;
     readonly submissionMode: SubmissionMode;
-    readonly reviewId?: string;
     readonly provenUnsent: boolean;
     readonly operatorResolved?: true;
-    readonly signature?: string;
-    readonly verified?: true;
-    readonly txnHash?: string;
     readonly error?: WalletErrorCode;
 }
+```
+
+### `OperationState`
+
+Fields an operation's `status` guarantees. Narrowing on `status` narrows these: a `quoted`
+operation always has its `quote` and the `reviewId` that `execute` requires; a submitted one
+(`submitting`, `pending`, `executed`) always has its `quote`; a `signed` one always has its
+verified `signature`. `reviewId` binds the reviewed terms; `txnHash` is the chain transaction
+reference (a Solana signature or a Tron transaction ID on those chains), which can arrive after
+`executed`.
+
+```typescript
+export type OperationState<TQuote> = {
+    readonly status: "preparing";
+    readonly quote?: undefined;
+    readonly reviewId?: undefined;
+    readonly txnHash?: undefined;
+    readonly signature?: undefined;
+    readonly verified?: undefined;
+} | {
+    readonly status: "quoted";
+    readonly quote: TQuote;
+    readonly reviewId: string;
+    readonly txnHash?: undefined;
+    readonly signature?: undefined;
+    readonly verified?: undefined;
+} | {
+    readonly status: "submitting" | "pending" | "executed";
+    readonly quote: TQuote;
+    readonly reviewId?: string;
+    readonly txnHash?: string;
+    readonly signature?: undefined;
+    readonly verified?: undefined;
+} | {
+    readonly status: "unknown" | "failed" | "expired" | "cancelled";
+    readonly quote?: TQuote;
+    readonly reviewId?: string;
+    readonly txnHash?: string;
+    readonly signature?: undefined;
+    readonly verified?: undefined;
+} | {
+    readonly status: "signed";
+    readonly signature: string;
+    readonly verified: true;
+    readonly quote?: undefined;
+    readonly reviewId?: undefined;
+    readonly txnHash?: undefined;
+};
 ```
 
 ### `OperationStatus`
 
 ```typescript
-export type OperationStatus = "preparing" | "quoted" | "submitting" | "pending" | "executed" | "failed" | "unknown" | "signed" | "expired";
+export type OperationStatus = "preparing" | "quoted" | "submitting" | "pending" | "executed" | "failed" | "unknown" | "signed" | "expired" | "cancelled";
 ```
 
 ### `SubmissionMode`
@@ -1153,33 +1198,48 @@ export interface WaitForOperationOptions {
 
 ### `WaitResult`
 
-Outcome of `waitForOperation`. A finished operation reports its terminal status as the outcome:
-only `executed` means WaaS executed the transaction, while `failed` and `expired` mean it did not
-(check `operation.provenUnsent` before preparing a replacement), and `signed` ends a signing
-operation. `reconciliation-required`, `timed-out` and `cancelled` mean the wait ended first.
+Outcome of `waitForOperation`. A finished operation reports its terminal status as the outcome,
+and `operation` is narrowed to that status: only `executed` means WaaS executed the
+transaction (its `txnHash` can still be missing; refresh to obtain it), while `failed`,
+`expired` and `cancelled` mean it did not (check `operation.provenUnsent` before preparing a
+replacement), and `signed` ends a signing operation. `reconciliation-required` needs an
+operator. `timed-out` and `aborted` mean the wait itself ended first; `operation` is the last
+view read, absent if even the first read did not finish in time.
 
 ```typescript
 export type WaitResult<TOperation extends WalletOperation> = {
     readonly outcome: "executed";
-    readonly operation: TOperation;
+    readonly operation: TOperation & {
+        readonly status: "executed";
+    };
 } | {
     readonly outcome: "failed";
-    readonly operation: TOperation;
+    readonly operation: TOperation & {
+        readonly status: "failed";
+    };
 } | {
     readonly outcome: "expired";
-    readonly operation: TOperation;
+    readonly operation: TOperation & {
+        readonly status: "expired";
+    };
 } | {
     readonly outcome: "signed";
-    readonly operation: TOperation;
-} | {
-    readonly outcome: "reconciliation-required";
-    readonly operation: TOperation;
-} | {
-    readonly outcome: "timed-out";
-    readonly operation: TOperation;
+    readonly operation: TOperation & {
+        readonly status: "signed";
+    };
 } | {
     readonly outcome: "cancelled";
-    readonly operation: TOperation;
+    readonly operation: TOperation & {
+        readonly status: "cancelled";
+    };
+} | {
+    readonly outcome: "reconciliation-required";
+    readonly operation: TOperation & {
+        readonly status: "unknown";
+    };
+} | {
+    readonly outcome: "timed-out" | "aborted";
+    readonly operation?: TOperation;
 };
 ```
 
@@ -1221,10 +1281,11 @@ export interface OperationGuidance {
 
 ### `OperationNextAction`
 
-Derived next-action classification returned by `describeOperation`.
+Next safe action from `describeOperation`. Only `safe-to-reprepare` allows a new idempotency
+key for the same payment; `resume-original` means repeat the original call with the same key.
 
 ```typescript
-export type OperationNextAction = "await-review" | "poll-original" | "reconcile-original" | "safe-to-reprepare" | "done";
+export type OperationNextAction = "await-review" | "resume-original" | "poll-original" | "reconcile-original" | "safe-to-reprepare" | "done";
 ```
 
 ## Indexer (unattested)
@@ -1392,7 +1453,7 @@ export declare function isUpstreamError(error: unknown): error is UpstreamError;
 Closed union of safe, machine-readable SDK error codes.
 
 ```typescript
-export type WalletErrorCode = "APPROVAL_REQUIRED" | "ATTESTATION_FAILED" | "CHAIN_READ_FAILED" | "CONFIGURATION" | "CREATION_UNCERTAIN" | "DEBIT_PENDING" | "EXECUTE_REFUSED" | "FEE_ABOVE_QUOTE" | "FEE_LIMIT_EXCEEDED" | "FUNDING_FAILED" | "FUNDING_RECEIPT_UNVERIFIED" | "FUNDING_REVERTED" | "FUNDING_UNKNOWN" | "IDEMPOTENCY_CONFLICT" | "IDENTITY_MISMATCH" | "INDEXER_UNAVAILABLE" | "INSUFFICIENT_BALANCE" | "INTENT_ALREADY_TRACKED" | "INTENT_NOT_FUNDABLE" | "INVALID_ADDRESS" | "INVALID_AMOUNT" | "INVALID_CALL" | "INVALID_FAMILY" | "INVALID_FEE" | "INVALID_IDEMPOTENCY_KEY" | "INVALID_IDENTITY" | "INVALID_INPUT" | "INVALID_JSON" | "INVALID_MESSAGE" | "INVALID_METHOD" | "INVALID_PAGE" | "INVALID_RECOVERY" | "INVALID_RECOVERY_TRANSACTION" | "INVALID_RESPONSE" | "INVALID_STATE" | "INVALID_SWAP" | "INVALID_SWAP_QUOTE" | "INVALID_TRANSACTION" | "INVALID_TRANSFER" | "INVALID_TYPED_DATA" | "NO_CREDENTIAL" | "NO_RECOVERABLE_BALANCE" | "NOT_FOUND" | "PREPARATION_FAILED" | "QUOTE_EXPIRED" | "RECONCILIATION_REQUIRED" | "RECOVERY_CHANGED" | "RECOVERY_EVIDENCE_PENDING" | "RECOVERY_EXPIRED" | "RECOVERY_FAILED" | "RECOVERY_LIMIT" | "RECOVERY_NOT_READY" | "RECOVERY_PENDING" | "REFUND_REQUIRES_REVIEW" | "RESPONSE_TOO_LARGE" | "RPC_CONFIGURATION" | "SETTLEMENT_REQUIRES_REVIEW" | "SIGNATURE_INVALID" | "SIGNING_FAILED" | "SPONSORSHIP_REQUIRED" | "STALE_QUOTE" | "STALE_RECOVERY" | "STALE_REVIEW" | "STORAGE_INTEGRITY" | "SUBMISSION_UNCERTAIN" | "SWAP_ENVIRONMENT_CHANGED" | "SWAP_UNAVAILABLE" | "SWAPS_COORDINATION_REQUIRED" | "SWAPS_DISABLED" | "TRAILS_ABORTED" | "TRAILS_ERROR" | "TRAILS_TIMEOUT" | "TRAILS_UNAVAILABLE" | "UNSUPPORTED_CHAIN" | "UNSUPPORTED_NETWORK" | "UNSUPPORTED_PROTOCOL" | "UPSTREAM_ERROR" | "UPSTREAM_REDIRECT" | "UPSTREAM_UNAVAILABLE" | "WALLET_BUSY" | "WALLET_CLOSED" | "WALLET_DISABLED" | "WALLET_MISMATCH" | "WALLET_NOT_INITIALIZED" | "WALLET_PENDING";
+export type WalletErrorCode = "APPROVAL_REQUIRED" | "ATTESTATION_FAILED" | "CHAIN_READ_FAILED" | "CONFIGURATION" | "CREATION_UNCERTAIN" | "DEBIT_PENDING" | "EXECUTE_REFUSED" | "FEE_ABOVE_QUOTE" | "FEE_LIMIT_EXCEEDED" | "FUNDING_FAILED" | "FUNDING_RECEIPT_UNVERIFIED" | "FUNDING_REVERTED" | "FUNDING_UNKNOWN" | "IDEMPOTENCY_CONFLICT" | "IDENTITY_MISMATCH" | "INDEXER_UNAVAILABLE" | "INSUFFICIENT_BALANCE" | "INTENT_ALREADY_TRACKED" | "INTENT_NOT_FUNDABLE" | "INVALID_ADDRESS" | "INVALID_AMOUNT" | "INVALID_CALL" | "INVALID_FAMILY" | "INVALID_FEE" | "INVALID_IDEMPOTENCY_KEY" | "INVALID_IDENTITY" | "INVALID_INPUT" | "INVALID_JSON" | "INVALID_MESSAGE" | "INVALID_METHOD" | "INVALID_PAGE" | "INVALID_RECOVERY" | "INVALID_RECOVERY_TRANSACTION" | "INVALID_RESPONSE" | "INVALID_STATE" | "INVALID_SWAP" | "INVALID_SWAP_QUOTE" | "INVALID_TRANSFER" | "INVALID_TYPED_DATA" | "NO_CREDENTIAL" | "NO_RECOVERABLE_BALANCE" | "NOT_FOUND" | "OPERATION_CANCELLED" | "PREPARATION_FAILED" | "QUOTE_EXPIRED" | "RECONCILIATION_REQUIRED" | "RECOVERY_CHANGED" | "RECOVERY_EVIDENCE_PENDING" | "RECOVERY_EXPIRED" | "RECOVERY_FAILED" | "RECOVERY_LIMIT" | "RECOVERY_NOT_READY" | "RECOVERY_PENDING" | "REFUND_REQUIRES_REVIEW" | "RESPONSE_TOO_LARGE" | "RPC_CONFIGURATION" | "SETTLEMENT_REQUIRES_REVIEW" | "SIGNATURE_INVALID" | "SIGNING_FAILED" | "SPONSORSHIP_REQUIRED" | "STALE_QUOTE" | "STALE_RECOVERY" | "STALE_REVIEW" | "STORAGE_INTEGRITY" | "SUBMISSION_UNCERTAIN" | "SWAP_ENVIRONMENT_CHANGED" | "SWAP_UNAVAILABLE" | "SWAPS_COORDINATION_REQUIRED" | "SWAPS_DISABLED" | "TRAILS_ABORTED" | "TRAILS_ERROR" | "TRAILS_TIMEOUT" | "TRAILS_UNAVAILABLE" | "TYPED_DATA_REFUSED" | "UNSUPPORTED_CHAIN" | "UNSUPPORTED_NETWORK" | "UNSUPPORTED_PROTOCOL" | "UPSTREAM_ERROR" | "UPSTREAM_REDIRECT" | "UPSTREAM_UNAVAILABLE" | "WALLET_BUSY" | "WALLET_CLOSED" | "WALLET_DISABLED" | "WALLET_MISMATCH" | "WALLET_NOT_INITIALIZED" | "WALLET_PENDING";
 ```
 
 ### `isWalletErrorCode`
