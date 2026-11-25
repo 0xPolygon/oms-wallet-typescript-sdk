@@ -213,7 +213,7 @@ export async function swapHarness(native = false) {
             expiresAt: Math.floor(Date.now() / 1000) + 300
           })
         },
-        store: { encryptedStore: walletStore },
+        storage: { encryptedStore: walletStore },
         executor,
         approval: 'allow-immediate',
         swaps: trailsInternal(

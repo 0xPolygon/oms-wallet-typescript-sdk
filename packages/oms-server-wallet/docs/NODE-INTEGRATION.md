@@ -199,7 +199,7 @@ const wallet = wallets.forSubject('customer:12345');
 
 // 1. Create or restore EVM (and optionally Solana/Tron)
 const snapshot = await wallet.createOrRestore({ families: ['evm'] });
-console.log('EVM address:', snapshot.wallet?.address);
+console.log('EVM address:', snapshot.wallets.evm?.address);
 
 // 2. Plain-message & EIP-712 signing (verified with WaaS)
 const signed = await wallet.evm.signMessage({
@@ -214,7 +214,7 @@ const transferId = 'demo-transfer-0001'; // Persist before calling the SDK
 const prepared = await wallet.evm.prepareTransfer({
   idempotencyKey: transferId,
   chainId: 137,
-  to: snapshot.wallet!.address,
+  to: snapshot.wallets.evm!.address,
   asset: 'native',
   amount: parseAmount('0.001', 18)
 });

@@ -285,7 +285,7 @@ export function sdkHarness<TApproval extends ApprovalMode = 'allow-immediate'>(
             expiresAt: Math.floor(Date.now() / 1000) + 300
           })
         },
-        store: { encryptedStore: store },
+        storage: { encryptedStore: store },
         executor,
         approval: (overrideApproval ?? approval) as M
       },

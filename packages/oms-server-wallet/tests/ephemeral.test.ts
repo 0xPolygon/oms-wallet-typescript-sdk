@@ -99,7 +99,9 @@ describe('createEphemeralServerWallet', () => {
   it('refuses typed data that could authorize the wallet itself', async () => {
     const remote = await provisioned();
     const wallet = ephemeral(remote);
-    const { wallet: evm } = await wallet.restore({ families: ['evm'] });
+    const {
+      wallets: { evm }
+    } = await wallet.restore({ families: ['evm'] });
     const signed = calls(remote, 'SignTypedData').length;
     await expect(
       wallet.evm.signTypedData({ chainId: 137 as const, typedData: evmTypedData(evm!.address) })
@@ -130,7 +132,7 @@ describe('createEphemeralServerWallet', () => {
       handles.map((handle) => handle.restore({ families: ['evm'] }))
     );
     expect(new Set(snapshots.map((snapshot) => snapshot.credentialId)).size).toBe(3);
-    expect(new Set(snapshots.map((snapshot) => snapshot.wallet?.address)).size).toBe(1);
+    expect(new Set(snapshots.map((snapshot) => snapshot.wallets.evm?.address)).size).toBe(1);
     remote.maxInFlight = 0;
     const results = await Promise.all(
       handles.flatMap((handle) =>

@@ -114,7 +114,7 @@ describe('EVM contract calls', () => {
     for (const [input, code] of cases)
       await expect(h.client.evm.prepareCall(input as EvmCallInput)).rejects.toMatchObject({ code });
     await h.client.createOrRestore();
-    const self = (await h.client.inspect()).wallet!.address;
+    const self = (await h.client.inspect()).wallets.evm!.address;
     await expect(
       h.client.evm.prepareCall({
         idempotencyKey: 'self-call',

@@ -171,7 +171,7 @@ const serviceSwaps = trails({
 const wTwoPhase = createServerWallet({
   publishableKey: key,
   oidc,
-  store: { adapter: state, encryptionKey },
+  storage: { adapter: state, encryptionKey },
   executor: createSingleProcessExecutor()
 });
 // @ts-expect-error two-phase mode omits sendTransfer
@@ -183,7 +183,7 @@ void wTwoPhase.swaps;
 const wTwoPhaseSwaps = createServerWallet({
   publishableKey: key,
   oidc,
-  store: { adapter: state, encryptionKey },
+  storage: { adapter: state, encryptionKey },
   executor: createSingleProcessExecutor(),
   swaps: walletSwaps
 });
@@ -195,7 +195,7 @@ void wTwoPhaseSwaps.evm.sendTransfer;
 const wImmediate = createServerWallet({
   publishableKey: key,
   oidc,
-  store: { adapter: state, encryptionKey },
+  storage: { adapter: state, encryptionKey },
   executor: createSingleProcessExecutor(),
   approval: 'allow-immediate'
 });
@@ -218,15 +218,15 @@ void wSvc.swaps.list;
 
 // Scope mismatch is a compile-time error:
 // @ts-expect-error service-scoped trails cannot be passed to createServerWallet
-createServerWallet({ publishableKey: key, oidc, store: { adapter: state, encryptionKey }, executor: createSingleProcessExecutor(), swaps: serviceSwaps });
+createServerWallet({ publishableKey: key, oidc, storage: { adapter: state, encryptionKey }, executor: createSingleProcessExecutor(), swaps: serviceSwaps });
 // @ts-expect-error wallet-scoped trails cannot be passed to createServerWalletService
 createServerWalletService({ publishableKey: key, oidc: { issuer: oidc.issuer, audience: oidc.audience, getIdToken: oidc.getIdToken }, storage: { adapter: nsState, encryptionKey }, executor: createSingleProcessExecutorPool(), swaps: walletSwaps });
 
 // Callers cannot claim capabilities via options annotations or generic arguments without enabling them:
 // @ts-expect-error cannot claim allow-immediate without passing approval: 'allow-immediate'
-createServerWallet<'allow-immediate'>({ publishableKey: key, oidc, store: { adapter: state, encryptionKey }, executor: createSingleProcessExecutor() });
+createServerWallet<'allow-immediate'>({ publishableKey: key, oidc, storage: { adapter: state, encryptionKey }, executor: createSingleProcessExecutor() });
 // @ts-expect-error cannot claim swaps facet without passing swaps: trails(...)
-createServerWallet<typeof walletSwaps>({ publishableKey: key, oidc, store: { adapter: state, encryptionKey }, executor: createSingleProcessExecutor() });
+createServerWallet<typeof walletSwaps>({ publishableKey: key, oidc, storage: { adapter: state, encryptionKey }, executor: createSingleProcessExecutor() });
 // @ts-expect-error cannot claim allow-immediate on service without passing approval: 'allow-immediate'
 createServerWalletService<'allow-immediate'>({ publishableKey: key, oidc: { issuer: oidc.issuer, audience: oidc.audience, getIdToken: oidc.getIdToken }, storage: { adapter: nsState, encryptionKey }, executor: createSingleProcessExecutorPool() });
 // @ts-expect-error cannot claim swaps facet on service without passing swaps: trails(...)
@@ -271,7 +271,7 @@ void eph.evm.prepareTransfer;
 // @ts-expect-error ephemeral handles have no disable()
 void eph.disable;
 // @ts-expect-error ephemeral handles take no store
-createEphemeralServerWallet({ publishableKey: key, oidc, store: { adapter: state, encryptionKey } });
+createEphemeralServerWallet({ publishableKey: key, oidc, storage: { adapter: state, encryptionKey } });
 void asDurable;
 
 // Declaration emit: inferred public types must be nameable from the package entry points (TS4023).
@@ -349,7 +349,7 @@ const swaps = trails({
 const wallet = createServerWallet({
   publishableKey: key,
   oidc: { issuer: 'https://issuer.example', audience: 'oms', subject: 'smoke-1', getIdToken: async () => ({ token: 't', expiresAt: 1 }) },
-  store: { adapter: mem(), encryptionKey },
+  storage: { adapter: mem(), encryptionKey },
   executor: createSingleProcessExecutor(),
   swaps
 });
@@ -361,7 +361,7 @@ assert.throws(
   () => createServerWallet({
     publishableKey: key,
     oidc: { issuer: 'https://issuer.example', audience: 'oms', subject: 'smoke-2', getIdToken: async () => ({ token: 't', expiresAt: 1 }) },
-    store: { adapter: mem(), encryptionKey },
+    storage: { adapter: mem(), encryptionKey },
     executor: createSingleProcessExecutor(),
     swaps: { ...swaps }
   }),

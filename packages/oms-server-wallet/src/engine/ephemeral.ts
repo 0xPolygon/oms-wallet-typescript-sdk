@@ -50,7 +50,6 @@ export class EphemeralEngine {
 
   private snapshot(state: State): EphemeralWalletSnapshot {
     return {
-      wallet: state.wallets.evm,
       wallets: { ...state.wallets },
       expiresAt: state.credential?.expiresAt,
       credentialId: state.credential?.credentialId

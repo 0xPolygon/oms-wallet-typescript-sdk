@@ -25,7 +25,7 @@ describe('strict wallet state validation', () => {
       return origWrite(key, value);
     };
     const snap = await h.client.inspect();
-    expect(snap.wallet?.id).toBe('wallet-1');
+    expect(snap.wallets.evm?.id).toBe('wallet-1');
     const op = await h.client.evm.getOperation('readonly-sign-1');
     expect(op?.status).toBe('signed');
     expect(writes).toBe(0);
@@ -93,7 +93,7 @@ describe('one wallet per network family', () => {
     const created = await h.client.createOrRestore({ families: ['evm', 'solana', 'tron'] });
     expect(created.wallets.solana?.address).toBe(SOLANA_ADDRESS);
     expect(created.wallets.tron?.address).toBe(TRON_ADDRESS);
-    expect(created.wallet).toEqual(created.wallets.evm);
+    expect(created.wallets.evm).toEqual(created.wallets.evm);
     expect(calls(h.remote, 'CreateWallet').map((call) => call.body.networkFamily)).toEqual([
       'evm',
       'solana',
@@ -263,7 +263,7 @@ describe('one wallet per network family', () => {
   it('keeps every family across rotation and disable/enable', async () => {
     const h = sdkHarness();
     const before = await h.client.createOrRestore({ families: ['solana', 'tron'] });
-    expect(before.wallet).toBeUndefined();
+    expect(before.wallets.evm).toBeUndefined();
     const rotated = await h.client.rotateCredential();
     expect(rotated.wallets).toEqual(before.wallets);
     expect(rotated.credentialId).not.toBe(before.credentialId);

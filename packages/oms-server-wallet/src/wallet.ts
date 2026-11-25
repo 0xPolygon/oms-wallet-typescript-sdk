@@ -50,7 +50,7 @@ import type {
   WaitResult,
   WalletIndexerFacet,
   WalletOperation,
-  WalletStoreOption
+  WalletStorageOption
 } from './types.js';
 
 import { WalletEngine } from './engine.js';
@@ -128,11 +128,11 @@ function validateApproval(approval: unknown): ApprovalMode {
   return approval;
 }
 
-function resolveWalletStore(store: WalletStoreOption, namespace: string) {
+function resolveWalletStore(store: WalletStorageOption, namespace: string) {
   if (!store || typeof store !== 'object')
     throw new WalletError(
       'CONFIGURATION',
-      'Configure store as { adapter, encryptionKey } or { encryptedStore }.',
+      'Configure storage as { adapter, encryptionKey } or { encryptedStore }.',
       503
     );
   const hasAdapter = 'adapter' in store && store.adapter !== undefined;
@@ -511,7 +511,7 @@ function instantiateServerWallet(
     audience: options.oidc.audience,
     subject: options.oidc.subject
   });
-  const store = resolveWalletStore(options.store, namespace);
+  const store = resolveWalletStore(options.storage, namespace);
   const baseFetch = options.fetch ?? fetch;
   const fetcher = origin ? omsFetch(origin, baseFetch) : baseFetch;
   const transport =

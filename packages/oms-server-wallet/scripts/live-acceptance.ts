@@ -159,7 +159,7 @@ const open = (identity: string, prefix = '') =>
       audience,
       getIdToken: () => idToken(identity)
     },
-    store: { adapter: disk(prefix), encryptionKey: env('ENCRYPTION_KEY') },
+    storage: { adapter: disk(prefix), encryptionKey: env('ENCRYPTION_KEY') },
     executor: createSingleProcessExecutor(),
     attestation: { trustedPcr0s: pcr0s, allowDebugEnclave },
     approval: 'allow-immediate',
@@ -216,7 +216,7 @@ await check('create and restore one wallet per family', async () => {
   const again = await wallet.createOrRestore({ families: ['evm', 'solana', 'tron'] });
   if (JSON.stringify(again.wallets) !== JSON.stringify(snapshot.wallets))
     throw new Error('Restore returned different wallets');
-  return { evm: snapshot.wallet?.address, solana, tron };
+  return { evm: snapshot.wallets.evm?.address, solana, tron };
 });
 
 await check(
@@ -234,7 +234,7 @@ await check(
   }
 );
 
-const evm = snapshot.wallet!.address;
+const evm = snapshot.wallets.evm!.address;
 await check('EVM message signing on Polygon, verified by WaaS', async () => {
   const op = await wallet.evm.signMessage({
     idempotencyKey: id('live-evm-sign'),
@@ -323,11 +323,11 @@ const lifecycleWallet = lifecycleWallets.evm!;
 await check('credential rotation keeps the wallet and replaces the credential', async () => {
   const before = (await lifecycle.inspect()).credentialId;
   const rotated = await lifecycle.rotateCredential();
-  if (rotated.wallet?.address !== lifecycleWallet.address)
+  if (rotated.wallets.evm?.address !== lifecycleWallet.address)
     throw new Error('Rotation changed the wallet');
   if (!rotated.credentialId || rotated.credentialId === before)
     throw new Error('Rotation kept the credential');
-  return { wallet: rotated.wallet?.address };
+  return { wallet: rotated.wallets.evm?.address };
 });
 await check('a disabled wallet refuses to sign; re-enabling restores the same wallet', async () => {
   await lifecycle.disable();
@@ -337,7 +337,7 @@ await check('a disabled wallet refuses to sign; re-enabling restores the same wa
   if (!(refused instanceof WalletError) || refused.code !== 'WALLET_DISABLED')
     throw new Error('A disabled wallet signed');
   const enabled = await lifecycle.enable();
-  if (enabled.wallet?.address !== lifecycleWallet.address)
+  if (enabled.wallets.evm?.address !== lifecycleWallet.address)
     throw new Error('Re-enabling returned another wallet');
   const op = await lifecycle.evm.signMessage({
     idempotencyKey: id('live-enabled-sign'),
@@ -345,7 +345,7 @@ await check('a disabled wallet refuses to sign; re-enabling restores the same wa
     message: 'enabled'
   });
   if (op.status !== 'signed') throw new Error(`Signing after re-enabling ended ${op.status}`);
-  return { wallet: enabled.wallet?.address };
+  return { wallet: enabled.wallets.evm?.address };
 });
 
 const amoy = 80002;

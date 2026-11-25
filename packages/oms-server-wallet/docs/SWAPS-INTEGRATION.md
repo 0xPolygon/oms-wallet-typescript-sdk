@@ -23,7 +23,7 @@ const wallet = createServerWallet({
   publishableKey: env.OMS_PUBLISHABLE_KEY,
   origin: env.APP_ORIGIN,
   oidc: { issuer, audience, subject, getIdToken },
-  store: { adapter: stateStore, encryptionKey: env.ENCRYPTION_KEY },
+  storage: { adapter: stateStore, encryptionKey: env.ENCRYPTION_KEY },
   executor: createSingleProcessExecutor(),
   swaps: trails({
     apiKey: env.TRAILS_API_KEY,

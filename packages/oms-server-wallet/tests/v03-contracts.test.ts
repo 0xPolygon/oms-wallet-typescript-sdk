@@ -289,7 +289,7 @@ describe('swaps: trails(...) binding, scope isolation, and coordination marker',
         subject: 'user-1',
         getIdToken: async () => ({ token: 't', expiresAt: 1 })
       },
-      store: { adapter: new MemoryStore(), encryptionKey },
+      storage: { adapter: new MemoryStore(), encryptionKey },
       executor: createSingleProcessExecutor()
     };
 
@@ -340,7 +340,7 @@ describe('swaps: trails(...) binding, scope isolation, and coordination marker',
           audience: 'oms-server-wallet',
           getIdToken: async () => ({ token: 't', expiresAt: Math.floor(Date.now() / 1000) + 300 })
         },
-        store: { encryptedStore: h.waas.store },
+        storage: { encryptedStore: h.waas.store },
         executor: h.waas.executor
       },
       { transport: h.waas.remote }
@@ -1032,7 +1032,7 @@ describe('observation, waitForOperation, describeOperation, indexer facet, and e
           audience: 'oms',
           getIdToken: async () => ({ token: 't', expiresAt: 1000 })
         },
-        store: { encryptedStore: store },
+        storage: { encryptedStore: store },
         executor: createSingleProcessExecutor()
       },
       { transport: remote, indexer: new IndexerClient(TEST_PUBLISHABLE_KEY, fetcher) }
@@ -1088,14 +1088,14 @@ describe('observation, waitForOperation, describeOperation, indexer facet, and e
               expiresAt: Math.floor(Date.now() / 1000) + 300
             })
           },
-          store: { adapter: raw, encryptionKey },
+          storage: { adapter: raw, encryptionKey },
           executor: createSingleProcessExecutor()
         },
         { transport: remote }
       );
     const created = await make('https://app-a.example').createOrRestore();
     const restored = await make('https://app-b.example').inspect();
-    expect(restored.wallet).toEqual(created.wallet);
+    expect(restored.wallets.evm).toEqual(created.wallets.evm);
   });
 });
 
@@ -1138,7 +1138,7 @@ describe('review-audit boundary regressions', () => {
             expiresAt: Math.floor(Date.now() / 1000) + 300
           })
         },
-        store: { encryptedStore: storeB },
+        storage: { encryptedStore: storeB },
         executor: createSingleProcessExecutor(),
         swaps: trailsInternal(
           {
@@ -1256,7 +1256,7 @@ describe('review-audit boundary regressions', () => {
           audience: 'oms-server-wallet',
           getIdToken: async () => ({ token: 'tok', expiresAt: Math.floor(Date.now() / 1000) + 300 })
         },
-        store: { encryptedStore: h.waas.store },
+        storage: { encryptedStore: h.waas.store },
         executor: h.waas.executor,
         swaps: swapsCfg
       },
@@ -1338,7 +1338,7 @@ describe('deep systems hardening', () => {
           audience: 'oms-server-wallet',
           getIdToken: async () => ({ token: 'tok', expiresAt: Math.floor(Date.now() / 1000) + 300 })
         },
-        store: { encryptedStore: h.waas.store },
+        storage: { encryptedStore: h.waas.store },
         executor: h.waas.executor,
         swaps: trailsInternal(
           {
@@ -1489,7 +1489,7 @@ describe('deep systems hardening', () => {
             };
           }
         },
-        store: { encryptedStore: store },
+        storage: { encryptedStore: store },
         executor: createSingleProcessExecutor()
       },
       { transport: remote }
@@ -1533,7 +1533,7 @@ describe('deep systems hardening', () => {
   it('rejects public evm.signTypedData for Sequence Wallet Calls payloads and self verifyingContract', async () => {
     const h = sdkHarness();
     await h.client.createOrRestore();
-    const selfAddress = (await h.client.inspect()).wallet!.address;
+    const selfAddress = (await h.client.inspect()).wallets.evm!.address;
     const { typedData } = recoveryFixture();
     // Sequence Wallet Calls payload must be refused on public signTypedData.
     await expect(
@@ -1709,7 +1709,7 @@ describe('deep systems hardening', () => {
             return { token: `tok-${crypto.randomUUID()}`, expiresAt: Math.floor(now / 1000) + 300 };
           }
         },
-        store: { encryptedStore: store },
+        storage: { encryptedStore: store },
         executor: createSingleProcessExecutor()
       },
       { transport: remote, clock: () => now }
@@ -1781,7 +1781,7 @@ describe('deep systems hardening', () => {
             audience: 'oms-server-wallet',
             getIdToken: async () => ({ token: 't', expiresAt: 1 })
           },
-          store: { encryptedStore: store },
+          storage: { encryptedStore: store },
           executor: createSingleProcessExecutor()
         },
         { transport: new FakeWaas() }
@@ -1797,7 +1797,7 @@ describe('deep systems hardening', () => {
           audience: 'oms-server-wallet',
           getIdToken: async () => ({ token: '', expiresAt: Number.NaN })
         },
-        store: { encryptedStore: store },
+        storage: { encryptedStore: store },
         executor: createSingleProcessExecutor()
       },
       { transport: new FakeWaas() }

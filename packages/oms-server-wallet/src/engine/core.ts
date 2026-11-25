@@ -238,7 +238,6 @@ export class EngineCore {
 
   private snapshot(state: State): WalletSnapshot {
     return {
-      wallet: state.wallets.evm,
       wallets: { ...state.wallets },
       disabled: state.disabled,
       expiresAt: state.credential?.expiresAt,

@@ -40,7 +40,7 @@ const wallet = createServerWallet({
     // Mint a new ID token on every call: WaaS rejects a token that was already used to sign in.
     getIdToken: () => issueIdToken('customer:12345') // { token, expiresAt (Unix seconds) }
   },
-  store: {
+  storage: {
     // SDK encrypts state with AES-256-GCM bound to the canonical wallet namespace.
     adapter: persistence,
     encryptionKey: process.env.ENCRYPTION_KEY! // 32 random bytes, base64-encoded
@@ -233,7 +233,7 @@ const wallet = createServerWallet({
   publishableKey: process.env.OMS_PUBLISHABLE_KEY!,
   origin: process.env.APP_ORIGIN!,
   oidc: { issuer, audience, subject, getIdToken },
-  store: { adapter: persistence, encryptionKey: process.env.ENCRYPTION_KEY! },
+  storage: { adapter: persistence, encryptionKey: process.env.ENCRYPTION_KEY! },
   executor: createSingleProcessExecutor(),
   swaps: trails({
     apiKey: process.env.TRAILS_API_KEY!,

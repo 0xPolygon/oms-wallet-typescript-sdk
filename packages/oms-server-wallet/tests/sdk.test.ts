@@ -38,7 +38,7 @@ describe('server wallet lifecycle and transactions', () => {
     state.credential.expiresAt = new Date(0).toISOString();
     await h.store.write('wallet', JSON.stringify(state));
     const restored = await h.create().createOrRestore();
-    expect(restored.wallet).toEqual(first.wallet);
+    expect(restored.wallets.evm).toEqual(first.wallets.evm);
     expect(restored.credentialId).not.toBe(first.credentialId);
     expect(h.remote.calls.filter((c) => c.method === 'CreateWallet')).toHaveLength(1);
     expect(h.remote.calls.some((c) => c.method === 'UseWallet')).toBe(true);
@@ -72,7 +72,7 @@ describe('server wallet lifecycle and transactions', () => {
       ).verified
     ).toBe(true);
     const restored = await h.client.inspect();
-    expect(restored.wallet).toEqual(initial.wallet);
+    expect(restored.wallets.evm).toEqual(initial.wallets.evm);
     expect(restored.credentialId).not.toBe(initial.credentialId);
     h.remote.revoked.add(restored.credentialId!);
     expect((await h.client.disable()).disabled).toBe(true);
@@ -104,7 +104,7 @@ describe('server wallet lifecycle and transactions', () => {
     const h = sdkHarness();
     h.remote.failCreate = true;
     await expect(h.client.createOrRestore()).rejects.toThrow('Lost create');
-    expect((await h.create().createOrRestore()).wallet?.id).toBe('wallet-1');
+    expect((await h.create().createOrRestore()).wallets.evm?.id).toBe('wallet-1');
     expect(h.remote.calls.filter((c) => c.method === 'CreateWallet')).toHaveLength(1);
   });
   it('continues discovery when a create is uncertain instead of creating duplicates', async () => {
@@ -117,7 +117,7 @@ describe('server wallet lifecycle and transactions', () => {
       code: 'CREATION_UNCERTAIN'
     });
     h.remote.wallet = wallet;
-    expect((await h.create().createOrRestore()).wallet?.id).toBe('wallet-1');
+    expect((await h.create().createOrRestore()).wallets.evm?.id).toBe('wallet-1');
   });
   it('serializes concurrent requests from separate SDK instances sharing an executor', async () => {
     const h = sdkHarness();
@@ -231,7 +231,7 @@ describe('server wallet lifecycle and transactions', () => {
     h.remote.failRevoke = false;
     const enabled = await h.create().enable();
     expect(h.remote.revoked.has(first.credentialId!)).toBe(true);
-    expect(enabled.wallet).toEqual(first.wallet);
+    expect(enabled.wallets.evm).toEqual(first.wallets.evm);
     expect(enabled.disabled).toBe(false);
   });
   it('rotates by self-revoking the old key and authenticating a fresh credential', async () => {
@@ -240,7 +240,7 @@ describe('server wallet lifecycle and transactions', () => {
     const after = await h.client.rotateCredential();
     expect(h.remote.revoked.has(before.credentialId!)).toBe(true);
     expect(after.credentialId).not.toBe(before.credentialId);
-    expect(after.wallet).toEqual(before.wallet);
+    expect(after.wallets.evm).toEqual(before.wallets.evm);
   });
   it('rejects mismatched authenticated identities', async () => {
     const h = sdkHarness();
@@ -253,7 +253,7 @@ describe('server wallet lifecycle and transactions', () => {
           audience: 'oms-server-wallet',
           getIdToken: async () => ({ token: 'x', expiresAt: 100 })
         },
-        store: { encryptedStore: h.store },
+        storage: { encryptedStore: h.store },
         executor: createSingleProcessExecutor()
       },
       { transport: h.remote }

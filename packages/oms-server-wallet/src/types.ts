@@ -82,7 +82,7 @@ export interface ServiceOidcOptions {
  * namespace) or `{ encryptedStore }` (caller-managed authenticated encryption, isolation, and
  * durability).
  */
-export type WalletStoreOption =
+export type WalletStorageOption =
   | {
       readonly adapter: StateStore;
       readonly encryptionKey: string;
@@ -118,7 +118,7 @@ export interface ServerWalletOptionsBase {
   /** Application Origin allowed by your OMS project (sent as the HTTP `Origin` header). */
   readonly origin?: string;
   readonly oidc: WalletOidcOptions;
-  readonly store: WalletStoreOption;
+  readonly storage: WalletStorageOption;
   /** Required exclusive ownership boundary for this wallet identity. */
   readonly executor: ExclusiveExecutor;
   readonly attestation?: AttestationOptions;
@@ -166,8 +166,6 @@ export type ServerWalletServiceOptions<
 
 /** Public snapshot of a wallet identity's persisted state. */
 export interface WalletSnapshot {
-  /** The EVM wallet, when created or restored. */
-  readonly wallet?: RemoteWallet;
   /** One wallet per network family that has been created or restored. */
   readonly wallets: Readonly<Partial<Record<NetworkFamily, RemoteWallet>>>;
   readonly disabled: boolean;
@@ -790,7 +788,6 @@ export interface EphemeralServerWalletOptions {
 
 /** Wallets and credential held by an ephemeral handle. */
 export interface EphemeralWalletSnapshot {
-  readonly wallet?: RemoteWallet;
   readonly wallets: Readonly<Partial<Record<NetworkFamily, RemoteWallet>>>;
   readonly expiresAt?: string;
   readonly credentialId?: string;

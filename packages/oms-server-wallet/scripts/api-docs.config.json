@@ -48,7 +48,7 @@
         "ExecutorProvider",
         "StateStore",
         "NamespacedStateStore",
-        "WalletStoreOption",
+        "WalletStorageOption",
         "ServiceStorageOption"
       ]
     },

@@ -95,7 +95,7 @@ export type {
   WalletOidcOptions,
   WalletOperation,
   WalletSnapshot,
-  WalletStoreOption
+  WalletStorageOption
 } from './types.js';
 export type { TypedDataDomain, TypedDataField } from './typed-data.js';
 export type { EvmNetwork, SupportedEvmChainId } from './environment.js';
