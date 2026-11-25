@@ -186,7 +186,8 @@ export class IndexerClient {
       throw new WalletError(
         'INDEXER_UNAVAILABLE',
         'Balance service request did not complete.',
-        502
+        502,
+        { cause: error }
       );
     }
     if (!response.ok)
@@ -295,7 +296,8 @@ export class IndexerClient {
       throw new WalletError(
         'INDEXER_UNAVAILABLE',
         'Balance service request did not complete.',
-        502
+        502,
+        { cause: error }
       );
     }
     if (!response.ok)

@@ -23,6 +23,8 @@ try {
 | `UpstreamError` | `UPSTREAM_ERROR` | `upstreamCode` (WaaS error code), `method` (WaaS RPC) |
 | `TrailsError` (`/trails`) | `TRAILS_ERROR` | `method`, `httpStatus`, optional `upstreamCode` |
 
+When the SDK wraps a lower-level failure, such as a network timeout or TLS error, the original error is kept as the standard `cause` property for logging.
+
 `isWalletError` matches all three; `isUpstreamError` matches `UpstreamError` only. `status` is an
 HTTP-style hint: 400 for invalid input, 404 for an unknown ID, 409 for a state conflict, 502 for an
 upstream failure and 503 for configuration.

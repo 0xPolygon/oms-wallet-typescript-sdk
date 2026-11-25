@@ -495,7 +495,7 @@ export class EngineCore {
       );
   }
 
-  private async readOperation(id: string): Promise<StoredOperationRecord | null> {
+  async readOperation(id: string): Promise<StoredOperationRecord | null> {
     const value = await this.config.store.read(`operation:${id}`);
     return value === null ? null : parseStoredOperation(value);
   }
@@ -678,24 +678,29 @@ export class EngineCore {
   }
 
   /** Page through open operations for one family, lazily pruning settled IDs left by a crash. */
+  /**
+   * Page through open operations. `project` returns the public view of a record, or null for a
+   * record another family or an internal flow owns. Runs under the identity lock, so a missing
+   * record (a crash before its first write) and a settled one are both pruned from the open index.
+   */
   async listOpenOperations<T extends WalletOperation>(
     offset: number,
     limit: number,
-    readRecord: (id: string) => Promise<{ readonly status: string; readonly view: T | null } | null>
+    project: (op: StoredOperationRecord) => T | null
   ): Promise<OperationPage<T>> {
     const ids = await this.openOperationIds();
     const operations: T[] = [];
-    const settled: string[] = [];
+    const stale: string[] = [];
     for (const id of ids) {
-      const entry = await readRecord(id);
-      if (!entry) continue;
-      if (!OPEN_STATUSES.has(entry.status)) {
-        settled.push(id);
+      const op = await this.readOperation(id);
+      if (!op || !OPEN_STATUSES.has(op.status)) {
+        stale.push(id);
         continue;
       }
-      if (entry.view) operations.push(entry.view);
+      const view = project(op);
+      if (view) operations.push(view);
     }
-    await this.pruneOpenOperations(settled);
+    await this.pruneOpenOperations(stale);
     return paginate(operations, offset, limit);
   }
 

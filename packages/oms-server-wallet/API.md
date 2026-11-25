@@ -1287,13 +1287,16 @@ export interface ChainBalance {
 
 ### `WalletError`
 
-Structured SDK error exposing a safe code, message, and HTTP-oriented status.
+Structured SDK error exposing a safe code, message, and HTTP-oriented status. When the SDK wraps
+a lower-level failure (network, timeout, TLS), the original error is kept as `cause` for logs.
 
 ```typescript
 export declare class WalletError extends Error {
     readonly code: WalletErrorCode;
     readonly status: number;
-    constructor(code: WalletErrorCode, message: string, status?: number);
+    constructor(code: WalletErrorCode, message: string, status?: number, options?: {
+        readonly cause?: unknown;
+    });
 }
 ```
 

@@ -115,7 +115,7 @@ export class TrailsClient {
         signal: combined
       });
       if (response.status >= 300 && response.status < 400) {
-        await response.body?.cancel();
+        await response.body?.cancel().catch(() => undefined);
         throw new WalletError('UPSTREAM_REDIRECT', 'Trails redirects are not permitted.', 502);
       }
       text = await boundedText(response);
@@ -128,7 +128,8 @@ export class TrailsClient {
             ? 'TRAILS_TIMEOUT'
             : 'TRAILS_UNAVAILABLE',
         'Trails request did not complete. Reconcile mutations before retrying.',
-        502
+        502,
+        { cause: error }
       );
     }
     let result: unknown;

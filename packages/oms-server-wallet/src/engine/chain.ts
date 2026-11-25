@@ -140,10 +140,9 @@ export class ChainEngine {
           const op = await this.core.readChainOperation(id, 'solana');
           return op ? projectSolanaOperation(op) : null;
         });
-      return this.core.listOpenOperations(offset, limit, async (id) => {
-        const op = await this.core.readChainOperation(id, 'solana');
-        return op ? { status: op.status, view: projectSolanaOperation(op) } : null;
-      });
+      return this.core.listOpenOperations(offset, limit, (op) =>
+        'family' in op && op.family === 'solana' ? projectSolanaOperation(op) : null
+      );
     });
   }
 
@@ -299,10 +298,9 @@ export class ChainEngine {
           const op = await this.core.readChainOperation(id, 'tron');
           return op ? projectTronOperation(op) : null;
         });
-      return this.core.listOpenOperations(offset, limit, async (id) => {
-        const op = await this.core.readChainOperation(id, 'tron');
-        return op ? { status: op.status, view: projectTronOperation(op) } : null;
-      });
+      return this.core.listOpenOperations(offset, limit, (op) =>
+        'family' in op && op.family === 'tron' ? projectTronOperation(op) : null
+      );
     });
   }
 

@@ -67,7 +67,7 @@ export class WaasTransport implements RpcTransport {
         signal: AbortSignal.timeout(20_000)
       });
       if (response.status >= 300 && response.status < 400) {
-        await response.body?.cancel();
+        await response.body?.cancel().catch(() => undefined);
         throw new WalletError('UPSTREAM_REDIRECT', 'WaaS redirects are not permitted.', 502);
       }
       responseBody = await boundedText(response);
@@ -76,7 +76,8 @@ export class WaasTransport implements RpcTransport {
       throw new WalletError(
         'UPSTREAM_UNAVAILABLE',
         `WaaS ${method} request did not complete.`,
-        502
+        502,
+        { cause: error }
       );
     }
     try {

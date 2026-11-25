@@ -218,12 +218,9 @@ export class EvmEngine {
           const op = await this.core.readEvmOperation(id);
           return op && !isInternalEvmOperation(op) ? projectEvmOperation(op) : null;
         });
-      return this.core.listOpenOperations(offset, limit, async (id) => {
-        const op = await this.core.readEvmOperation(id);
-        return op
-          ? { status: op.status, view: isInternalEvmOperation(op) ? null : projectEvmOperation(op) }
-          : null;
-      });
+      return this.core.listOpenOperations(offset, limit, (op) =>
+        'family' in op || isInternalEvmOperation(op) ? null : projectEvmOperation(op)
+      );
     });
   }
 

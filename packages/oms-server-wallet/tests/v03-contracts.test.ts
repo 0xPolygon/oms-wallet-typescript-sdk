@@ -651,6 +651,25 @@ describe('observation, waitForOperation, describeOperation, indexer facet, and e
     ).rejects.toMatchObject({ code: 'INVALID_RESPONSE' });
   });
 
+  it('prunes an open-index ID whose record was never written (crash before first write)', async () => {
+    const h = sdkHarness();
+    await h.client.evm.prepareTransfer({
+      idempotencyKey: 'open-kept-1',
+      chainId: 137,
+      to: '0x2222222222222222222222222222222222222222',
+      asset: 'native',
+      amount: '1000'
+    });
+    const index = JSON.parse((await h.store.read('openOperationIndex'))!);
+    await h.store.write(
+      'openOperationIndex',
+      JSON.stringify({ ...index, ids: [...index.ids, 'orphan-crash-1'] })
+    );
+    const page = await h.client.evm.listOperations({ status: 'open' });
+    expect(page.items.map((op) => op.id)).toEqual(['open-kept-1']);
+    expect(JSON.parse((await h.store.read('openOperationIndex'))!).ids).toEqual(['open-kept-1']);
+  });
+
   it('derives safe next actions from operation evidence in describeOperation', () => {
     const base = {
       id: 'op-12345678',

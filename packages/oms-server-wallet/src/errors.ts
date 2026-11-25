@@ -86,14 +86,18 @@ export type WalletErrorCode =
   | 'WALLET_NOT_INITIALIZED'
   | 'WALLET_PENDING';
 
-/** Structured SDK error exposing a safe code, message, and HTTP-oriented status. */
+/**
+ * Structured SDK error exposing a safe code, message, and HTTP-oriented status. When the SDK wraps
+ * a lower-level failure (network, timeout, TLS), the original error is kept as `cause` for logs.
+ */
 export class WalletError extends Error {
   constructor(
     public readonly code: WalletErrorCode,
     message: string,
-    public readonly status = 400
+    public readonly status = 400,
+    options?: { readonly cause?: unknown }
   ) {
-    super(message);
+    super(message, options);
     this.name = 'WalletError';
   }
 }

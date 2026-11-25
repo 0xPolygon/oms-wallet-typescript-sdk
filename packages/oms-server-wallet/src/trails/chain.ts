@@ -98,11 +98,12 @@ export class EvmChainReader implements ChainReader {
       )
         throw new Error();
       return value.result;
-    } catch {
+    } catch (error) {
       throw new WalletError(
         'CHAIN_READ_FAILED',
         'Could not verify current on-chain state. Try again later.',
-        502
+        502,
+        { cause: error }
       );
     }
   }

@@ -139,9 +139,12 @@ describe('WaaS request protocol', () => {
         throw new TypeError('fetch failed');
       }
     );
-    await expect(netClient.request('SignMessage', {})).rejects.toMatchObject({
-      code: 'UPSTREAM_UNAVAILABLE',
-      status: 502
+    const unavailable = await netClient.request('SignMessage', {}).catch((error: unknown) => error);
+    expect(unavailable).toMatchObject({ code: 'UPSTREAM_UNAVAILABLE', status: 502 });
+    // The original network error is kept for logs.
+    expect((unavailable as Error).cause).toMatchObject({
+      name: 'TypeError',
+      message: 'fetch failed'
     });
 
     let cancelled = false;

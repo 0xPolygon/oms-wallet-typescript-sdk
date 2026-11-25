@@ -79,14 +79,14 @@ export class WalletEngine {
       },
       listOpenEvmOperationsLocked: async () => {
         const out: StoredEvmOperation[] = [];
-        const settled: string[] = [];
+        const stale: string[] = [];
         for (const id of await this.core.openOperationIds()) {
-          const op = await this.core.readEvmOperation(id);
-          if (!op) continue;
-          if (OPEN_STATUSES.has(op.status)) out.push(op);
-          else settled.push(id);
+          const op = await this.core.readOperation(id);
+          // A missing record is an orphan from a crash before its first write; prune it too.
+          if (!op || !OPEN_STATUSES.has(op.status)) stale.push(id);
+          else if (!('family' in op)) out.push(op);
         }
-        await this.core.pruneOpenOperations(settled);
+        await this.core.pruneOpenOperations(stale);
         return out;
       },
       refreshEvmOperationLocked: async (id) => {
