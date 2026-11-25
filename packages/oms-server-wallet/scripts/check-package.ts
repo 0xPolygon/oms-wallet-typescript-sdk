@@ -251,6 +251,16 @@ const selector = () => wTwoPhase.evm.prepareCall({ idempotencyKey: 'consumer-hex
 void pay; void misspelled; void wrongArgs; void selector;
 void parseAmount; void describeOperation; void isWalletError; void isUpstreamError; void TrailsError;
 
+// Chain IDs and wait outcomes are checked at compile time.
+// @ts-expect-error unsupported EVM chain ID
+void wTwoPhase.evm.signMessage({ idempotencyKey: 'consumer-chain', chainId: 999999, message: 'hi' });
+const waitOutcome = (result: Awaited<ReturnType<typeof wTwoPhase.evm.waitForOperation>>) => {
+  // @ts-expect-error 'settled' was split into executed / failed / expired / signed
+  if (result.outcome === 'settled') return 'ambiguous';
+  return result.outcome === 'executed' ? 'paid' : 'not-paid';
+};
+void waitOutcome;
+
 // Ephemeral signer: no store, executor, swaps or sending, and not substitutable for a durable wallet.
 const eph = createEphemeralServerWallet({ publishableKey: key, oidc });
 void eph.evm.signMessage({ chainId: 80002, message: 'hi' });

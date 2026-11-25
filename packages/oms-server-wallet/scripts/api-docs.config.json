@@ -21,7 +21,12 @@
         "CreateOrRestoreOptions",
         "NetworkFamily",
         "RemoteWallet",
-        "SupportedEvmChainId"
+        "SupportedEvmChainId",
+        "EvmNetwork",
+        "EVM_NETWORKS",
+        "SOLANA_NETWORKS",
+        "TRON_NETWORKS",
+        "isSupportedEvmChainId"
       ]
     },
     {
@@ -130,7 +135,8 @@
         "UpstreamError",
         "isWalletError",
         "isUpstreamError",
-        "WalletErrorCode"
+        "WalletErrorCode",
+        "isWalletErrorCode"
       ]
     }
   ]

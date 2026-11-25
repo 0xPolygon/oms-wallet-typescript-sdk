@@ -308,7 +308,11 @@ await check('EVM sponsored transfer quote on Polygon (never executed)', async ()
     amount: '1'
   });
   if (op.status !== 'quoted' || !op.quote?.sponsored) throw new Error(`Quote ended ${op.status}`);
-  return { status: op.status, sponsored: op.quote.sponsored, expiresAt: op.quote.expiresAt };
+  return {
+    status: op.status,
+    sponsored: op.quote.sponsored,
+    quoteLifetimeMs: Date.parse(op.quote.expiresAt) - Date.parse(op.createdAt)
+  };
 });
 
 const lifecycle = open(`${subject}-lifecycle`, `${subject}-lifecycle:`);
@@ -367,7 +371,11 @@ await check('EVM sponsored transfer quote on Polygon Amoy', async () => {
     amount: amoyAmount ?? '1'
   });
   if (op.status !== 'quoted' || !op.quote?.sponsored) throw new Error(`Quote ended ${op.status}`);
-  return { status: op.status, sponsored: op.quote.sponsored, expiresAt: op.quote.expiresAt };
+  return {
+    status: op.status,
+    sponsored: op.quote.sponsored,
+    quoteLifetimeMs: Date.parse(op.quote.expiresAt) - Date.parse(op.createdAt)
+  };
 });
 if (!execute)
   skip('EVM zero-value call on Polygon Amoy', 'Set LIVE_EXECUTE=1 to send a sponsored call.');
@@ -468,7 +476,11 @@ const solanaRecipient = process.env.LIVE_SOLANA_RECIPIENT ?? lifecycleWallets.so
       const status = await wallet.solana.getTransactionStatus(op.quote!.txnId);
       if (status.status !== 'executed' || status.txnHash !== done.txnHash)
         throw new Error(`getTransactionStatus returned ${JSON.stringify(status)}`);
-      return { to: transfer.to, txnHash: done.txnHash };
+      return {
+        to: transfer.to,
+        txnHash: done.txnHash,
+        quoteLifetimeMs: Date.parse(op.quote!.expiresAt) - Date.parse(op.createdAt)
+      };
     });
 }
 
@@ -494,6 +506,36 @@ await check('Tron TIP-712 signing, verified by WaaS', () =>
       message: { wallet: tron, note: 'OMS server wallet acceptance' }
     }
   })
+);
+await check(
+  'observation: Tron TRC-20 transfer call is accepted and quoted (quote only)',
+  async () => {
+    // Nile USDT. The wallet may hold none, so a balance refusal is reported, not treated as failure.
+    try {
+      const op = await wallet.tron.prepareContractCall({
+        idempotencyKey: id('live-trc20-quote'),
+        network: 'tron:nile',
+        contract: process.env.LIVE_TRON_TOKEN ?? 'TXYZopYRdj2D9XRtbG411XZZ3kM5VkAeBf',
+        method: 'transfer',
+        args: [
+          { type: 'address', value: lifecycleWallets.tron!.address },
+          { type: 'uint256', value: '1' }
+        ],
+        maxFee: process.env.LIVE_TRON_MAX_FEE ?? '20000000'
+      });
+      return {
+        status: op.status,
+        sponsored: op.quote?.sponsored,
+        quoteLifetimeMs: op.quote ? Date.parse(op.quote.expiresAt) - Date.parse(op.createdAt) : null
+      };
+    } catch (error) {
+      if (!(error instanceof WalletError)) throw error;
+      return {
+        refused: error.code,
+        ...('upstreamCode' in error ? { upstreamCode: error.upstreamCode } : {})
+      };
+    }
+  }
 );
 await check('Tron Nile balances', () =>
   balances(wallet.indexer.getTronBalances({ networks: ['tron:nile'] }))
@@ -527,7 +569,11 @@ const tronRecipient = process.env.LIVE_TRON_RECIPIENT ?? lifecycleWallets.tron!.
       const status = await wallet.tron.getTransactionStatus(op.quote!.txnId);
       if (status.status !== 'executed' || status.txnHash !== done.txnHash)
         throw new Error(`getTransactionStatus returned ${JSON.stringify(status)}`);
-      return { to: transfer.to, txnHash: done.txnHash };
+      return {
+        to: transfer.to,
+        txnHash: done.txnHash,
+        quoteLifetimeMs: Date.parse(op.quote!.expiresAt) - Date.parse(op.createdAt)
+      };
     });
 }
 

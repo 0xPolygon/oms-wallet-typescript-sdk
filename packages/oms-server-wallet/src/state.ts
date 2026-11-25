@@ -1,9 +1,10 @@
 import { z } from 'zod';
 
+import type { WalletErrorCode } from './errors.js';
 import type { Credential, NetworkFamily, RemoteWallet } from './protocol.js';
 import type { StateStore } from './storage.js';
 
-import { WalletError } from './errors.js';
+import { isWalletErrorCode, WalletError } from './errors.js';
 import {
   chainQuoteSchema,
   feeOptionSchema,
@@ -107,7 +108,8 @@ const storedEvmOperationSchema = z.strictObject({
   signature: z.string().optional(),
   verified: z.boolean().optional(),
   txnHash: z.string().optional(),
-  error: z.string().optional()
+  // Only SDK error codes are recorded; anything else is unrecognised state and fails closed.
+  error: z.custom<WalletErrorCode>(isWalletErrorCode).optional()
 });
 
 const storedChainOperationSchema = z.strictObject({
@@ -154,7 +156,8 @@ const storedChainOperationSchema = z.strictObject({
   signature: z.string().optional(),
   verified: z.boolean().optional(),
   txnHash: z.string().optional(),
-  error: z.string().optional()
+  // Only SDK error codes are recorded; anything else is unrecognised state and fails closed.
+  error: z.custom<WalletErrorCode>(isWalletErrorCode).optional()
 });
 
 export type StoredEvmOperation = z.infer<typeof storedEvmOperationSchema>;

@@ -24,7 +24,7 @@ function built() {
       to: prepared.intentAddress,
       data: executeData(prepared.payload.encoded),
       value: '0',
-      chainId: 137,
+      chainId: 137 as const,
       intentAddress: prepared.intentAddress,
       payloadHash: prepared.payloadHash,
       requiresDeploy: false
@@ -131,7 +131,7 @@ it('rejects calldata suffixes, altered signed calls, changed targets, hashes, ch
     { ...tx, data: `${tx.data}00` },
     { ...tx, to: owner },
     { ...tx, value: '1' },
-    { ...tx, chainId: 8453 },
+    { ...tx, chainId: 8453 as const },
     { ...tx, payloadHash: `0x${'ff'.repeat(32)}` },
     { ...tx, data: executeData(`${prepared.payload.encoded}00`) },
     { ...tx, requiresDeploy: true },

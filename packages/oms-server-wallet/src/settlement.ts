@@ -54,7 +54,7 @@ export interface TransactionStatus {
 /** The fields settlement reads and writes on an EVM, Solana or Tron operation. */
 export interface Settleable {
   status: string;
-  error?: WalletErrorCode | string;
+  error?: WalletErrorCode;
   txnHash?: string;
   quote?: { expiresAt: string };
   preClaimRefused?: boolean;

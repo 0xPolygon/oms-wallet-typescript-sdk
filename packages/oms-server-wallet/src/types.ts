@@ -6,7 +6,7 @@ import type {
   Hex
 } from 'viem';
 
-import type { AttestationOptions } from './environment.js';
+import type { AttestationOptions, SupportedEvmChainId } from './environment.js';
 import type { WalletErrorCode } from './errors.js';
 import type {
   ChainBalance,
@@ -207,7 +207,7 @@ export interface EvmTransfer {
 export interface EvmTransferInput {
   /** Durable idempotency key (8–100 chars: letters, digits, `_`, `-`; must not start with `swp_`). */
   readonly idempotencyKey: string;
-  readonly chainId: number;
+  readonly chainId: SupportedEvmChainId;
   readonly to: string;
   readonly asset: 'native' | string;
   /** Positive base-unit decimal string (use `parseAmount`). */
@@ -225,7 +225,7 @@ export type EvmCallInput<
 > = {
   /** Durable idempotency key (8–100 chars: letters, digits, `_`, `-`; must not start with `swp_`). */
   readonly idempotencyKey: string;
-  readonly chainId: number;
+  readonly chainId: SupportedEvmChainId;
   readonly to: string;
   /** Optional native value in base units (decimal string, default `'0'`). */
   readonly value?: string;
@@ -246,14 +246,14 @@ export type EvmCallInput<
 /** Input to `wallet.evm.signMessage`. */
 export interface EvmSignMessageInput {
   readonly idempotencyKey: string;
-  readonly chainId: number;
+  readonly chainId: SupportedEvmChainId;
   readonly message: string;
 }
 
 /** Input to `wallet.evm.signTypedData`. */
 export interface EvmSignTypedDataInput {
   readonly idempotencyKey: string;
-  readonly chainId: number;
+  readonly chainId: SupportedEvmChainId;
   readonly typedData: TypedDataInput;
 }
 
@@ -365,7 +365,7 @@ export interface OperationBase {
   readonly signature?: string;
   readonly verified?: true;
   readonly txnHash?: string;
-  readonly error?: WalletErrorCode | string;
+  readonly error?: WalletErrorCode;
 }
 
 /** Persisted EVM operation view. */
@@ -436,9 +436,17 @@ export interface WaitForOperationOptions {
   readonly signal?: AbortSignal;
 }
 
-/** Outcome of `waitForOperation`, keeping timeout/cancel distinct from transaction failure. */
+/**
+ * Outcome of `waitForOperation`. A finished operation reports its terminal status as the outcome:
+ * only `executed` means WaaS executed the transaction, while `failed` and `expired` mean it did not
+ * (check `operation.provenUnsent` before preparing a replacement), and `signed` ends a signing
+ * operation. `reconciliation-required`, `timed-out` and `cancelled` mean the wait ended first.
+ */
 export type WaitResult<TOperation extends WalletOperation> =
-  | { readonly outcome: 'settled'; readonly operation: TOperation }
+  | { readonly outcome: 'executed'; readonly operation: TOperation }
+  | { readonly outcome: 'failed'; readonly operation: TOperation }
+  | { readonly outcome: 'expired'; readonly operation: TOperation }
+  | { readonly outcome: 'signed'; readonly operation: TOperation }
   | { readonly outcome: 'reconciliation-required'; readonly operation: TOperation }
   | { readonly outcome: 'timed-out'; readonly operation: TOperation }
   | { readonly outcome: 'cancelled'; readonly operation: TOperation };
@@ -458,7 +466,7 @@ export interface OperationGuidance {
 }
 
 export interface GetEvmBalancesOptions {
-  readonly chainIds?: readonly number[];
+  readonly chainIds?: readonly SupportedEvmChainId[];
   readonly page?: number;
 }
 
@@ -725,12 +733,12 @@ export interface EphemeralServerWallet {
   close(): Promise<void>;
   readonly evm: {
     signMessage(input: {
-      readonly chainId: number;
+      readonly chainId: SupportedEvmChainId;
       readonly message: string;
     }): Promise<SignatureResult>;
     /** Refuses Sequence wallet `Calls` and typed data whose `verifyingContract` is the wallet. */
     signTypedData(input: {
-      readonly chainId: number;
+      readonly chainId: SupportedEvmChainId;
       readonly typedData: TypedDataInput;
     }): Promise<SignatureResult>;
   };

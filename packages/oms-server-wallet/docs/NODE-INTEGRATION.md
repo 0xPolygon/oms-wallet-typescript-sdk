@@ -229,7 +229,15 @@ if (prepared.status === 'quoted' && prepared.reviewId) {
 
 // 5. Observe settlement outside exclusive ownership
 const waited = await wallet.evm.waitForOperation(transferId, { timeoutMs: 30_000 });
-console.log(waited.outcome, describeOperation(waited.operation));
+switch (waited.outcome) {
+  case 'executed': // WaaS executed it; confirm the receipt on-chain before marking it paid
+    break;
+  case 'failed':
+  case 'expired': // not executed; prepare a replacement only if describeOperation says safe-to-reprepare
+    break;
+  default: // reconciliation-required, timed-out, cancelled: keep the original operation open
+    console.log(waited.outcome, describeOperation(waited.operation));
+}
 
 // 6. Unattested display balances (never use as proof of funds)
 try {

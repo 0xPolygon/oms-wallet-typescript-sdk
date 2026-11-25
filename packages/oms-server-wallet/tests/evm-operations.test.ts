@@ -5,7 +5,7 @@ import { describeOperation } from '@polygonlabs/oms-server-wallet-sdk';
 import { sdkHarness } from './helpers.js';
 
 const transfer = {
-  chainId: 137,
+  chainId: 137 as const,
   to: '0x2222222222222222222222222222222222222222',
   asset: 'native',
   amount: '1000'
@@ -177,14 +177,20 @@ describe('EVM operation records', () => {
     const h = sdkHarness();
     h.remote.signaturesValid = false;
     await expect(
-      h.client.evm.signMessage({ idempotencyKey: 'sign-invalid', chainId: 137, message: 'hello' })
+      h.client.evm.signMessage({
+        idempotencyKey: 'sign-invalid',
+        chainId: 137 as const,
+        message: 'hello'
+      })
     ).rejects.toMatchObject({
       code: 'SIGNATURE_INVALID'
     });
     expect(
-      await h
-        .create()
-        .evm.signMessage({ idempotencyKey: 'sign-invalid', chainId: 137, message: 'hello' })
+      await h.create().evm.signMessage({
+        idempotencyKey: 'sign-invalid',
+        chainId: 137 as const,
+        message: 'hello'
+      })
     ).toMatchObject({
       status: 'failed',
       error: 'SIGNATURE_INVALID'
@@ -200,7 +206,7 @@ describe('EVM operation records', () => {
     });
     await h.client.evm.signMessage({
       idempotencyKey: 'closed-op-1',
-      chainId: 137,
+      chainId: 137 as const,
       message: 'hello'
     });
     h.store.values.delete('openOperationIndex');
@@ -273,7 +279,11 @@ describe('chunked operation index and crash recovery', () => {
     const total = 262;
     for (let i = 0; i < total; i++) {
       const id = `evm-op-${String(i).padStart(4, '0')}`;
-      await h.client.evm.signMessage({ idempotencyKey: id, chainId: 137, message: `msg-${i}` });
+      await h.client.evm.signMessage({
+        idempotencyKey: id,
+        chainId: 137 as const,
+        message: `msg-${i}`
+      });
     }
     const meta = JSON.parse((await h.store.read('operationIndex:evm:meta'))!);
     expect(meta).toEqual({ v: 1, chunks: 2, total });
@@ -317,7 +327,7 @@ describe('chunked operation index and crash recovery', () => {
     );
     await h.client.evm.signMessage({
       idempotencyKey: 'evm-op-0000',
-      chainId: 137,
+      chainId: 137 as const,
       message: 'msg-0'
     });
     const metaAfterResume = JSON.parse((await h.store.read('operationIndex:evm:meta'))!);
@@ -326,7 +336,11 @@ describe('chunked operation index and crash recovery', () => {
 
   it('self-heals after a crash between chunk write and meta update, and handles orphaned crash entries cleanly', async () => {
     const h = sdkHarness();
-    await h.client.evm.signMessage({ idempotencyKey: 'heal-op-1', chainId: 137, message: 'one' });
+    await h.client.evm.signMessage({
+      idempotencyKey: 'heal-op-1',
+      chainId: 137 as const,
+      message: 'one'
+    });
 
     // Crash after writing chunk 0 with heal-op-2, before bumping meta.
     const write = h.store.write.bind(h.store);
@@ -335,12 +349,20 @@ describe('chunked operation index and crash recovery', () => {
       return write(key, value);
     };
     await expect(
-      h.client.evm.signMessage({ idempotencyKey: 'heal-op-2', chainId: 137, message: 'two' })
+      h.client.evm.signMessage({
+        idempotencyKey: 'heal-op-2',
+        chainId: 137 as const,
+        message: 'two'
+      })
     ).rejects.toThrow('meta write failed');
     h.store.write = write;
 
     // Next write slices to committed meta.total and cleanly overwrites the uncommitted tail entry.
-    await h.client.evm.signMessage({ idempotencyKey: 'heal-op-3', chainId: 137, message: 'three' });
+    await h.client.evm.signMessage({
+      idempotencyKey: 'heal-op-3',
+      chainId: 137 as const,
+      message: 'three'
+    });
     expect(JSON.parse((await h.store.read('operationIndex:evm:meta'))!)).toEqual({
       v: 1,
       chunks: 1,
@@ -359,7 +381,11 @@ describe('chunked operation index and crash recovery', () => {
       return write(key, value);
     };
     await expect(
-      h.client.evm.signMessage({ idempotencyKey: 'heal-op-4', chainId: 137, message: 'four' })
+      h.client.evm.signMessage({
+        idempotencyKey: 'heal-op-4',
+        chainId: 137 as const,
+        message: 'four'
+      })
     ).rejects.toThrow('record write failed');
     h.store.write = write;
 
@@ -367,7 +393,11 @@ describe('chunked operation index and crash recovery', () => {
     expect(beforeRetry.items.map((op) => op.id)).toEqual(['heal-op-1', 'heal-op-3']);
     expect(beforeRetry.nextCursor).toBeUndefined();
 
-    await h.client.evm.signMessage({ idempotencyKey: 'heal-op-4', chainId: 137, message: 'four' });
+    await h.client.evm.signMessage({
+      idempotencyKey: 'heal-op-4',
+      chainId: 137 as const,
+      message: 'four'
+    });
     expect(JSON.parse((await h.store.read('operationIndex:evm:meta'))!)).toEqual({
       v: 1,
       chunks: 1,
@@ -379,7 +409,11 @@ describe('chunked operation index and crash recovery', () => {
 
   it('prunes settled IDs left in openOperationIndex after an interrupted terminal write and rejects corrupted index chunks', async () => {
     const h = sdkHarness();
-    await h.client.evm.signMessage({ idempotencyKey: 'prune-op-1', chainId: 137, message: 'done' });
+    await h.client.evm.signMessage({
+      idempotencyKey: 'prune-op-1',
+      chainId: 137 as const,
+      message: 'done'
+    });
     await h.client.evm.prepareTransfer({ idempotencyKey: 'prune-op-2', ...transfer });
     // Simulate a crash after operation:prune-op-1 became signed, before removeOpenOperation ran.
     await h.store.write(

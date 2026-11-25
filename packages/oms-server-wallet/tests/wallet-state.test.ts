@@ -15,7 +15,7 @@ describe('strict wallet state validation', () => {
     await h.client.createOrRestore();
     await h.client.evm.signMessage({
       idempotencyKey: 'readonly-sign-1',
-      chainId: 137,
+      chainId: 137 as const,
       message: 'hello'
     });
     let writes = 0;
@@ -177,7 +177,7 @@ describe('one wallet per network family', () => {
       (
         await h.client.evm.signMessage({
           idempotencyKey: 'evm-still-works',
-          chainId: 137,
+          chainId: 137 as const,
           message: 'hello'
         })
       ).verified

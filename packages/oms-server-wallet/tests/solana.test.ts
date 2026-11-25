@@ -160,7 +160,11 @@ describe('Solana transfers', () => {
       h.client.solana.prepareTransfer({ idempotencyKey: 'shared-id-1', ...transfer, amount: '2' })
     ).rejects.toMatchObject({ code: 'IDEMPOTENCY_CONFLICT' });
     await expect(
-      h.client.evm.signMessage({ idempotencyKey: 'shared-id-1', chainId: 137, message: 'hello' })
+      h.client.evm.signMessage({
+        idempotencyKey: 'shared-id-1',
+        chainId: 137 as const,
+        message: 'hello'
+      })
     ).rejects.toMatchObject({
       code: 'IDEMPOTENCY_CONFLICT'
     });

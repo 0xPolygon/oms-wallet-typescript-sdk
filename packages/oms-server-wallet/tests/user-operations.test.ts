@@ -8,7 +8,7 @@ import { sdkHarness } from './helpers.js';
 const usdc = '0x3c499c542cEF5E3811e1192ce70d8cC03d5c3359';
 const recipient = '0x2222222222222222222222222222222222222222';
 const transferCall = {
-  chainId: 137,
+  chainId: 137 as const,
   to: usdc,
   abi: erc20Abi,
   functionName: 'transfer',
@@ -39,7 +39,7 @@ describe('EVM contract calls', () => {
     const h = sdkHarness();
     const op = await h.client.evm.prepareCall({
       idempotencyKey: 'payable-1',
-      chainId: 8453,
+      chainId: 8453 as const,
       to: recipient,
       value: '1000',
       data: '0xd0E30DB0'
@@ -69,7 +69,7 @@ describe('EVM contract calls', () => {
     await expect(
       h.client.evm.sendCall({
         idempotencyKey: 'payment-2',
-        chainId: 137,
+        chainId: 137 as const,
         to: usdc,
         abi: erc20Abi,
         functionName: 'transfer',
@@ -102,8 +102,14 @@ describe('EVM contract calls', () => {
       [{ idempotencyKey: 'invalid-1', ...transferCall, value: '0.5' }, 'INVALID_AMOUNT'],
       [{ idempotencyKey: 'invalid-1', ...transferCall, functionName: 'mint' }, 'INVALID_CALL'],
       [{ idempotencyKey: 'invalid-1', ...transferCall, args: [recipient] }, 'INVALID_CALL'],
-      [{ idempotencyKey: 'invalid-1', chainId: 137, to: usdc, data: '0x123' }, 'INVALID_CALL'],
-      [{ idempotencyKey: 'invalid-1', chainId: 137, to: usdc, data: 'transfer' }, 'INVALID_CALL']
+      [
+        { idempotencyKey: 'invalid-1', chainId: 137 as const, to: usdc, data: '0x123' },
+        'INVALID_CALL'
+      ],
+      [
+        { idempotencyKey: 'invalid-1', chainId: 137 as const, to: usdc, data: 'transfer' },
+        'INVALID_CALL'
+      ]
     ];
     for (const [input, code] of cases)
       await expect(h.client.evm.prepareCall(input as EvmCallInput)).rejects.toMatchObject({ code });
@@ -112,7 +118,7 @@ describe('EVM contract calls', () => {
     await expect(
       h.client.evm.prepareCall({
         idempotencyKey: 'self-call',
-        chainId: 137,
+        chainId: 137 as const,
         to: self,
         data: '0x'
       })
@@ -129,7 +135,7 @@ describe('EVM contract calls', () => {
     const invalid = [
       {
         idempotencyKey: 'abi-check-1',
-        chainId: 137,
+        chainId: 137 as const,
         to: usdc,
         abi: twoFunctions,
         args: [recipient, 1n]

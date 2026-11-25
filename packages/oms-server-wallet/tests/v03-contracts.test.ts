@@ -1,6 +1,11 @@
 import { describe, expect, it, vi } from 'vitest';
 
 import {
+  EVM_NETWORKS,
+  SOLANA_NETWORKS,
+  TRON_NETWORKS,
+  isSupportedEvmChainId,
+  isWalletErrorCode,
   createServerWallet,
   createServerWalletService,
   createSingleProcessExecutor,
@@ -119,7 +124,7 @@ describe('attestation trust policy', () => {
 
 describe('approval mode, reviewId binding, and submissionMode isolation', () => {
   const evmTransfer = {
-    chainId: 137,
+    chainId: 137 as const,
     to: '0x2222222222222222222222222222222222222222',
     asset: 'native',
     amount: '1000'
@@ -335,7 +340,7 @@ describe('swaps: trails(...) binding, scope isolation, and coordination marker',
     await expect(
       plain.evm.prepareTransfer({
         idempotencyKey: 'bypass-attempt-1',
-        chainId: 137,
+        chainId: 137 as const,
         to: '0x2222222222222222222222222222222222222222',
         asset: 'native',
         amount: '1'
@@ -453,7 +458,7 @@ describe('observation, waitForOperation, describeOperation, indexer facet, and e
     const h = sdkHarness();
     const sent = await h.client.evm.sendTransfer({
       idempotencyKey: 'wait-op-1',
-      chainId: 137,
+      chainId: 137 as const,
       to: '0x2222222222222222222222222222222222222222',
       asset: 'native',
       amount: '1000'
@@ -487,7 +492,7 @@ describe('observation, waitForOperation, describeOperation, indexer facet, and e
     const h2 = sdkHarness();
     const prep2 = await h2.client.evm.prepareTransfer({
       idempotencyKey: 'wait-recon-1',
-      chainId: 137,
+      chainId: 137 as const,
       to: '0x2222222222222222222222222222222222222222',
       asset: 'native',
       amount: '1000'
@@ -511,7 +516,7 @@ describe('observation, waitForOperation, describeOperation, indexer facet, and e
       timeoutMs: 5_000,
       pollIntervalMs: 250
     });
-    expect(settled.outcome).toBe('settled');
+    expect(settled.outcome).toBe('executed');
     expect(settled.operation.status).toBe('executed');
   });
 
@@ -519,7 +524,7 @@ describe('observation, waitForOperation, describeOperation, indexer facet, and e
     const h = sdkHarness();
     const prep = await h.client.evm.prepareTransfer({
       idempotencyKey: 'grace-op-1',
-      chainId: 137,
+      chainId: 137 as const,
       to: '0x2222222222222222222222222222222222222222',
       asset: 'native',
       amount: '1000'
@@ -579,6 +584,67 @@ describe('observation, waitForOperation, describeOperation, indexer facet, and e
     ).rejects.toMatchObject({ code: 'INVALID_INPUT' });
   });
 
+  it('exports the supported networks and guards for chain IDs and error codes', async () => {
+    expect(EVM_NETWORKS.map((network) => network.id)).toEqual(
+      expect.arrayContaining([1, 137, 80002, 11155111, 8453, 84532])
+    );
+    expect(EVM_NETWORKS).toHaveLength(16);
+    expect(SOLANA_NETWORKS).toEqual(['solana:mainnet', 'solana:devnet']);
+    expect(TRON_NETWORKS).toEqual(['tron:mainnet', 'tron:nile']);
+    expect(isSupportedEvmChainId(80002)).toBe(true);
+    expect(isSupportedEvmChainId(999_999)).toBe(false);
+    expect(isSupportedEvmChainId('137')).toBe(false);
+    expect(isWalletErrorCode('QUOTE_EXPIRED')).toBe(true);
+    expect(isWalletErrorCode('TRAILS_FAILED')).toBe(false);
+    expect(isWalletErrorCode('toString')).toBe(false);
+
+    // A stored operation recording a code outside the union is unrecognised state.
+    const h = sdkHarness();
+    await h.client.evm.prepareTransfer({
+      idempotencyKey: 'bad-code-1',
+      chainId: 137,
+      to: '0x2222222222222222222222222222222222222222',
+      asset: 'native',
+      amount: '1000'
+    });
+    const stored = JSON.parse((await h.store.read('operation:bad-code-1'))!);
+    await h.store.write('operation:bad-code-1', JSON.stringify({ ...stored, error: 'NOT_A_CODE' }));
+    await expect(h.client.evm.getOperation('bad-code-1')).rejects.toMatchObject({
+      code: 'INVALID_STATE'
+    });
+  });
+
+  it('reports failed and expired operations as their own wait outcomes, never as executed', async () => {
+    const h = sdkHarness();
+    const transfer = {
+      chainId: 137 as const,
+      to: '0x2222222222222222222222222222222222222222',
+      asset: 'native',
+      amount: '1000'
+    } as const;
+    const refused = await h.client.evm.prepareTransfer({
+      idempotencyKey: 'wait-failed-1',
+      ...transfer
+    });
+    h.remote.evmExecuteRefusal = 7206;
+    await h.client.evm.execute({ idempotencyKey: 'wait-failed-1', reviewId: refused.reviewId! });
+    const failed = await h.client.evm.waitForOperation('wait-failed-1', { timeoutMs: 1_000 });
+    expect(failed).toMatchObject({ outcome: 'failed', operation: { provenUnsent: true } });
+
+    const stale = await h.client.evm.prepareTransfer({
+      idempotencyKey: 'wait-expired-1',
+      ...transfer
+    });
+    const stored = JSON.parse((await h.store.read('operation:wait-expired-1'))!);
+    stored.quote.expiresAt = new Date(Date.now() - 1_000).toISOString();
+    await h.store.write('operation:wait-expired-1', JSON.stringify(stored));
+    await expect(
+      h.client.evm.execute({ idempotencyKey: 'wait-expired-1', reviewId: stale.reviewId! })
+    ).rejects.toMatchObject({ code: 'QUOTE_EXPIRED' });
+    const expired = await h.client.evm.waitForOperation('wait-expired-1', { timeoutMs: 1_000 });
+    expect(expired).toMatchObject({ outcome: 'expired', operation: { provenUnsent: true } });
+  });
+
   it('reads transaction status by txnId without settling operations or creating wallets', async () => {
     const h = sdkHarness();
     for (const facet of [h.client.evm, h.client.solana, h.client.tron])
@@ -593,7 +659,7 @@ describe('observation, waitForOperation, describeOperation, indexer facet, and e
 
     const sent = await h.client.evm.sendTransfer({
       idempotencyKey: 'status-evm-1',
-      chainId: 137,
+      chainId: 137 as const,
       to: '0x2222222222222222222222222222222222222222',
       asset: 'native',
       amount: '1000'
@@ -634,7 +700,7 @@ describe('observation, waitForOperation, describeOperation, indexer facet, and e
     const failure = await h.client.evm
       .prepareTransfer({
         idempotencyKey: 'malformed-quote-1',
-        chainId: 137,
+        chainId: 137 as const,
         to: '0x2222222222222222222222222222222222222222',
         asset: 'native',
         amount: '1000'
@@ -647,7 +713,11 @@ describe('observation, waitForOperation, describeOperation, indexer facet, and e
       error: 'INVALID_RESPONSE'
     });
     await expect(
-      h.client.evm.signMessage({ idempotencyKey: 'malformed-sign-1', chainId: 137, message: 'hi' })
+      h.client.evm.signMessage({
+        idempotencyKey: 'malformed-sign-1',
+        chainId: 137 as const,
+        message: 'hi'
+      })
     ).rejects.toMatchObject({ code: 'INVALID_RESPONSE' });
   });
 
@@ -655,7 +725,7 @@ describe('observation, waitForOperation, describeOperation, indexer facet, and e
     const h = sdkHarness();
     await h.client.evm.prepareTransfer({
       idempotencyKey: 'open-kept-1',
-      chainId: 137,
+      chainId: 137 as const,
       to: '0x2222222222222222222222222222222222222222',
       asset: 'native',
       amount: '1000'
@@ -675,7 +745,7 @@ describe('observation, waitForOperation, describeOperation, indexer facet, and e
       id: 'op-12345678',
       family: 'evm' as const,
       kind: 'transfer' as const,
-      chainId: 137,
+      chainId: 137 as const,
       inputHash: 'hash',
       createdAt: new Date().toISOString(),
       submissionMode: 'review' as const,
@@ -734,10 +804,10 @@ describe('observation, waitForOperation, describeOperation, indexer facet, and e
       Response.json({
         nativeBalances: [
           {
-            chainId: 137,
+            chainId: 137 as const,
             results: [
               {
-                chainId: 137,
+                chainId: 137 as const,
                 accountAddress: '0x1111111111111111111111111111111111111111',
                 balanceWei: '500'
               }
@@ -925,7 +995,7 @@ describe('review-audit boundary regressions', () => {
     await expect(
       worker2.evm.prepareTransfer({
         idempotencyKey: 'bypass-rollout-1',
-        chainId: 137,
+        chainId: 137 as const,
         to: '0x2222222222222222222222222222222222222222',
         asset: 'native',
         amount: '1'
@@ -1031,7 +1101,7 @@ describe('deep systems hardening (Dot + Opus 5.5 audit)', () => {
     await expect(
       worker2.evm.prepareTransfer({
         idempotencyKey: 'ordinary-blocked-1',
-        chainId: 137,
+        chainId: 137 as const,
         to: '0x2222222222222222222222222222222222222222',
         asset: 'native',
         amount: '1'
@@ -1067,7 +1137,7 @@ describe('deep systems hardening (Dot + Opus 5.5 audit)', () => {
     // Create an open EVM op on chain 137 whose refresh triggers a credential rotation (expiredOnce).
     const first = await h.wallet.evm.prepareTransfer({
       idempotencyKey: 'gate-refresh-1',
-      chainId: 137,
+      chainId: 137 as const,
       to: '0x2222222222222222222222222222222222222222',
       asset: 'native',
       amount: '1'
@@ -1091,7 +1161,7 @@ describe('deep systems hardening (Dot + Opus 5.5 audit)', () => {
     // Must reload state after the gate and use the NEW credential rather than overwriting it with the old one!
     const second = await h.wallet.evm.prepareTransfer({
       idempotencyKey: 'gate-refresh-2',
-      chainId: 137,
+      chainId: 137 as const,
       to: '0x2222222222222222222222222222222222222222',
       asset: 'native',
       amount: '2'
@@ -1126,7 +1196,7 @@ describe('deep systems hardening (Dot + Opus 5.5 audit)', () => {
     );
     const prep = await wallet.evm.prepareTransfer({
       idempotencyKey: 'reauth-fail-1',
-      chainId: 137,
+      chainId: 137 as const,
       to: '0x2222222222222222222222222222222222222222',
       asset: 'native',
       amount: '100'
@@ -1169,7 +1239,7 @@ describe('deep systems hardening (Dot + Opus 5.5 audit)', () => {
     await expect(
       h.client.evm.signTypedData({
         idempotencyKey: 'block-seq-calls',
-        chainId: 137,
+        chainId: 137 as const,
         typedData
       })
     ).rejects.toMatchObject({ code: 'INVALID_TYPED_DATA' });
@@ -1178,9 +1248,14 @@ describe('deep systems hardening (Dot + Opus 5.5 audit)', () => {
     await expect(
       h.client.evm.signTypedData({
         idempotencyKey: 'block-self-vc',
-        chainId: 137,
+        chainId: 137 as const,
         typedData: {
-          domain: { name: 'App', version: '1', chainId: 137, verifyingContract: selfAddress },
+          domain: {
+            name: 'App',
+            version: '1',
+            chainId: 137 as const,
+            verifyingContract: selfAddress
+          },
           types: { Note: [{ name: 'text', type: 'string' }] },
           primaryType: 'Note',
           message: { text: 'hi' }
@@ -1222,7 +1297,7 @@ describe('deep systems hardening (Dot + Opus 5.5 audit)', () => {
     await expect(
       h.wallet.evm.prepareTransfer({
         idempotencyKey: 'after-op-resolve',
-        chainId: 137,
+        chainId: 137 as const,
         to: '0x2222222222222222222222222222222222222222',
         asset: 'native',
         amount: '1'
@@ -1233,7 +1308,7 @@ describe('deep systems hardening (Dot + Opus 5.5 audit)', () => {
     const h2 = sdkHarness();
     const p2 = await h2.client.evm.prepareTransfer({
       idempotencyKey: 'ord-resolve-1',
-      chainId: 137,
+      chainId: 137 as const,
       to: '0x2222222222222222222222222222222222222222',
       asset: 'native',
       amount: '10'
@@ -1261,7 +1336,7 @@ describe('deep systems hardening (Dot + Opus 5.5 audit)', () => {
         id: 'missing-rev-1',
         family: 'evm',
         kind: 'transfer',
-        chainId: 137,
+        chainId: 137 as const,
         inputHash: 'h',
         createdAt: new Date().toISOString(),
         status: 'quoted',
@@ -1277,7 +1352,7 @@ describe('deep systems hardening (Dot + Opus 5.5 audit)', () => {
       JSON.stringify({
         id: 'sig-unknown-1',
         kind: 'sign',
-        chainId: 137,
+        chainId: 137 as const,
         inputHash: 'h',
         createdAt: new Date().toISOString(),
         status: 'unknown',
@@ -1326,7 +1401,7 @@ describe('deep systems hardening (Dot + Opus 5.5 audit)', () => {
     // Prepare EVM and Solana transfers whose quotes expire at now + 120s.
     const evmPrep = await client.evm.prepareTransfer({
       idempotencyKey: 'recheck-evm-1',
-      chainId: 137,
+      chainId: 137 as const,
       to: '0x2222222222222222222222222222222222222222',
       asset: 'native',
       amount: '10'

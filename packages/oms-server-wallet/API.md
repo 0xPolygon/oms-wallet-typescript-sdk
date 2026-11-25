@@ -280,6 +280,53 @@ Chain ID of an EVM network the SDK accepts.
 export type SupportedEvmChainId = (typeof EVM_NETWORKS)[number]["id"];
 ```
 
+### `EvmNetwork`
+
+An EVM network the SDK accepts.
+
+```typescript
+export interface EvmNetwork {
+    readonly id: SupportedEvmChainId;
+    readonly name: string;
+    readonly displayName: string;
+    readonly nativeTokenSymbol: string;
+    readonly explorerUrl: string;
+}
+```
+
+### `EVM_NETWORKS`
+
+Every EVM network the SDK accepts, mainnets and testnets alike. The same list as the client
+SDK's `Networks`; sponsorship is still configured per project and network in WaaS.
+
+```typescript
+export declare const EVM_NETWORKS: readonly EvmNetwork[];
+```
+
+### `SOLANA_NETWORKS`
+
+Solana networks the SDK accepts.
+
+```typescript
+export declare const SOLANA_NETWORKS: readonly ("solana:mainnet" | "solana:devnet")[];
+```
+
+### `TRON_NETWORKS`
+
+Tron networks the SDK accepts.
+
+```typescript
+export declare const TRON_NETWORKS: readonly ("tron:mainnet" | "tron:nile")[];
+```
+
+### `isSupportedEvmChainId`
+
+Whether a value is a supported EVM chain ID; narrows config or request input without a cast.
+
+```typescript
+export declare function isSupportedEvmChainId(chainId: unknown): chainId is SupportedEvmChainId;
+```
+
 ## Ephemeral signer
 
 ### `createEphemeralServerWallet`
@@ -321,11 +368,11 @@ export interface EphemeralServerWallet {
     close(): Promise<void>;
     readonly evm: {
         signMessage(input: {
-            readonly chainId: number;
+            readonly chainId: SupportedEvmChainId;
             readonly message: string;
         }): Promise<SignatureResult>;
         signTypedData(input: {
-            readonly chainId: number;
+            readonly chainId: SupportedEvmChainId;
             readonly typedData: TypedDataInput;
         }): Promise<SignatureResult>;
     };
@@ -547,7 +594,7 @@ Input to `wallet.evm.prepareTransfer` and `wallet.evm.sendTransfer`.
 ```typescript
 export interface EvmTransferInput {
     readonly idempotencyKey: string;
-    readonly chainId: number;
+    readonly chainId: SupportedEvmChainId;
     readonly to: string;
     readonly asset: "native" | string;
     readonly amount: string;
@@ -575,7 +622,7 @@ viem) or pre-encoded hex `data`.
 ```typescript
 export type EvmCallInput<abi extends Abi | readonly unknown[] = Abi, functionName extends ContractFunctionName<abi> = ContractFunctionName<abi>, args = ContractFunctionArgs<abi, AbiStateMutability, functionName>> = {
     readonly idempotencyKey: string;
-    readonly chainId: number;
+    readonly chainId: SupportedEvmChainId;
     readonly to: string;
     readonly value?: string;
 } & (({
@@ -602,7 +649,7 @@ Input to `wallet.evm.signMessage`.
 ```typescript
 export interface EvmSignMessageInput {
     readonly idempotencyKey: string;
-    readonly chainId: number;
+    readonly chainId: SupportedEvmChainId;
     readonly message: string;
 }
 ```
@@ -614,7 +661,7 @@ Input to `wallet.evm.signTypedData`.
 ```typescript
 export interface EvmSignTypedDataInput {
     readonly idempotencyKey: string;
-    readonly chainId: number;
+    readonly chainId: SupportedEvmChainId;
     readonly typedData: TypedDataInput;
 }
 ```
@@ -1045,7 +1092,7 @@ export interface OperationBase {
     readonly signature?: string;
     readonly verified?: true;
     readonly txnHash?: string;
-    readonly error?: WalletErrorCode | string;
+    readonly error?: WalletErrorCode;
 }
 ```
 
@@ -1106,11 +1153,23 @@ export interface WaitForOperationOptions {
 
 ### `WaitResult`
 
-Outcome of `waitForOperation`, keeping timeout/cancel distinct from transaction failure.
+Outcome of `waitForOperation`. A finished operation reports its terminal status as the outcome:
+only `executed` means WaaS executed the transaction, while `failed` and `expired` mean it did not
+(check `operation.provenUnsent` before preparing a replacement), and `signed` ends a signing
+operation. `reconciliation-required`, `timed-out` and `cancelled` mean the wait ended first.
 
 ```typescript
 export type WaitResult<TOperation extends WalletOperation> = {
-    readonly outcome: "settled";
+    readonly outcome: "executed";
+    readonly operation: TOperation;
+} | {
+    readonly outcome: "failed";
+    readonly operation: TOperation;
+} | {
+    readonly outcome: "expired";
+    readonly operation: TOperation;
+} | {
+    readonly outcome: "signed";
     readonly operation: TOperation;
 } | {
     readonly outcome: "reconciliation-required";
@@ -1198,7 +1257,7 @@ export interface ServiceIndexerFacet {
 
 ```typescript
 export interface GetEvmBalancesOptions {
-    readonly chainIds?: readonly number[];
+    readonly chainIds?: readonly SupportedEvmChainId[];
     readonly page?: number;
 }
 ```
@@ -1334,4 +1393,12 @@ Closed union of safe, machine-readable SDK error codes.
 
 ```typescript
 export type WalletErrorCode = "APPROVAL_REQUIRED" | "ATTESTATION_FAILED" | "CHAIN_READ_FAILED" | "CONFIGURATION" | "CREATION_UNCERTAIN" | "DEBIT_PENDING" | "EXECUTE_REFUSED" | "FEE_ABOVE_QUOTE" | "FEE_LIMIT_EXCEEDED" | "FUNDING_FAILED" | "FUNDING_RECEIPT_UNVERIFIED" | "FUNDING_REVERTED" | "FUNDING_UNKNOWN" | "IDEMPOTENCY_CONFLICT" | "IDENTITY_MISMATCH" | "INDEXER_UNAVAILABLE" | "INSUFFICIENT_BALANCE" | "INTENT_ALREADY_TRACKED" | "INTENT_NOT_FUNDABLE" | "INVALID_ADDRESS" | "INVALID_AMOUNT" | "INVALID_CALL" | "INVALID_FAMILY" | "INVALID_FEE" | "INVALID_IDEMPOTENCY_KEY" | "INVALID_IDENTITY" | "INVALID_INPUT" | "INVALID_JSON" | "INVALID_MESSAGE" | "INVALID_METHOD" | "INVALID_PAGE" | "INVALID_RECOVERY" | "INVALID_RECOVERY_TRANSACTION" | "INVALID_RESPONSE" | "INVALID_STATE" | "INVALID_SWAP" | "INVALID_SWAP_QUOTE" | "INVALID_TRANSACTION" | "INVALID_TRANSFER" | "INVALID_TYPED_DATA" | "NO_CREDENTIAL" | "NO_RECOVERABLE_BALANCE" | "NOT_FOUND" | "PREPARATION_FAILED" | "QUOTE_EXPIRED" | "RECONCILIATION_REQUIRED" | "RECOVERY_CHANGED" | "RECOVERY_EVIDENCE_PENDING" | "RECOVERY_EXPIRED" | "RECOVERY_FAILED" | "RECOVERY_LIMIT" | "RECOVERY_NOT_READY" | "RECOVERY_PENDING" | "REFUND_REQUIRES_REVIEW" | "RESPONSE_TOO_LARGE" | "RPC_CONFIGURATION" | "SETTLEMENT_REQUIRES_REVIEW" | "SIGNATURE_INVALID" | "SIGNING_FAILED" | "SPONSORSHIP_REQUIRED" | "STALE_QUOTE" | "STALE_RECOVERY" | "STALE_REVIEW" | "STORAGE_INTEGRITY" | "SUBMISSION_UNCERTAIN" | "SWAP_ENVIRONMENT_CHANGED" | "SWAP_UNAVAILABLE" | "SWAPS_COORDINATION_REQUIRED" | "SWAPS_DISABLED" | "TRAILS_ABORTED" | "TRAILS_ERROR" | "TRAILS_TIMEOUT" | "TRAILS_UNAVAILABLE" | "UNSUPPORTED_CHAIN" | "UNSUPPORTED_NETWORK" | "UNSUPPORTED_PROTOCOL" | "UPSTREAM_ERROR" | "UPSTREAM_REDIRECT" | "UPSTREAM_UNAVAILABLE" | "WALLET_BUSY" | "WALLET_CLOSED" | "WALLET_DISABLED" | "WALLET_MISMATCH" | "WALLET_NOT_INITIALIZED" | "WALLET_PENDING";
+```
+
+### `isWalletErrorCode`
+
+Whether a string is one of the SDK's `WalletErrorCode`s.
+
+```typescript
+export declare function isWalletErrorCode(value: unknown): value is WalletErrorCode;
 ```

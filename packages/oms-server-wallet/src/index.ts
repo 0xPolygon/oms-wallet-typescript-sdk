@@ -5,7 +5,19 @@ export {
 } from './wallet.js';
 export { parseAmount } from './engine.js';
 export { createSingleProcessExecutor, createSingleProcessExecutorPool } from './storage.js';
-export { WalletError, UpstreamError, isWalletError, isUpstreamError } from './errors.js';
+export {
+  WalletError,
+  UpstreamError,
+  isWalletError,
+  isUpstreamError,
+  isWalletErrorCode
+} from './errors.js';
+export {
+  EVM_NETWORKS,
+  SOLANA_NETWORKS,
+  TRON_NETWORKS,
+  isSupportedEvmChainId
+} from './environment.js';
 export { describeOperation } from './guidance.js';
 
 export type {
@@ -85,4 +97,4 @@ export type {
   WalletStoreOption
 } from './types.js';
 export type { TypedDataDomain, TypedDataField } from './typed-data.js';
-export type { SupportedEvmChainId } from './environment.js';
+export type { EvmNetwork, SupportedEvmChainId } from './environment.js';

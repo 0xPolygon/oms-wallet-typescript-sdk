@@ -127,7 +127,7 @@ describe('durable swap execution', () => {
     await expect(
       h.wallet.evm.prepareTransfer({
         idempotencyKey: 'normal-transfer',
-        chainId: 137,
+        chainId: 137 as const,
         to: owner,
         asset: 'native',
         amount: '1'
@@ -500,7 +500,7 @@ it('recovers a destination-side intermediate token without assuming the quoted o
       {
         contractAddress: token,
         balance: '1000',
-        chainId: 8453,
+        chainId: 8453 as const,
         decimals: 6,
         symbol: 'INTERMEDIATE'
       }
@@ -512,7 +512,7 @@ it('recovers a destination-side intermediate token without assuming the quoted o
     source: 'destination'
   });
   expect(view.recoveries[0]).toMatchObject({
-    chainId: 8453,
+    chainId: 8453 as const,
     assets: [{ asset: token, symbol: 'INTERMEDIATE' }]
   });
   await h.swaps.confirmRecovery({
@@ -577,7 +577,7 @@ it('blocks an already prepared ordinary transfer when a swap subsequently reserv
   const h = await swapHarness();
   const prepared = await h.wallet.evm.prepareTransfer({
     idempotencyKey: 'prepared-normal-1',
-    chainId: 137,
+    chainId: 137 as const,
     to: owner,
     asset: 'native',
     amount: '1'
@@ -617,7 +617,7 @@ it('uses fresh recovery state and expires reviews before deploying or signing', 
 
 it('coordinates EVM calls with swap debits in both directions on the same wallet', async () => {
   const h = await swapHarness();
-  const call = { chainId: 137, to: token, data: '0xd0e30db0' as const };
+  const call = { chainId: 137 as const, to: token, data: '0xd0e30db0' as const };
   const prepared = await h.wallet.evm.prepareCall({ idempotencyKey: 'prepared-call-1', ...call });
   await h.confirm();
   await expect(
@@ -655,7 +655,7 @@ it('coordinates EVM calls with swap debits in both directions on the same wallet
 
 it('keeps an uncertain EVM debit blocking while its status read is stale inside the grace window', async () => {
   const h = await swapHarness();
-  const call = { chainId: 137, to: token, data: '0xd0e30db0' as const };
+  const call = { chainId: 137 as const, to: token, data: '0xd0e30db0' as const };
   h.waas.remote.failExecute = true;
   await h.wallet.evm.sendCall({ idempotencyKey: 'stale-call-1', ...call });
   h.waas.remote.failExecute = false;
@@ -674,7 +674,7 @@ it('keeps an uncertain EVM debit blocking while its status read is stale inside 
 
 it('returns a finished EVM call while a swap holds its chain', async () => {
   const h = await swapHarness();
-  const call = { chainId: 137, to: token, data: '0xd0e30db0' as const };
+  const call = { chainId: 137 as const, to: token, data: '0xd0e30db0' as const };
   await h.wallet.evm.sendCall({ idempotencyKey: 'finished-call-1', ...call });
   h.waas.remote.txnStatus = 'executed';
   expect((await h.wallet.evm.sendCall({ idempotencyKey: 'finished-call-1', ...call })).status).toBe(
@@ -692,7 +692,7 @@ it('coordinates on the chain fixed when the EVM call is requested', async () => 
   await h.confirm();
   const input = {
     idempotencyKey: 'moved-call-1',
-    chainId: 8453,
+    chainId: 8453 as 8453 | 137,
     to: token,
     data: '0xd0e30db0' as const
   };
@@ -728,7 +728,7 @@ describe('settled funding and recovery operations', () => {
     await expect(
       h.wallet.evm.prepareTransfer({
         idempotencyKey: 'after-refused-funding',
-        chainId: 137,
+        chainId: 137 as const,
         to: owner,
         asset: 'native',
         amount: '1'
@@ -765,7 +765,7 @@ describe('settled funding and recovery operations', () => {
     await expect(
       h.wallet.evm.prepareTransfer({
         idempotencyKey: 'after-presubmit-expiry',
-        chainId: 137,
+        chainId: 137 as const,
         to: owner,
         asset: 'native',
         amount: '1'
@@ -796,7 +796,7 @@ describe('settled funding and recovery operations', () => {
     await expect(
       h.wallet.evm.prepareTransfer({
         idempotencyKey: 'blocked-during-reconcile',
-        chainId: 137,
+        chainId: 137 as const,
         to: owner,
         asset: 'native',
         amount: '1'
@@ -899,7 +899,7 @@ describe('settled funding and recovery operations', () => {
     await expect(
       h.wallet.evm.prepareTransfer({
         idempotencyKey: 'blocked-by-deploy-recon',
-        chainId: 137,
+        chainId: 137 as const,
         to: '0x2222222222222222222222222222222222222222',
         asset: 'native',
         amount: '1'
@@ -922,7 +922,7 @@ describe('settled funding and recovery operations', () => {
     await expect(
       h.wallet.evm.prepareTransfer({
         idempotencyKey: 'unblocked-after-deploy-recon',
-        chainId: 137,
+        chainId: 137 as const,
         to: '0x2222222222222222222222222222222222222222',
         asset: 'native',
         amount: '1'

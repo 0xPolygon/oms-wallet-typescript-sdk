@@ -7,13 +7,13 @@ import { FakeWaas, TEST_PUBLISHABLE_KEY, sdkHarness } from './helpers.js';
 
 const usdt = 'TXYZopYRdj2D9XRtbG411XZZ3kM5VkAeBf';
 const tronTypedData: TypedDataInput = {
-  domain: { name: 'Permit', version: '1', chainId: 3448148188, verifyingContract: usdt },
+  domain: { name: 'Permit', version: '1', chainId: 3448148188 as const, verifyingContract: usdt },
   types: { Note: [{ name: 'text', type: 'string' }] },
   primaryType: 'Note',
   message: { text: 'ephemeral' }
 };
 const evmTypedData = (verifyingContract: string): TypedDataInput => ({
-  domain: { name: 'Acceptance', version: '1', chainId: 137, verifyingContract },
+  domain: { name: 'Acceptance', version: '1', chainId: 137 as const, verifyingContract },
   types: { Check: [{ name: 'note', type: 'string' }] },
   primaryType: 'Check',
   message: { note: 'ephemeral' }
@@ -50,7 +50,9 @@ describe('createEphemeralServerWallet', () => {
   it('never creates wallets: restore and signing need an existing wallet', async () => {
     const remote = new FakeWaas();
     const wallet = ephemeral(remote);
-    await expect(wallet.evm.signMessage({ chainId: 137, message: 'hi' })).rejects.toMatchObject({
+    await expect(
+      wallet.evm.signMessage({ chainId: 137 as const, message: 'hi' })
+    ).rejects.toMatchObject({
       code: 'WALLET_NOT_INITIALIZED'
     });
     await expect(wallet.restore()).rejects.toMatchObject({ code: 'WALLET_NOT_INITIALIZED' });
@@ -70,13 +72,15 @@ describe('createEphemeralServerWallet', () => {
     expect(calls(remote, 'ListWallets')).toHaveLength(listsBefore);
     expect(calls(remote, 'CompleteAuth').at(-1)?.body.lifetime).toBe(900);
 
-    await expect(wallet.evm.signMessage({ chainId: 80002, message: 'hi' })).resolves.toEqual({
+    await expect(
+      wallet.evm.signMessage({ chainId: 80002 as const, message: 'hi' })
+    ).resolves.toEqual({
       signature: '0x1234',
       verified: true
     });
     await expect(
       wallet.evm.signTypedData({
-        chainId: 137,
+        chainId: 137 as const,
         typedData: evmTypedData('0x000000000000000000000000000000000000dEaD')
       })
     ).resolves.toMatchObject({ verified: true });
@@ -98,16 +102,16 @@ describe('createEphemeralServerWallet', () => {
     const { wallet: evm } = await wallet.restore({ families: ['evm'] });
     const signed = calls(remote, 'SignTypedData').length;
     await expect(
-      wallet.evm.signTypedData({ chainId: 137, typedData: evmTypedData(evm!.address) })
+      wallet.evm.signTypedData({ chainId: 137 as const, typedData: evmTypedData(evm!.address) })
     ).rejects.toMatchObject({ code: 'INVALID_TYPED_DATA' });
     await expect(
       wallet.evm.signTypedData({
-        chainId: 137,
+        chainId: 137 as const,
         typedData: {
           domain: {
             name: 'Sequence Wallet',
             version: '3',
-            chainId: 137,
+            chainId: 137 as const,
             verifyingContract: evm!.address
           },
           types: { Calls: [{ name: 'nonce', type: 'uint256' }] },
@@ -130,7 +134,9 @@ describe('createEphemeralServerWallet', () => {
     remote.maxInFlight = 0;
     const results = await Promise.all(
       handles.flatMap((handle) =>
-        [1, 2].map((n) => handle.evm.signMessage({ chainId: 137, message: `parallel ${n}` }))
+        [1, 2].map((n) =>
+          handle.evm.signMessage({ chainId: 137 as const, message: `parallel ${n}` })
+        )
       )
     );
     expect(results.every((result) => result.verified)).toBe(true);
@@ -159,7 +165,7 @@ describe('createEphemeralServerWallet', () => {
       () => wallet.inspect(),
       () => wallet.restore(),
       () => wallet.rotateCredential(),
-      () => wallet.evm.signMessage({ chainId: 137, message: 'hi' }),
+      () => wallet.evm.signMessage({ chainId: 137 as const, message: 'hi' }),
       () => wallet.indexer.getEvmBalances()
     ])
       await expect(call()).rejects.toMatchObject({ code: 'WALLET_CLOSED' });

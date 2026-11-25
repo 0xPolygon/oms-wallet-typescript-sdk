@@ -111,6 +111,8 @@ const wallets = createServerWalletService({
 const wallet = wallets.forSubject(authenticatedUserId);
 ```
 
+`forSubject` does no I/O, and `createOrRestore` makes no WaaS call once the identity holds a valid credential and the requested wallets (it reads stored state only); it signs in again when the credential is within a minute of expiry. Handles can be cached or created per request. Several handles for the same subject are safe as long as your `ExecutorProvider` serializes by namespace, so they all queue behind one lock: `createSingleProcessExecutorPool` does this within a process, and a distributed provider must lock per namespace too.
+
 ## Attestation & trust policy
 
 Every WaaS response is verified against AWS Nitro attestation (root certificate, COSE signature, PCR0 allowlist, freshness, nonce, and request/response body binding). There is no skip-attestation switch.
@@ -125,6 +127,27 @@ By default (`approval: 'two-phase'`), one-shot `send*` shortcuts are omitted at 
 - `execute({ idempotencyKey, reviewId })` requires the opaque `reviewId` returned by `prepare*`, binding execution to the exact reviewed terms, fee/sponsor policy, quote ID, and expiry. `reviewId` binds terms — it is **not** caller authorization; expose `execute` only to your trusted backend approver.
 - Pass `approval: 'allow-immediate'` when your backend enforces authorization before calling one-shot `sendTransfer` / `sendCall` / `sendTransaction` / `sendContractCall`. Even in immediate mode, `submissionMode` is persisted before quoting so a `send*` call can never adopt or execute a quote prepared for manual review (`APPROVAL_REQUIRED`).
 
+## Payout lifecycle: operations, attempts and approval
+
+An operation's ID is the `idempotencyKey` you choose (`getOperation(idempotencyKey)`). Keys are 8–100 letters, digits, `_` or `-`. Retrying the same step with the same key and input is safe: `prepare*` returns the stored operation, and `execute` with the same `reviewId` returns its current state instead of submitting again.
+
+Quotes are short-lived. Measured on WaaS v1.2.0:
+
+| Chain | Quote lifetime |
+| --- | --- |
+| EVM (Polygon, Amoy and other EVM networks) | about 15 minutes |
+| Tron | about 15 minutes |
+| Solana | about 60 seconds (the blockhash lifetime) |
+
+Model one business payout as a series of **attempts**, each with its own key, for example `payout-123-a1`, `payout-123-a2`:
+
+1. `prepare*` under the current attempt key and store the `reviewId` and `quote.expiresAt` with your payout.
+2. Approve, then `execute({ idempotencyKey, reviewId })` before the quote expires.
+3. Wait with `waitForOperation`. Only the `'executed'` outcome means the transaction went through.
+4. Start a new attempt only when `describeOperation(operation).action` is `'safe-to-reprepare'` (for example a quote that expired before `execute`, or a refusal with `provenUnsent: true`). For `'poll-original'` or `'reconcile-original'`, keep waiting on or reconciling the same operation: a new attempt could pay twice.
+
+Approval that can take longer than the quote lifetime should approve the business terms (recipient, asset, amount, limits) rather than a specific quote: after approval, prepare and execute right away, re-approving only if the new terms differ. On Solana this is the only practical pattern.
+
 ## Uniform wallet grammar
 
 | Surface | Methods |
@@ -138,7 +161,9 @@ By default (`approval: 'two-phase'`), one-shot `send*` shortcuts are omitted at 
 
 ### EVM networks
 
-Every EVM network the client SDK (`@polygonlabs/oms-wallet`) supports is accepted, mainnets and testnets: Ethereum and Sepolia, Polygon and Polygon Amoy (`80002`), Arbitrum, Arbitrum Sepolia and Arbitrum Nova, Optimism and Optimism Sepolia, Base and Base Sepolia, BNB Chain and its testnet, Avalanche and its testnet, and Katana. `SupportedEvmChainId` lists their chain IDs. Sponsorship is configured per project and network in WaaS.
+Every EVM network the client SDK (`@polygonlabs/oms-wallet`) supports is accepted, mainnets and testnets: Ethereum and Sepolia, Polygon and Polygon Amoy (`80002`), Arbitrum, Arbitrum Sepolia and Arbitrum Nova, Optimism and Optimism Sepolia, Base and Base Sepolia, BNB Chain and its testnet, Avalanche and its testnet, and Katana. `SupportedEvmChainId` lists their chain IDs, and `EVM_NETWORKS`, `SOLANA_NETWORKS` and `TRON_NETWORKS` list the supported networks at runtime. Sponsorship is configured per project and network in WaaS; an unsponsored network quotes with `SPONSORSHIP_REQUIRED`.
+
+EVM `chainId` inputs are typed `SupportedEvmChainId`, so an unsupported chain fails to compile. A literal inside an object you build first widens to `number`; write `chainId: 137 as const`, annotate the object (`const transfer: EvmTransferInput = { … }`), or narrow a configured value with `isSupportedEvmChainId(chainId)`.
 
 ### EVM contract calls (`wallet.evm.prepareCall` / `sendCall`)
 
@@ -164,9 +189,27 @@ Never build `to`, `data`, `abi`, `functionName`, `args`, or `typedData` from unt
 - **Solana** (`solana:mainnet`, `solana:devnet`): Ed25519 account with mandatory fee-payer sponsorship (`SPONSORSHIP_REQUIRED`). Quotes expire in ~1 minute with their blockhash.
 - **Tron** (`tron:mainnet`, `tron:nile`): secp256k1 account (`T…`). Sponsored-only by default (delegated resources); set `maxFee` in sun to allow paying up to a quoted TRX cap (`FEE_LIMIT_EXCEEDED` / `FEE_ABOVE_QUOTE`). Note that `maxFee` applies to the quote and execution-time re-check; on-chain contract calls are capped by WaaS's sealed energy limit (1.2× estimate).
 
+A TRC-20 transfer, such as USDT, is a contract call. `method` is the bare function name, and each argument is an ABI type with its value; pass integers as decimal strings in base units:
+
+```ts
+const prepared = await wallet.tron.prepareContractCall({
+  idempotencyKey: 'payout-123-a1',
+  network: 'tron:mainnet',
+  contract: 'TR7NHqjeKQxGTCi8q8ZY4pL8otSzgjLj6t', // USDT on Tron
+  method: 'transfer', // not 'transfer(address,uint256)'
+  args: [
+    { type: 'address', value: recipient }, // T… address
+    { type: 'uint256', value: parseAmount('25', 6) } // '25000000'
+  ],
+  maxFee: '20000000' // pay up to 20 TRX when delegated energy does not cover it
+});
+```
+
+WaaS simulates the call while quoting; a call that would revert (for example, an insufficient token balance) is refused with `UPSTREAM_ERROR` (`upstreamCode` 7200).
+
 ### Observation, settlement & `describeOperation`
 
-- `getOperation(id)` is a **local read** (never authenticates or polls WaaS). Use `refreshOperation(id)` for one remote status poll, or `waitForOperation(id, { timeoutMs, pollIntervalMs?, signal? })` to poll outside exclusive ownership with distinct `'settled' | 'reconciliation-required' | 'timed-out' | 'cancelled'` outcomes.
+- `getOperation(id)` is a **local read** (never authenticates or polls WaaS). Use `refreshOperation(id)` for one remote status poll, or `waitForOperation(id, { timeoutMs, pollIntervalMs?, signal? })` to poll outside exclusive ownership with distinct outcomes: a finished operation reports its terminal status (`'executed' | 'failed' | 'expired' | 'signed'`), and `'reconciliation-required' | 'timed-out' | 'cancelled'` mean the wait ended first. Only `'executed'` means the transaction went through.
 - **Pre-submit quote expiry** marks the operation terminal `expired` (`QUOTE_EXPIRED`, `provenUnsent: true`) and never calls WaaS `Execute`.
 - **Ambiguous `Execute` (lost response)** stays **open** (`status: 'unknown'`). If WaaS still answers `TransactionExpired` two minutes past quote expiry without claim evidence, the operation escalates to `error: 'RECONCILIATION_REQUIRED'` while remaining open (`status: 'unknown'`) and retaining swap debit reservations — because an eventually-consistent negative read is a heuristic, not proof nothing was broadcast. Once an operator verifies out of band that nothing was broadcast, call `resolveReconciliation({ idempotencyKey, txnId, resolution: 'not-broadcast' })` (or `wallet.swaps.resolveReconciliation({ swapId, txnId, resolution: 'not-broadcast' })` for swap funding/recovery), which re-checks WaaS under lock before releasing reservations and marks the operation `expired` with `operatorResolved: true`. A stale `TransactionExpired` read inside the grace window leaves the operation unchanged, so `waitForOperation` keeps polling.
 - `getTransactionStatus(txnId)` reads the current WaaS status of a transaction by the `txnId` from its quote, for operators reconciling from their own records. It never changes a stored operation and never creates a wallet. Like any status read, a `quoted` or `TransactionExpired` answer is not proof that nothing was broadcast while WaaS is still catching up after the quote expired.
@@ -258,6 +301,23 @@ Every thrown error is a `WalletError` with a stable `code`, a safe `message` and
 - Once swaps are enabled and confirmed on a wallet, keep `swaps: trails({ ..., enabled: false })` if you later pause new swaps rather than removing `swaps` entirely, so existing reservations stay coordinated.
 - The SDK computes the canonical namespace (`JSON.stringify([waasOrigin, projectId, issuer, audience, subject])`) from the routed **WaaS API origin** (never `APP_ORIGIN`), ignoring a trailing slash on the issuer, and binds AES-256-GCM AAD to it. Unrecognized or corrupted state fails closed with `INVALID_STATE` or `STORAGE_INTEGRITY`.
 - Restoring a database backup after newer nonces or submissions have been sent requires upstream reconciliation — a backup alone is not a safe rollback.
+
+### Distributed executors
+
+A clustered backend supplies an `ExecutorProvider` backed by a distributed lock, one lock per namespace. One `run` can make several sequential WaaS requests, each with a 20-second timeout (for example, a sign-in and wallet discovery followed by `Execute`), so:
+
+- Hold the lock for the whole task and renew it while the task runs (a heartbeat), with a lease of minutes, not seconds.
+- If the lease is lost, stop the task and fail the call; never let two holders run tasks for the same namespace at once. The store contract has no compare-and-set, so the lock is the only guard against two workers interleaving credential nonces and operation records.
+- Never run wallet calls from inside `getIdToken`, a store adapter or a custom `fetch`: the lock is not re-entrant.
+
+## Custody: protect the OIDC signing key
+
+WaaS trusts ID tokens from your registered issuer. Whoever can mint an ID token for a subject, together with your publishable key (which is not a secret), controls that subject's wallet. Treat the issuer's signing key as the custody key for every wallet:
+
+- Keep it in a KMS or HSM and sign ID tokens there; never ship it in application config or images.
+- Mint tokens only inside the backend path that has already authorized the end user, and only for that user's subject.
+- Rotate it by publishing the new key in your JWKS under a new `kid` before switching, then retire the old one.
+- Mint a fresh token on every `getIdToken` call: WaaS rejects a token that was already used to sign in.
 
 ## Development
 

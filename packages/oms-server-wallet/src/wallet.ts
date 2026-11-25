@@ -70,7 +70,16 @@ import {
 } from './storage.js';
 import { WaasTransport } from './transport.js';
 
-const SETTLED_STATUSES: ReadonlySet<string> = new Set(['executed', 'failed', 'expired', 'signed']);
+type TerminalOutcome = 'executed' | 'failed' | 'expired' | 'signed';
+const TERMINAL_OUTCOMES: ReadonlySet<string> = new Set<TerminalOutcome>([
+  'executed',
+  'failed',
+  'expired',
+  'signed'
+]);
+/** The operation's terminal status as a wait outcome, or undefined while it is still open. */
+const terminalOutcome = (status: string): TerminalOutcome | undefined =>
+  TERMINAL_OUTCOMES.has(status) ? (status as TerminalOutcome) : undefined;
 
 function normalizeOrigin(origin: string | undefined): string | undefined {
   if (origin === undefined) return undefined;
@@ -197,7 +206,8 @@ async function waitFor<TOperation extends WalletOperation>(
   // never trigger unnecessary remote WaaS polling.
   let last = await getLocal(id);
   if (!last) throw new WalletError('NOT_FOUND', 'Operation not found.', 404);
-  if (SETTLED_STATUSES.has(last.status)) return { outcome: 'settled', operation: last };
+  const finished = terminalOutcome(last.status);
+  if (finished) return { outcome: finished, operation: last };
   if (
     last.status === 'unknown' &&
     (last.error === 'RECONCILIATION_REQUIRED' ||
@@ -220,7 +230,8 @@ async function waitFor<TOperation extends WalletOperation>(
     }
     if (!current) throw new WalletError('NOT_FOUND', 'Operation not found.', 404);
     last = current;
-    if (SETTLED_STATUSES.has(current.status)) return { outcome: 'settled', operation: current };
+    const done = terminalOutcome(current.status);
+    if (done) return { outcome: done, operation: current };
     if (current.status === 'unknown' && current.error === 'RECONCILIATION_REQUIRED')
       return { outcome: 'reconciliation-required', operation: current };
     if (options.signal?.aborted) return { outcome: 'cancelled', operation: current };

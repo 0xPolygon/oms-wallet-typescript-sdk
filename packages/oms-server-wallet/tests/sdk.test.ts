@@ -6,7 +6,7 @@ import { createServerWalletInternal } from '../src/wallet.js';
 import { MemoryStore, TEST_PUBLISHABLE_KEY, sdkHarness } from './helpers.js';
 
 const transfer = {
-  chainId: 137,
+  chainId: 137 as const,
   to: '0x2222222222222222222222222222222222222222',
   asset: 'native',
   amount: '1000000000000000'
@@ -51,7 +51,7 @@ describe('server wallet lifecycle and transactions', () => {
       (
         await h.client.evm.signMessage({
           idempotencyKey: 'sign-001',
-          chainId: 137,
+          chainId: 137 as const,
           message: 'hello'
         })
       ).verified
@@ -66,7 +66,7 @@ describe('server wallet lifecycle and transactions', () => {
       (
         await h.client.evm.signMessage({
           idempotencyKey: 'revoked-1',
-          chainId: 137,
+          chainId: 137 as const,
           message: 'hello'
         })
       ).verified
@@ -89,7 +89,11 @@ describe('server wallet lifecycle and transactions', () => {
       return request(method, body, credential);
     };
     await expect(
-      h.client.evm.signMessage({ idempotencyKey: 'denied-1', chainId: 137, message: 'hello' })
+      h.client.evm.signMessage({
+        idempotencyKey: 'denied-1',
+        chainId: 137 as const,
+        message: 'hello'
+      })
     ).rejects.toMatchObject({
       upstreamCode: 7207
     });
@@ -122,7 +126,7 @@ describe('server wallet lifecycle and transactions', () => {
       Array.from({ length: 12 }, (_, i) =>
         h.create().evm.signMessage({
           idempotencyKey: `message-${i}`,
-          chainId: 137,
+          chainId: 137 as const,
           message: `hello ${i}`
         })
       )
@@ -216,7 +220,9 @@ describe('server wallet lifecycle and transactions', () => {
     h.remote.failRevoke = true;
     await expect(h.client.disable()).rejects.toThrow();
     await expect(
-      h.create().evm.signMessage({ idempotencyKey: 'disabled-1', chainId: 137, message: 'hello' })
+      h
+        .create()
+        .evm.signMessage({ idempotencyKey: 'disabled-1', chainId: 137 as const, message: 'hello' })
     ).rejects.toMatchObject({
       code: 'WALLET_DISABLED'
     });

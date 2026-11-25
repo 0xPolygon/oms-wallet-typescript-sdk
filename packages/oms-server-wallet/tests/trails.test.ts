@@ -56,7 +56,13 @@ describe('Trails direct API transport', () => {
   });
   it('discovers assets/routes and validates quote, intent and recovery response envelopes', async () => {
     const { intent, request } = quoteFixture();
-    const asset = { chainId: 137, address: token, name: 'Test USD', symbol: 'USD', decimals: 6 };
+    const asset = {
+      chainId: 137 as const,
+      address: token,
+      name: 'Test USD',
+      symbol: 'USD',
+      decimals: 6
+    };
     const h = makeClient({ tokens: [asset] });
     expect(await h.client.getTokenList([137])).toEqual({ tokens: [asset] });
     expect(JSON.parse(h.fetcher.mock.calls[0][1]!.body as string)).toEqual({
@@ -162,7 +168,7 @@ describe('quote authorization', () => {
     const { intent, request } = quoteFixture(native, '123456789012345678901234567890');
     const quote = await validateSwapQuote(intent, request, policy, now);
     expect(quote.funding).toEqual({
-      chainId: 137,
+      chainId: 137 as const,
       to: intent.originIntentAddress,
       asset: native ? 'native' : token,
       amount: request.originTokenAmount

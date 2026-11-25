@@ -185,10 +185,10 @@ describe('indexer gateway', () => {
         return Response.json({
           nativeBalances: [
             {
-              chainId: 137,
+              chainId: 137 as const,
               results: [
                 {
-                  chainId: 137,
+                  chainId: 137 as const,
                   accountAddress: address,
                   balanceWei: '1000000000000000001',
                   name: 'Polygon',
@@ -196,14 +196,14 @@ describe('indexer gateway', () => {
                 }
               ]
             },
-            { chainId: 1, errorReason: 'Indexer unavailable' }
+            { chainId: 1 as const, errorReason: 'Indexer unavailable' }
           ],
           balances: [
             {
-              chainId: 137,
+              chainId: 137 as const,
               results: [
                 {
-                  chainId: 137,
+                  chainId: 137 as const,
                   accountAddress: address,
                   contractAddress: '0x2222222222222222222222222222222222222222',
                   contractType: 'ERC20',
@@ -231,10 +231,10 @@ describe('indexer gateway', () => {
       Response.json({
         nativeBalances: [
           {
-            chainId: 137,
+            chainId: 137 as const,
             results: [
               {
-                chainId: 137,
+                chainId: 137 as const,
                 accountAddress: '0x2222222222222222222222222222222222222222',
                 balance: '0'
               }

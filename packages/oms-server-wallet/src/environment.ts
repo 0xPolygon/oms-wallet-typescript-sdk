@@ -3,22 +3,50 @@ import type { WaasMode, WaasStage } from './internal/protocol/publishableKey.js'
 
 import { WalletError } from './errors.js';
 import { normalizeTrustedPcr0s, trustsDebugEnclave } from './internal/protocol/attestation.js';
-import { EVM_NETWORKS } from './internal/protocol/networks.js';
+import {
+  EVM_NETWORKS as PROTOCOL_EVM_NETWORKS,
+  SOLANA_NETWORKS as PROTOCOL_SOLANA_NETWORKS,
+  TRON_NETWORKS as PROTOCOL_TRON_NETWORKS
+} from './internal/protocol/networks.js';
 import { routePublishableKey } from './internal/protocol/publishableKey.js';
 
+/** Chain ID of an EVM network the SDK accepts. */
+export type SupportedEvmChainId = EvmChainId;
+
+/** An EVM network the SDK accepts. */
+export interface EvmNetwork {
+  readonly id: SupportedEvmChainId;
+  readonly name: string;
+  readonly displayName: string;
+  readonly nativeTokenSymbol: string;
+  readonly explorerUrl: string;
+}
+
 /**
- * EVM networks the SDK accepts: every network WaaS serves, shared with the client SDK through
- * `oms-wallet-protocol`, mainnets and testnets alike.
+ * Every EVM network the SDK accepts, mainnets and testnets alike. The same list as the client
+ * SDK's `Networks`; sponsorship is still configured per project and network in WaaS.
  */
+export const EVM_NETWORKS: readonly EvmNetwork[] = PROTOCOL_EVM_NETWORKS;
+
+/** Solana networks the SDK accepts. */
+export const SOLANA_NETWORKS: readonly ('solana:mainnet' | 'solana:devnet')[] =
+  PROTOCOL_SOLANA_NETWORKS;
+
+/** Tron networks the SDK accepts. */
+export const TRON_NETWORKS: readonly ('tron:mainnet' | 'tron:nile')[] = PROTOCOL_TRON_NETWORKS;
+
+/** Whether a value is a supported EVM chain ID; narrows config or request input without a cast. */
+export function isSupportedEvmChainId(chainId: unknown): chainId is SupportedEvmChainId {
+  return EVM_NETWORKS.some((network) => network.id === chainId);
+}
+
+/** Internal lookup shape used by the indexer and validation. */
 export const CHAINS = EVM_NETWORKS.map((network) => ({
   id: network.id,
   name: network.displayName,
   symbol: network.nativeTokenSymbol,
   explorer: network.explorerUrl
 }));
-
-/** Chain ID of an EVM network the SDK accepts. */
-export type SupportedEvmChainId = EvmChainId;
 
 export interface AttestationOptions {
   /**

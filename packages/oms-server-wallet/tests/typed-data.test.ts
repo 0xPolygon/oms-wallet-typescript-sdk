@@ -41,8 +41,8 @@ describe('lossless bounded authorization data', () => {
       type: 'uint256'
     });
     for (const data of [
-      { ...typedData, domain: { ...typedData.domain, chainId: 1 } },
-      { ...typedData, domain: { chainId: 137 } },
+      { ...typedData, domain: { ...typedData.domain, chainId: 1 as const } },
+      { ...typedData, domain: { chainId: 137 as const } },
       { ...typedData, primaryType: 'Absent' },
       { ...typedData, primaryType: 'EIP712Domain' },
       { ...typedData, types: { ...typedData.types, EIP712Domain: [] } },
@@ -58,7 +58,7 @@ function permitTypedData() {
     domain: {
       name: 'USD Coin',
       version: '2',
-      chainId: 137,
+      chainId: 137 as const,
       verifyingContract: '0x3c499c542cef5e3811e1192ce70d8cc03d5c3359'
     },
     types: {
@@ -85,7 +85,7 @@ describe('WaaS typed-data signing', () => {
     const typedData = permitTypedData();
     const operation = await h.client.evm.signTypedData({
       idempotencyKey: 'typed-sign-1',
-      chainId: 137,
+      chainId: 137 as const,
       typedData
     });
     expect(operation).toMatchObject({
@@ -97,7 +97,7 @@ describe('WaaS typed-data signing', () => {
     expect(
       await h.create().evm.signTypedData({
         idempotencyKey: 'typed-sign-1',
-        chainId: 137,
+        chainId: 137 as const,
         typedData: { ...typedData }
       })
     ).toEqual(operation);
@@ -111,14 +111,18 @@ describe('WaaS typed-data signing', () => {
     await expect(
       h.client.evm.signTypedData({
         idempotencyKey: 'typed-sign-1',
-        chainId: 137,
+        chainId: 137 as const,
         typedData: changed
       })
     ).rejects.toMatchObject({
       code: 'IDEMPOTENCY_CONFLICT'
     });
     await expect(
-      h.client.evm.signMessage({ idempotencyKey: 'typed-sign-1', chainId: 137, message: 'message' })
+      h.client.evm.signMessage({
+        idempotencyKey: 'typed-sign-1',
+        chainId: 137 as const,
+        message: 'message'
+      })
     ).rejects.toMatchObject({
       code: 'IDEMPOTENCY_CONFLICT'
     });
@@ -131,13 +135,15 @@ describe('WaaS typed-data signing', () => {
     const expectedNonce = typedData.message.nonce;
     const pending = h.client.evm.signTypedData({
       idempotencyKey: 'typed-queued',
-      chainId: 137,
+      chainId: 137 as const,
       typedData
     });
     typedData.message.nonce = '987654321';
     await Promise.all([
       pending,
-      h.create().evm.signTypedData({ idempotencyKey: 'typed-concurrent', chainId: 137, typedData })
+      h
+        .create()
+        .evm.signTypedData({ idempotencyKey: 'typed-concurrent', chainId: 137 as const, typedData })
     ]);
     expect(h.remote.maxInFlight).toBe(1);
     expect(h.remote.calls.filter((c) => c.method === 'CompleteAuth')).toHaveLength(2);
@@ -149,14 +155,22 @@ describe('WaaS typed-data signing', () => {
     const h = sdkHarness();
     const typedData = permitTypedData();
     await expect(
-      h.client.evm.signTypedData({ idempotencyKey: 'typed-bad-chain', chainId: 1, typedData })
+      h.client.evm.signTypedData({
+        idempotencyKey: 'typed-bad-chain',
+        chainId: 1 as const,
+        typedData
+      })
     ).rejects.toMatchObject({
       code: 'INVALID_TYPED_DATA'
     });
     expect(h.remote.calls).toHaveLength(0);
     await h.client.disable();
     await expect(
-      h.client.evm.signTypedData({ idempotencyKey: 'typed-disabled', chainId: 137, typedData })
+      h.client.evm.signTypedData({
+        idempotencyKey: 'typed-disabled',
+        chainId: 137 as const,
+        typedData
+      })
     ).rejects.toMatchObject({
       code: 'WALLET_DISABLED'
     });
@@ -171,14 +185,18 @@ describe('WaaS typed-data signing', () => {
         ? { isValid: false }
         : request(method, body, credential);
     await expect(
-      h.client.evm.signTypedData({ idempotencyKey: 'typed-invalid', chainId: 137, typedData })
+      h.client.evm.signTypedData({
+        idempotencyKey: 'typed-invalid',
+        chainId: 137 as const,
+        typedData
+      })
     ).rejects.toMatchObject({
       code: 'SIGNATURE_INVALID'
     });
     expect(
       await h
         .create()
-        .evm.signTypedData({ idempotencyKey: 'typed-invalid', chainId: 137, typedData })
+        .evm.signTypedData({ idempotencyKey: 'typed-invalid', chainId: 137 as const, typedData })
     ).toMatchObject({
       status: 'failed',
       error: 'SIGNATURE_INVALID'

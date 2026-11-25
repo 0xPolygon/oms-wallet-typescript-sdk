@@ -284,7 +284,7 @@ describe('Tron transactions and fees', () => {
 
 describe('Tron message and typed-data signing', () => {
   const typedData: TypedDataInput = {
-    domain: { name: 'Permit', version: '1', chainId: 3448148188, verifyingContract: usdt },
+    domain: { name: 'Permit', version: '1', chainId: 3448148188 as const, verifyingContract: usdt },
     types: {
       Transfer: [
         { name: 'to', type: 'address' },
@@ -325,7 +325,7 @@ describe('Tron message and typed-data signing', () => {
     const hex = (address: string) => tronToHex(address);
     expect(digest).toBe(
       hashTypedData({
-        domain: { ...typedData.domain, chainId: 3448148188, verifyingContract: hex(usdt) },
+        domain: { ...typedData.domain, chainId: 3448148188 as const, verifyingContract: hex(usdt) },
         types: typedData.types,
         primaryType: 'Transfer',
         message: {
@@ -367,7 +367,7 @@ describe('Tron message and typed-data signing', () => {
     [
       'a missing verifying contract',
       'tron:nile',
-      { ...typedData, domain: { name: 'Permit', chainId: 3448148188 } }
+      { ...typedData, domain: { name: 'Permit', chainId: 3448148188 as const } }
     ]
   ])('rejects typed data for %s', async (_, network, data) => {
     const h = sdkHarness();
