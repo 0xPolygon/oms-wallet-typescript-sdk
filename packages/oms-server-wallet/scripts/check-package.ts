@@ -156,14 +156,14 @@ const walletSwaps = trails({
   apiKey: 'fixture',
   chains: { 137: 'https://rpc.example' },
   assets: [],
-  store: { scope: 'wallet', adapter: swapStore },
+  storage: { scope: 'wallet', adapter: swapStore, encryptionKey },
   environment: 'consumer'
 });
 const serviceSwaps = trails({
   apiKey: 'fixture',
   chains: { 137: 'https://rpc.example' },
   assets: [],
-  store: { scope: 'service', adapter: nsSwapStore },
+  storage: { scope: 'service', adapter: nsSwapStore, encryptionKey },
   environment: 'consumer'
 });
 
@@ -343,7 +343,7 @@ const swaps = trails({
   apiKey: 'trails-key',
   chains: { 137: 'https://rpc.example' },
   assets: [],
-  store: { scope: 'wallet', adapter: swapMem() },
+  storage: { scope: 'wallet', adapter: swapMem(), encryptionKey },
   environment: 'smoke'
 });
 const wallet = createServerWallet({

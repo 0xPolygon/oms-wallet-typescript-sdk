@@ -254,7 +254,9 @@ export class EvmEngine {
     // Authoritative swap reservations in wallet state protect against a misconfigured worker
     // pointing at an empty or different swap store while sharing wallet state and executor.
     if (state.swapReservations) {
-      const blocking = Object.entries(state.swapReservations).find(([, c]) => c === chainId);
+      const blocking = Object.entries(state.swapReservations).find(
+        ([, reservation]) => reservation.chainId === chainId
+      );
       if (blocking)
         throw new WalletError(
           'DEBIT_PENDING',

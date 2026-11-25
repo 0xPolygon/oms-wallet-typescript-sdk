@@ -35,7 +35,7 @@ const wallet = createServerWallet({
       { chainId: 137, asset: '0x3c499c542cef5e3811e1192ce70d8cc03d5c3359', decimals: 6, symbol: 'USDC' },
       { chainId: 8453, asset: '0x833589fcd6edb6e08f4c7c32d4f71b54bda02913', decimals: 6, symbol: 'USDC' }
     ],
-    store: { scope: 'wallet', adapter: swapStore },
+    storage: { scope: 'wallet', adapter: swapStore, encryptionKey: process.env.ENCRYPTION_KEY! },
     environment: 'my-trails-project'
   })
 });
@@ -43,7 +43,7 @@ const wallet = createServerWallet({
 
 ### Multi-tenant service (Node backend)
 
-Pass `store: { scope: 'service', adapter: namespacedSwapStore }` to `trails(...)` and pass it to `createServerWalletService`:
+Pass `storage: { scope: 'service', adapter: namespacedSwapStore, encryptionKey }` to `trails(...)` and pass it to `createServerWalletService`:
 
 ```ts
 import {
@@ -66,7 +66,7 @@ const wallets = createServerWalletService({
     apiKey: process.env.TRAILS_API_KEY!,
     chains: { 137: process.env.POLYGON_RPC_URL!, 8453: process.env.BASE_RPC_URL! },
     assets: approvedAssets,
-    store: { scope: 'service', adapter: swapStorage },
+    storage: { scope: 'service', adapter: swapStorage, encryptionKey: process.env.ENCRYPTION_KEY! },
     environment: 'my-trails-project'
   })
 });
@@ -117,7 +117,9 @@ Implement `SwapStore` (or `NamespacedSwapStore`) over `StoredSwapEntry`:
 | `active` | Whether the swap has a pending workflow action (indexed for `list({ active: true })`). |
 | `nextAt` | Epoch ms timestamp for the next scheduled `tick()` alarm, or `null` when idle. |
 | `createdAt` | ISO-8601 creation timestamp (sort descending in `list`). |
-| `payload` | Opaque sensitive JSON blob containing private swap/recovery state. **Encrypt at rest and never return to browsers.** |
+| `payload` | Opaque string the SDK has already encrypted (AES-256-GCM) and authenticated with the metadata fields above and the wallet namespace. Store it as given; an edited entry fails with `STORAGE_INTEGRITY`. |
+
+`storage.encryptionKey` is 32 base64-encoded bytes. It may be the wallet state key: swap records use a key derived separately for each wallet namespace. The SDK cannot detect a store that returns an older authentic version of an entry, so `save` must never be rolled back (restore a backup only together with the matching wallet state). A wallet-state debit reservation is released only by a swap record newer than the reservation, so a rolled-back swap store keeps the wallet's EVM debits blocked (`DEBIT_PENDING`) until the swap step is retried.
 
 Always arrange a durable wake-up (`nextAt`) before committing an action that can reach an external service. On Cloudflare Workers, use one SQLite Durable Object per wallet with one alarm set to the earliest active `nextAt`, and never hold `blockConcurrencyWhile` open across network I/O.
 

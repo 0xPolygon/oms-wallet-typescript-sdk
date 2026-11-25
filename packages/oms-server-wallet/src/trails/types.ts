@@ -17,6 +17,13 @@ export type SwapPhase =
   | 'recovering'
   | 'refunded';
 
+/**
+ * What a `succeeded` or `refunded` phase rests on. `'provider-reported'`: the Trails receipt says so
+ * and its addresses, token and amount match the quote, but the SDK did not read the destination or
+ * refund transfer on chain. `'chain-verified'`: the SDK read the outcome on chain itself (recovery).
+ */
+export type SwapOutcomeEvidence = 'provider-reported' | 'chain-verified';
+
 export type SwapAction =
   | 'prepare-funding'
   | 'activate'
@@ -87,6 +94,7 @@ export interface SwapRecord {
   };
   quote: SwapQuote;
   phase: SwapPhase;
+  outcomeEvidence?: SwapOutcomeEvidence;
   action: SwapAction;
   createdAt: string;
   updatedAt: string;
@@ -106,8 +114,10 @@ export interface SwapRecord {
 
 /**
  * Opaque durable swap entry persisted by `SwapStore` / `NamespacedSwapStore`.
- * Hosts index the metadata fields for queries and wake-up alarms; encrypt `payload` at rest and
- * never return `payload` to browsers.
+ * Hosts index the metadata fields for queries and wake-up alarms and store `payload` as given:
+ * the SDK encrypts it (AES-256-GCM) and authenticates it together with every metadata field and
+ * the wallet namespace, so an edited entry fails with `STORAGE_INTEGRITY`. Replaying an older
+ * authentic entry is not detected; the store must not roll back.
  */
 export interface StoredSwapEntry {
   readonly id: string;
@@ -142,19 +152,30 @@ export interface NamespacedSwapStore {
   ): Promise<readonly StoredSwapEntry[]>;
 }
 
-/** Explicit store scope passed to `trails(...)`. */
-export type TrailsStoreOption =
-  | { readonly scope: 'wallet'; readonly adapter: SwapStore }
-  | { readonly scope: 'service'; readonly adapter: NamespacedSwapStore };
+/**
+ * Swap record storage passed to `trails({ storage })`. `encryptionKey` is 32 base64-encoded bytes;
+ * it may be the wallet's own key (swap records use a separately derived key per wallet namespace).
+ */
+export type TrailsStorageOption =
+  | {
+      readonly scope: 'wallet';
+      readonly adapter: SwapStore;
+      readonly encryptionKey: string;
+    }
+  | {
+      readonly scope: 'service';
+      readonly adapter: NamespacedSwapStore;
+      readonly encryptionKey: string;
+    };
 
 /** Options for `trails(...)` from `@polygonlabs/oms-server-wallet-sdk/trails`. */
-export interface TrailsOptions<TStore extends TrailsStoreOption = TrailsStoreOption> {
+export interface TrailsOptions<TStorage extends TrailsStorageOption = TrailsStorageOption> {
   readonly apiKey: string;
   /** HTTPS JSON-RPC URLs keyed by EVM chain ID (used to verify balances, code, and receipts). */
   readonly chains: Readonly<Record<number, string>>;
   /** Host-approved swap asset allowlist (never supplied by an untrusted caller). */
   readonly assets: readonly SwapAsset[];
-  readonly store: TStore;
+  readonly storage: TStorage;
   /** Stable endpoint/project identity (never an API key). A mismatch blocks replay. */
   readonly environment?: string;
   /** Set `false` to pause new swaps/funding while still allowing observation and recovery. Default `true`. */
@@ -219,6 +240,8 @@ export interface SwapView {
     readonly destination: { readonly decimals: number; readonly symbol?: string };
   };
   readonly phase: SwapPhase;
+  /** Set when `phase` is `succeeded` or `refunded`; see `SwapOutcomeEvidence`. */
+  readonly outcomeEvidence?: SwapOutcomeEvidence;
   readonly createdAt: string;
   readonly updatedAt: string;
   readonly confirmedAt?: string;

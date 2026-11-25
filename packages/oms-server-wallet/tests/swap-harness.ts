@@ -10,7 +10,7 @@ import type { ChainReader } from '../src/trails/chain.js';
 import type { PreparedRecovery, TrailsIntent, TrailsReceipt } from '../src/trails/protocol.js';
 import type { SwapGateway, SwapRecord } from '../src/trails/types.js';
 
-import { trailsInternal } from '../src/trails/coordinator.js';
+import { type SwapRecordCodec, trailsInternal } from '../src/trails/coordinator.js';
 import { executeAbi } from '../src/trails/recovery-transaction.js';
 import { createServerWalletInternal } from '../src/wallet.js';
 import {
@@ -24,9 +24,14 @@ import {
 } from './fixtures/trails.js';
 import { FakeWaas, MemoryStore, TEST_PUBLISHABLE_KEY } from './helpers.js';
 
+/** Test-only 32-byte base64 key for swap record encryption. */
+export const SWAP_ENCRYPTION_KEY = Buffer.alloc(32, 7).toString('base64');
+
 export class MemorySwapStore implements SwapStore {
   entries = new Map<string, StoredSwapEntry>();
   fail?: (record: SwapRecord) => boolean;
+  /** The codec the bound coordinator uses, so tests can read and write records. */
+  codec?: SwapRecordCodec;
   async get(id: string) {
     return structuredClone(this.entries.get(id) ?? null);
   }
@@ -34,8 +39,8 @@ export class MemorySwapStore implements SwapStore {
     return [...this.entries.values()].find((e) => e.intentId === intent)?.id ?? null;
   }
   async save(entry: StoredSwapEntry) {
-    const record = JSON.parse(entry.payload) as SwapRecord;
-    if (this.fail?.(record)) throw new Error('Simulated storage outage');
+    if (this.fail && this.fail(await this.codec!.decode(entry)))
+      throw new Error('Simulated storage outage');
     this.entries.set(entry.id, structuredClone(entry));
   }
   async list({ active, offset = 0, limit }: { active?: boolean; offset?: number; limit: number }) {
@@ -49,19 +54,11 @@ export class MemorySwapStore implements SwapStore {
   /** Convenience helper for tests inspecting internal persisted SwapRecord state. */
   async getRecord(id: string): Promise<SwapRecord | null> {
     const entry = this.entries.get(id);
-    return entry ? (JSON.parse(entry.payload) as SwapRecord) : null;
+    return entry ? this.codec!.decode(entry) : null;
   }
   /** Convenience helper for tests mutating a stored SwapRecord directly. */
   async putRecord(record: SwapRecord): Promise<void> {
-    this.entries.set(record.id, {
-      id: record.id,
-      intentId: record.quote.intent.intentId,
-      version: record.version,
-      active: record.action !== null,
-      nextAt: record.nextAt,
-      createdAt: record.createdAt,
-      payload: JSON.stringify(record)
-    });
+    this.entries.set(record.id, await this.codec!.encode(record));
   }
 }
 
@@ -224,11 +221,11 @@ export async function swapHarness(native = false) {
             apiKey: 'fixture-trails-key',
             chains: { 137: 'https://polygon.rpc.example', 8453: 'https://base.rpc.example' },
             assets: fixture.assets,
-            store: { scope: 'wallet', adapter: store },
+            storage: { scope: 'wallet', adapter: store, encryptionKey: SWAP_ENCRYPTION_KEY },
             enabled,
             environment
           },
-          { gateway, chains, clock: () => clock }
+          { gateway, chains, clock: () => clock, onCodec: (codec) => (store.codec = codec) }
         )
       },
       { transport: remote, clock: () => clock }

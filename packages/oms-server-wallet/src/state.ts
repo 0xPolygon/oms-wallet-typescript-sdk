@@ -14,6 +14,15 @@ import {
   walletSchema
 } from './protocol.js';
 
+/**
+ * A swap's hold on one chain's debits, with the swap-record version it was taken at. Only a save
+ * of a newer swap record may release it, so a stale or rolled-back swap record cannot.
+ */
+export interface SwapReservation {
+  chainId: number;
+  version: number;
+}
+
 /** Persisted under the `wallet` key. Holds one wallet per network family and active coordination state. */
 export interface State {
   version: 2;
@@ -32,7 +41,7 @@ export interface State {
    * wallet state under the shared executor so a misconfigured worker with an empty swap store
    * cannot bypass active debit reservations.
    */
-  swapReservations?: Record<string, number>;
+  swapReservations?: Record<string, SwapReservation>;
 }
 
 const storedWallet = (family: NetworkFamily) =>
@@ -57,7 +66,12 @@ const stateSchema = z.strictObject({
   disabled: z.boolean(),
   creating: z.array(z.enum(NETWORK_FAMILIES)).max(NETWORK_FAMILIES.length),
   swapsCoordinated: z.boolean().optional(),
-  swapReservations: z.record(z.string().min(1), z.number().int().positive()).optional()
+  swapReservations: z
+    .record(
+      z.string().min(1),
+      z.strictObject({ chainId: z.number().int().positive(), version: z.number().int().min(0) })
+    )
+    .optional()
 });
 
 const operationStatusValues = [

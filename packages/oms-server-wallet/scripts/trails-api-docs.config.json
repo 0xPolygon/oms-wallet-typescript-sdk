@@ -2,7 +2,7 @@
   "groups": [
     {
       "label": "Setup",
-      "symbols": ["trails", "TrailsOptions", "TrailsStoreOption", "SwapAsset", "SwapsConfig"]
+      "symbols": ["trails", "TrailsOptions", "TrailsStorageOption", "SwapAsset", "SwapsConfig"]
     },
     {
       "label": "Swaps facet",
@@ -29,6 +29,7 @@
       "symbols": [
         "SwapView",
         "SwapPhase",
+        "SwapOutcomeEvidence",
         "RecoveryView",
         "RecoveryStatus",
         "RecoveryAsset",

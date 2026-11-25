@@ -54,18 +54,25 @@ export class WalletEngine {
         const state = await this.core.load();
         return { ...(state.swapReservations ?? {}) };
       },
-      setSwapReservationLocked: async (swapId, chainId) => {
+      reserveSwapChainLocked: async (swapId, chainId, version) => {
         const state = await this.core.load();
-        const next: Record<string, number> = { ...(state.swapReservations ?? {}) };
-        if (chainId === null) {
-          if (!(swapId in next)) return;
-          delete next[swapId];
-        } else {
-          if (next[swapId] === chainId) return;
-          next[swapId] = chainId;
-        }
+        const current = state.swapReservations?.[swapId];
+        if (current?.chainId === chainId && current.version === version) return;
+        state.swapReservations = {
+          ...(state.swapReservations ?? {}),
+          [swapId]: { chainId, version }
+        };
+        await this.core.save(state);
+      },
+      releaseSwapChainLocked: async (swapId, recordVersion) => {
+        const state = await this.core.load();
+        const current = state.swapReservations?.[swapId];
+        if (!current || recordVersion <= current.version) return false;
+        const next = { ...state.swapReservations };
+        delete next[swapId];
         state.swapReservations = Object.keys(next).length > 0 ? next : undefined;
         await this.core.save(state);
+        return true;
       },
       resolveEvmReconciliationLocked: (id, txnId) =>
         this.evm.resolveEvmReconciliationInternal(id, txnId, { allowInternal: true }),

@@ -242,7 +242,7 @@ const wallet = createServerWallet({
       { chainId: 137, asset: '0x3c499c542cef5e3811e1192ce70d8cc03d5c3359', decimals: 6, symbol: 'USDC' },
       { chainId: 8453, asset: '0x833589fcd6edb6e08f4c7c32d4f71b54bda02913', decimals: 6, symbol: 'USDC' }
     ],
-    store: { scope: 'wallet', adapter: swapStore },
+    storage: { scope: 'wallet', adapter: swapStore, encryptionKey: process.env.ENCRYPTION_KEY! },
     environment: 'my-trails-project'
   })
 });

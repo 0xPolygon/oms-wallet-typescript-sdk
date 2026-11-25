@@ -30,7 +30,7 @@ import type {
   TickSwapsOptions,
   TickSwapsResult,
   TrailsOptions,
-  TrailsStoreOption
+  TrailsStorageOption
 } from './types.js';
 
 import { sha256 } from '../encoding.js';
@@ -38,6 +38,7 @@ import { WalletError } from '../errors.js';
 import { registerSwapsBinder } from '../internal/swapsBridge.js';
 import { canonicalJson } from '../json.js';
 import { isStaleExpiryRead } from '../settlement.js';
+import { NamespaceCipher } from '../storage.js';
 import { parseOrThrow } from '../validation.js';
 import { EvmChainReader } from './chain.js';
 import { TrailsClient, TrailsError } from './client.js';
@@ -69,41 +70,78 @@ function validateId(id: unknown): string {
   return parsed.data;
 }
 
-function serializeSwapRecord(record: SwapRecord): StoredSwapEntry {
-  return {
-    id: record.id,
-    intentId: record.quote.intent.intentId,
-    version: record.version,
-    active: record.action !== null,
-    nextAt: record.nextAt,
-    createdAt: record.createdAt,
-    payload: JSON.stringify(record)
-  };
-}
+const integrity = (message: string) => new WalletError('STORAGE_INTEGRITY', message, 500);
 
-function deserializeSwapRecord(entry: StoredSwapEntry): SwapRecord {
-  let parsed: unknown;
-  try {
-    parsed = JSON.parse(entry.payload);
-  } catch {
-    throw new WalletError('INVALID_STATE', 'Stored swap entry payload is not valid JSON.', 500);
+/**
+ * Seals swap records into `StoredSwapEntry` payloads. The AAD binds the wallet namespace and every
+ * metadata field the host stores beside the payload, so editing, swapping or relabelling an entry
+ * fails closed. Replaying an older authentic entry is not detectable here.
+ */
+export class SwapRecordCodec {
+  private readonly cipher: NamespaceCipher;
+  constructor(
+    encryptionKey: string,
+    private readonly namespace: string
+  ) {
+    this.cipher = new NamespaceCipher(encryptionKey, 'trails-swap', namespace);
   }
-  const candidate = parsed as Partial<SwapRecord> | null;
-  if (
-    !candidate ||
-    typeof candidate !== 'object' ||
-    candidate.id !== entry.id ||
-    candidate.version !== entry.version ||
-    typeof candidate.owner !== 'string' ||
-    typeof candidate.requestHash !== 'string' ||
-    candidate.quote?.intent?.intentId !== entry.intentId
-  )
-    throw new WalletError(
-      'INVALID_STATE',
-      'Stored swap entry payload is not in a recognised format.',
-      500
-    );
-  return candidate as SwapRecord;
+
+  private aad(entry: Omit<StoredSwapEntry, 'payload'>): string {
+    return JSON.stringify([
+      'oms-server-wallet:trails-swap:v1',
+      this.namespace,
+      entry.id,
+      entry.intentId,
+      entry.version,
+      entry.active,
+      entry.nextAt,
+      entry.createdAt
+    ]);
+  }
+
+  async encode(record: SwapRecord): Promise<StoredSwapEntry> {
+    const metadata = {
+      id: record.id,
+      intentId: record.quote.intent.intentId,
+      version: record.version,
+      active: record.action !== null,
+      nextAt: record.nextAt,
+      createdAt: record.createdAt
+    };
+    return {
+      ...metadata,
+      payload: await this.cipher.seal(JSON.stringify(record), this.aad(metadata))
+    };
+  }
+
+  /** Decode an entry; `expectedId` is the ID it was looked up by, when there was one. */
+  async decode(entry: StoredSwapEntry, expectedId?: string): Promise<SwapRecord> {
+    if (!entry || typeof entry !== 'object' || typeof entry.payload !== 'string')
+      throw integrity('Stored swap entry is malformed.');
+    if (expectedId !== undefined && entry.id !== expectedId)
+      throw integrity('The swap store returned an entry for a different swap ID.');
+    const plain = await this.cipher.open(entry.payload, this.aad(entry));
+    if (plain === null)
+      throw integrity(
+        'Stored swap entry failed authentication (wrong encryption key, other wallet, or edited entry).'
+      );
+    const candidate = JSON.parse(plain) as Partial<SwapRecord> | null;
+    if (
+      !candidate ||
+      typeof candidate !== 'object' ||
+      candidate.id !== entry.id ||
+      candidate.version !== entry.version ||
+      typeof candidate.owner !== 'string' ||
+      typeof candidate.requestHash !== 'string' ||
+      candidate.quote?.intent?.intentId !== entry.intentId
+    )
+      throw new WalletError(
+        'INVALID_STATE',
+        'Stored swap entry payload is not in a recognised format.',
+        500
+      );
+    return candidate as SwapRecord;
+  }
 }
 
 function scopeSwapStore(store: NamespacedSwapStore, namespace: string): SwapStore {
@@ -120,6 +158,7 @@ export interface CoordinatorConfig {
   readonly trails: SwapGateway;
   readonly chains: ChainReader;
   readonly store: SwapStore;
+  readonly codec: SwapRecordCodec;
   readonly assets: readonly SwapAsset[];
   readonly enabled: boolean;
   readonly environment: string;
@@ -183,7 +222,7 @@ export class TrailsCoordinator {
     validateId(id);
     const entry = await this.config.store.get(id);
     if (!entry) throw new WalletError('NOT_FOUND', 'Swap not found.', 404);
-    const record = deserializeSwapRecord(entry);
+    const record = await this.config.codec.decode(entry, id);
     this.checkEnvironment(record);
     await this.assertRecordOwnerLocked(record);
     return record;
@@ -207,24 +246,26 @@ export class TrailsCoordinator {
     record.updatedAt = new Date(this.now()).toISOString();
     record.nextAt = delay === null ? null : this.now() + delay;
     if (options.syncReservation === false) {
-      await this.config.store.save(serializeSwapRecord(record));
+      await this.config.store.save(await this.config.codec.encode(record));
       return;
     }
     const reserved = this.reservedChain(record);
     // Conservative crash ordering: persist reservation BEFORE swap record when acquiring,
     // and clear reservation AFTER swap record when releasing.
     if (reserved !== undefined)
-      await this.config.primitives.setSwapReservationLocked(record.id, reserved);
-    await this.config.store.save(serializeSwapRecord(record));
+      await this.config.primitives.reserveSwapChainLocked(record.id, reserved, record.version);
+    await this.config.store.save(await this.config.codec.encode(record));
+    // Released only if this record is newer than the reservation: a save that started from a
+    // stale or rolled-back swap record cannot release a hold taken by a newer one.
     if (reserved === undefined)
-      await this.config.primitives.setSwapReservationLocked(record.id, null);
+      await this.config.primitives.releaseSwapChainLocked(record.id, record.version);
   }
 
   private async activeRecordsLocked(): Promise<SwapRecord[]> {
     const entries = await this.config.store.list({ active: true, limit: 1001 });
     if (entries.length > 1000)
       throw new WalletError('WALLET_BUSY', 'Too many unresolved wallet operations.', 409);
-    const records = entries.map(deserializeSwapRecord);
+    const records = await Promise.all(entries.map((e) => this.config.codec.decode(e)));
     if (records.length > 0) {
       const snapshot = await this.config.primitives.inspectLocked();
       const owner = snapshot.wallet?.address.toLowerCase();
@@ -259,7 +300,7 @@ export class TrailsCoordinator {
     // swap store cannot confirm a competing swap or recovery on a reserved chain.
     const walletReservations = await this.config.primitives.readSwapReservationsLocked();
     for (const [swapId, reserved] of Object.entries(walletReservations)) {
-      if (swapId !== exceptSwap && reserved === chainId)
+      if (swapId !== exceptSwap && reserved.chainId === chainId)
         throw new WalletError(
           'DEBIT_PENDING',
           `Another debit on chain ${chainId} (swap "${swapId}") must be reconciled first.`,
@@ -321,7 +362,7 @@ export class TrailsCoordinator {
       const requestHash = await sha256(canonicalJson(request));
       const existingEntry = await this.config.store.get(id);
       if (existingEntry) {
-        const existing = deserializeSwapRecord(existingEntry);
+        const existing = await this.config.codec.decode(existingEntry, id);
         if (existing.requestHash !== requestHash || existing.owner !== owner)
           throw new WalletError(
             'IDEMPOTENCY_CONFLICT',
@@ -345,12 +386,18 @@ export class TrailsCoordinator {
       );
       const quote = await validateSwapQuote(intent, request, TrailsContracts, this.now());
       const previous = await this.config.store.findIntent(intent.intentId);
-      if (previous && previous !== id)
+      if (previous && previous !== id) {
+        // The intent index is host data: only an authentic record for that intent may block.
+        const entry = await this.config.store.get(validateId(previous));
+        const tracked = entry ? await this.config.codec.decode(entry, previous) : undefined;
+        if (tracked?.quote.intent.intentId !== intent.intentId)
+          throw integrity('The swap store intent index points at a record for another intent.');
         throw new WalletError(
           'INTENT_ALREADY_TRACKED',
           'This intent is already tracked by another swap. Open its existing activity.',
           409
         );
+      }
       const timestamp = new Date(this.now()).toISOString();
       const metadata = (chainId: number, token: string) => {
         const asset = this.config.assets.find(
@@ -481,7 +528,9 @@ export class TrailsCoordinator {
     return this.config.primitives.runLocked(async () => {
       const entries = await this.config.store.list({ offset, limit: limit + 1 });
       const hasMore = entries.length > limit;
-      const records = entries.slice(0, limit).map(deserializeSwapRecord);
+      const records = await Promise.all(
+        entries.slice(0, limit).map((e) => this.config.codec.decode(e))
+      );
       for (const record of records) {
         this.checkEnvironment(record);
         await this.assertRecordOwnerLocked(record);
@@ -511,10 +560,12 @@ export class TrailsCoordinator {
       for (const swapId of Object.keys(reservations)) {
         const entry = await this.config.store.get(swapId);
         if (!entry) continue;
-        const record = deserializeSwapRecord(entry);
+        const record = await this.config.codec.decode(entry, swapId);
         await this.assertRecordOwnerLocked(record);
+        // Only a stored record newer than the reservation can release it (no affirmative evidence
+        // otherwise, e.g. a rolled-back swap store); a retained hold needs the swap step retried.
         if (this.reservedChain(record) === undefined)
-          await this.config.primitives.setSwapReservationLocked(swapId, null);
+          await this.config.primitives.releaseSwapChainLocked(swapId, record.version);
       }
 
       const active = await this.activeRecordsLocked();
@@ -969,6 +1020,7 @@ export class TrailsCoordinator {
         return;
       }
       record.phase = 'succeeded';
+      record.outcomeEvidence = 'provider-reported';
       record.action = null;
     } else if (receipt.status === 'REFUNDED') {
       const refund = receipt.refundTransaction;
@@ -983,6 +1035,7 @@ export class TrailsCoordinator {
         return;
       }
       record.phase = 'refunded';
+      record.outcomeEvidence = 'provider-reported';
       record.action = null;
     } else if (terminalUpstream.has(receipt.status)) {
       record.phase = 'attention';
@@ -1477,6 +1530,7 @@ export class TrailsCoordinator {
     recovery.status = partial ? 'partial' : 'recovered';
     record.activeRecoveryId = undefined;
     record.phase = partial ? 'attention' : 'refunded';
+    record.outcomeEvidence = partial ? undefined : 'chain-verified';
     record.action = partial ? 'observe' : null;
   }
 }
@@ -1489,19 +1543,21 @@ function validateTrailsOptions(options: TrailsOptions): {
 } {
   if (!options || typeof options !== 'object')
     throw new WalletError('CONFIGURATION', 'Configure trails(...) options.', 503);
-  if (!options.store || typeof options.store !== 'object')
+  if (!options.storage || typeof options.storage !== 'object')
     throw new WalletError(
       'CONFIGURATION',
-      'Configure trails store as { scope: "wallet", adapter } or { scope: "service", adapter }.',
+      'Configure trails storage as { scope: "wallet" | "service", adapter, encryptionKey }.',
       503
     );
-  const { scope, adapter } = options.store;
+  const { scope, adapter, encryptionKey } = options.storage;
   if (scope !== 'wallet' && scope !== 'service')
     throw new WalletError(
       'CONFIGURATION',
-      'trails store.scope must be "wallet" or "service".',
+      'trails storage.scope must be "wallet" or "service".',
       503
     );
+  // Fails with CONFIGURATION unless the key is 32 base64-encoded bytes.
+  new NamespaceCipher(encryptionKey, 'trails-swap', 'validate');
   if (
     !adapter ||
     typeof adapter !== 'object' ||
@@ -1512,7 +1568,7 @@ function validateTrailsOptions(options: TrailsOptions): {
   )
     throw new WalletError(
       'CONFIGURATION',
-      'trails store.adapter must implement get, findIntent, save, and list.',
+      'trails storage.adapter must implement get, findIntent, save, and list.',
       503
     );
   if (!options.chains || typeof options.chains !== 'object')
@@ -1560,10 +1616,15 @@ function validateTrailsOptions(options: TrailsOptions): {
 }
 
 /** Package-private test seam: registers a `SwapsConfig` backed by custom gateway/chains/clock. */
-export function trailsInternal<TStore extends TrailsStoreOption>(
-  options: TrailsOptions<TStore>,
-  overrides: { gateway?: SwapGateway; chains?: ChainReader; clock?: () => number } = {}
-): SwapsConfig<TStore['scope'], SwapsFacet> {
+export function trailsInternal<TStorage extends TrailsStorageOption>(
+  options: TrailsOptions<TStorage>,
+  overrides: {
+    gateway?: SwapGateway;
+    chains?: ChainReader;
+    clock?: () => number;
+    onCodec?: (codec: SwapRecordCodec) => void;
+  } = {}
+): SwapsConfig<TStorage['scope'], SwapsFacet> {
   const { chainsCopy, assetsCopy, environment, enabled } = validateTrailsOptions(options);
   // Validate TrailsClient configuration eagerly when using the real gateway.
   if (!overrides.gateway) {
@@ -1581,11 +1642,12 @@ export function trailsInternal<TStore extends TrailsStoreOption>(
   const configuredOrigin = options.origin;
   const configuredFetch = options.fetch;
   const timeoutMs = options.timeoutMs;
-  const storeScope = options.store.scope;
-  const storeAdapter = options.store.adapter;
+  const storeScope = options.storage.scope;
+  const storeAdapter = options.storage.adapter;
+  const encryptionKey = options.storage.encryptionKey;
   let boundWalletNamespace: string | undefined;
 
-  return registerSwapsBinder<TStore['scope'], SwapsFacet>({
+  return registerSwapsBinder<TStorage['scope'], SwapsFacet>({
     scope: storeScope,
     bind(primitives: LockedEnginePrimitives): BoundSwaps<SwapsFacet> {
       let store: SwapStore;
@@ -1614,11 +1676,14 @@ export function trailsInternal<TStore extends TrailsStoreOption>(
       const chainReader =
         overrides.chains ?? new EvmChainReader(chainsCopy, configuredFetch ?? fetch);
 
+      const codec = new SwapRecordCodec(encryptionKey, primitives.namespace);
+      overrides.onCodec?.(codec);
       const coordinator = new TrailsCoordinator({
         primitives,
         trails: gateway,
         chains: chainReader,
         store,
+        codec,
         assets: assetsCopy,
         enabled,
         environment,
@@ -1634,15 +1699,16 @@ export function trailsInternal<TStore extends TrailsStoreOption>(
 
 /**
  * Enable durable Trails swaps and recovery on a server wallet via
- * `createServerWallet({ ..., swaps: trails({ ..., store: { scope: 'wallet', adapter } }) })`
- * or `createServerWalletService({ ..., swaps: trails({ ..., store: { scope: 'service', adapter } }) })`.
+ * `createServerWallet({ ..., swaps: trails({ ..., storage: { scope: 'wallet', adapter, encryptionKey } }) })`
+ * or `createServerWalletService({ ..., swaps: trails({ ..., storage: { scope: 'service', adapter, encryptionKey } }) })`.
+ * Swap records are encrypted and authenticated with a key derived from `encryptionKey` per wallet.
  * Ordinary EVM debits and swaps automatically share one executor and one debit gate.
  */
 export function trails(
-  options: TrailsOptions<{ readonly scope: 'wallet'; readonly adapter: SwapStore }>
+  options: TrailsOptions<Extract<TrailsStorageOption, { readonly scope: 'wallet' }>>
 ): SwapsConfig<'wallet', SwapsFacet>;
 export function trails(
-  options: TrailsOptions<{ readonly scope: 'service'; readonly adapter: NamespacedSwapStore }>
+  options: TrailsOptions<Extract<TrailsStorageOption, { readonly scope: 'service' }>>
 ): SwapsConfig<'service', SwapsFacet>;
 export function trails(
   options: TrailsOptions

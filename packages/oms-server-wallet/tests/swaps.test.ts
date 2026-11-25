@@ -46,6 +46,7 @@ describe('durable swap execution', () => {
       h.receipt.summary.destinationTokenAmount = '9900000';
       await h.tick();
       expect((await h.record()).phase).toBe('succeeded');
+      expect((await h.swaps.get('swap-test-0001')).outcomeEvidence).toBe('provider-reported');
       expect(executes(h)).toHaveLength(1);
       expect(h.calls).not.toContain('commit');
     }
@@ -214,6 +215,7 @@ describe('durable swap execution', () => {
     };
     await h.tick();
     expect((await h.record()).phase).toBe('refunded');
+    expect((await h.swaps.get('swap-test-0001')).outcomeEvidence).toBe('provider-reported');
   });
 
   it('pauses new funding but continues funded observation with the feature disabled', async () => {
@@ -288,6 +290,7 @@ describe('reviewed recovery', () => {
     await h.tick();
     expect((await h.record()).recoveries[0].status).toBe('recovered');
     expect((await h.record()).phase).toBe('refunded');
+    expect(swapView(await h.record()).outcomeEvidence).toBe('chain-verified');
     const publicView = JSON.stringify(swapView(await h.record()));
     expect(publicView).not.toContain('signature');
     expect(publicView).not.toContain('typedData');

@@ -117,70 +117,109 @@ export class MemoryStateStore implements StateStore {
   }
 }
 
+/** Decode and check a configured 32-byte base64 encryption key. */
+function encryptionKeyBytes(secret: unknown): Uint8Array<ArrayBuffer> {
+  let bytes: Uint8Array<ArrayBuffer> | undefined;
+  try {
+    if (typeof secret === 'string') bytes = base64DecodeBytes(secret);
+  } catch {
+    bytes = undefined;
+  }
+  if (!bytes || bytes.length !== 32)
+    throw new WalletError(
+      'CONFIGURATION',
+      'ENCRYPTION_KEY must contain 32 base64-encoded bytes.',
+      503
+    );
+  return bytes;
+}
+
+/**
+ * AES-256-GCM sealing with a key derived (HKDF-SHA256) from the configured secret for one purpose
+ * and one wallet namespace. Each wallet namespace gets its own key, so the volume of random-IV
+ * encryptions under any single key stays per-wallet even when one secret serves every tenant, and
+ * wallet state and swap records never share a key.
+ */
+export class NamespaceCipher {
+  private readonly key: Promise<CryptoKey>;
+
+  /** Validates the secret synchronously so misconfiguration fails at construction. */
+  constructor(secret: string, purpose: 'wallet-state' | 'trails-swap', namespace: string) {
+    const bytes = encryptionKeyBytes(secret);
+    this.key = crypto.subtle.importKey('raw', bytes, 'HKDF', false, ['deriveKey']).then((master) =>
+      crypto.subtle.deriveKey(
+        {
+          name: 'HKDF',
+          hash: 'SHA-256',
+          salt: utf8('oms-server-wallet:v2'),
+          info: utf8(JSON.stringify([purpose, namespace]))
+        },
+        master,
+        { name: 'AES-GCM', length: 256 },
+        false,
+        ['encrypt', 'decrypt']
+      )
+    );
+  }
+
+  /** Encrypt `plaintext` bound to `aad`; returns a JSON envelope. */
+  async seal(plaintext: string, aad: string): Promise<string> {
+    const iv = crypto.getRandomValues(new Uint8Array(12));
+    const data = await crypto.subtle.encrypt(
+      { name: 'AES-GCM', iv, additionalData: utf8(aad) },
+      await this.key,
+      utf8(plaintext)
+    );
+    return JSON.stringify({
+      v: 2,
+      iv: base64EncodeBytes(iv),
+      data: base64EncodeBytes(new Uint8Array(data))
+    });
+  }
+
+  /** Decrypt an envelope from `seal` bound to the same `aad`; any mismatch returns null. */
+  async open(envelope: string, aad: string): Promise<string | null> {
+    try {
+      const parsed: { v: number; iv: string; data: string } = JSON.parse(envelope);
+      if (parsed.v !== 2) return null;
+      const plain = await crypto.subtle.decrypt(
+        { name: 'AES-GCM', iv: base64DecodeBytes(parsed.iv), additionalData: utf8(aad) },
+        await this.key,
+        base64DecodeBytes(parsed.data)
+      );
+      return new TextDecoder().decode(plain);
+    } catch {
+      return null;
+    }
+  }
+}
+
 /** Authenticated AES-256-GCM encryption bound to the identity namespace and record key. */
 export class EncryptedStore implements StateStore {
-  private readonly key: Promise<CryptoKey>;
+  private readonly cipher: NamespaceCipher;
   constructor(
     private readonly inner: StateStore,
     secret: string,
     private readonly context: string
   ) {
-    let bytes: Uint8Array<ArrayBuffer>;
-    try {
-      bytes = base64DecodeBytes(secret);
-    } catch {
-      throw new WalletError(
-        'CONFIGURATION',
-        'ENCRYPTION_KEY must contain 32 base64-encoded bytes.',
-        503
-      );
-    }
-    if (bytes.length !== 32)
-      throw new WalletError(
-        'CONFIGURATION',
-        'ENCRYPTION_KEY must contain 32 base64-encoded bytes.',
-        503
-      );
-    this.key = crypto.subtle.importKey('raw', bytes, 'AES-GCM', false, ['encrypt', 'decrypt']);
+    this.cipher = new NamespaceCipher(secret, 'wallet-state', context);
+  }
+  private aad(key: string): string {
+    return JSON.stringify(['oms-server-wallet:wallet-state:v2', this.context, key]);
   }
   async read(key: string): Promise<string | null> {
     const raw = await this.inner.read(key);
     if (raw === null) return null;
-    try {
-      const envelope: { v: number; iv: string; data: string } = JSON.parse(raw);
-      if (envelope.v !== 1) throw new Error('Unsupported encryption version');
-      const plain = await crypto.subtle.decrypt(
-        {
-          name: 'AES-GCM',
-          iv: base64DecodeBytes(envelope.iv),
-          additionalData: utf8(`${this.context}:${key}:v1`)
-        },
-        await this.key,
-        base64DecodeBytes(envelope.data)
-      );
-      return new TextDecoder().decode(plain);
-    } catch {
+    const plain = await this.cipher.open(raw, this.aad(key));
+    if (plain === null)
       throw new WalletError(
         'STORAGE_INTEGRITY',
         'Encrypted wallet state could not be authenticated.',
         500
       );
-    }
+    return plain;
   }
   async write(key: string, value: string): Promise<void> {
-    const iv = crypto.getRandomValues(new Uint8Array(12));
-    const data = await crypto.subtle.encrypt(
-      { name: 'AES-GCM', iv, additionalData: utf8(`${this.context}:${key}:v1`) },
-      await this.key,
-      utf8(value)
-    );
-    await this.inner.write(
-      key,
-      JSON.stringify({
-        v: 1,
-        iv: base64EncodeBytes(iv),
-        data: base64EncodeBytes(new Uint8Array(data))
-      })
-    );
+    await this.inner.write(key, await this.cipher.seal(value, this.aad(key)));
   }
 }

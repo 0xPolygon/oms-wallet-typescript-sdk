@@ -37,6 +37,9 @@ export function swapView(record: SwapRecord): SwapView {
         }
       : undefined,
     phase: record.phase,
+    ...((record.phase === 'succeeded' || record.phase === 'refunded') && record.outcomeEvidence
+      ? { outcomeEvidence: record.outcomeEvidence }
+      : {}),
     createdAt: record.createdAt,
     updatedAt: record.updatedAt,
     confirmedAt: record.confirmedAt,

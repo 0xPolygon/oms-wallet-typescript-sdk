@@ -15,6 +15,7 @@ export type {
   ResolveSwapReconciliationInput,
   StoredSwapEntry,
   SwapListPage,
+  SwapOutcomeEvidence,
   SwapPhase,
   SwapsFacet,
   SwapStore,
@@ -22,6 +23,6 @@ export type {
   TickSwapsOptions,
   TickSwapsResult,
   TrailsOptions,
-  TrailsStoreOption,
+  TrailsStorageOption,
   TransactionView
 } from './types.js';

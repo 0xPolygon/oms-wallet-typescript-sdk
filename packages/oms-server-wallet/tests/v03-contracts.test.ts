@@ -38,7 +38,7 @@ import {
   TRON_RECIPIENT,
   sdkHarness
 } from './helpers.js';
-import { MemorySwapStore, swapHarness } from './swap-harness.js';
+import { MemorySwapStore, SWAP_ENCRYPTION_KEY, swapHarness } from './swap-harness.js';
 
 const validPcr0 = 'a'.repeat(96);
 const debugPcr0 = '0'.repeat(96);
@@ -264,13 +264,21 @@ describe('swaps: trails(...) binding, scope isolation, and coordination marker',
       apiKey: 'trails-key',
       chains: { 137: 'https://polygon.rpc.example', 8453: 'https://base.rpc.example' },
       assets: fixture.assets,
-      store: { scope: 'wallet', adapter: new MemorySwapStore() }
+      storage: {
+        scope: 'wallet',
+        adapter: new MemorySwapStore(),
+        encryptionKey: SWAP_ENCRYPTION_KEY
+      }
     });
     const serviceSwaps = trails({
       apiKey: 'trails-key',
       chains: { 137: 'https://polygon.rpc.example', 8453: 'https://base.rpc.example' },
       assets: fixture.assets,
-      store: { scope: 'service', adapter: new MemoryNamespacedSwapStore() }
+      storage: {
+        scope: 'service',
+        adapter: new MemoryNamespacedSwapStore(),
+        encryptionKey: SWAP_ENCRYPTION_KEY
+      }
     });
 
     const baseOpts = {
@@ -387,7 +395,7 @@ describe('swaps: trails(...) binding, scope isolation, and coordination marker',
             apiKey: 'trails-key',
             chains: { 137: 'https://polygon.rpc.example', 8453: 'https://base.rpc.example' },
             assets: fixture.assets,
-            store: { scope: 'service', adapter: swapStorage }
+            storage: { scope: 'service', adapter: swapStorage, encryptionKey: SWAP_ENCRYPTION_KEY }
           },
           {
             gateway: {
@@ -1137,7 +1145,7 @@ describe('review-audit boundary regressions', () => {
             apiKey: 'trails-key',
             chains: { 137: 'https://polygon.rpc.example', 8453: 'https://base.rpc.example' },
             assets: h.fixture.assets,
-            store: { scope: 'wallet', adapter: h.store }
+            storage: { scope: 'wallet', adapter: h.store, encryptionKey: SWAP_ENCRYPTION_KEY }
           },
           { gateway: h.gateway, chains: h.chains }
         )
@@ -1146,8 +1154,9 @@ describe('review-audit boundary regressions', () => {
     );
     await walletB.createOrRestore();
     const callsBefore = remoteB.calls.length;
-    await expect(walletB.swaps.list()).rejects.toMatchObject({ code: 'WALLET_MISMATCH' });
-    await expect(walletB.swaps.tick()).rejects.toMatchObject({ code: 'WALLET_MISMATCH' });
+    // Records are sealed per wallet namespace, so wallet B cannot even decrypt them.
+    await expect(walletB.swaps.list()).rejects.toMatchObject({ code: 'STORAGE_INTEGRITY' });
+    await expect(walletB.swaps.tick()).rejects.toMatchObject({ code: 'STORAGE_INTEGRITY' });
     // Wallet B must never Prepare or Execute anything for wallet A's swap.
     expect(
       remoteB.calls
@@ -1156,18 +1165,83 @@ describe('review-audit boundary regressions', () => {
     ).toHaveLength(0);
   });
 
+  it('requires a 32-byte swap encryption key at trails() configuration time', () => {
+    const base = {
+      apiKey: 'trails-key',
+      chains: { 137: 'https://polygon.rpc.example' },
+      assets: quoteFixture().assets
+    };
+    for (const encryptionKey of [undefined, '', 'c2hvcnQ=']) {
+      expect(() =>
+        trails({
+          ...base,
+          storage: {
+            scope: 'wallet',
+            adapter: new MemorySwapStore(),
+            encryptionKey: encryptionKey!
+          }
+        })
+      ).toThrow(expect.objectContaining({ code: 'CONFIGURATION' }));
+    }
+  });
+
+  it('encrypts swap payloads and fails closed on any edited entry field', async () => {
+    const h = await swapHarness();
+    const q = await h.quote();
+    const original = structuredClone(h.store.entries.get(q.id)!);
+    expect(original.payload).not.toContain(q.quote.reviewId);
+    expect(original.payload).not.toContain(h.fixture.intent.intentId);
+    const edits: Partial<StoredSwapEntry>[] = [
+      { active: !original.active },
+      { nextAt: 1 },
+      { version: original.version + 1 },
+      { createdAt: '2020-01-01T00:00:00.000Z' },
+      { intentId: 'other-intent' },
+      { payload: original.payload.replace(/"data":"./, '"data":"A') }
+    ];
+    for (const edit of edits) {
+      h.store.entries.set(q.id, { ...original, ...edit });
+      await expect(h.swaps.get(q.id)).rejects.toMatchObject({ code: 'STORAGE_INTEGRITY' });
+    }
+    // An entry stored under another ID is not accepted for this one.
+    h.store.entries.set('swap-test-0002', original);
+    h.store.entries.set(q.id, original);
+    await expect(h.swaps.get('swap-test-0002')).rejects.toMatchObject({
+      code: 'STORAGE_INTEGRITY'
+    });
+    h.store.entries.delete('swap-test-0002');
+    expect((await h.swaps.get(q.id)).id).toBe(q.id);
+  });
+
+  it('only an authentic record for the same intent can block a quote as already tracked', async () => {
+    const h = await swapHarness();
+    // A store whose intent index points at a missing or unrelated swap is refused, not trusted.
+    h.store.findIntent = async () => 'swap-not-there';
+    await expect(h.quote('swap-test-0002')).rejects.toMatchObject({ code: 'STORAGE_INTEGRITY' });
+    delete (h.store as { findIntent?: unknown }).findIntent;
+    const first = await h.quote('swap-test-0001');
+    await expect(h.quote('swap-test-0002')).rejects.toMatchObject({
+      code: 'INTENT_ALREADY_TRACKED'
+    });
+    expect(first.id).toBe('swap-test-0001');
+  });
+
   it('persists authoritative swap reservations in wallet state so a second worker with an empty swap store cannot bypass DEBIT_PENDING', async () => {
     const h = await swapHarness();
     await h.confirm();
     // Worker 2 shares wallet state + executor, but points at a fresh/empty swap store (e.g. rollout mismatch).
     const emptySwapStore = new MemorySwapStore();
-    const storeOpt = { scope: 'wallet' as const, adapter: emptySwapStore };
+    const storeOpt = {
+      scope: 'wallet' as const,
+      adapter: emptySwapStore,
+      encryptionKey: SWAP_ENCRYPTION_KEY
+    };
     const swapsCfg = trailsInternal(
       {
         apiKey: 'trails-key',
         chains: { 137: 'https://polygon.rpc.example', 8453: 'https://base.rpc.example' },
         assets: h.fixture.assets,
-        store: storeOpt
+        storage: storeOpt
       },
       { gateway: h.gateway, chains: h.chains }
     );
@@ -1271,7 +1345,11 @@ describe('deep systems hardening', () => {
             apiKey: 'trails-key',
             chains: { 137: 'https://polygon.rpc.example', 8453: 'https://base.rpc.example' },
             assets: h.fixture.assets,
-            store: { scope: 'wallet', adapter: emptySwapStore }
+            storage: {
+              scope: 'wallet',
+              adapter: emptySwapStore,
+              encryptionKey: SWAP_ENCRYPTION_KEY
+            }
           },
           { gateway: h.gateway, chains: h.chains }
         )
@@ -1307,25 +1385,51 @@ describe('deep systems hardening', () => {
     // Tick on worker2 with missing swap store record retains the reservation (fails closed).
     await worker2.swaps.tick();
     const state = JSON.parse((await h.waas.store.read('wallet'))!);
-    expect(state.swapReservations).toEqual({ 'swap-test-0001': 137 });
+    expect(state.swapReservations).toMatchObject({ 'swap-test-0001': { chainId: 137 } });
   });
 
-  it('clears an orphaned wallet-state reservation during tick() when the swap record exists and is unreserved, and returns nextAt', async () => {
+  it('keeps a reservation whose swap record lags behind it until the swap step is retried', async () => {
     const h = await swapHarness();
     const q = await h.quote();
-    // Simulate SwapStore.save failing during confirm AFTER wallet state persisted the reservation.
+    // SwapStore.save fails during confirm AFTER wallet state persisted the reservation.
     h.store.fail = (r) => r.phase === 'preparing';
     await expect(h.swaps.confirm({ swapId: q.id, reviewId: q.quote.reviewId })).rejects.toThrow(
       'Simulated storage outage'
     );
     h.store.fail = undefined;
-    // Reservation is orphaned while record in SwapStore is still 'quoted' (unreserved).
-    expect(JSON.parse((await h.waas.store.read('wallet'))!).swapReservations).toEqual({
-      'swap-test-0001': 137
-    });
-    const result = await h.swaps.tick();
-    expect(result).toEqual({ nextAt: null });
-    expect(JSON.parse((await h.waas.store.read('wallet'))!).swapReservations).toBeUndefined();
+    const held = async () => JSON.parse((await h.waas.store.read('wallet'))!).swapReservations;
+    expect(await held()).toMatchObject({ 'swap-test-0001': { chainId: 137 } });
+    // The stored record is older than the reservation, which a rollback would look like too:
+    // tick() has no evidence it is safe to release, so the hold stays.
+    expect(await h.swaps.tick()).toEqual({ nextAt: null });
+    expect(await held()).toMatchObject({ 'swap-test-0001': { chainId: 137 } });
+    // Retrying the step rewrites record and reservation consistently.
+    expect((await h.swaps.confirm({ swapId: q.id, reviewId: q.quote.reviewId })).phase).toBe(
+      'preparing'
+    );
+    expect(await held()).toMatchObject({ 'swap-test-0001': { chainId: 137 } });
+  });
+
+  it('never lets a rolled-back swap record release a newer reservation', async () => {
+    const h = await swapHarness();
+    const q = await h.quote();
+    const quotedEntry = structuredClone(h.store.entries.get(q.id)!);
+    await h.swaps.confirm({ swapId: q.id, reviewId: q.quote.reviewId });
+    const held = async () => JSON.parse((await h.waas.store.read('wallet'))!).swapReservations;
+    expect(await held()).toMatchObject({ 'swap-test-0001': { chainId: 137 } });
+    // Roll the swap store back to the authentic, unreserved quote-phase record.
+    h.store.entries.set(q.id, quotedEntry);
+    await h.swaps.tick();
+    expect(await held()).toMatchObject({ 'swap-test-0001': { chainId: 137 } });
+    await expect(
+      h.wallet.evm.prepareTransfer({
+        idempotencyKey: 'rollback-debit-1',
+        chainId: 137,
+        to: '0x2222222222222222222222222222222222222222',
+        asset: 'native',
+        amount: '1'
+      })
+    ).rejects.toMatchObject({ code: 'DEBIT_PENDING' });
   });
 
   it('reloads wallet state after checkEvmDebitGate so gate-driven nonce/credential updates are never overwritten', async () => {
