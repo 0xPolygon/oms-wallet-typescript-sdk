@@ -517,8 +517,11 @@ export class ChainEngine {
     try {
       op.quote = parseWaas(
         chainQuoteSchema,
-        await this.core.activeCall(state, method, params, [family])
+        await this.core.activeCall(state, method, params, [family], {
+          minLifetimeMs: this.core.prepareLifetimeMs()
+        })
       );
+      op.credentialId = state.credential!.credentialId;
       const fee = selectFee(op);
       if (fee) {
         op.fee = fee;
@@ -563,7 +566,8 @@ export class ChainEngine {
       throw new WalletError('SPONSORSHIP_REQUIRED', 'This transaction is not sponsored.', 409);
     await this.core.expireBeforeSubmit(op);
     const state = await this.core.load();
-    await this.core.ensure(state, [family]);
+    if (op.credentialId) await this.core.assertPreparingCredential(state, op);
+    else await this.core.ensure(state, [family]);
     // Re-check expiry after re-auth I/O so a short-lived quote is never sent to Execute.
     await this.core.expireBeforeSubmit(op);
     op.status = 'submitting';
@@ -579,7 +583,8 @@ export class ChainEngine {
             txnId: op.quote.txnId,
             ...(op.fee ? { feeOption: { token: op.fee.token.symbol, index: op.feeIndex } } : {})
           },
-          [family]
+          [family],
+          { bound: !!op.credentialId }
         )
       );
       op.status = result.status === 'quoted' ? 'unknown' : result.status;

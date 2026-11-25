@@ -903,7 +903,7 @@ export interface EphemeralServerWalletOptions {
   readonly publishableKey: string;
   /** Application origin sent to WaaS, when the project restricts origins. */
   readonly origin?: string;
-  /** OIDC identity. `sessionLifetimeSeconds` defaults to 900 (15 minutes) for ephemeral handles. */
+  /** OIDC identity. `sessionLifetimeSeconds` defaults to 3600 (one hour) for ephemeral handles. */
   readonly oidc: WalletOidcOptions;
   /** Adds `evm.signTypedData` and `tron.signTypedData`, gated by the policy. */
   readonly signing?: SigningOptions;

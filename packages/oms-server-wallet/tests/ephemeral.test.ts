@@ -71,7 +71,7 @@ describe('createEphemeralServerWallet', () => {
     const snapshot = await wallet.restore();
     expect(Object.keys(snapshot.wallets).sort()).toEqual(['evm', 'solana', 'tron']);
     expect(calls(remote, 'ListWallets')).toHaveLength(listsBefore);
-    expect(calls(remote, 'CompleteAuth').at(-1)?.body.lifetime).toBe(900);
+    expect(calls(remote, 'CompleteAuth').at(-1)?.body.lifetime).toBe(3600);
 
     await expect(
       wallet.evm.signMessage({ chainId: 80002 as const, message: 'hi' })

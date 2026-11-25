@@ -15,6 +15,11 @@ import { WaasErrorCode } from './internal/protocol/waasErrors.js';
  */
 export const TRANSACTION_EXPIRED = WaasErrorCode.TransactionExpired;
 const TRANSACTION_NOT_FOUND = WaasErrorCode.TransactionNotFound;
+/**
+ * WaaS has answered `TransactionStatus` with this, under load, for transactions that then went
+ * `pending` and `executed`, so a status read that fails with it carries no information.
+ */
+const TRANSACTION_FAILED = WaasErrorCode.TransactionFailed;
 
 /** A status read that says WaaS has no live transaction: expired, or not found. */
 function isAbsenceRead(error: unknown): error is UpstreamError {
@@ -40,8 +45,8 @@ export const PRE_CLAIM_REFUSALS: ReadonlySet<number> = new Set([
   WaasErrorCode.Unauthorized,
   WaasErrorCode.UnsupportedNetwork,
   WaasErrorCode.UnsupportedTransactionMode,
-  WaasErrorCode.TransactionFailed,
-  WaasErrorCode.WalletProviderError,
+  // Not TransactionFailed or WalletProviderError: WaaS has answered TransactionFailed for
+  // transactions that went on to execute, so neither proves that nothing was sent.
   WaasErrorCode.TransactionNotFound,
   WaasErrorCode.InvalidFeeOption
 ]);
@@ -123,7 +128,8 @@ function claimed(op: Settleable): boolean {
  * window leaves it unchanged so callers keep polling; past the window it escalates the still-open
  * operation to `RECONCILIATION_REQUIRED` rather than marking it `expired` or releasing debit
  * reservations. `TransactionNotFound` before the quote expired is not explained by expiry and is
- * rethrown.
+ * rethrown. A `TransactionFailed` read is treated as no information: it changes nothing, except
+ * that an unclaimed operation still escalates once the grace window has passed.
  */
 export async function refreshStatus(
   op: Settleable,
@@ -134,11 +140,16 @@ export async function refreshStatus(
   try {
     result = await status();
   } catch (error) {
-    if (!isAbsenceRead(error)) throw error;
+    const inconclusive =
+      error instanceof UpstreamError && error.upstreamCode === TRANSACTION_FAILED;
+    if (!inconclusive && !isAbsenceRead(error)) throw error;
     if (claimed(op)) return;
-    if (!op.quote) throw error;
+    if (!op.quote) {
+      if (inconclusive) return;
+      throw error;
+    }
     const expiry = Date.parse(op.quote.expiresAt);
-    if (error.upstreamCode === TRANSACTION_NOT_FOUND && now < expiry) throw error;
+    if (!inconclusive && error.upstreamCode === TRANSACTION_NOT_FOUND && now < expiry) throw error;
     if (now < expiry + CLAIM_GRACE_MS) return;
     // Heuristic grace elapsed without authoritative proof nothing was broadcast: keep open.
     op.status = 'unknown';
@@ -150,7 +161,13 @@ export async function refreshStatus(
     return;
   }
   if (result.status === 'quoted') {
-    if (!claimed(op)) op.status = 'unknown';
+    if (!claimed(op)) {
+      op.status = 'unknown';
+      // A submission WaaS still shows as unclaimed past the grace window escalates like an
+      // absence read: kept open for reconciliation, never treated as proof nothing was sent.
+      if (op.quote && now >= Date.parse(op.quote.expiresAt) + CLAIM_GRACE_MS)
+        op.error = 'RECONCILIATION_REQUIRED';
+    }
   } else {
     op.status = result.status;
     op.error = undefined;
@@ -206,12 +223,18 @@ export async function resolveNotBroadcast(
     op.operatorResolved = true;
     return;
   }
-  if (result.status === 'quoted')
-    throw new WalletError(
-      'RECONCILIATION_REQUIRED',
-      'WaaS still reports this transaction as quoted; cannot resolve as expired yet.',
-      409
-    );
+  if (result.status === 'quoted') {
+    if (now() < Date.parse(op.quote.expiresAt) + CLAIM_GRACE_MS)
+      throw new WalletError(
+        'RECONCILIATION_REQUIRED',
+        'WaaS still reports this transaction as quoted; cannot resolve before the post-expiry grace window has elapsed.',
+        409
+      );
+    op.status = 'expired';
+    op.error = 'QUOTE_EXPIRED';
+    op.operatorResolved = true;
+    return;
+  }
   op.status = result.status;
   op.error = undefined;
   if (result.txnHash) op.txnHash = result.txnHash;

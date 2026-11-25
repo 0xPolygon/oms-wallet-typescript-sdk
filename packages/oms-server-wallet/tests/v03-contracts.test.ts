@@ -1688,7 +1688,7 @@ describe('deep systems hardening', () => {
     expect(second.wallets.solana?.address).toBeDefined();
   });
 
-  it('re-checks quote expiry after re-auth so a quote expiring mid-execute is never sent to WaaS', async () => {
+  it('never re-authenticates for Execute: an expired preparing credential fails with nothing sent', async () => {
     let now = Date.parse('2026-06-01T00:00:00.000Z');
     const store = new MemoryStore();
     const remote = new FakeWaas();
@@ -1740,29 +1740,28 @@ describe('deep systems hardening', () => {
     };
 
     const executesBefore = remote.calls.filter((c) => c.method === 'Execute').length;
+    const authsBefore = remote.calls.filter((c) => c.method === 'CompleteAuth').length;
     advanceOnAuth = true;
+    // The credential that prepared both quotes expires: only it could execute them, so Execute
+    // is never sent under a new one.
     await clearCredExpiry();
-    await expect(
-      client.evm.execute({ idempotencyKey: 'recheck-evm-1', reviewId: evmPrep.reviewId! })
-    ).rejects.toMatchObject({ code: 'QUOTE_EXPIRED' });
-    expect(await client.evm.getOperation('recheck-evm-1')).toMatchObject({
-      status: 'expired',
-      error: 'QUOTE_EXPIRED',
-      provenUnsent: true
-    });
-
-    // Reset clock so Solana quote is still valid before re-auth, then expires during re-auth.
-    now = Date.parse('2026-06-01T00:00:00.000Z');
-    await clearCredExpiry();
-    await expect(
-      client.solana.execute({ idempotencyKey: 'recheck-sol-1', reviewId: solPrep.reviewId! })
-    ).rejects.toMatchObject({ code: 'QUOTE_EXPIRED' });
-    expect(await client.solana.getOperation('recheck-sol-1')).toMatchObject({
-      status: 'expired',
-      error: 'QUOTE_EXPIRED',
-      provenUnsent: true
-    });
+    for (const [facet, id, reviewId] of [
+      [client.evm, 'recheck-evm-1', evmPrep.reviewId!],
+      [client.solana, 'recheck-sol-1', solPrep.reviewId!]
+    ] as const) {
+      await expect(facet.execute({ idempotencyKey: id, reviewId })).rejects.toMatchObject({
+        code: 'CREDENTIAL_CHANGED'
+      });
+      const op = await facet.getOperation(id);
+      expect(op).toMatchObject({
+        status: 'failed',
+        error: 'CREDENTIAL_CHANGED',
+        provenUnsent: true
+      });
+      expect(describeOperation(op!).action).toBe('safe-to-reprepare');
+    }
     expect(remote.calls.filter((c) => c.method === 'Execute')).toHaveLength(executesBefore);
+    expect(remote.calls.filter((c) => c.method === 'CompleteAuth')).toHaveLength(authsBefore);
   });
 
   it('rejects non-string subject and malformed getIdToken results as typed WalletErrors', async () => {

@@ -332,7 +332,7 @@ describe('Solana quote expiry', () => {
       idempotencyKey: 'sol-refused-1',
       ...transfer
     });
-    h.remote.executeRefusal = 7306;
+    h.remote.executeRefusal = 7305;
     expect(
       await h.client.solana.execute({
         idempotencyKey: 'sol-refused-1',

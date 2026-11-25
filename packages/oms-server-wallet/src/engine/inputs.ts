@@ -46,6 +46,11 @@ export const transferSchema = z
   })
   .strict();
 
+/**
+ * WaaS rejected the calling credential: sign in again and retry. `Unauthorized` is included for a
+ * revoked credential; Execute never retries on it (`activeCall`'s `bound`), since WaaS also
+ * answers it when a credential executes a transaction another credential prepared.
+ */
 export const credentialRejectedCodes: ReadonlySet<number> = new Set([
   WaasErrorCode.KeyNotFound,
   WaasErrorCode.KeyExpired,

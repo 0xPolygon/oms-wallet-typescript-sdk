@@ -233,6 +233,40 @@ export class EngineCore {
    * Mark a still-quoted operation whose quote has expired as `expired` before anything is sent,
    * persist it, and throw `QUOTE_EXPIRED`. Returns normally while the quote is still valid.
    */
+  /**
+   * The credential must outlive a quote for the same credential to execute it, so preparing
+   * renews one with less than this left (16 minutes: quotes last up to about 15), or half the
+   * configured session lifetime when that is shorter.
+   */
+  prepareLifetimeMs(): number {
+    return Math.min(16 * 60_000, ((this.config.sessionLifetimeSeconds ?? 21_600) * 1000) / 2);
+  }
+
+  /**
+   * Before Execute: a prepared transaction can only be executed by the credential that prepared
+   * it. If that credential is gone or expired, nothing is sent: the operation fails with
+   * `CREDENTIAL_CHANGED` and `provenUnsent`, and must be prepared again.
+   */
+  async assertPreparingCredential(state: State, op: StoredOperationRecord): Promise<void> {
+    const credential = state.credential;
+    if (
+      !op.credentialId ||
+      (credential?.credentialId === op.credentialId &&
+        credential.expiresAt &&
+        Date.parse(credential.expiresAt) > this.now())
+    )
+      return;
+    op.status = 'failed';
+    op.error = 'CREDENTIAL_CHANGED';
+    op.preClaimRefused = true;
+    await this.writeOperation(op);
+    throw new WalletError(
+      'CREDENTIAL_CHANGED',
+      'The credential that prepared this transaction has expired or been replaced, and only it can execute it; nothing was sent. Prepare it again.',
+      409
+    );
+  }
+
   async expireBeforeSubmit(op: StoredOperationRecord): Promise<void> {
     if (!op.quote || Date.parse(op.quote.expiresAt) > this.now()) return;
     op.status = 'expired';
@@ -300,9 +334,19 @@ export class EngineCore {
     state: State,
     method: string,
     params: Record<string, unknown>,
-    families: readonly NetworkFamily[] = ['evm']
+    families: readonly NetworkFamily[] = ['evm'],
+    options: {
+      /** Renew a credential with less than this left (default 60 seconds). */
+      readonly minLifetimeMs?: number;
+      /**
+       * Call with the current credential as is: no renewal and no retry under a new one. For
+       * Execute, whose transaction only the preparing credential can execute.
+       */
+      readonly bound?: boolean;
+    } = {}
   ): Promise<unknown> {
-    await this.ensure(state, families);
+    if (options.bound) return this.call(state, method, params);
+    await this.ensure(state, families, { minLifetimeMs: options.minLifetimeMs });
     try {
       return await this.call(state, method, params);
     } catch (error) {
@@ -418,6 +462,8 @@ export class EngineCore {
       /** Whether a missing wallet may be created; defaults to `config.createWallets !== false`. */
       readonly create?: boolean;
       readonly pins?: WalletPins;
+      /** Renew a credential with less than this left (default 60 seconds). */
+      readonly minLifetimeMs?: number;
     } = {}
   ): Promise<void> {
     const pins = options.pins ?? {};
@@ -430,7 +476,7 @@ export class EngineCore {
     let discovered = false;
     if (
       !state.credential?.expiresAt ||
-      Date.parse(state.credential.expiresAt) <= this.now() + 60_000 ||
+      Date.parse(state.credential.expiresAt) <= this.now() + (options.minLifetimeMs ?? 60_000) ||
       state.creating.some((family) => !state.wallets[family])
     ) {
       await this.signIn(state, discoverFamilies, pins);

@@ -28,7 +28,7 @@ describe('EVM execution settlement', () => {
       idempotencyKey: 'refused-1',
       ...transfer
     });
-    h.remote.evmExecuteRefusal = 7306;
+    h.remote.evmExecuteRefusal = 7305;
     const failed = await h.client.evm.execute({
       idempotencyKey: 'refused-1',
       reviewId: prepared.reviewId!
@@ -42,6 +42,50 @@ describe('EVM execution settlement', () => {
     expect(await h.client.evm.getOperation('refused-1')).toMatchObject({ status: 'failed' });
     expect(h.remote.calls.filter((c) => c.method === 'Execute')).toHaveLength(1);
     expect((await h.client.evm.listOperations({ status: 'open' })).items).toEqual([]);
+  });
+
+  it.each([
+    [7306, 'TransactionFailed'],
+    [7307, 'WalletProviderError']
+  ])(
+    'leaves an Execute refused with %i (%s) uncertain: it does not prove nothing was sent',
+    async (code) => {
+      const h = sdkHarness();
+      const prepared = await h.client.evm.prepareTransfer({
+        idempotencyKey: `uncertain-refusal-${code}`,
+        ...transfer
+      });
+      h.remote.evmExecuteRefusal = code;
+      const op = await h.client.evm.execute({
+        idempotencyKey: `uncertain-refusal-${code}`,
+        reviewId: prepared.reviewId!
+      });
+      expect(op.status).not.toBe('failed');
+      expect(op.provenUnsent).toBe(false);
+      expect(describeOperation(op).action).not.toBe('safe-to-reprepare');
+    }
+  );
+
+  it('treats a TransactionFailed status read as no information and keeps waiting', async () => {
+    const h = sdkHarness();
+    const prepared = await h.client.evm.prepareTransfer({
+      idempotencyKey: 'flaky-read-1',
+      ...transfer
+    });
+    await h.client.evm.execute({ idempotencyKey: 'flaky-read-1', reviewId: prepared.reviewId! });
+    h.remote.evmStatusError = 7306;
+    expect(await h.client.evm.refreshOperation('flaky-read-1')).toMatchObject({
+      status: 'pending'
+    });
+    const waited = h.client.evm.waitForOperation('flaky-read-1', {
+      timeoutMs: 2000,
+      pollIntervalMs: 10
+    });
+    setTimeout(() => {
+      h.remote.evmStatusError = undefined;
+      h.remote.txnStatus = 'executed';
+    }, 50);
+    expect((await waited).outcome).toBe('executed');
   });
 
   it.each([

@@ -292,7 +292,7 @@ import { createEphemeralServerWallet } from '@polygonlabs/oms-server-wallet-sdk'
 const signer = createEphemeralServerWallet({
   publishableKey,
   origin: appOrigin,
-  oidc: { issuer, audience, subject, getIdToken } // sessionLifetimeSeconds defaults to 900
+  oidc: { issuer, audience, subject, getIdToken } // sessionLifetimeSeconds defaults to 3600
 });
 try {
   await signer.restore(); // binds wallets that already exist; never creates one (see create())

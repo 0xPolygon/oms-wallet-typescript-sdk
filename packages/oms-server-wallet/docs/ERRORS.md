@@ -94,6 +94,7 @@ so the outcome survives a restart. Settlement codes such as `SUBMISSION_UNCERTAI
 | `WALLET_MISMATCH` | WaaS shows a different wallet than the one bound, the identity has several wallets for a family and none was selected, a selected wallet is not the identity's, or a swap belongs to another wallet. | For duplicates, list them with `listWallets()`, choose one (for example the one holding funds) and pass it as `wallets` to `createOrRestore` / `restore`. Otherwise investigate; do not retry blindly. |
 | `WALLET_BUSY` | Too many unresolved swaps for this wallet. | Reconcile existing swaps first. |
 | `CREATION_UNCERTAIN` | A create request has an unknown outcome and the created wallet did not show up when re-checked. | Restore again later (ephemeral: `restore()`, not `create()`); the SDK does not create again. |
+| `CREDENTIAL_CHANGED` | The credential that prepared a transaction expired or was replaced (`rotateCredential`, `disable`, `close`) before `execute`; only it can execute the transaction. Nothing was sent (`provenUnsent`). | Prepare it again. |
 | `NO_CREDENTIAL` | No credential is available for the request. | Retry; the SDK signs in again. |
 | `IDEMPOTENCY_CONFLICT` | The idempotency key was already used with different input or mode. | Use a new key for new input. |
 | `NOT_FOUND` | No operation, prepared transaction or swap has that ID. | Check the ID. |

@@ -723,7 +723,7 @@ describe('settled funding and recovery operations', () => {
   it('releases the origin chain once its own funding is refused before sending', async () => {
     const h = await swapHarness();
     await h.confirm();
-    h.waas.remote.evmExecuteRefusal = 7306;
+    h.waas.remote.evmExecuteRefusal = 7305;
     await h.tick(4);
     const record = await h.record();
     expect(record.funding).toMatchObject({ status: 'failed', error: 'EXECUTE_REFUSED' });

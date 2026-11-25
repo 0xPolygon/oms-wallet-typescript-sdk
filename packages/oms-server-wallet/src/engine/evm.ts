@@ -409,13 +409,20 @@ export class EvmEngine {
     try {
       op.quote = parseWaas(
         quoteSchema,
-        await this.core.activeCall(state, 'PrepareEthereumTransaction', {
-          network: String(op.chainId),
-          walletId: state.wallets.evm!.id,
-          ...call,
-          mode: 'relayer'
-        })
+        await this.core.activeCall(
+          state,
+          'PrepareEthereumTransaction',
+          {
+            network: String(op.chainId),
+            walletId: state.wallets.evm!.id,
+            ...call,
+            mode: 'relayer'
+          },
+          ['evm'],
+          { minLifetimeMs: this.core.prepareLifetimeMs() }
+        )
       );
+      op.credentialId = state.credential!.credentialId;
       if (!op.quote.sponsored) throw new WalletError('SPONSORSHIP_REQUIRED', unsponsored, 409);
       op.reviewId = await this.core.computeReviewId({
         walletId: state.wallets.evm!.id,
@@ -458,7 +465,8 @@ export class EvmEngine {
     await this.checkEvmDebitGate(state, op.chainId, op.id, options.skipGate);
     // Reload state after the debit gate in case gate refreshes advanced the nonce or rotated credentials.
     state = await this.core.load();
-    await this.core.ensure(state, ['evm']);
+    if (op.credentialId) await this.core.assertPreparingCredential(state, op);
+    else await this.core.ensure(state, ['evm']);
     // Re-check expiry after debit gate / re-auth I/O so an expired quote is never sent to Execute.
     await this.core.expireBeforeSubmit(op);
     op.status = 'submitting';
@@ -468,7 +476,9 @@ export class EvmEngine {
     try {
       const result = parseWaas(
         statusSchema,
-        await this.core.activeCall(state, 'Execute', { txnId: quote.txnId })
+        await this.core.activeCall(state, 'Execute', { txnId: quote.txnId }, ['evm'], {
+          bound: !!op.credentialId
+        })
       );
       op.status = result.status === 'quoted' ? 'unknown' : result.status;
       if (result.txnHash) op.txnHash = result.txnHash;

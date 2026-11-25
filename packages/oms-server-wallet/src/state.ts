@@ -136,6 +136,8 @@ const storedEvmOperationSchema = z
     submitted: z.boolean().optional(),
     preSubmitExpired: z.boolean().optional(),
     preClaimRefused: z.boolean().optional(),
+    /** The credential that prepared the quote: only it can execute the transaction. */
+    credentialId: z.string().min(1).optional(),
     operatorResolved: z.boolean().optional(),
     transfer: z
       .object({
@@ -179,6 +181,8 @@ const storedChainOperationSchema = z
     submitted: z.boolean().optional(),
     preSubmitExpired: z.boolean().optional(),
     preClaimRefused: z.boolean().optional(),
+    /** The credential that prepared the quote: only it can execute the transaction. */
+    credentialId: z.string().min(1).optional(),
     operatorResolved: z.boolean().optional(),
     quote: chainQuoteSchema.optional(),
     fee: feeOptionSchema.optional(),

@@ -843,7 +843,7 @@ function instantiateEphemeralServerWallet(
       issuer: options.oidc.issuer,
       audience: options.oidc.audience,
       getIdToken: options.oidc.getIdToken,
-      sessionLifetimeSeconds: options.oidc.sessionLifetimeSeconds ?? 900,
+      sessionLifetimeSeconds: options.oidc.sessionLifetimeSeconds ?? 3600,
       store: new MemoryStateStore(),
       executor: createSingleProcessExecutor(),
       transport,
