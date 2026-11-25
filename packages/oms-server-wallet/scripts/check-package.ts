@@ -262,14 +262,20 @@ const waitOutcome = (result: Awaited<ReturnType<typeof wTwoPhase.evm.waitForOper
 };
 void waitOutcome;
 
-// Ephemeral signer: no store, executor, swaps or sending, and not substitutable for a durable wallet.
+// In-memory wallet: the same API as createServerWallet, no store or executor, no disable(), and
+// not substitutable for a durable wallet.
 const eph = createEphemeralServerWallet({ publishableKey: key, oidc });
-void eph.evm.signMessage({ chainId: 80002, message: 'hi' });
-// @ts-expect-error an ephemeral handle is not a durable ServerWallet
+void eph.evm.signMessage({ idempotencyKey: 'consumer-eph-sign', chainId: 80002, message: 'hi' });
+void eph.evm.prepareTransfer({ idempotencyKey: 'consumer-eph-1', chainId: 80002, to: '0x2222222222222222222222222222222222222222', asset: 'native', amount: '1' });
+// @ts-expect-error two-phase in-memory handles have no send*
+void eph.evm.sendTransfer;
+const ephImmediate = createEphemeralServerWallet({ publishableKey: key, oidc, approval: 'allow-immediate', swaps: walletSwaps });
+void ephImmediate.evm.sendTransfer({ idempotencyKey: 'consumer-eph-2', chainId: 80002, to: '0x2222222222222222222222222222222222222222', asset: 'native', amount: '1', onPrepared: async (op) => void op.quote.txnId });
+void ephImmediate.swaps.tick;
+void ephImmediate.evm.waitForTransaction({ txnId: 'txn_1', expiresAt: new Date().toISOString() }, { timeoutMs: 1000 });
+// @ts-expect-error an in-memory handle is not a durable ServerWallet
 const asDurable: ServerWallet = eph;
-// @ts-expect-error ephemeral handles cannot prepare transactions
-void eph.evm.prepareTransfer;
-// @ts-expect-error ephemeral handles have no disable()
+// @ts-expect-error in-memory handles have no disable()
 void eph.disable;
 // @ts-expect-error ephemeral handles take no store
 createEphemeralServerWallet({ publishableKey: key, oidc, storage: { adapter: state, encryptionKey } });
@@ -342,6 +348,7 @@ export const declWalletSwaps = walletSwaps;
 export const declServiceSwaps = serviceSwaps;
 export const declEphemeral = eph;
 export const declEphemeralEvm = eph.evm;
+export const declEphemeralImmediate = ephImmediate;
 export const declSigning = wSigning;
 export const declSigningService = svcSigning;
 export const declEphemeralSigning = ephSigning;
@@ -428,7 +435,9 @@ const ephemeral = createEphemeralServerWallet({
   publishableKey: key,
   oidc: { issuer: 'https://issuer.example', audience: 'oms', subject: 'smoke-3', getIdToken: async () => ({ token: 't', expiresAt: 1 }) }
 });
-assert.equal('prepareTransfer' in ephemeral.evm, false);
+assert.equal(typeof ephemeral.evm.prepareTransfer, 'function');
+assert.equal('sendTransfer' in ephemeral.evm, false);
+assert.equal('disable' in ephemeral, false);
 await ephemeral.close();
 await assert.rejects(ephemeral.inspect(), (err) => isWalletError(err) && err.code === 'WALLET_CLOSED');
 assert.throws(

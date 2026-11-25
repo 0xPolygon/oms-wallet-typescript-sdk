@@ -127,8 +127,8 @@ export interface TypedDataSigningRequest {
   readonly subject: string;
   /** The signing wallet's address (`0x…` on EVM, `T…` on Tron). */
   readonly walletAddress: string;
-  /** The durable operation's idempotency key; absent on the ephemeral signer. */
-  readonly idempotencyKey?: string;
+  /** The operation's idempotency key. */
+  readonly idempotencyKey: string;
   /** The EIP-712 digest that will be signed. */
   readonly digest: `0x${string}`;
   /**
@@ -962,45 +962,38 @@ export interface ServerWalletService<
   readonly indexer: ServiceIndexerFacet;
 }
 
-/** Options for `createEphemeralServerWallet`. There is no store, executor, swaps or approval mode. */
+/**
+ * Options for `createEphemeralServerWallet`: those of `createServerWallet` without `storage` and
+ * `executor`. The handle keeps its credential and records in memory and queues its own calls.
+ */
 export interface EphemeralServerWalletOptions {
   readonly publishableKey: string;
   /** Application origin sent to WaaS, when the project restricts origins. */
   readonly origin?: string;
   /** OIDC identity. `sessionLifetimeSeconds` defaults to 3600 (one hour) for ephemeral handles. */
   readonly oidc: WalletOidcOptions;
+  /** `'allow-immediate'` adds the one-shot `send*` methods. Default `'two-phase'`. */
+  readonly approval?: ApprovalMode;
+  /**
+   * `trails(...)` from `/trails` with `scope: 'wallet'` adds `swaps`. Swap records live in its
+   * durable `storage`, which every process of the wallet shares (see the swaps guide).
+   */
+  readonly swaps?: SwapsConfig<'wallet', unknown>;
   /** Adds `evm.signTypedData` and `tron.signTypedData`, gated by the policy. */
   readonly signing?: SigningOptions;
   readonly attestation?: AttestationOptions;
   readonly fetch?: typeof fetch;
 }
 
-/** Wallets and credential held by an ephemeral handle. */
-export interface EphemeralWalletSnapshot {
-  readonly wallets: Readonly<Partial<Record<NetworkFamily, RemoteWallet>>>;
-  readonly expiresAt?: string;
-  readonly credentialId?: string;
-}
-
-/** A signature that WaaS produced and then verified. */
-export interface SignatureResult {
-  readonly signature: string;
-  readonly verified: true;
-}
-
-/**
- * Memory-only signer for one OIDC identity, from `createEphemeralServerWallet`. It signs and reads
- * balances; it cannot prepare or send transactions and keeps no operation records. `restore()`
- * binds existing wallets and `create()` creates missing ones. Not assignable to `ServerWallet`.
- * Call `close()` when done.
- */
-export interface EphemeralServerWallet<TTypedData extends boolean = false> {
+/** Lifecycle of an in-memory handle (`createEphemeralServerWallet`). */
+export interface EphemeralWalletLifecycle {
   /**
    * Sign in and bind wallets that already exist on WaaS; never creates one. With `families`, each
    * must exist; without, every existing family is bound. Throws `WALLET_NOT_INITIALIZED` when
-   * none exists. Required before signing or balance reads.
+   * none exists. With `families`, free when the handle already holds them and a valid credential:
+   * call it at the start of every request on a cached handle.
    */
-  restore(options?: CreateOrRestoreOptions): Promise<EphemeralWalletSnapshot>;
+  restore(options?: CreateOrRestoreOptions): Promise<WalletSnapshot>;
   /**
    * Bind existing wallets and create missing ones (default EVM). Call it where a user's wallets
    * are first set up, such as signup, and `restore()` everywhere else: WaaS does not deduplicate
@@ -1008,50 +1001,41 @@ export interface EphemeralServerWallet<TTypedData extends boolean = false> {
    * wallets per family. Concurrent calls within one process are run one at a time. After an
    * unknown outcome it throws `CREATION_UNCERTAIN`; call `restore()` later, not `create()`.
    */
-  create(options?: CreateOrRestoreOptions): Promise<EphemeralWalletSnapshot>;
+  create(options?: CreateOrRestoreOptions): Promise<WalletSnapshot>;
   /** Every wallet WaaS holds for this identity; see `ServerWalletBase.listWallets`. */
   listWallets(): Promise<readonly IdentityWallet[]>;
-  inspect(): Promise<EphemeralWalletSnapshot>;
-  /** Revoke this handle's credential and sign in again with a new one. */
-  rotateCredential(): Promise<EphemeralWalletSnapshot>;
+  /** The handle's wallets and credential; no I/O. */
+  inspect(): Promise<WalletSnapshot>;
+  /**
+   * Revoke this handle's credential and sign in again. Transactions it prepared before can no
+   * longer be executed (`CREDENTIAL_CHANGED`).
+   */
+  rotateCredential(): Promise<WalletSnapshot>;
   /**
    * Close the handle and revoke its credential. Every later call, including calls already queued,
    * throws `WALLET_CLOSED`. Idempotent; call again to retry a revoke that failed.
    */
   close(): Promise<void>;
-  readonly evm: {
-    signMessage(input: {
-      readonly chainId: SupportedEvmChainId;
-      readonly message: string;
-    }): Promise<SignatureResult>;
-  } & (TTypedData extends true
-    ? {
-        /**
-         * Sign EIP-712 data after `signing.authorizeTypedData` returns `true`. Refuses Sequence
-         * wallet `Calls` and typed data whose `verifyingContract` is the wallet.
-         */
-        signTypedData(input: {
-          readonly chainId: SupportedEvmChainId;
-          readonly typedData: TypedDataInput;
-        }): Promise<SignatureResult>;
-      }
-    : unknown);
-  readonly solana: {
-    signMessage(input: { readonly message: string }): Promise<SignatureResult>;
-  };
-  readonly tron: {
-    signMessage(input: { readonly message: string }): Promise<SignatureResult>;
-  } & (TTypedData extends true
-    ? {
-        /**
-         * Sign TIP-712 data after `signing.authorizeTypedData` returns `true`. Refuses typed data
-         * whose `verifyingContract` is the wallet.
-         */
-        signTypedData(input: {
-          readonly network: TronNetwork;
-          readonly typedData: TypedDataInput;
-        }): Promise<SignatureResult>;
-      }
-    : unknown);
-  readonly indexer: WalletIndexerFacet;
 }
+
+/**
+ * In-memory wallet for one OIDC identity, from `createEphemeralServerWallet`: the same transfers,
+ * calls, signing, waits, balances and swaps as `createServerWallet`, with its credential and
+ * records held in this handle only. Records and `idempotencyKey` protection last as long as the
+ * handle: after a restart, recover a transaction by the `txnId` your app saved (see `onPrepared`)
+ * with `getTransactionStatus` or `waitForTransaction`. Each handle signs in with its own
+ * credential, so handles in different processes run in parallel without a lock; calls on one
+ * handle run one at a time. There is no `disable()`: stop with `close()`. Not assignable to
+ * `ServerWallet`.
+ */
+export type EphemeralServerWallet<
+  TApproval extends ApprovalMode = 'two-phase',
+  TSwaps extends SwapsConfig<'wallet', unknown> | undefined = undefined,
+  TTypedData extends boolean = false
+> = EphemeralWalletLifecycle & {
+  readonly evm: EvmFacet<TApproval, TTypedData>;
+  readonly solana: SolanaFacet<TApproval>;
+  readonly tron: TronFacet<TApproval, TTypedData>;
+  /** Explicitly unattested indexer reads for this handle's restored addresses. */
+  readonly indexer: WalletIndexerFacet;
+} & (TSwaps extends SwapsConfig<'wallet', infer TFacet> ? { readonly swaps: TFacet } : unknown);

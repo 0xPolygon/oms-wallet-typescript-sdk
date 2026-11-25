@@ -32,13 +32,12 @@
       ]
     },
     {
-      "label": "Ephemeral signer",
+      "label": "In-memory wallet",
       "symbols": [
         "createEphemeralServerWallet",
         "EphemeralServerWalletOptions",
         "EphemeralServerWallet",
-        "EphemeralWalletSnapshot",
-        "SignatureResult"
+        "EphemeralWalletLifecycle"
       ]
     },
     {

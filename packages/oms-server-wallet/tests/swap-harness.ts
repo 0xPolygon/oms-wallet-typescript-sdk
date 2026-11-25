@@ -14,7 +14,7 @@ import type { SwapGateway, SwapRecord } from '../src/trails/types.js';
 
 import { type SwapRecordCodec, trailsInternal } from '../src/trails/coordinator.js';
 import { executeAbi } from '../src/trails/recovery-transaction.js';
-import { createServerWalletInternal } from '../src/wallet.js';
+import { createEphemeralServerWalletInternal, createServerWalletInternal } from '../src/wallet.js';
 import {
   contracts,
   intentId,
@@ -283,6 +283,36 @@ export async function swapHarness(native = false) {
     },
     get swaps() {
       return wallet.swaps;
+    },
+    /** An in-memory handle (createEphemeralServerWallet) for the same identity and swap store. */
+    async ephemeralWorker() {
+      const handle = createEphemeralServerWalletInternal(
+        {
+          publishableKey: TEST_PUBLISHABLE_KEY,
+          oidc: {
+            subject: 'customer-1',
+            issuer: 'https://issuer.example',
+            audience: 'oms-server-wallet',
+            getIdToken: async () => ({
+              token: `fixture-${crypto.randomUUID()}`,
+              expiresAt: Math.floor(Date.now() / 1000) + 300
+            })
+          },
+          approval: 'allow-immediate',
+          swaps: trailsInternal(
+            {
+              apiKey: 'fixture-trails-key',
+              chains: { 137: 'https://polygon.rpc.example', 8453: 'https://base.rpc.example' },
+              assets: fixture.assets,
+              storage: { scope: 'wallet', adapter: store, encryptionKey: SWAP_ENCRYPTION_KEY }
+            },
+            { gateway, chains, clock: () => clock }
+          )
+        },
+        { transport: remote, clock: () => clock }
+      );
+      await handle.restore({ families: ['evm'] });
+      return handle;
     },
     /** Another process for the same identity: its own wallet state and lock, the same swap store. */
     async worker() {

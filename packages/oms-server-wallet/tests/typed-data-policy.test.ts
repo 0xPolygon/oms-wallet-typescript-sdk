@@ -240,7 +240,7 @@ describe('typed-data signing is opt-in', () => {
     expect(seen).toHaveLength(1);
   });
 
-  it('asks the policy on the ephemeral signer too, without an idempotency key', async () => {
+  it('asks the policy on in-memory handles too', async () => {
     const h = sdkHarness();
     await h.client.createOrRestore({ families: ['evm', 'tron'] });
     const seen: TypedDataSigningRequest[] = [];
@@ -261,15 +261,25 @@ describe('typed-data signing is opt-in', () => {
     await ephemeral.restore();
     const before = signTypedDataCalls(h.remote).length;
     await expect(
-      ephemeral.evm.signTypedData({ chainId: 137, typedData: permit })
+      ephemeral.evm.signTypedData({
+        idempotencyKey: `eph-${crypto.randomUUID()}`,
+        chainId: 137,
+        typedData: permit
+      })
     ).rejects.toMatchObject({ code: 'TYPED_DATA_REFUSED' });
     expect(signTypedDataCalls(h.remote)).toHaveLength(before);
     allow = true;
-    expect(await ephemeral.evm.signTypedData({ chainId: 137, typedData: permit })).toMatchObject({
+    expect(
+      await ephemeral.evm.signTypedData({
+        idempotencyKey: `eph-${crypto.randomUUID()}`,
+        chainId: 137,
+        typedData: permit
+      })
+    ).toMatchObject({
       verified: true
     });
     expect(seen[0]).toMatchObject({ family: 'evm', subject: 'customer-1' });
-    expect(seen[0]).not.toHaveProperty('idempotencyKey');
+    expect(seen[0].idempotencyKey).toMatch(/^eph-/);
     await ephemeral.close();
   });
 });

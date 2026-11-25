@@ -126,3 +126,33 @@ describe('several processes advancing one swap', () => {
     expect((await h.record()).fundingConfirmed).toBe(true);
   });
 });
+
+describe('swaps on in-memory handles', () => {
+  it('runs a swap from in-memory handles that share only the swap store, funding it once', async () => {
+    const h = await swapHarness();
+    const [a, b] = [await h.ephemeralWorker(), await h.ephemeralWorker()];
+    const q = await a.swaps.quote({ idempotencyKey: 'swap-test-0001', ...h.fixture.input });
+    await b.swaps.confirm({ swapId: q.id, reviewId: q.quote.reviewId });
+    // The hold is visible to the durable wallet and to every in-memory handle.
+    await expect(
+      h.wallet.evm.prepareTransfer({
+        idempotencyKey: 'blocked-by-ephemeral-swap',
+        chainId: 137,
+        to: '0x2222222222222222222222222222222222222222',
+        asset: 'native',
+        amount: '1'
+      })
+    ).rejects.toMatchObject({ code: 'DEBIT_PENDING' });
+    for (let i = 0; i < 8; i++) {
+      h.advance(5001);
+      await Promise.all([a.swaps.tick(), b.swaps.tick()]);
+    }
+    expect(executes(h)).toHaveLength(1);
+    h.waas.remote.txnStatus = 'executed';
+    h.advance(61_000);
+    await Promise.all([a.swaps.tick(), b.swaps.tick()]);
+    expect((await h.record()).fundingConfirmed).toBe(true);
+    expect(executes(h)).toHaveLength(1);
+    await Promise.all([a.close(), b.close()]);
+  });
+});

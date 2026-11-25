@@ -52,7 +52,11 @@ describe('createEphemeralServerWallet', () => {
     const remote = new FakeWaas();
     const wallet = ephemeral(remote);
     await expect(
-      wallet.evm.signMessage({ chainId: 137 as const, message: 'hi' })
+      wallet.evm.signMessage({
+        idempotencyKey: `eph-${crypto.randomUUID()}`,
+        chainId: 137 as const,
+        message: 'hi'
+      })
     ).rejects.toMatchObject({
       code: 'WALLET_NOT_INITIALIZED'
     });
@@ -74,25 +78,39 @@ describe('createEphemeralServerWallet', () => {
     expect(calls(remote, 'CompleteAuth').at(-1)?.body.lifetime).toBe(3600);
 
     await expect(
-      wallet.evm.signMessage({ chainId: 80002 as const, message: 'hi' })
-    ).resolves.toEqual({
+      wallet.evm.signMessage({
+        idempotencyKey: `eph-${crypto.randomUUID()}`,
+        chainId: 80002 as const,
+        message: 'hi'
+      })
+    ).resolves.toMatchObject({
+      status: 'signed',
       signature: '0x1234',
       verified: true
     });
     await expect(
       wallet.evm.signTypedData({
+        idempotencyKey: `eph-${crypto.randomUUID()}`,
         chainId: 137 as const,
         typedData: evmTypedData('0x000000000000000000000000000000000000dEaD')
       })
     ).resolves.toMatchObject({ verified: true });
-    await expect(wallet.solana.signMessage({ message: 'hi' })).resolves.toMatchObject({
-      verified: true
-    });
-    await expect(wallet.tron.signMessage({ message: 'hi' })).resolves.toMatchObject({
+    await expect(
+      wallet.solana.signMessage({ idempotencyKey: `eph-${crypto.randomUUID()}`, message: 'hi' })
+    ).resolves.toMatchObject({
       verified: true
     });
     await expect(
-      wallet.tron.signTypedData({ network: 'tron:nile', typedData: tronTypedData })
+      wallet.tron.signMessage({ idempotencyKey: `eph-${crypto.randomUUID()}`, message: 'hi' })
+    ).resolves.toMatchObject({
+      verified: true
+    });
+    await expect(
+      wallet.tron.signTypedData({
+        idempotencyKey: `eph-${crypto.randomUUID()}`,
+        network: 'tron:nile',
+        typedData: tronTypedData
+      })
     ).resolves.toMatchObject({ verified: true });
     expect(calls(remote, 'CreateWallet')).toHaveLength(before);
   });
@@ -105,10 +123,15 @@ describe('createEphemeralServerWallet', () => {
     } = await wallet.restore({ families: ['evm'] });
     const signed = calls(remote, 'SignTypedData').length;
     await expect(
-      wallet.evm.signTypedData({ chainId: 137 as const, typedData: evmTypedData(evm!.address) })
+      wallet.evm.signTypedData({
+        idempotencyKey: `eph-${crypto.randomUUID()}`,
+        chainId: 137 as const,
+        typedData: evmTypedData(evm!.address)
+      })
     ).rejects.toMatchObject({ code: 'INVALID_TYPED_DATA' });
     await expect(
       wallet.evm.signTypedData({
+        idempotencyKey: `eph-${crypto.randomUUID()}`,
         chainId: 137 as const,
         typedData: {
           domain: {
@@ -138,7 +161,11 @@ describe('createEphemeralServerWallet', () => {
     const results = await Promise.all(
       handles.flatMap((handle) =>
         [1, 2].map((n) =>
-          handle.evm.signMessage({ chainId: 137 as const, message: `parallel ${n}` })
+          handle.evm.signMessage({
+            idempotencyKey: `eph-${crypto.randomUUID()}`,
+            chainId: 137 as const,
+            message: `parallel ${n}`
+          })
         )
       )
     );
@@ -168,7 +195,12 @@ describe('createEphemeralServerWallet', () => {
       () => wallet.inspect(),
       () => wallet.restore(),
       () => wallet.rotateCredential(),
-      () => wallet.evm.signMessage({ chainId: 137 as const, message: 'hi' }),
+      () =>
+        wallet.evm.signMessage({
+          idempotencyKey: `eph-${crypto.randomUUID()}`,
+          chainId: 137 as const,
+          message: 'hi'
+        }),
       () => wallet.indexer.getEvmBalances()
     ])
       await expect(call()).rejects.toMatchObject({ code: 'WALLET_CLOSED' });
@@ -257,5 +289,90 @@ describe('createEphemeralServerWallet', () => {
           ...extra
         } as never)
       ).toThrow(expect.objectContaining({ code: 'CONFIGURATION' }));
+  });
+});
+
+describe('transactions on in-memory handles', () => {
+  const immediate = (remote: FakeWaas) =>
+    createEphemeralServerWalletInternal(
+      {
+        publishableKey: TEST_PUBLISHABLE_KEY,
+        oidc: {
+          subject: 'customer-1',
+          issuer: 'https://issuer.example',
+          audience: 'oms-server-wallet',
+          getIdToken: async () => ({
+            token: `fixture-${crypto.randomUUID()}`,
+            expiresAt: Math.floor(Date.now() / 1000) + 300
+          })
+        },
+        approval: 'allow-immediate'
+      },
+      { transport: remote }
+    );
+  const transfer = {
+    chainId: 137 as const,
+    to: '0x2222222222222222222222222222222222222222',
+    asset: 'native',
+    amount: '1000'
+  };
+
+  it('prepares, executes and waits like a durable wallet', async () => {
+    const remote = await provisioned();
+    const wallet = immediate(remote);
+    await wallet.restore({ families: ['evm'] });
+    const prepared = await wallet.evm.prepareTransfer({ idempotencyKey: 'eph-pay-1', ...transfer });
+    expect(prepared.status).toBe('quoted');
+    if (prepared.status !== 'quoted') throw new Error('not quoted');
+    // A retry on the same handle returns the same operation instead of preparing again.
+    expect(
+      (await wallet.evm.prepareTransfer({ idempotencyKey: 'eph-pay-1', ...transfer })).reviewId
+    ).toBe(prepared.reviewId);
+    await wallet.evm.execute({ idempotencyKey: 'eph-pay-1', reviewId: prepared.reviewId });
+    remote.txnStatus = 'executed';
+    expect(
+      (await wallet.evm.waitForOperation('eph-pay-1', { timeoutMs: 2000, pollIntervalMs: 10 }))
+        .outcome
+    ).toBe('executed');
+    expect(calls(remote, 'CreateWallet')).toHaveLength(3); // only the durable provisioning
+  });
+
+  it('sends from several handles of one wallet in parallel, each with its own credential', async () => {
+    const remote = await provisioned();
+    const handles = [immediate(remote), immediate(remote), immediate(remote)];
+    await Promise.all(handles.map((handle) => handle.restore({ families: ['solana'] })));
+    const sent = await Promise.all(
+      handles.map((handle, i) =>
+        handle.solana.sendTransfer({
+          idempotencyKey: `eph-parallel-${i}`,
+          network: 'solana:devnet',
+          to: '11111111111111111111111111111111',
+          asset: 'native',
+          amount: '1000'
+        })
+      )
+    );
+    expect(new Set(sent.map((op) => op.quote?.txnId)).size).toBe(3);
+    const credentials = await Promise.all(handles.map((handle) => handle.inspect()));
+    expect(new Set(credentials.map((snapshot) => snapshot.credentialId)).size).toBe(3);
+  });
+
+  it('refuses to create a wallet from a transaction call; only create() does', async () => {
+    const remote = new FakeWaas();
+    const wallet = immediate(remote);
+    await expect(
+      wallet.evm.prepareTransfer({ idempotencyKey: 'eph-no-wallet', ...transfer })
+    ).rejects.toMatchObject({ code: 'WALLET_NOT_INITIALIZED' });
+    expect(calls(remote, 'CreateWallet')).toHaveLength(0);
+  });
+
+  it('refuses every call once closed, including transactions', async () => {
+    const remote = await provisioned();
+    const wallet = immediate(remote);
+    await wallet.restore({ families: ['evm'] });
+    await wallet.close();
+    await expect(
+      wallet.evm.sendTransfer({ idempotencyKey: 'eph-closed-1', ...transfer })
+    ).rejects.toMatchObject({ code: 'WALLET_CLOSED' });
   });
 });

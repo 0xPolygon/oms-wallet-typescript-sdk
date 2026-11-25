@@ -642,9 +642,19 @@ await check('ephemeral handles restore the same wallets and sign in parallel', a
     const started = Date.now();
     const signatures = await Promise.all(
       handles.flatMap((handle, n) => [
-        handle.evm.signMessage({ chainId: amoy, message: `ephemeral ${n}` }),
-        handle.solana.signMessage({ message: `ephemeral ${n}` }),
-        handle.tron.signMessage({ message: `ephemeral ${n}` })
+        handle.evm.signMessage({
+          idempotencyKey: `eph-${crypto.randomUUID()}`,
+          chainId: amoy,
+          message: `ephemeral ${n}`
+        }),
+        handle.solana.signMessage({
+          idempotencyKey: `eph-${crypto.randomUUID()}`,
+          message: `ephemeral ${n}`
+        }),
+        handle.tron.signMessage({
+          idempotencyKey: `eph-${crypto.randomUUID()}`,
+          message: `ephemeral ${n}`
+        })
       ])
     );
     if (!signatures.every((signature) => signature.verified))
@@ -661,7 +671,7 @@ await check('a closed ephemeral handle revokes its credential and refuses to sig
   await handle.close();
   if ((calls.RevokeCredential ?? 0) !== revokes + 1) throw new Error('close() did not revoke');
   const refused = await handle.evm
-    .signMessage({ chainId: amoy, message: 'closed' })
+    .signMessage({ idempotencyKey: `eph-${crypto.randomUUID()}`, chainId: amoy, message: 'closed' })
     .catch((error) => error);
   if (!(refused instanceof WalletError) || refused.code !== 'WALLET_CLOSED')
     throw new Error('A closed handle signed');

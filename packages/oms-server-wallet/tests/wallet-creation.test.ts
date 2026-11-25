@@ -29,7 +29,13 @@ describe('in-memory wallet creation', () => {
     const remote = new FakeWaas();
     const wallet = ephemeral(remote);
     await expect(wallet.restore()).rejects.toMatchObject({ code: 'WALLET_NOT_INITIALIZED' });
-    await expect(wallet.evm.signMessage({ chainId: 137, message: 'hi' })).rejects.toMatchObject({
+    await expect(
+      wallet.evm.signMessage({
+        idempotencyKey: `eph-${crypto.randomUUID()}`,
+        chainId: 137,
+        message: 'hi'
+      })
+    ).rejects.toMatchObject({
       code: 'WALLET_NOT_INITIALIZED'
     });
     expect(creates(remote)).toHaveLength(0);

@@ -43,7 +43,6 @@ import type {
   TronFacet,
   TronFacetBase,
   TronImmediateFacet,
-  TronNetwork,
   TronOperation,
   TronSignMessageInput,
   TronSignTypedDataInput,
@@ -52,7 +51,6 @@ import type {
   TransactionStatusView,
   TransactionWaitResult,
   TronTypedDataFacet,
-  TypedDataInput,
   TypedDataSigningRequest,
   WaitForOperationOptions,
   WaitResult,
@@ -62,8 +60,7 @@ import type {
 } from './types.js';
 
 import { WalletEngine } from './engine.js';
-import { EngineCore } from './engine/core.js';
-import { EphemeralEngine } from './engine/ephemeral.js';
+import { ClosableExecutor, EphemeralLifecycle } from './engine/ephemeral.js';
 import { validateTxnId } from './engine/inputs.js';
 import { environmentFromKey, resolveAttestationPolicy } from './environment.js';
 import { UpstreamError, WalletError } from './errors.js';
@@ -73,7 +70,6 @@ import { resolveSwapsBinder } from './internal/swapsBridge.js';
 import { CLAIM_GRACE_MS, isStaleExpiryRead } from './settlement.js';
 import {
   computeIdentityNamespace,
-  createSingleProcessExecutor,
   EncryptedStore,
   MemoryStateStore,
   scopeNamespacedStore
@@ -886,21 +882,26 @@ export function createServerWalletService<const TOptions extends ServerWalletSer
   return instantiateServerWalletService(options) as unknown as ServerWalletServiceFrom<TOptions>;
 }
 
+type AnyEphemeralWallet = EphemeralServerWallet<ApprovalMode, undefined, boolean> & {
+  readonly swaps?: unknown;
+};
+
 function instantiateEphemeralServerWallet(
   options: EphemeralServerWalletOptions,
   overrides: Overrides = {}
-): EphemeralServerWallet<boolean> {
+): AnyEphemeralWallet {
   if (!options || typeof options !== 'object')
     throw new WalletError('CONFIGURATION', 'Configure createEphemeralServerWallet options.', 503);
-  for (const key of ['store', 'storage', 'executor', 'swaps', 'approval'])
+  for (const key of ['store', 'storage', 'executor'])
     if ((options as unknown as Record<string, unknown>)[key] !== undefined)
       throw new WalletError(
         'CONFIGURATION',
-        `createEphemeralServerWallet does not take "${key}": ephemeral handles keep no durable state, cannot send, and do not support swaps. Use createServerWallet for those.`,
+        `createEphemeralServerWallet does not take "${key}": its credential and records live in memory and it queues its own calls. Use createServerWallet to keep them in storage.`,
         503
       );
   const environment = environmentFromKey(options.publishableKey);
   const origin = normalizeOrigin(options.origin);
+  const approval = validateApproval(options.approval);
   const authorizeTypedData = resolveSigning(options.signing);
   validateOidcCore(
     options.oidc?.issuer,
@@ -923,64 +924,67 @@ function instantiateEphemeralServerWallet(
   const transport =
     overrides.transport ?? new WaasTransport(options.publishableKey, options.attestation, fetcher);
   const indexer = overrides.indexer ?? new IndexerClient(options.publishableKey, fetcher);
+  const swapsBinder =
+    options.swaps !== undefined ? resolveSwapsBinder(options.swaps, 'wallet') : undefined;
 
-  const engine = new EphemeralEngine(
-    new EngineCore({
-      namespace,
-      origin,
-      subject: options.oidc.subject,
-      issuer: options.oidc.issuer,
-      audience: options.oidc.audience,
-      getIdToken: options.oidc.getIdToken,
-      sessionLifetimeSeconds: options.oidc.sessionLifetimeSeconds ?? 3600,
-      store: new MemoryStateStore(),
-      executor: createSingleProcessExecutor(),
-      transport,
-      clock: overrides.clock,
-      creationRecheckDelaysMs: overrides.creationRecheckDelaysMs,
-      createWallets: false,
-      authorizeTypedData
-    })
-  );
-
+  const executor = new ClosableExecutor();
+  const engine = new WalletEngine({
+    namespace,
+    origin,
+    subject: options.oidc.subject,
+    issuer: options.oidc.issuer,
+    audience: options.oidc.audience,
+    getIdToken: options.oidc.getIdToken,
+    sessionLifetimeSeconds: options.oidc.sessionLifetimeSeconds ?? 3600,
+    store: new MemoryStateStore(),
+    executor,
+    transport,
+    clock: overrides.clock,
+    creationRecheckDelaysMs: overrides.creationRecheckDelaysMs,
+    createWallets: false,
+    authorizeTypedData
+  });
+  let swapsFacet: unknown;
+  if (swapsBinder) {
+    const bound = swapsBinder.bind(engine.lockedPrimitives());
+    engine.attachGate(bound.gate);
+    swapsFacet = bound.facet;
+  }
+  const facade = buildWalletFacade({
+    engine,
+    indexer,
+    approval,
+    typedData: authorizeTypedData !== undefined,
+    swapsFacet,
+    clock: overrides.clock
+  });
+  const lifecycle = new EphemeralLifecycle(engine.core, executor);
   return Object.freeze({
     restore: (restoreOptions?: CreateOrRestoreOptions) =>
-      engine.restore(restoreOptions?.families, restoreOptions?.wallets),
+      lifecycle.restore(restoreOptions?.families, restoreOptions?.wallets),
     create: (createOptions?: CreateOrRestoreOptions) =>
-      engine.create(createOptions?.families, createOptions?.wallets),
-    listWallets: () => engine.listWallets(),
-    inspect: () => engine.inspect(),
-    rotateCredential: () => engine.rotateCredential(),
-    close: () => engine.close(),
-    evm: Object.freeze({
-      signMessage: (input: { readonly chainId: number; readonly message: string }) =>
-        engine.signEvmMessage(input?.chainId, input?.message),
-      ...(authorizeTypedData
-        ? {
-            signTypedData: (input: {
-              readonly chainId: number;
-              readonly typedData: TypedDataInput;
-            }) => engine.signEvmTypedData(input?.chainId, input?.typedData)
-          }
-        : {})
-    }),
-    solana: Object.freeze({
-      signMessage: (input: { readonly message: string }) => engine.signSolanaMessage(input?.message)
-    }),
-    tron: Object.freeze({
-      signMessage: (input: { readonly message: string }) => engine.signTronMessage(input?.message),
-      ...(authorizeTypedData
-        ? {
-            signTypedData: (input: {
-              readonly network: TronNetwork;
-              readonly typedData: TypedDataInput;
-            }) => engine.signTronTypedData(input?.network, input?.typedData)
-          }
-        : {})
-    }),
-    indexer: buildIndexerFacet(indexer, (family) => engine.address(family))
+      lifecycle.create(createOptions?.families, createOptions?.wallets),
+    listWallets: () => lifecycle.listWallets(),
+    inspect: () => lifecycle.inspect(),
+    rotateCredential: () => lifecycle.rotateCredential(),
+    close: () => lifecycle.close(),
+    evm: facade.evm,
+    solana: facade.solana,
+    tron: facade.tron,
+    indexer: facade.indexer,
+    ...(swapsFacet !== undefined ? { swaps: swapsFacet } : {})
   });
 }
+
+/** The handle `createEphemeralServerWallet` returns for these options. */
+type EphemeralServerWalletFrom<TOptions extends EphemeralServerWalletOptions> =
+  EphemeralServerWallet<
+    ApprovalFrom<TOptions>,
+    TOptions extends { readonly swaps: infer TSwaps extends SwapsConfig<'wallet', unknown> }
+      ? TSwaps
+      : undefined,
+    TypedDataFrom<TOptions>
+  >;
 
 /** Package-private test seam for `createEphemeralServerWallet`. */
 export function createEphemeralServerWalletInternal<
@@ -988,23 +992,25 @@ export function createEphemeralServerWalletInternal<
 >(
   options: TOptions & ExactOptions<TOptions, EphemeralServerWalletOptions>,
   overrides?: Overrides
-): EphemeralServerWallet<TOptions extends { readonly signing: SigningOptions } ? true : false> {
-  return instantiateEphemeralServerWallet(options, overrides) as EphemeralServerWallet<
-    TOptions extends { readonly signing: SigningOptions } ? true : false
-  >;
+): EphemeralServerWalletFrom<TOptions> {
+  return instantiateEphemeralServerWallet(
+    options,
+    overrides
+  ) as unknown as EphemeralServerWalletFrom<TOptions>;
 }
 
 /**
- * Create a memory-only signer for one OIDC identity. It needs no storage, encryption key or
- * distributed lock: each handle holds its own credential, so run one handle per concurrent
- * worker. It signs and reads balances but cannot send and keeps no records. `create()` creates an
- * identity's wallets where they are first set up; `restore()` binds them everywhere else.
- * `signing` adds `signTypedData`. Call `close()` when done.
+ * Create an in-memory wallet for one OIDC identity: the full wallet API of `createServerWallet`
+ * without storage, an encryption key or a distributed lock. Each handle signs in with its own
+ * credential and keeps it, its wallets and its operation records in memory, so handles in
+ * different processes run in parallel; calls on one handle run one at a time. `create()` creates
+ * an identity's wallets where they are first set up; `restore()` binds them everywhere else.
+ * Records and `idempotencyKey` protection last as long as the handle. Call `close()` when done.
  */
 export function createEphemeralServerWallet<const TOptions extends EphemeralServerWalletOptions>(
   options: TOptions & ExactOptions<TOptions, EphemeralServerWalletOptions>
-): EphemeralServerWallet<TOptions extends { readonly signing: SigningOptions } ? true : false> {
-  return instantiateEphemeralServerWallet(options) as EphemeralServerWallet<
-    TOptions extends { readonly signing: SigningOptions } ? true : false
-  >;
+): EphemeralServerWalletFrom<TOptions> {
+  return instantiateEphemeralServerWallet(
+    options
+  ) as unknown as EphemeralServerWalletFrom<TOptions>;
 }
