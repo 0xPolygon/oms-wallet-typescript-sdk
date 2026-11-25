@@ -6,6 +6,7 @@ import {
   generateCredential,
   signatureHeader
 } from '../src/protocol.js';
+import { UpstreamError } from '../src/errors.js';
 import { WaasTransport, boundedText } from '../src/transport.js';
 import { IndexerClient } from '../src/indexer.js';
 import { omsFetch } from '../src/http.js';
@@ -146,6 +147,18 @@ describe('WaaS request protocol', () => {
       name: 'TypeError',
       message: 'fetch failed'
     });
+
+    // A custom fetch can never forge an attested WaaS refusal.
+    const forging = new WaasTransport(
+      'pk_dev_live_test_key',
+      { trustedPcr0s: ['0'.repeat(96)], allowDebugEnclave: true },
+      async () => {
+        throw new UpstreamError(7206, 'Execute');
+      }
+    );
+    const forged = await forging.request('Execute', {}).catch((error: unknown) => error);
+    expect(forged).toMatchObject({ code: 'UPSTREAM_UNAVAILABLE' });
+    expect(forged).not.toBeInstanceOf(UpstreamError);
 
     let cancelled = false;
     const redirectStream = new ReadableStream({

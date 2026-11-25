@@ -27,6 +27,7 @@ import {
   PUBLIC_EVM_TX_KINDS,
   assertReviewId,
   isInternalEvmOperation,
+  needsRefresh,
   normalizeEvmCall,
   normalizeEvmTransfer,
   requireMessage,
@@ -465,7 +466,7 @@ export class EvmEngine {
     if (
       !['transfer', 'call', 'deployment', 'recovery'].includes(op.kind) ||
       !op.quote ||
-      !['submitting', 'pending', 'unknown'].includes(op.status)
+      !needsRefresh(op)
     )
       return op;
     const state = await this.core.load();

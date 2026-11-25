@@ -88,9 +88,10 @@ describe('EVM execution settlement', () => {
       provenUnsent: false
     });
     h.remote.evmStatusError = 7309;
-    // Within grace period: still raises 7309 while staying open.
-    await expect(h.client.evm.refreshOperation('ambiguous-1')).rejects.toMatchObject({
-      upstreamCode: 7309
+    // Within grace period: a stale TransactionExpired read leaves the operation open and unchanged.
+    expect(await h.client.evm.refreshOperation('ambiguous-1')).toMatchObject({
+      status: 'unknown',
+      error: 'SUBMISSION_UNCERTAIN'
     });
     await editStored(h.store, 'ambiguous-1', (op) => {
       op.quote.expiresAt = new Date(Date.now() - 121_000).toISOString();

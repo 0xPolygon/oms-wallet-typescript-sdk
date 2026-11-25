@@ -276,9 +276,8 @@ describe('Solana quote expiry', () => {
     vi.useFakeTimers({ now: Date.now() + 61_000, toFake: ['Date'] });
     h.remote.staleStatusReads = 1;
     h.remote.chainOutcome = 'executed';
-    await expect(h.client.solana.refreshOperation('sol-stale-2')).rejects.toMatchObject({
-      upstreamCode: 7309
-    });
+    // The stale expired read leaves the operation open and unchanged.
+    expect((await h.client.solana.refreshOperation('sol-stale-2'))?.status).toBe('unknown');
     expect(await h.client.solana.refreshOperation('sol-stale-2')).toMatchObject({
       status: 'executed',
       txnHash: SOLANA_SIGNATURE
@@ -366,8 +365,10 @@ describe('Solana quote expiry', () => {
     });
     expect((await h.client.solana.refreshOperation('sol-lost-1'))?.status).toBe('unknown');
     vi.useFakeTimers({ now: Date.now() + 90_000, toFake: ['Date'] });
-    await expect(h.client.solana.refreshOperation('sol-lost-1')).rejects.toMatchObject({
-      upstreamCode: 7309
+    // Inside the grace window: still open, not escalated.
+    expect(await h.client.solana.refreshOperation('sol-lost-1')).toMatchObject({
+      status: 'unknown',
+      error: 'SUBMISSION_UNCERTAIN'
     });
     vi.setSystemTime(Date.now() + 120_000);
     expect(await h.client.solana.refreshOperation('sol-lost-1')).toMatchObject({

@@ -56,8 +56,11 @@ export class WaasTransport implements RpcTransport {
         body
       );
     const fetcher = this.fetcher;
+    const unavailable = (cause: unknown) =>
+      new WalletError('UPSTREAM_UNAVAILABLE', `WaaS ${method} request did not complete.`, 502, {
+        cause
+      });
     let response: Response;
-    let responseBody: string;
     try {
       response = await fetcher(this.environment.origin + path, {
         method: 'POST',
@@ -66,19 +69,27 @@ export class WaasTransport implements RpcTransport {
         redirect: 'manual',
         signal: AbortSignal.timeout(20_000)
       });
-      if (response.status >= 300 && response.status < 400) {
-        await response.body?.cancel().catch(() => undefined);
-        throw new WalletError('UPSTREAM_REDIRECT', 'WaaS redirects are not permitted.', 502);
-      }
+    } catch (error) {
+      // Anything the fetch call throws is a transport failure, even a WalletError: only a verified
+      // WaaS response may produce an UpstreamError, which settlement treats as attested evidence.
+      throw unavailable(error);
+    }
+    if (response.status >= 300 && response.status < 400) {
+      await response.body?.cancel().catch(() => undefined);
+      throw new WalletError('UPSTREAM_REDIRECT', 'WaaS redirects are not permitted.', 502);
+    }
+    let responseBody: string;
+    try {
       responseBody = await boundedText(response);
     } catch (error) {
-      if (error instanceof WalletError) throw error;
-      throw new WalletError(
-        'UPSTREAM_UNAVAILABLE',
-        `WaaS ${method} request did not complete.`,
-        502,
-        { cause: error }
-      );
+      // Only the SDK's own size and UTF-8 checks pass through; stream failures are wrapped.
+      if (
+        error instanceof WalletError &&
+        !(error instanceof UpstreamError) &&
+        (error.code === 'RESPONSE_TOO_LARGE' || error.code === 'INVALID_RESPONSE')
+      )
+        throw error;
+      throw unavailable(error);
     }
     try {
       const encodedDocument = response.headers.get(ATTESTATION_DOCUMENT_HEADER);

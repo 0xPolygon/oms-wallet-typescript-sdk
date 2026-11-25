@@ -70,6 +70,19 @@ export function isInternalEvmOperation(op: StoredEvmOperation): boolean {
   return op.internal === true || op.id.startsWith('swp_') || !PUBLIC_EVM_KINDS.has(op.kind);
 }
 
+/**
+ * Whether a refresh can still learn something: the operation is in flight, or it executed but its
+ * transaction hash has not been reported yet.
+ */
+export function needsRefresh(op: { readonly status: string; readonly txnHash?: string }): boolean {
+  return (
+    op.status === 'submitting' ||
+    op.status === 'pending' ||
+    op.status === 'unknown' ||
+    (op.status === 'executed' && !op.txnHash)
+  );
+}
+
 export const PUBLIC_EVM_TX_KINDS: readonly StoredEvmOperation['kind'][] = ['transfer', 'call'];
 
 /** Convert a human-readable decimal token amount into a positive base-unit decimal string. */

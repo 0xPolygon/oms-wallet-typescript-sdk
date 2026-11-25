@@ -31,6 +31,7 @@ import {
   assertReviewId,
   isSolanaSignature,
   isTronTxid,
+  needsRefresh,
   normalizeSolanaTransfer,
   normalizeTronContractCall,
   normalizeTronTransaction,
@@ -553,7 +554,7 @@ export class ChainEngine {
   }
 
   private async refreshChain(op: StoredChainOperation): Promise<StoredChainOperation> {
-    if (!op.quote || !['submitting', 'pending', 'unknown'].includes(op.status)) return op;
+    if (!op.quote || !needsRefresh(op)) return op;
     const state = await this.core.load();
     await refreshStatus(op, () => this.chainTransactionStatus(state, op), this.core.now());
     await this.core.writeOperation(op);

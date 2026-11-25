@@ -584,6 +584,72 @@ describe('observation, waitForOperation, describeOperation, indexer facet, and e
     ).rejects.toMatchObject({ code: 'INVALID_INPUT' });
   });
 
+  it('keeps executed operations executed through stale reads and backfills a missing hash', async () => {
+    const h = sdkHarness();
+    const sent = await h.client.evm.sendTransfer({
+      idempotencyKey: 'mono-exec-1',
+      chainId: 137,
+      to: '0x2222222222222222222222222222222222222222',
+      asset: 'native',
+      amount: '1000'
+    });
+    expect(sent.status).toBe('pending');
+    const request = h.remote.request.bind(h.remote);
+    const reads: unknown[] = [{ status: 'executed' }, { status: 'quoted' }, { status: 'pending' }];
+    h.remote.request = async (method, body, credential) =>
+      method === 'TransactionStatus' && reads.length
+        ? reads.shift()
+        : request(method, body, credential);
+    expect(await h.client.evm.refreshOperation('mono-exec-1')).toMatchObject({
+      status: 'executed'
+    });
+    const waited = await h.client.evm.waitForOperation('mono-exec-1', { timeoutMs: 1_000 });
+    expect(waited.outcome).toBe('executed');
+    // Stale reads after execution never move it back.
+    expect((await h.client.evm.refreshOperation('mono-exec-1'))?.status).toBe('executed');
+    expect((await h.client.evm.refreshOperation('mono-exec-1'))?.status).toBe('executed');
+    h.remote.txnStatus = 'executed';
+    expect(await h.client.evm.refreshOperation('mono-exec-1')).toMatchObject({
+      status: 'executed',
+      txnHash: `0x${'ab'.repeat(32)}`
+    });
+  });
+
+  it('treats TransactionNotFound like expiry only after the quote expired, and lets operators resolve it', async () => {
+    const h = sdkHarness();
+    const prepared = await h.client.evm.prepareTransfer({
+      idempotencyKey: 'not-found-1',
+      chainId: 137,
+      to: '0x2222222222222222222222222222222222222222',
+      asset: 'native',
+      amount: '1000'
+    });
+    h.remote.failExecute = true;
+    await h.client.evm.execute({ idempotencyKey: 'not-found-1', reviewId: prepared.reviewId! });
+    h.remote.evmStatusError = 7308;
+    // Before expiry, absence is not explained by expiry: surfaced to the caller.
+    await expect(h.client.evm.refreshOperation('not-found-1')).rejects.toMatchObject({
+      upstreamCode: 7308
+    });
+    const stored = JSON.parse((await h.store.read('operation:not-found-1'))!);
+    stored.quote.expiresAt = new Date(Date.now() - 10_000).toISOString();
+    await h.store.write('operation:not-found-1', JSON.stringify(stored));
+    expect((await h.client.evm.refreshOperation('not-found-1'))?.status).toBe('unknown');
+    stored.quote.expiresAt = new Date(Date.now() - 121_000).toISOString();
+    await h.store.write('operation:not-found-1', JSON.stringify(stored));
+    expect(await h.client.evm.refreshOperation('not-found-1')).toMatchObject({
+      status: 'unknown',
+      error: 'RECONCILIATION_REQUIRED'
+    });
+    expect(
+      await h.client.evm.resolveReconciliation({
+        idempotencyKey: 'not-found-1',
+        txnId: stored.quote.txnId,
+        resolution: 'not-broadcast'
+      })
+    ).toMatchObject({ status: 'expired', operatorResolved: true });
+  });
+
   it('exports the supported networks and guards for chain IDs and error codes', async () => {
     expect(EVM_NETWORKS.map((network) => network.id)).toEqual(
       expect.arrayContaining([1, 137, 80002, 11155111, 8453, 84532])
