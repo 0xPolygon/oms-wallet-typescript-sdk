@@ -82,8 +82,10 @@
       "symbols": [
         "TronFacet",
         "TronNetwork",
-        "TronTransactionInput",
-        "TronContractCallInput",
+        "TronTransferInput",
+        "TronTransfer",
+        "TronCallInput",
+        "TronMaxQuotedFee",
         "TronAbiArg",
         "TronSignMessageInput",
         "TronSignTypedDataInput",

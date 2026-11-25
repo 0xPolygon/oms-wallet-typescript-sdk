@@ -300,38 +300,71 @@ export interface SolanaSignMessageInput {
   readonly message: string;
 }
 
-/** Input to `wallet.tron.prepareTransaction` and `wallet.tron.sendTransaction`. */
-export interface TronTransactionInput {
+/**
+ * Highest TRX fee, in sun, a quote may carry when delegated energy and bandwidth do not cover the
+ * transaction. The SDK refuses a quote whose TRX fee option is above it and pays that option at
+ * Execute; WaaS refuses Execute if the transaction was re-priced above the quote. It is a bound on
+ * the quoted fee, not on energy actually burned. Omit it to require full sponsorship
+ * (`SPONSORSHIP_REQUIRED` otherwise).
+ */
+export type TronMaxQuotedFee = string;
+
+/** Input to `wallet.tron.prepareTransfer` and `wallet.tron.sendTransfer`. */
+export interface TronTransferInput {
   readonly idempotencyKey: string;
   readonly network: TronNetwork;
-  /** Base58Check recipient or contract (`T…`). */
+  /** Base58Check recipient (`T…`). */
   readonly to: string;
-  /** Sun as a decimal string (default `'0'`; required positive for TRX transfer). */
-  readonly value?: string;
-  /** Pre-encoded calldata; omitting sends TRX, providing `data` (even `'0x'`) makes a contract call. */
-  readonly data?: `0x${string}`;
-  /** Maximum TRX fee in sun when delegated resources do not cover the transaction. Omit to require sponsorship. */
-  readonly maxFee?: string;
+  /** `'native'` for TRX or a TRC-20 token contract (`T…`). */
+  readonly asset: 'native' | string;
+  /** Positive base-unit decimal string: sun for TRX (below 2^63), token units for TRC-20 (uint256). */
+  readonly amount: string;
+  /** See `TronMaxQuotedFee`. */
+  readonly maxQuotedFee?: TronMaxQuotedFee;
 }
 
-/** Typed ABI argument for `wallet.tron.prepareContractCall` / `sendContractCall`. */
+/** Normalized Tron transfer stored on a `TronOperation`. */
+export interface TronTransfer {
+  readonly network: TronNetwork;
+  readonly to: string;
+  readonly asset: 'native' | string;
+  readonly amount: string;
+}
+
+/** Typed ABI argument for `wallet.tron.prepareCall` / `sendCall`. */
 export interface TronAbiArg {
   readonly type: string;
   readonly value: unknown;
 }
 
-/** Input to `wallet.tron.prepareContractCall` and `wallet.tron.sendContractCall`. */
-export interface TronContractCallInput {
+/**
+ * Input to `wallet.tron.prepareCall` and `wallet.tron.sendCall`: either a function name with typed
+ * arguments (encoded by WaaS) or pre-encoded calldata with an optional TRX value.
+ */
+export type TronCallInput = {
   readonly idempotencyKey: string;
   readonly network: TronNetwork;
   /** Base58Check contract address (`T…`). */
-  readonly contract: string;
-  /** Function name alone (such as `'transfer'`). */
-  readonly method: string;
-  readonly args?: readonly TronAbiArg[];
-  /** Maximum TRX fee in sun when delegated resources do not cover the call. Omit to require sponsorship. */
-  readonly maxFee?: string;
-}
+  readonly to: string;
+  /** See `TronMaxQuotedFee`. */
+  readonly maxQuotedFee?: TronMaxQuotedFee;
+} & (
+  | {
+      /** Function name alone (such as `'approve'`). */
+      readonly method: string;
+      readonly args?: readonly TronAbiArg[];
+      readonly data?: never;
+      readonly value?: never;
+    }
+  | {
+      /** 0x-prefixed calldata. */
+      readonly data: `0x${string}`;
+      /** TRX sent with the call, in sun (default `'0'`). */
+      readonly value?: string;
+      readonly method?: never;
+      readonly args?: never;
+    }
+);
 
 /** Input to `wallet.tron.signMessage`. */
 export interface TronSignMessageInput {
@@ -432,19 +465,24 @@ export type SolanaOperation = OperationBase & {
 /** Persisted Tron operation view. */
 export type TronOperation = OperationBase & {
   readonly family: 'tron';
-  readonly kind: 'transaction' | 'contractCall' | 'sign' | 'signTypedData';
+  readonly kind: 'transfer' | 'call' | 'sign' | 'signTypedData';
   readonly network?: TronNetwork;
+  /** Set for `kind: 'transfer'`. */
+  readonly transfer?: TronTransfer;
+  /** Set for a `kind: 'call'` made with calldata. */
   readonly transaction?: {
     readonly to: string;
     readonly value: string;
-    readonly data?: `0x${string}`;
+    readonly data: `0x${string}`;
   };
+  /** Set for a `kind: 'call'` made with a function name and arguments. */
   readonly call?: {
-    readonly contract: string;
+    readonly to: string;
     readonly method: string;
-    readonly args?: readonly TronAbiArg[];
+    readonly args: readonly TronAbiArg[];
   };
-  readonly maxFee?: string;
+  readonly maxQuotedFee?: TronMaxQuotedFee;
+  /** The TRX fee option paid at Execute, when the quote was not sponsored. */
   readonly fee?: FeeOption;
 } & OperationState<ChainQuote>;
 
@@ -684,8 +722,8 @@ export type SolanaFacet<TApproval extends ApprovalMode = 'two-phase'> = {
 
 /** Base Tron operations available in both two-phase and immediate approval modes. */
 export interface TronFacetBase {
-  prepareTransaction(input: TronTransactionInput): Promise<TronOperation>;
-  prepareContractCall(input: TronContractCallInput): Promise<TronOperation>;
+  prepareTransfer(input: TronTransferInput): Promise<TronOperation>;
+  prepareCall(input: TronCallInput): Promise<TronOperation>;
   execute(input: ExecuteInput): Promise<TronOperation>;
   signMessage(input: TronSignMessageInput): Promise<TronOperation>;
   signTypedData(input: TronSignTypedDataInput): Promise<TronOperation>;
@@ -716,11 +754,11 @@ export interface TronFacetBase {
 
 /** Immediate one-shot Tron shortcuts, present only when `approval: 'allow-immediate'` is enabled. */
 export interface TronImmediateFacet {
-  sendTransaction(input: TronTransactionInput): Promise<TronOperation>;
-  sendContractCall(input: TronContractCallInput): Promise<TronOperation>;
+  sendTransfer(input: TronTransferInput): Promise<TronOperation>;
+  sendCall(input: TronCallInput): Promise<TronOperation>;
 }
 
-/** Tron operations. `sendTransaction` and `sendContractCall` exist only with `approval: 'allow-immediate'`. */
+/** Tron operations. `sendTransfer` and `sendCall` exist only with `approval: 'allow-immediate'`. */
 export type TronFacet<TApproval extends ApprovalMode = 'two-phase'> = {
   [
     K in keyof (TApproval extends 'allow-immediate'

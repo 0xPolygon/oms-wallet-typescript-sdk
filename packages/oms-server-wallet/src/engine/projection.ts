@@ -100,27 +100,28 @@ export function projectTronOperation(op: StoredChainOperation): TronOperation {
     ...(op.operatorResolved === true ? { operatorResolved: true as const } : {}),
     ...(op.network ? { network: op.network as TronNetwork } : {}),
     ...(op.reviewId ? { reviewId: op.reviewId } : {}),
+    ...(op.transfer
+      ? { transfer: { ...op.transfer, network: op.transfer.network as TronNetwork } }
+      : {}),
     ...(op.transaction
       ? {
           transaction: {
             to: op.transaction.to,
             value: op.transaction.value,
-            ...(op.transaction.data !== undefined
-              ? { data: op.transaction.data as `0x${string}` }
-              : {})
+            data: op.transaction.data as `0x${string}`
           }
         }
       : {}),
     ...(op.call
       ? {
           call: {
-            contract: op.call.contract,
+            to: op.call.to,
             method: op.call.method,
-            ...(op.call.args ? { args: structuredClone(op.call.args) } : {})
+            args: structuredClone(op.call.args)
           }
         }
       : {}),
-    ...(op.maxFee ? { maxFee: op.maxFee } : {}),
+    ...(op.maxQuotedFee ? { maxQuotedFee: op.maxQuotedFee } : {}),
     ...(op.quote ? { quote: structuredClone(op.quote) } : {}),
     ...(op.fee ? { fee: structuredClone(op.fee) } : {}),
     ...(op.signature ? { signature: op.signature } : {}),

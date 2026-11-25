@@ -168,7 +168,7 @@ const storedChainOperationSchema = z
   .strictObject({
     id: z.string().min(1),
     family: z.enum(['solana', 'tron']),
-    kind: z.enum(['transfer', 'transaction', 'contractCall', 'sign', 'signTypedData']),
+    kind: z.enum(['transfer', 'call', 'sign', 'signTypedData']),
     network: z.string().optional(),
     inputHash: z.string().min(1),
     createdAt: z.string().min(1),
@@ -195,17 +195,17 @@ const storedChainOperationSchema = z
       .object({
         to: z.string(),
         value: z.string(),
-        data: z.string().optional()
+        data: z.string()
       })
       .optional(),
     call: z
       .object({
-        contract: z.string(),
+        to: z.string(),
         method: z.string(),
-        args: z.array(z.object({ type: z.string(), value: z.unknown() })).optional()
+        args: z.array(z.object({ type: z.string(), value: z.unknown() }))
       })
       .optional(),
-    maxFee: z.string().optional(),
+    maxQuotedFee: z.string().optional(),
     signature: z.string().optional(),
     verified: z.boolean().optional(),
     txnHash: z.string().optional(),
@@ -213,7 +213,13 @@ const storedChainOperationSchema = z
     error: z.custom<WalletErrorCode>(isWalletErrorCode).optional()
   })
   .superRefine((op, ctx) => {
-    const problem = operationStateProblem(op);
+    const problem =
+      operationStateProblem(op) ??
+      (op.kind === 'transfer' && !op.transfer
+        ? 'A transfer must record what it transfers.'
+        : op.kind === 'call' && !op.call === !op.transaction
+          ? 'A Tron call must record exactly one of its ABI call or its calldata.'
+          : undefined);
     if (problem) ctx.addIssue({ code: 'custom', message: problem });
   });
 

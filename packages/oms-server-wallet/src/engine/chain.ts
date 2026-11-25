@@ -11,14 +11,15 @@ import type {
   SolanaTransferInput,
   SubmissionMode,
   TransactionStatusView,
-  TronAbiArg,
-  TronContractCallInput,
+  TronCallInput,
   TronNetwork,
   TronOperation,
-  TronTransactionInput,
+  TronTransfer,
+  TronTransferInput,
   TypedDataInput
 } from '../types.js';
 import type { EngineCore } from './core.js';
+import type { NormalizedTronCall } from './inputs.js';
 import type { ChainSignRequest } from './signing.js';
 
 import { WalletError } from '../errors.js';
@@ -33,8 +34,8 @@ import {
   isTronTxid,
   needsRefresh,
   normalizeSolanaTransfer,
-  normalizeTronContractCall,
-  normalizeTronTransaction,
+  normalizeTronCall,
+  normalizeTronTransfer,
   requireMessage,
   requireTronNetwork,
   validateIdempotencyKey,
@@ -152,83 +153,66 @@ export class ChainEngine {
     });
   }
 
-  async prepareTronTransaction(input: TronTransactionInput): Promise<TronOperation> {
-    const { idempotencyKey, network, transaction, maxFee } = normalizeTronTransaction(input);
+  async prepareTronTransfer(input: TronTransferInput): Promise<TronOperation> {
+    const { idempotencyKey, transfer, maxQuotedFee } = normalizeTronTransfer(input);
     return this.core.config.executor.run(async () =>
       projectTronOperation(
-        await this.prepareTronTransactionInternal(
+        await this.prepareTronTransferInternal(idempotencyKey, transfer, maxQuotedFee, 'review')
+      )
+    );
+  }
+
+  async sendTronTransfer(input: TronTransferInput): Promise<TronOperation> {
+    const { idempotencyKey, transfer, maxQuotedFee } = normalizeTronTransfer(input);
+    return this.core.config.executor.run(async () =>
+      this.sendTronLocked(
+        await this.prepareTronTransferInternal(idempotencyKey, transfer, maxQuotedFee, 'immediate')
+      )
+    );
+  }
+
+  async prepareTronCall(input: TronCallInput): Promise<TronOperation> {
+    const { idempotencyKey, network, target, maxQuotedFee } = normalizeTronCall(input);
+    return this.core.config.executor.run(async () =>
+      projectTronOperation(
+        await this.prepareTronCallInternal(idempotencyKey, network, target, maxQuotedFee, 'review')
+      )
+    );
+  }
+
+  async sendTronCall(input: TronCallInput): Promise<TronOperation> {
+    const { idempotencyKey, network, target, maxQuotedFee } = normalizeTronCall(input);
+    return this.core.config.executor.run(async () =>
+      this.sendTronLocked(
+        await this.prepareTronCallInternal(
           idempotencyKey,
           network,
-          transaction,
-          maxFee,
-          'review'
+          target,
+          maxQuotedFee,
+          'immediate'
         )
       )
     );
   }
 
-  async sendTronTransaction(input: TronTransactionInput): Promise<TronOperation> {
-    const { idempotencyKey, network, transaction, maxFee } = normalizeTronTransaction(input);
-    return this.core.config.executor.run(async () => {
-      const prepared = await this.prepareTronTransactionInternal(
-        idempotencyKey,
-        network,
-        transaction,
-        maxFee,
-        'immediate'
-      );
-      if (prepared.status === 'quoted') {
-        const executed = await this.executeChainInternal(
+  private async sendTronLocked(prepared: StoredChainOperation): Promise<TronOperation> {
+    if (prepared.status === 'quoted')
+      return projectTronOperation(
+        await this.executeChainInternal(
           'tron',
           prepared.id,
-          ['transaction'],
+          [prepared.kind as 'transfer' | 'call'],
           prepared.reviewId!
-        );
-        return projectTronOperation(executed);
-      }
-      return projectTronOperation(await this.refreshChain(prepared));
-    });
-  }
-
-  async prepareTronContractCall(input: TronContractCallInput): Promise<TronOperation> {
-    const { idempotencyKey, network, call, maxFee } = normalizeTronContractCall(input);
-    return this.core.config.executor.run(async () =>
-      projectTronOperation(
-        await this.prepareTronCallInternal(idempotencyKey, network, call, maxFee, 'review')
-      )
-    );
-  }
-
-  async sendTronContractCall(input: TronContractCallInput): Promise<TronOperation> {
-    const { idempotencyKey, network, call, maxFee } = normalizeTronContractCall(input);
-    return this.core.config.executor.run(async () => {
-      const prepared = await this.prepareTronCallInternal(
-        idempotencyKey,
-        network,
-        call,
-        maxFee,
-        'immediate'
+        )
       );
-      if (prepared.status === 'quoted') {
-        const executed = await this.executeChainInternal(
-          'tron',
-          prepared.id,
-          ['contractCall'],
-          prepared.reviewId!
-        );
-        return projectTronOperation(executed);
-      }
-      return projectTronOperation(await this.refreshChain(prepared));
-    });
+    return projectTronOperation(await this.refreshChain(prepared));
   }
 
   async executeTron(idempotencyKey: string, reviewId: string): Promise<TronOperation> {
     const id = validateIdempotencyKey(idempotencyKey);
     const rev = validateReviewId(reviewId);
     return this.core.config.executor.run(async () =>
-      projectTronOperation(
-        await this.executeChainInternal('tron', id, ['transaction', 'contractCall'], rev)
-      )
+      projectTronOperation(await this.executeChainInternal('tron', id, ['transfer', 'call'], rev))
     );
   }
 
@@ -371,26 +355,48 @@ export class ChainEngine {
     );
   }
 
-  private prepareTronTransactionInternal(
+  private prepareTronTransferInternal(
     id: string,
-    network: TronNetwork,
-    transaction: { to: string; value: string; data?: `0x${string}` },
-    maxFee: string | undefined,
+    transfer: TronTransfer,
+    maxQuotedFee: string | undefined,
     submissionMode: SubmissionMode
   ): Promise<StoredChainOperation> {
     return this.prepareChainLocked(
       id,
       'tron',
-      'transaction',
-      { network, ...transaction, maxFee },
-      { network, transaction, ...(maxFee ? { maxFee } : {}) },
+      'transfer',
+      { ...transfer, maxQuotedFee },
+      { network: transfer.network, transfer, ...(maxQuotedFee ? { maxQuotedFee } : {}) },
       submissionMode,
       (wallet) => {
-        if (transaction.to === wallet.address)
+        if (transfer.to === wallet.address)
           throw new WalletError('INVALID_ADDRESS', 'The recipient cannot be the sending wallet.');
+        if (transfer.asset === 'native')
+          return {
+            method: 'PrepareTronTransaction',
+            params: {
+              network: transfer.network,
+              walletId: wallet.id,
+              to: transfer.to,
+              value: transfer.amount,
+              mode: 'native'
+            }
+          };
+        if (transfer.asset === wallet.address)
+          throw new WalletError('INVALID_ADDRESS', 'The token contract cannot be the wallet.');
         return {
-          method: 'PrepareTronTransaction',
-          params: { network, walletId: wallet.id, ...transaction, mode: 'native' }
+          method: 'PrepareTronContractCall',
+          params: {
+            network: transfer.network,
+            walletId: wallet.id,
+            contract: transfer.asset,
+            method: 'transfer',
+            args: [
+              { type: 'address', value: transfer.to },
+              { type: 'uint256', value: transfer.amount }
+            ],
+            mode: 'native'
+          }
         };
       },
       (op) => this.selectTronFee(op)
@@ -400,31 +406,37 @@ export class ChainEngine {
   private prepareTronCallInternal(
     id: string,
     network: TronNetwork,
-    call: { contract: string; method: string; args: TronAbiArg[] },
-    maxFee: string | undefined,
+    target: NormalizedTronCall,
+    maxQuotedFee: string | undefined,
     submissionMode: SubmissionMode
   ): Promise<StoredChainOperation> {
+    const to = target.call ? target.call.to : target.transaction.to;
     return this.prepareChainLocked(
       id,
       'tron',
-      'contractCall',
-      { network, ...call, maxFee },
-      { network, call, ...(maxFee ? { maxFee } : {}) },
+      'call',
+      { network, ...(target.call ?? target.transaction), maxQuotedFee },
+      { network, ...target, ...(maxQuotedFee ? { maxQuotedFee } : {}) },
       submissionMode,
       (wallet) => {
-        if (call.contract === wallet.address)
+        if (to === wallet.address)
           throw new WalletError('INVALID_CALL', 'Calls to the wallet itself are not allowed.');
-        return {
-          method: 'PrepareTronContractCall',
-          params: {
-            network,
-            walletId: wallet.id,
-            contract: call.contract,
-            method: call.method,
-            args: call.args,
-            mode: 'native'
-          }
-        };
+        return target.call
+          ? {
+              method: 'PrepareTronContractCall',
+              params: {
+                network,
+                walletId: wallet.id,
+                contract: target.call.to,
+                method: target.call.method,
+                args: target.call.args,
+                mode: 'native'
+              }
+            }
+          : {
+              method: 'PrepareTronTransaction',
+              params: { network, walletId: wallet.id, ...target.transaction, mode: 'native' }
+            };
       },
       (op) => this.selectTronFee(op)
     );
@@ -433,10 +445,10 @@ export class ChainEngine {
   private selectTronFee(op: StoredChainOperation): FeeOption | undefined {
     const quote = op.quote!;
     if (quote.sponsored) return undefined;
-    if (!op.maxFee)
+    if (!op.maxQuotedFee)
       throw new WalletError(
         'SPONSORSHIP_REQUIRED',
-        'Delegated resources do not cover this transaction. Delegate energy and bandwidth to the wallet, or set maxFee to pay in TRX.',
+        'Delegated resources do not cover this transaction. Delegate energy and bandwidth to the wallet, or set maxQuotedFee to pay in TRX.',
         409
       );
     const options = quote.feeOptions.filter(
@@ -444,10 +456,10 @@ export class ChainEngine {
     );
     if (options.length !== 1 || options[0].value === '0')
       throw new WalletError('INVALID_RESPONSE', 'WaaS quoted no single TRX fee.', 502);
-    if (BigInt(options[0].value) > BigInt(op.maxFee))
+    if (BigInt(options[0].value) > BigInt(op.maxQuotedFee))
       throw new WalletError(
         'FEE_LIMIT_EXCEEDED',
-        `The quoted fee of ${options[0].value} sun exceeds maxFee.`,
+        `The quoted fee of ${options[0].value} sun exceeds maxQuotedFee.`,
         409
       );
     return options[0];

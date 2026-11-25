@@ -36,7 +36,7 @@ import type {
   SolanaOperation,
   SolanaSignMessageInput,
   SolanaTransferInput,
-  TronContractCallInput,
+  TronCallInput,
   TronFacet,
   TronFacetBase,
   TronImmediateFacet,
@@ -44,7 +44,7 @@ import type {
   TronOperation,
   TronSignMessageInput,
   TronSignTypedDataInput,
-  TronTransactionInput,
+  TronTransferInput,
   TypedDataInput,
   WaitForOperationOptions,
   WaitResult,
@@ -410,9 +410,8 @@ function buildWalletFacade<
   ) as SolanaFacet<TApproval>;
 
   const tronBase: TronFacetBase = {
-    prepareTransaction: (input: TronTransactionInput) => engine.chain.prepareTronTransaction(input),
-    prepareContractCall: (input: TronContractCallInput) =>
-      engine.chain.prepareTronContractCall(input),
+    prepareTransfer: (input: TronTransferInput) => engine.chain.prepareTronTransfer(input),
+    prepareCall: (input: TronCallInput) => engine.chain.prepareTronCall(input),
     execute: (input: ExecuteInput) =>
       engine.chain.executeTron(input?.idempotencyKey, input?.reviewId),
     signMessage: (input: TronSignMessageInput) =>
@@ -436,8 +435,8 @@ function buildWalletFacade<
     cancel: (input: CancelInput) => engine.chain.cancelTron(input?.idempotencyKey)
   };
   const tronImmediate: TronImmediateFacet = {
-    sendTransaction: (input: TronTransactionInput) => engine.chain.sendTronTransaction(input),
-    sendContractCall: (input: TronContractCallInput) => engine.chain.sendTronContractCall(input)
+    sendTransfer: (input: TronTransferInput) => engine.chain.sendTronTransfer(input),
+    sendCall: (input: TronCallInput) => engine.chain.sendTronCall(input)
   };
   const tron = Object.freeze(
     allowImmediate ? { ...tronBase, ...tronImmediate } : { ...tronBase }

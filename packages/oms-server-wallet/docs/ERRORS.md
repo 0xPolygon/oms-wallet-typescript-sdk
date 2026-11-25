@@ -57,7 +57,6 @@ so the outcome survives a restart. Settlement codes such as `SUBMISSION_UNCERTAI
 | `INVALID_ADDRESS` | An address is not valid for its network, or a recipient is the sending wallet. | Fix the address. |
 | `INVALID_AMOUNT` | An amount is not a base-unit integer in range, or exceeds the token's precision. | Pass base units (see `parseAmount`). |
 | `INVALID_TRANSFER` | A transfer is missing a chain, recipient, asset or positive amount. | Complete the transfer input. |
-| `INVALID_TRANSACTION` | A Tron transaction has unexpected or invalid fields. | Fix the transaction input. |
 | `INVALID_CALL` | A contract call is malformed, targets the wallet itself, or its ABI arguments do not encode. | Fix the call. |
 | `INVALID_FEE` | `maxFee` is not a positive amount of sun. | Fix `maxFee`. |
 | `INVALID_MESSAGE` | A message is empty or larger than 16,384 UTF-8 bytes. | Shorten the message. |

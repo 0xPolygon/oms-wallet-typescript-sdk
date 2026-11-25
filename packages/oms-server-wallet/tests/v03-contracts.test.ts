@@ -135,16 +135,16 @@ describe('approval mode, reviewId binding, and submissionMode isolation', () => 
     expect('sendTransfer' in twoPhase.client.evm).toBe(false);
     expect('sendCall' in twoPhase.client.evm).toBe(false);
     expect('sendTransfer' in twoPhase.client.solana).toBe(false);
-    expect('sendTransaction' in twoPhase.client.tron).toBe(false);
-    expect('sendContractCall' in twoPhase.client.tron).toBe(false);
+    expect('sendTransfer' in twoPhase.client.tron).toBe(false);
+    expect('sendCall' in twoPhase.client.tron).toBe(false);
     expect('swaps' in twoPhase.client).toBe(false);
 
     const immediate = sdkHarness({ approval: 'allow-immediate' });
     expect(typeof immediate.client.evm.sendTransfer).toBe('function');
     expect(typeof immediate.client.evm.sendCall).toBe('function');
     expect(typeof immediate.client.solana.sendTransfer).toBe('function');
-    expect(typeof immediate.client.tron.sendTransaction).toBe('function');
-    expect(typeof immediate.client.tron.sendContractCall).toBe('function');
+    expect(typeof immediate.client.tron.sendTransfer).toBe('function');
+    expect(typeof immediate.client.tron.sendCall).toBe('function');
   });
 
   it('rejects execute with a wrong or missing reviewId without submitting', async () => {
@@ -200,20 +200,16 @@ describe('approval mode, reviewId binding, and submissionMode isolation', () => 
       })
     ).rejects.toMatchObject({ code: 'APPROVAL_REQUIRED' });
 
-    // 4. Tron review -> sendTransaction refused
-    await h.client.tron.prepareTransaction({
-      idempotencyKey: 'review-only-trx',
+    // 4. Tron review -> sendTransfer refused
+    const trx = {
       network: 'tron:nile',
       to: TRON_RECIPIENT,
-      value: '1000'
-    });
+      asset: 'native',
+      amount: '1000'
+    } as const;
+    await h.client.tron.prepareTransfer({ idempotencyKey: 'review-only-trx', ...trx });
     await expect(
-      h.create().tron.sendTransaction({
-        idempotencyKey: 'review-only-trx',
-        network: 'tron:nile',
-        to: TRON_RECIPIENT,
-        value: '1000'
-      })
+      h.create().tron.sendTransfer({ idempotencyKey: 'review-only-trx', ...trx })
     ).rejects.toMatchObject({ code: 'APPROVAL_REQUIRED' });
     expect(h.remote.calls.filter((c) => c.method === 'Execute')).toHaveLength(0);
   });

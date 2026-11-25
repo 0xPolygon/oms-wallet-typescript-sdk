@@ -9,7 +9,8 @@ import type {
   SolanaNetwork,
   SolanaTransfer,
   TronAbiArg,
-  TronNetwork
+  TronNetwork,
+  TronTransfer
 } from '../types.js';
 
 import { requireChain } from '../environment.js';
@@ -306,17 +307,17 @@ export const isSun = (value: unknown, allowZero: boolean) =>
   BigInt(value) < 2n ** 63n &&
   (allowZero || value !== '0');
 
-export function requireTronMaxFee(value: unknown): string | undefined {
+export function requireTronMaxQuotedFee(value: unknown): string | undefined {
   if (value === undefined) return undefined;
   if (!isSun(value, false))
-    throw new WalletError('INVALID_FEE', 'Set maxFee as a positive amount of sun.');
+    throw new WalletError('INVALID_FEE', 'Set maxQuotedFee as a positive amount of sun.');
   return value as string;
 }
 
 export function normalizeTronFields(
   input: unknown,
   allowed: readonly string[],
-  code: 'INVALID_TRANSACTION' | 'INVALID_CALL'
+  code: 'INVALID_TRANSFER' | 'INVALID_CALL'
 ): Record<string, unknown> {
   if (!input || typeof input !== 'object' || Array.isArray(input))
     throw new WalletError(code, 'Provide the Tron transaction to prepare.');
@@ -328,61 +329,93 @@ export function normalizeTronFields(
   return record;
 }
 
-export function normalizeTronTransaction(input: unknown): {
+/** A TRX transfer (below 2^63 sun) or a TRC-20 `transfer(address,uint256)` (uint256 units). */
+export function normalizeTronTransfer(input: unknown): {
   idempotencyKey: string;
-  network: TronNetwork;
-  transaction: { to: string; value: string; data?: `0x${string}` };
-  maxFee?: string;
+  transfer: TronTransfer;
+  maxQuotedFee?: string;
 } {
   const record = normalizeTronFields(
     input,
-    ['idempotencyKey', 'network', 'to', 'value', 'data', 'maxFee'],
-    'INVALID_TRANSACTION'
+    ['idempotencyKey', 'network', 'to', 'asset', 'amount', 'maxQuotedFee'],
+    'INVALID_TRANSFER'
   );
   const idempotencyKey = validateIdempotencyKey(record.idempotencyKey);
   const network = requireTronNetwork(record.network);
-  if (!isTronAddress(record.to))
-    throw new WalletError('INVALID_ADDRESS', 'Provide a Base58Check Tron address (T…).');
-  const value = record.value ?? '0';
-  const data = record.data;
-  if (data !== undefined && (typeof data !== 'string' || !/^0x([0-9a-fA-F]{2})*$/.test(data)))
-    throw new WalletError('INVALID_CALL', 'Calldata must be 0x-prefixed, even-length hex.');
-  if (!isSun(value, data !== undefined))
+  const { to, asset, amount } = record;
+  if (!isTronAddress(to) || (asset !== 'native' && !isTronAddress(asset)))
+    throw new WalletError(
+      'INVALID_ADDRESS',
+      'Provide a Base58Check recipient and "native" or a TRC-20 contract address (T…).'
+    );
+  if (to === asset)
+    throw new WalletError('INVALID_ADDRESS', 'The recipient cannot be the token contract.');
+  const valid =
+    asset === 'native'
+      ? isSun(amount, false)
+      : typeof amount === 'string' &&
+        /^[1-9][0-9]{0,77}$/.test(amount) &&
+        BigInt(amount) < 2n ** 256n;
+  if (!valid)
     throw new WalletError(
       'INVALID_AMOUNT',
-      data === undefined
-        ? 'A TRX transfer needs a positive amount of sun.'
-        : 'Provide the call value in sun.'
+      asset === 'native'
+        ? 'A TRX transfer needs a positive amount of sun below 2^63.'
+        : 'A TRC-20 transfer needs a positive base-unit amount below 2^256.'
     );
   return {
     idempotencyKey,
-    network,
-    transaction: {
-      to: record.to as string,
-      value: value as string,
-      ...(data === undefined ? {} : { data: (data as string).toLowerCase() as `0x${string}` })
-    },
-    maxFee: requireTronMaxFee(record.maxFee)
+    transfer: { network, to: to as string, asset: asset as string, amount: amount as string },
+    maxQuotedFee: requireTronMaxQuotedFee(record.maxQuotedFee)
   };
 }
 
-export function normalizeTronContractCall(input: unknown): {
+/** Normalized Tron call: ABI form (`call`) or calldata form (`transaction`), never both. */
+export type NormalizedTronCall =
+  | { call: { to: string; method: string; args: TronAbiArg[] }; transaction?: undefined }
+  | { transaction: { to: string; value: string; data: `0x${string}` }; call?: undefined };
+
+export function normalizeTronCall(input: unknown): {
   idempotencyKey: string;
   network: TronNetwork;
-  call: { contract: string; method: string; args: TronAbiArg[] };
-  maxFee?: string;
+  target: NormalizedTronCall;
+  maxQuotedFee?: string;
 } {
   const record = normalizeTronFields(
     input,
-    ['idempotencyKey', 'network', 'contract', 'method', 'args', 'maxFee'],
+    ['idempotencyKey', 'network', 'to', 'method', 'args', 'data', 'value', 'maxQuotedFee'],
     'INVALID_CALL'
   );
   const idempotencyKey = validateIdempotencyKey(record.idempotencyKey);
   const network = requireTronNetwork(record.network);
-  if (!isTronAddress(record.contract))
+  if (!isTronAddress(record.to))
     throw new WalletError('INVALID_ADDRESS', 'Provide a Base58Check contract address (T…).');
+  const to = record.to as string;
+  const maxQuotedFee = requireTronMaxQuotedFee(record.maxQuotedFee);
+  const abiForm = record.method !== undefined || record.args !== undefined;
+  if (abiForm === (record.data !== undefined) || (abiForm && record.value !== undefined))
+    throw new WalletError(
+      'INVALID_CALL',
+      'Provide either method (with optional args) or data (with optional value), not both.'
+    );
+  if (!abiForm) {
+    const data = record.data;
+    if (typeof data !== 'string' || !/^0x([0-9a-fA-F]{2})*$/.test(data))
+      throw new WalletError('INVALID_CALL', 'Calldata must be 0x-prefixed, even-length hex.');
+    const value = record.value ?? '0';
+    if (!isSun(value, true))
+      throw new WalletError('INVALID_AMOUNT', 'Provide the call value in sun.');
+    return {
+      idempotencyKey,
+      network,
+      target: {
+        transaction: { to, value: value as string, data: data.toLowerCase() as `0x${string}` }
+      },
+      maxQuotedFee
+    };
+  }
   if (typeof record.method !== 'string' || !/^[A-Za-z_$][A-Za-z0-9_$]{0,127}$/.test(record.method))
-    throw new WalletError('INVALID_CALL', 'Provide the function name alone, such as "transfer".');
+    throw new WalletError('INVALID_CALL', 'Provide the function name alone, such as "approve".');
   const args = record.args ?? [];
   if (
     !Array.isArray(args) ||
@@ -405,8 +438,8 @@ export function normalizeTronContractCall(input: unknown): {
   return {
     idempotencyKey,
     network,
-    call: { contract: record.contract as string, method: record.method, args: snapshot },
-    maxFee: requireTronMaxFee(record.maxFee)
+    target: { call: { to, method: record.method, args: snapshot } },
+    maxQuotedFee
   };
 }
 

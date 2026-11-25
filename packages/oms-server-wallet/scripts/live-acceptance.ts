@@ -510,21 +510,18 @@ await check('Tron TIP-712 signing, verified by WaaS', () =>
 );
 const trc20 = {
   network: 'tron:nile',
-  contract: process.env.LIVE_TRON_TOKEN ?? 'TXYZopYRdj2D9XRtbG411XZZ3kM5VkAeBf', // Nile USDT
-  method: 'transfer',
-  args: [
-    { type: 'address', value: lifecycleWallets.tron!.address },
-    { type: 'uint256', value: process.env.LIVE_TRC20_AMOUNT ?? '1' }
-  ],
+  to: lifecycleWallets.tron!.address,
+  asset: process.env.LIVE_TRON_TOKEN ?? 'TXYZopYRdj2D9XRtbG411XZZ3kM5VkAeBf', // Nile USDT
+  amount: process.env.LIVE_TRC20_AMOUNT ?? '1',
   // A first TRC-20 transfer to an account burns more energy than a TRX transfer.
-  maxFee: process.env.LIVE_TRC20_MAX_FEE ?? '30000000'
+  maxQuotedFee: process.env.LIVE_TRC20_MAX_FEE ?? '30000000'
 } as const;
 if (!execute)
   await check(
     'observation: Tron TRC-20 transfer call is accepted and quoted (quote only)',
     async () => {
       try {
-        const op = await wallet.tron.prepareContractCall({
+        const op = await wallet.tron.prepareTransfer({
           idempotencyKey: id('live-trc20-quote'),
           ...trc20
         });
@@ -547,9 +544,9 @@ if (!execute)
   );
 else
   await check(
-    'Tron TRC-20 (USDT) transfer executes within maxFee; getTransactionStatus agrees',
+    'Tron TRC-20 (USDT) transfer executes within maxQuotedFee; getTransactionStatus agrees',
     async () => {
-      const op = await wallet.tron.sendContractCall({
+      const op = await wallet.tron.sendTransfer({
         idempotencyKey: id('live-trc20-send'),
         ...trc20
       });
@@ -558,8 +555,8 @@ else
       if (status.status !== 'executed' || status.txnHash !== done.txnHash)
         throw new Error(`getTransactionStatus returned ${JSON.stringify(status)}`);
       return {
-        to: trc20.args[0].value,
-        amount: trc20.args[1].value,
+        to: trc20.to,
+        amount: trc20.amount,
         sponsored: op.quote?.sponsored,
         fee: op.fee ? `${op.fee.value} sun` : 'none',
         txnHash: done.txnHash,
@@ -575,36 +572,40 @@ const tronRecipient = process.env.LIVE_TRON_RECIPIENT ?? lifecycleWallets.tron!.
   const transfer = {
     network: 'tron:nile',
     to: tronRecipient,
-    value: process.env.LIVE_TRON_AMOUNT ?? '1'
+    asset: 'native',
+    amount: process.env.LIVE_TRON_AMOUNT ?? '1'
   } as const;
-  await check('Tron quote without maxFee is sent only when sponsored', async () => {
+  await check('Tron quote without maxQuotedFee is sent only when sponsored', async () => {
     const result = await wallet.tron
-      .prepareTransaction({ idempotencyKey: id('live-trx-quote'), ...transfer })
+      .prepareTransfer({ idempotencyKey: id('live-trx-quote'), ...transfer })
       .catch((error) => error);
     if (result instanceof WalletError && result.code === 'SPONSORSHIP_REQUIRED')
       return 'not covered by delegated resources: refused as expected';
     if (result instanceof Error) throw result;
     return { sponsored: result.quote?.sponsored };
   });
-  const maxFee = process.env.LIVE_TRON_MAX_FEE;
+  const maxQuotedFee = process.env.LIVE_TRON_MAX_FEE;
   if (!execute) skip('Tron transfer execution', 'Set LIVE_EXECUTE=1 to send Nile TRX.');
   else
-    await check('Tron transfer executes within maxFee; getTransactionStatus agrees', async () => {
-      const op = await wallet.tron.sendTransaction({
-        idempotencyKey: id('live-trx-send'),
-        ...transfer,
-        maxFee
-      });
-      const done = await executed(() => wallet.tron.refreshOperation(op.id));
-      const status = await wallet.tron.getTransactionStatus(op.quote!.txnId);
-      if (status.status !== 'executed' || status.txnHash !== done.txnHash)
-        throw new Error(`getTransactionStatus returned ${JSON.stringify(status)}`);
-      return {
-        to: transfer.to,
-        txnHash: done.txnHash,
-        quoteLifetimeMs: Date.parse(op.quote!.expiresAt) - Date.parse(op.createdAt)
-      };
-    });
+    await check(
+      'Tron transfer executes within maxQuotedFee; getTransactionStatus agrees',
+      async () => {
+        const op = await wallet.tron.sendTransfer({
+          idempotencyKey: id('live-trx-send'),
+          ...transfer,
+          maxQuotedFee
+        });
+        const done = await executed(() => wallet.tron.refreshOperation(op.id));
+        const status = await wallet.tron.getTransactionStatus(op.quote!.txnId);
+        if (status.status !== 'executed' || status.txnHash !== done.txnHash)
+          throw new Error(`getTransactionStatus returned ${JSON.stringify(status)}`);
+        return {
+          to: transfer.to,
+          txnHash: done.txnHash,
+          quoteLifetimeMs: Date.parse(op.quote!.expiresAt) - Date.parse(op.createdAt)
+        };
+      }
+    );
 }
 
 const ephemeral = (getIdToken: () => ReturnType<typeof idToken> = () => idToken(subject)) =>

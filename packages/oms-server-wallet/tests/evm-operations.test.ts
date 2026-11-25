@@ -264,11 +264,12 @@ describe('chunked operation index and crash recovery', () => {
       asset: 'native',
       amount: '100'
     });
-    await h.client.tron.prepareTransaction({
+    await h.client.tron.prepareTransfer({
       idempotencyKey: 'tron-open-0001',
       network: 'tron:nile',
       to: 'TXYZopYRdj2D9XRtbG411XZZ3kM5VkAeBf',
-      value: '100'
+      asset: 'native',
+      amount: '100'
     });
     expect(
       (await h.client.solana.listOperations({ status: 'open' })).items.map((op) => op.id)

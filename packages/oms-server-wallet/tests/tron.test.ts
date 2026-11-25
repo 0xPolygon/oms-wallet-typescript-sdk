@@ -3,8 +3,8 @@ import { describe, expect, it, vi } from 'vitest';
 
 import {
   UpstreamError,
-  type TronContractCallInput,
-  type TronTransactionInput,
+  type TronCallInput,
+  type TronTransferInput,
   type TypedDataInput
 } from '@polygonlabs/oms-server-wallet-sdk';
 
@@ -14,11 +14,17 @@ import { validateTronTypedData } from '../src/typed-data.js';
 import { SOLANA_ADDRESS, TRON_ADDRESS, TRON_RECIPIENT, TRON_TXID, sdkHarness } from './helpers.js';
 
 const usdt = 'TXYZopYRdj2D9XRtbG411XZZ3kM5VkAeBf';
-const transfer = { network: 'tron:nile' as const, to: TRON_RECIPIENT, value: '1500000' };
+const transfer = {
+  network: 'tron:nile' as const,
+  to: TRON_RECIPIENT,
+  asset: 'native',
+  amount: '1500000'
+};
+const tokenTransfer = { ...transfer, asset: usdt, amount: '2500000' };
 const call = {
   network: 'tron:nile' as const,
-  contract: usdt,
-  method: 'transfer',
+  to: usdt,
+  method: 'approve',
   args: [
     { type: 'address', value: TRON_RECIPIENT },
     { type: 'uint256', value: '2500000' }
@@ -27,10 +33,10 @@ const call = {
 const calls = (h: ReturnType<typeof sdkHarness>, method: string) =>
   h.remote.calls.filter((entry) => entry.method === method);
 
-describe('Tron transactions and fees', () => {
+describe('Tron transfers, calls and fees', () => {
   it('sends a sponsored TRX transfer in native mode without a fee option', async () => {
     const h = sdkHarness();
-    const op = await h.client.tron.sendTransaction({ idempotencyKey: 'trx-send-1', ...transfer });
+    const op = await h.client.tron.sendTransfer({ idempotencyKey: 'trx-send-1', ...transfer });
     expect(calls(h, 'CreateWallet').map((entry) => entry.body.networkFamily)).toEqual(['tron']);
     expect(calls(h, 'PrepareTronTransaction')[0].body).toEqual({
       network: 'tron:nile',
@@ -40,7 +46,12 @@ describe('Tron transactions and fees', () => {
       mode: 'native'
     });
     expect(calls(h, 'Execute')[0].body).toEqual({ txnId: 'trx-txn-1' });
-    expect(op).toMatchObject({ family: 'tron', kind: 'transaction', status: 'pending' });
+    expect(op).toMatchObject({
+      family: 'tron',
+      kind: 'transfer',
+      status: 'pending',
+      transfer: { network: 'tron:nile', to: TRON_RECIPIENT, asset: 'native', amount: '1500000' }
+    });
     expect(op.fee).toBeUndefined();
     h.remote.chainOutcome = 'executed';
     expect(await h.client.tron.refreshOperation('trx-send-1')).toMatchObject({
@@ -49,11 +60,38 @@ describe('Tron transactions and fees', () => {
     });
   });
 
-  it('refuses to pay TRX unless the caller sets maxFee', async () => {
+  it('builds a TRC-20 transfer as transfer(address,uint256) on the token contract', async () => {
+    const h = sdkHarness();
+    const prepared = await h.client.tron.prepareTransfer({
+      idempotencyKey: 'trx-token-1',
+      ...tokenTransfer,
+      amount: (2n ** 255n).toString()
+    });
+    expect(calls(h, 'PrepareTronContractCall')[0].body).toEqual({
+      network: 'tron:nile',
+      walletId: 'wallet-trx',
+      contract: usdt,
+      method: 'transfer',
+      args: [
+        { type: 'address', value: TRON_RECIPIENT },
+        { type: 'uint256', value: (2n ** 255n).toString() }
+      ],
+      mode: 'native'
+    });
+    expect(prepared).toMatchObject({
+      kind: 'transfer',
+      status: 'quoted',
+      transfer: { asset: usdt, to: TRON_RECIPIENT, amount: (2n ** 255n).toString() }
+    });
+    expect(prepared.call).toBeUndefined();
+    expect(calls(h, 'PrepareTronTransaction')).toHaveLength(0);
+  });
+
+  it('refuses to pay TRX unless the caller sets maxQuotedFee', async () => {
     const h = sdkHarness();
     h.remote.chainSponsored = false;
     await expect(
-      h.client.tron.sendTransaction({ idempotencyKey: 'trx-fee-1', ...transfer })
+      h.client.tron.sendTransfer({ idempotencyKey: 'trx-fee-1', ...transfer })
     ).rejects.toMatchObject({
       code: 'SPONSORSHIP_REQUIRED'
     });
@@ -65,15 +103,15 @@ describe('Tron transactions and fees', () => {
     expect(calls(h, 'Execute')).toHaveLength(0);
   });
 
-  it('pays the quoted TRX fee within maxFee and selects it on Execute', async () => {
+  it('pays the quoted TRX fee within maxQuotedFee and selects it on Execute', async () => {
     const h = sdkHarness();
     h.remote.chainSponsored = false;
-    const op = await h.client.tron.sendTransaction({
+    const op = await h.client.tron.sendTransfer({
       idempotencyKey: 'trx-fee-2',
       ...transfer,
-      maxFee: '345000'
+      maxQuotedFee: '345000'
     });
-    expect(op).toMatchObject({ status: 'pending', maxFee: '345000' });
+    expect(op).toMatchObject({ status: 'pending', maxQuotedFee: '345000' });
     expect(op.fee).toMatchObject({ token: { symbol: 'TRX' }, value: '345000' });
     expect(calls(h, 'Execute')[0].body).toEqual({
       txnId: 'trx-txn-1',
@@ -81,12 +119,16 @@ describe('Tron transactions and fees', () => {
     });
   });
 
-  it('refuses a quoted fee above maxFee before executing', async () => {
+  it('refuses a quoted fee above maxQuotedFee before executing', async () => {
     const h = sdkHarness();
     h.remote.chainSponsored = false;
     h.remote.tronFee = '345001';
     await expect(
-      h.client.tron.sendTransaction({ idempotencyKey: 'trx-fee-3', ...transfer, maxFee: '345000' })
+      h.client.tron.sendTransfer({
+        idempotencyKey: 'trx-fee-3',
+        ...transfer,
+        maxQuotedFee: '345000'
+      })
     ).rejects.toMatchObject({ code: 'FEE_LIMIT_EXCEEDED' });
     expect(calls(h, 'Execute')).toHaveLength(0);
   });
@@ -94,10 +136,10 @@ describe('Tron transactions and fees', () => {
   it('records a fee re-priced above the quote at Execute as failed, with nothing sent', async () => {
     const h = sdkHarness();
     h.remote.chainSponsored = false;
-    const prepared = await h.client.tron.prepareTransaction({
+    const prepared = await h.client.tron.prepareTransfer({
       idempotencyKey: 'trx-fee-4',
       ...transfer,
-      maxFee: '400000'
+      maxQuotedFee: '400000'
     });
     h.remote.executeRefusal = 7310;
     expect(
@@ -115,31 +157,35 @@ describe('Tron transactions and fees', () => {
     h.remote.chainSponsored = false;
     h.remote.nullFeeOptions = true;
     await expect(
-      h.client.tron.prepareTransaction({
+      h.client.tron.prepareTransfer({
         idempotencyKey: 'trx-fee-5',
         ...transfer,
-        maxFee: '400000'
+        maxQuotedFee: '400000'
       })
     ).rejects.toMatchObject({ code: 'INVALID_RESPONSE' });
   });
 
-  it('makes maxFee part of the request: changing it under the same ID conflicts', async () => {
+  it('makes maxQuotedFee part of the request: changing it under the same ID conflicts', async () => {
     const h = sdkHarness();
-    await h.client.tron.prepareTransaction({ idempotencyKey: 'trx-fee-6', ...transfer });
+    await h.client.tron.prepareTransfer({ idempotencyKey: 'trx-fee-6', ...transfer });
     await expect(
-      h.client.tron.prepareTransaction({ idempotencyKey: 'trx-fee-6', ...transfer, maxFee: '1' })
+      h.client.tron.prepareTransfer({
+        idempotencyKey: 'trx-fee-6',
+        ...transfer,
+        maxQuotedFee: '1'
+      })
     ).rejects.toMatchObject({ code: 'IDEMPOTENCY_CONFLICT' });
   });
 
   it('sends raw calldata as a call, keeping an empty 0x for the fallback', async () => {
     const h = sdkHarness();
-    await h.client.tron.prepareTransaction({
+    const first = await h.client.tron.prepareCall({
       idempotencyKey: 'trx-raw-1',
       network: 'tron:nile',
       to: usdt,
       data: '0xA9059CBB'
     });
-    await h.client.tron.prepareTransaction({
+    await h.client.tron.prepareCall({
       idempotencyKey: 'trx-raw-2',
       network: 'tron:nile',
       to: usdt,
@@ -150,11 +196,16 @@ describe('Tron transactions and fees', () => {
       { to: usdt, value: '0', data: '0xa9059cbb' },
       { to: usdt, value: '5', data: '0x' }
     ]);
+    expect(first).toMatchObject({
+      kind: 'call',
+      transaction: { to: usdt, value: '0', data: '0xa9059cbb' }
+    });
+    expect(first.call).toBeUndefined();
   });
 
-  it('prepares an ABI contract call that WaaS encodes, then executes it once and refuses immediate send on review quote', async () => {
+  it('prepares an ABI call that WaaS encodes, then executes it once and refuses immediate send on review quote', async () => {
     const h = sdkHarness();
-    const prepared = await h.client.tron.prepareContractCall({
+    const prepared = await h.client.tron.prepareCall({
       idempotencyKey: 'trx-call-1',
       ...call
     });
@@ -162,19 +213,19 @@ describe('Tron transactions and fees', () => {
       network: 'tron:nile',
       walletId: 'wallet-trx',
       contract: usdt,
-      method: 'transfer',
+      method: 'approve',
       args: call.args,
       mode: 'native'
     });
     expect(prepared).toMatchObject({
-      kind: 'contractCall',
+      kind: 'call',
       status: 'quoted',
       network: 'tron:nile',
-      call: { contract: usdt, method: 'transfer', args: call.args }
+      call: { to: usdt, method: 'approve', args: call.args }
     });
     // Immediate send cannot adopt a review-mode operation ID!
     await expect(
-      h.client.tron.sendContractCall({ idempotencyKey: 'trx-call-1', ...call })
+      h.client.tron.sendCall({ idempotencyKey: 'trx-call-1', ...call })
     ).rejects.toMatchObject({ code: 'APPROVAL_REQUIRED' });
     expect(
       (await h.client.tron.execute({ idempotencyKey: 'trx-call-1', reviewId: prepared.reviewId! }))
@@ -187,10 +238,10 @@ describe('Tron transactions and fees', () => {
     expect(calls(h, 'Execute')).toHaveLength(1);
   });
 
-  it('snapshots contract-call arguments when the call is made', async () => {
+  it('snapshots call arguments when the call is made', async () => {
     const h = sdkHarness();
     const args = [{ type: 'uint256', value: '1' }];
-    const pending = h.client.tron.prepareContractCall({
+    const pending = h.client.tron.prepareCall({
       idempotencyKey: 'trx-call-2',
       ...call,
       args
@@ -204,63 +255,98 @@ describe('Tron transactions and fees', () => {
 
   it.each([
     ['an EVM recipient', { to: '0x2222222222222222222222222222222222222222' }, 'INVALID_ADDRESS'],
-    ['a zero TRX transfer', { value: '0' }, 'INVALID_AMOUNT'],
-    ['a value above int64', { value: (2n ** 63n).toString() }, 'INVALID_AMOUNT'],
-    ['odd-length calldata', { data: '0xabc' }, 'INVALID_CALL'],
-    ['a zero maxFee', { maxFee: '0' }, 'INVALID_FEE'],
+    ['an EVM token', { asset: '0x2222222222222222222222222222222222222222' }, 'INVALID_ADDRESS'],
+    ['the token contract as recipient', { asset: TRON_RECIPIENT }, 'INVALID_ADDRESS'],
+    ['a zero TRX transfer', { amount: '0' }, 'INVALID_AMOUNT'],
+    ['a TRX amount from 2^63', { amount: (2n ** 63n).toString() }, 'INVALID_AMOUNT'],
+    [
+      'a token amount from 2^256',
+      { asset: usdt, amount: (2n ** 256n).toString() },
+      'INVALID_AMOUNT'
+    ],
+    ['a leading-zero amount', { amount: '01' }, 'INVALID_AMOUNT'],
+    ['a zero maxQuotedFee', { maxQuotedFee: '0' }, 'INVALID_FEE'],
     ['an unknown network', { network: 'tron:shasta' }, 'UNSUPPORTED_NETWORK'],
-    ['an unexpected field', { feeLimit: '1' }, 'INVALID_TRANSACTION']
-  ])('rejects a transaction with %s before contacting WaaS', async (_, change, code) => {
+    ['calldata', { data: '0x' }, 'INVALID_TRANSFER'],
+    ['the old maxFee name', { maxFee: '1' }, 'INVALID_TRANSFER']
+  ])('rejects a transfer with %s before contacting WaaS', async (_, change, code) => {
     const h = sdkHarness();
     await expect(
-      h.client.tron.prepareTransaction({
+      h.client.tron.prepareTransfer({
         idempotencyKey: 'trx-bad-1',
         ...transfer,
         ...change
-      } as TronTransactionInput)
+      } as TronTransferInput)
     ).rejects.toMatchObject({ code });
     expect(h.remote.calls).toHaveLength(0);
   });
 
   it.each([
-    ['a full signature as the method', { method: 'transfer(address,uint256)' }],
-    ['an unknown ABI type', { args: [{ type: 'uint7', value: '1' }] }],
-    ['an argument without a value', { args: [{ type: 'bool' }] }],
-    ['too many arguments', { args: Array(33).fill({ type: 'bool', value: true }) }],
-    ['an unsafe number', { args: [{ type: 'uint256', value: 2 ** 60 }] }]
-  ])('rejects a contract call with %s', async (_, change) => {
+    ['a full signature as the method', { method: 'transfer(address,uint256)' }, 'INVALID_CALL'],
+    ['an unknown ABI type', { args: [{ type: 'uint7', value: '1' }] }, 'INVALID_CALL'],
+    ['an argument without a value', { args: [{ type: 'bool' }] }, 'INVALID_CALL'],
+    ['too many arguments', { args: Array(33).fill({ type: 'bool', value: true }) }, 'INVALID_CALL'],
+    ['an unsafe number', { args: [{ type: 'uint256', value: 2 ** 60 }] }, 'INVALID_JSON'],
+    ['both method and data', { data: '0x' }, 'INVALID_CALL'],
+    ['a value on an ABI call', { value: '1' }, 'INVALID_CALL'],
+    ['args without a method', { method: undefined, data: '0x' }, 'INVALID_CALL'],
+    ['odd-length calldata', { method: undefined, args: undefined, data: '0xabc' }, 'INVALID_CALL'],
+    [
+      'a value from 2^63',
+      { method: undefined, args: undefined, data: '0x', value: (2n ** 63n).toString() },
+      'INVALID_AMOUNT'
+    ],
+    ['neither method nor data', { method: undefined, args: undefined }, 'INVALID_CALL'],
+    ['the old contract field', { contract: usdt }, 'INVALID_CALL']
+  ])('rejects a call with %s before contacting WaaS', async (_, change, code) => {
     const h = sdkHarness();
     await expect(
-      h.client.tron.prepareContractCall({
+      h.client.tron.prepareCall({
         idempotencyKey: 'trx-bad-2',
         ...call,
         ...change
-      } as TronContractCallInput)
-    ).rejects.toMatchObject({ code: expect.stringMatching(/^INVALID_(CALL|JSON)$/) });
+      } as TronCallInput)
+    ).rejects.toMatchObject({ code });
     expect(h.remote.calls).toHaveLength(0);
   });
 
-  it('refuses transfers to and calls on the wallet itself', async () => {
+  it('refuses transfers to, tokens at and calls on the wallet itself', async () => {
     const h = sdkHarness();
     await expect(
-      h.client.tron.prepareTransaction({
-        idempotencyKey: 'trx-self-1',
-        ...transfer,
+      h.client.tron.prepareTransfer({ idempotencyKey: 'trx-self-1', ...transfer, to: TRON_ADDRESS })
+    ).rejects.toMatchObject({ code: 'INVALID_ADDRESS' });
+    await expect(
+      h.client.tron.prepareTransfer({
+        idempotencyKey: 'trx-self-2',
+        ...tokenTransfer,
         to: TRON_ADDRESS
       })
     ).rejects.toMatchObject({ code: 'INVALID_ADDRESS' });
     await expect(
-      h.client.tron.prepareContractCall({
-        idempotencyKey: 'trx-self-2',
-        ...call,
-        contract: TRON_ADDRESS
+      h.client.tron.prepareTransfer({
+        idempotencyKey: 'trx-self-3',
+        ...tokenTransfer,
+        asset: TRON_ADDRESS
+      })
+    ).rejects.toMatchObject({ code: 'INVALID_ADDRESS' });
+    await expect(
+      h.client.tron.prepareCall({ idempotencyKey: 'trx-self-4', ...call, to: TRON_ADDRESS })
+    ).rejects.toMatchObject({ code: 'INVALID_CALL' });
+    await expect(
+      h.client.tron.prepareCall({
+        idempotencyKey: 'trx-self-5',
+        network: 'tron:nile',
+        to: TRON_ADDRESS,
+        data: '0x'
       })
     ).rejects.toMatchObject({ code: 'INVALID_CALL' });
+    expect(calls(h, 'PrepareTronTransaction')).toHaveLength(0);
+    expect(calls(h, 'PrepareTronContractCall')).toHaveLength(0);
   });
 
   it('follows a claimed transaction after a refused broadcast', async () => {
     const h = sdkHarness();
-    const prepared = await h.client.tron.prepareTransaction({
+    const prepared = await h.client.tron.prepareTransfer({
       idempotencyKey: 'trx-claimed-1',
       ...transfer
     });
