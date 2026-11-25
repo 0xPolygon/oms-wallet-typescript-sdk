@@ -235,16 +235,13 @@ describe('one wallet per network family', () => {
     const h = sdkHarness();
     await h.client.createOrRestore();
     h.remote.failCreate = true;
-    await expect(h.client.createOrRestore({ families: ['solana'] })).rejects.toThrow('Lost create');
-    expect((await h.client.inspect()).creationUncertain).toBe(true);
-    h.remote.failCreate = false;
-    const snapshot = await h.create().createOrRestore({ families: ['solana'] });
+    const snapshot = await h.client.createOrRestore({ families: ['solana'] });
     expect(snapshot.wallets.solana?.id).toBe('wallet-sol');
     expect(snapshot.creationUncertain).toBe(false);
     expect(calls(h.remote, 'CreateWallet')).toHaveLength(2);
   });
 
-  it('rejects a created wallet of a different family', async () => {
+  it('never trusts a created wallet of a different family, binding only the discovered one', async () => {
     const h = sdkHarness();
     await h.client.createOrRestore();
     const request = h.remote.request.bind(h.remote);
@@ -254,10 +251,14 @@ describe('one wallet per network family', () => {
         return { wallet: { id: 'x', address: SOLANA_ADDRESS, networkFamily: 'solana' } };
       return response;
     };
-    await expect(h.client.createOrRestore({ families: ['tron'] })).rejects.toMatchObject({
-      code: 'INVALID_RESPONSE'
-    });
-    expect((await h.client.inspect()).wallets.tron).toBeUndefined();
+    // A malformed create response leaves the outcome unknown: the SDK binds only what an attested
+    // ListWallets and UseWallet show, and never sends a second CreateWallet.
+    const snapshot = await h.client.createOrRestore({ families: ['tron'] });
+    expect(snapshot.wallets.tron?.networkFamily).toBe('tron');
+    expect(snapshot.wallets.tron?.id).not.toBe('x');
+    expect(
+      calls(h.remote, 'CreateWallet').filter((c) => c.body.networkFamily === 'tron')
+    ).toHaveLength(1);
   });
 
   it('keeps every family across rotation and disable/enable', async () => {

@@ -203,9 +203,25 @@ export interface WalletSnapshot {
   readonly creationUncertain: boolean;
 }
 
+/**
+ * The wallet to use per family, by address. Needed only when an identity has more than one wallet
+ * for a family (for example after two concurrent first-time creates): list them with
+ * `listWallets()`, choose one, and pass it here. Once bound, a durable wallet remembers it.
+ */
+export type WalletSelection = Partial<Readonly<Record<NetworkFamily, string>>>;
+
+/** A wallet WaaS holds for an identity, from `listWallets()`. */
+export interface IdentityWallet {
+  readonly family: NetworkFamily;
+  readonly id: string;
+  readonly address: string;
+}
+
 export interface CreateOrRestoreOptions {
   /** Network families to create or restore (defaults to `['evm']`). */
   readonly families?: readonly NetworkFamily[];
+  /** See `WalletSelection`. */
+  readonly wallets?: WalletSelection;
 }
 
 export type OperationStatus =
@@ -834,6 +850,12 @@ export interface ServerWalletBase<
   inspect(): Promise<WalletSnapshot>;
   /** Authenticate if needed and create or restore one wallet per requested family (default EVM). */
   createOrRestore(options?: CreateOrRestoreOptions): Promise<WalletSnapshot>;
+  /**
+   * Every wallet WaaS holds for this identity, signing in if needed. Use it when restore fails
+   * with `WALLET_MISMATCH` because a family has several wallets, then pass the chosen one as
+   * `wallets` to `createOrRestore`.
+   */
+  listWallets(): Promise<readonly IdentityWallet[]>;
   /** Revoke the current credential and authenticate a fresh one. */
   rotateCredential(): Promise<WalletSnapshot>;
   /** Persist disablement before revoking the current credential; blocks further auth until `enable()`. */
@@ -904,16 +926,27 @@ export interface SignatureResult {
 
 /**
  * Memory-only signer for one OIDC identity, from `createEphemeralServerWallet`. It signs and reads
- * balances; it cannot prepare or send transactions, keeps no operation records, and never creates
- * wallets. Not assignable to `ServerWallet`. Call `close()` when done.
+ * balances; it cannot prepare or send transactions and keeps no operation records. `restore()`
+ * binds existing wallets and `create()` creates missing ones. Not assignable to `ServerWallet`.
+ * Call `close()` when done.
  */
 export interface EphemeralServerWallet<TTypedData extends boolean = false> {
   /**
-   * Sign in and bind wallets that already exist on WaaS. With `families`, each must exist;
-   * without, every existing family is bound. Throws `WALLET_NOT_INITIALIZED` when none exists:
-   * create wallets with `createServerWallet` first. Required before signing or balance reads.
+   * Sign in and bind wallets that already exist on WaaS; never creates one. With `families`, each
+   * must exist; without, every existing family is bound. Throws `WALLET_NOT_INITIALIZED` when
+   * none exists. Required before signing or balance reads.
    */
   restore(options?: CreateOrRestoreOptions): Promise<EphemeralWalletSnapshot>;
+  /**
+   * Bind existing wallets and create missing ones (default EVM). Call it where a user's wallets
+   * are first set up, such as signup, and `restore()` everywhere else: WaaS does not deduplicate
+   * wallet creation, so two processes creating one new identity's wallets at once give it two
+   * wallets per family. Concurrent calls within one process are run one at a time. After an
+   * unknown outcome it throws `CREATION_UNCERTAIN`; call `restore()` later, not `create()`.
+   */
+  create(options?: CreateOrRestoreOptions): Promise<EphemeralWalletSnapshot>;
+  /** Every wallet WaaS holds for this identity; see `ServerWalletBase.listWallets`. */
+  listWallets(): Promise<readonly IdentityWallet[]>;
   inspect(): Promise<EphemeralWalletSnapshot>;
   /** Revoke this handle's credential and sign in again with a new one. */
   rotateCredential(): Promise<EphemeralWalletSnapshot>;

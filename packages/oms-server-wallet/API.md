@@ -192,6 +192,7 @@ Base handle for a single OIDC identity's attested server wallet.
 export interface ServerWalletBase<TApproval extends ApprovalMode = "two-phase", TTypedData extends boolean = false> {
     inspect(): Promise<WalletSnapshot>;
     createOrRestore(options?: CreateOrRestoreOptions): Promise<WalletSnapshot>;
+    listWallets(): Promise<readonly IdentityWallet[]>;
     rotateCredential(): Promise<WalletSnapshot>;
     disable(): Promise<WalletSnapshot>;
     enable(): Promise<WalletSnapshot>;
@@ -234,6 +235,29 @@ export interface WalletSnapshot {
 ```typescript
 export interface CreateOrRestoreOptions {
     readonly families?: readonly NetworkFamily[];
+    readonly wallets?: WalletSelection;
+}
+```
+
+### `WalletSelection`
+
+The wallet to use per family, by address. Needed only when an identity has more than one wallet
+for a family (for example after two concurrent first-time creates): list them with
+`listWallets()`, choose one, and pass it here. Once bound, a durable wallet remembers it.
+
+```typescript
+export type WalletSelection = Partial<Readonly<Record<NetworkFamily, string>>>;
+```
+
+### `IdentityWallet`
+
+A wallet WaaS holds for an identity, from `listWallets()`.
+
+```typescript
+export interface IdentityWallet {
+    readonly family: NetworkFamily;
+    readonly id: string;
+    readonly address: string;
 }
 ```
 
@@ -320,9 +344,9 @@ export declare function isSupportedEvmChainId(chainId: unknown): chainId is Supp
 
 Create a memory-only signer for one OIDC identity. It needs no storage, encryption key or
 distributed lock: each handle holds its own credential, so run one handle per concurrent
-worker. It signs and reads balances but cannot send, keeps no records and never creates
-wallets; provision wallets with `createServerWallet` first. `signing` adds `signTypedData`.
-Call `close()` when done.
+worker. It signs and reads balances but cannot send and keeps no records. `create()` creates an
+identity's wallets where they are first set up; `restore()` binds them everywhere else.
+`signing` adds `signTypedData`. Call `close()` when done.
 
 ```typescript
 export declare function createEphemeralServerWallet<const TOptions extends EphemeralServerWalletOptions>(options: TOptions & {
@@ -350,12 +374,15 @@ export interface EphemeralServerWalletOptions {
 ### `EphemeralServerWallet`
 
 Memory-only signer for one OIDC identity, from `createEphemeralServerWallet`. It signs and reads
-balances; it cannot prepare or send transactions, keeps no operation records, and never creates
-wallets. Not assignable to `ServerWallet`. Call `close()` when done.
+balances; it cannot prepare or send transactions and keeps no operation records. `restore()`
+binds existing wallets and `create()` creates missing ones. Not assignable to `ServerWallet`.
+Call `close()` when done.
 
 ```typescript
 export interface EphemeralServerWallet<TTypedData extends boolean = false> {
     restore(options?: CreateOrRestoreOptions): Promise<EphemeralWalletSnapshot>;
+    create(options?: CreateOrRestoreOptions): Promise<EphemeralWalletSnapshot>;
+    listWallets(): Promise<readonly IdentityWallet[]>;
     inspect(): Promise<EphemeralWalletSnapshot>;
     rotateCredential(): Promise<EphemeralWalletSnapshot>;
     close(): Promise<void>;

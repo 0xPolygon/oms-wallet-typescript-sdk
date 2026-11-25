@@ -47,6 +47,7 @@ export type {
   GetEvmBalancesOptions,
   GetSolanaBalancesOptions,
   GetTronBalancesOptions,
+  IdentityWallet,
   ListOperationsOptions,
   NamespacedStateStore,
   NetworkFamily,
@@ -97,6 +98,7 @@ export type {
   WalletIndexerFacet,
   WalletOidcOptions,
   WalletOperation,
+  WalletSelection,
   WalletSnapshot,
   WalletStorageOption
 } from './types.js';

@@ -275,6 +275,17 @@ void eph.disable;
 createEphemeralServerWallet({ publishableKey: key, oidc, storage: { adapter: state, encryptionKey } });
 void asDurable;
 
+// Wallet creation and selection: explicit create() on ephemeral handles, wallets option, listWallets.
+void eph.create({ families: ['evm', 'tron'] });
+void eph.restore({ wallets: { evm: '0x2222222222222222222222222222222222222222' } });
+void eph.listWallets();
+void wTwoPhase.createOrRestore({ families: ['evm'], wallets: { evm: '0x2222222222222222222222222222222222222222' } });
+void wTwoPhase.listWallets();
+// @ts-expect-error ephemeral handles create with create(), not createOrRestore()
+void eph.createOrRestore;
+// @ts-expect-error wallet selection is keyed by family
+void eph.restore({ wallets: { bitcoin: 'x' } });
+
 // Typed-data signing exists only with a signing policy, on durable, service and ephemeral handles.
 // @ts-expect-error signTypedData needs signing.authorizeTypedData
 void wTwoPhase.evm.signTypedData;

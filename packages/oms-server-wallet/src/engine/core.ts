@@ -14,6 +14,7 @@ import type { RpcTransport } from '../transport.js';
 import type {
   OperationPage,
   ResolveReconciliationInput,
+  IdentityWallet,
   SubmissionMode,
   TypedDataSigningRequest,
   WalletOperation,
@@ -72,6 +73,11 @@ export interface WalletEngineConfig {
    * could otherwise lead to a second wallet for the identity.
    */
   readonly createWallets?: boolean;
+  /**
+   * Waits before each re-check of the identity's wallets after a `CreateWallet` call whose outcome
+   * is unknown (default 1, 2 and 4 seconds). Tests shorten it.
+   */
+  readonly creationRecheckDelaysMs?: readonly number[];
   /** `signing.authorizeTypedData`, bound to its options object; absent when not configured. */
   readonly authorizeTypedData?: (request: TypedDataSigningRequest) => boolean | Promise<boolean>;
 }
@@ -109,17 +115,47 @@ export class EngineCore {
     return this.config.executor.run(async () => (await this.load()).wallets[family]?.address);
   }
 
-  async createOrRestore(families: readonly NetworkFamily[] = ['evm']): Promise<WalletSnapshot> {
-    if (
-      !Array.isArray(families) ||
-      !families.length ||
-      families.some((family) => !NETWORK_FAMILIES.includes(family))
-    )
-      throw new WalletError('INVALID_FAMILY', 'Request one or more of: evm, solana, tron.');
+  async createOrRestore(
+    families: readonly NetworkFamily[] = ['evm'],
+    selection?: unknown
+  ): Promise<WalletSnapshot> {
+    const requested = validateFamilies(families);
+    const pins = validateSelection(selection);
     return this.config.executor.run(async () => {
       const state = await this.load();
-      await this.ensure(state, [...new Set(families)]);
+      await this.ensure(state, requested, { pins });
       return this.snapshot(state);
+    });
+  }
+
+  /**
+   * Every wallet WaaS holds for this identity, signing in if needed. Unlike restore, it does not
+   * fail when a family has more than one wallet, so an operator can choose which one to use.
+   */
+  listWallets(): Promise<readonly IdentityWallet[]> {
+    return this.config.executor.run(async () => {
+      const state = await this.load();
+      if (state.disabled) throw new WalletError('WALLET_DISABLED', 'This wallet is disabled.', 409);
+      if (
+        !state.credential?.expiresAt ||
+        Date.parse(state.credential.expiresAt) <= this.now() + 60_000
+      )
+        await this.signIn(state, []);
+      let all: RemoteWallet[];
+      try {
+        all = await this.listAll(state, [], '');
+      } catch (error) {
+        if (!(error instanceof UpstreamError) || !credentialRejectedCodes.has(error.upstreamCode))
+          throw error;
+        state.credential = undefined;
+        await this.save(state);
+        await this.signIn(state, []);
+        all = await this.listAll(state, [], '');
+      }
+      return all.flatMap((wallet) => {
+        const family = walletFamily(wallet);
+        return family ? [{ family, id: wallet.id, address: wallet.address }] : [];
+      });
     });
   }
 
@@ -290,7 +326,11 @@ export class EngineCore {
     return families.length ? families : ['evm'];
   }
 
-  private async signIn(state: State, discoverFamilies: readonly NetworkFamily[]): Promise<void> {
+  private async signIn(
+    state: State,
+    discoverFamilies: readonly NetworkFamily[],
+    pins: WalletPins = {}
+  ): Promise<void> {
     const idToken = await this.config.getIdToken();
     if (
       !idToken ||
@@ -346,7 +386,8 @@ export class EngineCore {
       state,
       discoverFamilies,
       authenticated.wallets,
-      authenticated.page?.cursor || undefined
+      authenticated.page?.cursor || undefined,
+      pins
     );
     state.credential.expiresAt = authenticated.credential.expiresAt;
     await this.save(state);
@@ -354,51 +395,78 @@ export class EngineCore {
 
   private async discoverWithRefresh(
     state: State,
-    discoverFamilies: readonly NetworkFamily[]
+    discoverFamilies: readonly NetworkFamily[],
+    pins: WalletPins = {}
   ): Promise<void> {
     try {
-      await this.discover(state, discoverFamilies, [], '');
+      await this.discover(state, discoverFamilies, [], '', pins);
       await this.save(state);
     } catch (error) {
       if (!(error instanceof UpstreamError) || !credentialRejectedCodes.has(error.upstreamCode))
         throw error;
       state.credential = undefined;
       await this.save(state);
-      await this.signIn(state, discoverFamilies);
+      await this.signIn(state, discoverFamilies, pins);
     }
   }
 
   async ensure(
     state: State,
     families: readonly NetworkFamily[],
-    options: { readonly bindAllExisting?: boolean } = {}
+    options: {
+      readonly bindAllExisting?: boolean;
+      /** Whether a missing wallet may be created; defaults to `config.createWallets !== false`. */
+      readonly create?: boolean;
+      readonly pins?: WalletPins;
+    } = {}
   ): Promise<void> {
+    const pins = options.pins ?? {};
+    // A selected wallet is always bound, even for a family the caller did not list.
+    const wanted = [
+      ...new Set([...families, ...NETWORK_FAMILIES.filter((family) => pins[family])])
+    ];
     if (state.disabled) throw new WalletError('WALLET_DISABLED', 'This wallet is disabled.', 409);
-    const discoverFamilies = options.bindAllExisting ? NETWORK_FAMILIES : families;
+    const discoverFamilies = options.bindAllExisting ? NETWORK_FAMILIES : wanted;
     let discovered = false;
     if (
       !state.credential?.expiresAt ||
       Date.parse(state.credential.expiresAt) <= this.now() + 60_000 ||
       state.creating.some((family) => !state.wallets[family])
     ) {
-      await this.signIn(state, discoverFamilies);
+      await this.signIn(state, discoverFamilies, pins);
       discovered = true;
     }
-    if (options.bindAllExisting && !discovered) {
-      await this.discoverWithRefresh(state, discoverFamilies);
+    const unboundPin = NETWORK_FAMILIES.some((family) => pins[family] && !state.wallets[family]);
+    if ((options.bindAllExisting || unboundPin) && !discovered) {
+      await this.discoverWithRefresh(state, discoverFamilies, pins);
       discovered = true;
     }
-    for (const family of families) {
+    for (const family of NETWORK_FAMILIES) {
+      const stored = state.wallets[family];
+      if (pins[family] && stored && !sameAddress(family, stored.address, pins[family]))
+        throw new WalletError(
+          'WALLET_MISMATCH',
+          `This identity is bound to ${family} wallet ${stored.address}, not ${pins[family]}.`,
+          409
+        );
+    }
+    for (const family of wanted) {
       if (state.wallets[family]) continue;
       if (!discovered) {
-        await this.discoverWithRefresh(state, discoverFamilies);
+        await this.discoverWithRefresh(state, discoverFamilies, pins);
         discovered = true;
         if (state.wallets[family]) continue;
       }
-      if (this.config.createWallets === false)
+      if (pins[family])
+        throw new WalletError(
+          'WALLET_MISMATCH',
+          `The selected ${family} wallet ${pins[family]} does not belong to this identity.`,
+          409
+        );
+      if (!(options.create ?? this.config.createWallets !== false))
         throw new WalletError(
           'WALLET_NOT_INITIALIZED',
-          `No ${family} wallet exists for this identity yet. Create it with a durable wallet first.`,
+          `No ${family} wallet exists for this identity yet. Call create() to create it.`,
           409
         );
       if (state.creating.includes(family))
@@ -427,19 +495,47 @@ export class EngineCore {
         state.creating = state.creating.filter((entry) => entry !== family);
         await this.save(state);
       } catch (error) {
+        // A WaaS refusal is a verified answer. Any other failure (network, timeout, malformed
+        // response) leaves the outcome unknown: never create again blindly, but look for the
+        // wallet the call may have created.
+        if (!(error instanceof UpstreamError) && (await this.recheckCreated(state, family)))
+          continue;
         state.credential!.expiresAt = undefined;
         await this.save(state);
-        throw error;
+        if (error instanceof UpstreamError) throw error;
+        throw new WalletError(
+          'CREATION_UNCERTAIN',
+          `Creating the ${family} wallet has an unknown outcome. Call restore() later instead of creating again: a second create would give this identity two wallets.`,
+          409,
+          { cause: error }
+        );
       }
     }
   }
 
-  private async discover(
+  /** After an unknown `CreateWallet` outcome, list the identity's wallets a few times. */
+  private async recheckCreated(state: State, family: NetworkFamily): Promise<boolean> {
+    for (const delay of this.config.creationRecheckDelaysMs ?? [1000, 2000, 4000]) {
+      await new Promise((resolve) => setTimeout(resolve, delay));
+      try {
+        await this.discoverWithRefresh(state, [family]);
+      } catch (error) {
+        if (error instanceof WalletError && error.code === 'WALLET_MISMATCH') throw error;
+        continue;
+      }
+      if (state.wallets[family]) {
+        await this.save(state);
+        return true;
+      }
+    }
+    return false;
+  }
+
+  private async listAll(
     state: State,
-    families: readonly NetworkFamily[],
     wallets: RemoteWallet[],
     from: string | undefined
-  ): Promise<void> {
+  ): Promise<RemoteWallet[]> {
     const all = [...wallets];
     const seen = new Set<string>();
     let cursor = from;
@@ -456,34 +552,56 @@ export class EngineCore {
       all.push(...page.wallets);
       cursor = page.page?.cursor || undefined;
     }
+    return all;
+  }
+
+  private async discover(
+    state: State,
+    families: readonly NetworkFamily[],
+    wallets: RemoteWallet[],
+    from: string | undefined,
+    pins: WalletPins = {}
+  ): Promise<void> {
+    const all = await this.listAll(state, wallets, from);
     for (const family of NETWORK_FAMILIES) {
       const stored = state.wallets[family];
-      if (!stored && !families.includes(family) && !state.creating.includes(family)) continue;
+      const pinned = pins[family];
+      if (!stored && !pinned && !families.includes(family) && !state.creating.includes(family))
+        continue;
       const found = all.filter((wallet) => walletFamily(wallet) === family);
-      if (
-        found.length > 1 ||
-        (stored &&
-          !found.some(
+      // The wallet this identity is bound to (stored), or the one the caller selected, decides
+      // which wallet is used when the identity has more than one.
+      const chosen = stored ?? (pinned ? { address: pinned } : undefined);
+      const candidates = chosen
+        ? found.filter(
             (wallet) =>
-              wallet.id === stored.id && sameAddress(family, wallet.address, stored.address)
-          ))
-      )
+              sameAddress(family, wallet.address, chosen.address) &&
+              (!stored || wallet.id === stored.id)
+          )
+        : found;
+      if (stored && candidates.length !== 1)
         throw new WalletError(
           'WALLET_MISMATCH',
           'Identity does not map to the expected single wallet.',
           409
         );
-      if (found.length !== 1) continue;
+      if (!chosen && found.length > 1)
+        throw new WalletError(
+          'WALLET_MISMATCH',
+          `This identity has ${found.length} ${family} wallets. Choose one with listWallets() and pass it as wallets.${family}.`,
+          409
+        );
+      if (candidates.length !== 1) continue;
       const bound = parseWaas(
         walletSchema,
         parseWaas(
           z.object({ wallet: walletSchema }),
-          await this.call(state, 'UseWallet', { walletId: found[0].id })
+          await this.call(state, 'UseWallet', { walletId: candidates[0].id })
         ).wallet
       );
       if (
-        bound.id !== found[0].id ||
-        !sameAddress(family, bound.address, found[0].address) ||
+        bound.id !== candidates[0].id ||
+        !sameAddress(family, bound.address, candidates[0].address) ||
         !isWalletAddress(family, bound.address)
       )
         throw new WalletError(
@@ -525,12 +643,16 @@ export class EngineCore {
    * `families`, each must exist; without, every existing family is bound and at least one must
    * exist. Throws `WALLET_NOT_INITIALIZED` otherwise.
    */
-  async restoreExisting(state: State, families?: readonly NetworkFamily[]): Promise<void> {
-    await this.ensure(state, families ?? [], { bindAllExisting: !families });
+  async restoreExisting(
+    state: State,
+    families?: readonly NetworkFamily[],
+    pins?: WalletPins
+  ): Promise<void> {
+    await this.ensure(state, families ?? [], { bindAllExisting: !families, create: false, pins });
     if (!NETWORK_FAMILIES.some((family) => state.wallets[family]))
       throw new WalletError(
         'WALLET_NOT_INITIALIZED',
-        'No wallet exists for this identity yet. Create it with a durable wallet first.',
+        'No wallet exists for this identity yet. Call create() to create it.',
         409
       );
   }
@@ -805,4 +927,33 @@ export class EngineCore {
     }
     return { operation: null, hash };
   }
+}
+
+/** Wallets the caller selected per family, by address. */
+export type WalletPins = Partial<Record<NetworkFamily, string>>;
+
+export function validateFamilies(families: unknown): NetworkFamily[] {
+  if (
+    !Array.isArray(families) ||
+    !families.length ||
+    families.some((family) => !NETWORK_FAMILIES.includes(family))
+  )
+    throw new WalletError('INVALID_FAMILY', 'Request one or more of: evm, solana, tron.');
+  return [...new Set(families as NetworkFamily[])];
+}
+
+export function validateSelection(selection: unknown): WalletPins {
+  if (selection === undefined) return {};
+  if (!selection || typeof selection !== 'object' || Array.isArray(selection))
+    throw new WalletError('INVALID_INPUT', 'Pass wallets as { evm?, solana?, tron? } addresses.');
+  const pins: WalletPins = {};
+  for (const [family, address] of Object.entries(selection)) {
+    if (address === undefined) continue;
+    if (!NETWORK_FAMILIES.includes(family as NetworkFamily))
+      throw new WalletError('INVALID_FAMILY', `Unknown wallet family "${family}".`);
+    if (typeof address !== 'string' || !isWalletAddress(family as NetworkFamily, address))
+      throw new WalletError('INVALID_ADDRESS', `Provide a valid ${family} wallet address.`);
+    pins[family as NetworkFamily] = address;
+  }
+  return pins;
 }

@@ -19,6 +19,8 @@
         "ServerWalletService",
         "WalletSnapshot",
         "CreateOrRestoreOptions",
+        "WalletSelection",
+        "IdentityWallet",
         "NetworkFamily",
         "RemoteWallet",
         "SupportedEvmChainId",

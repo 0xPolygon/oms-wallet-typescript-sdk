@@ -2,6 +2,7 @@ import type { NetworkFamily } from '../protocol.js';
 import type { State } from '../state.js';
 import type {
   EphemeralWalletSnapshot,
+  IdentityWallet,
   SignatureResult,
   TronNetwork,
   TypedDataInput
@@ -14,6 +15,7 @@ import { tronToHex } from '../internal/protocol/addresses.js';
 import { TRON_CHAIN_IDS } from '../internal/protocol/networks.js';
 import { NETWORK_FAMILIES } from '../protocol.js';
 import { validateTronTypedData, validateTypedData } from '../typed-data.js';
+import { validateFamilies, validateSelection } from './core.js';
 import { requireMessage, requireTronNetwork } from './inputs.js';
 import {
   assertNotSelfVerifying,
@@ -33,9 +35,17 @@ const closedError = () =>
 const familyLabel: Record<NetworkFamily, string> = { evm: 'EVM', solana: 'Solana', tron: 'Tron' };
 
 /**
+ * Wallet creations in flight in this process, by identity namespace. A handle creating wallets for
+ * an identity waits for any other handle in the process that is already doing so, then discovers
+ * what that one created instead of creating a second wallet.
+ */
+const creating = new Map<string, Promise<unknown>>();
+
+/**
  * Memory-only signer for one identity. It signs and reads balances but never prepares, sends or
- * records operations, and never creates wallets. Every call runs under the handle's private
- * executor; once `close()` starts, every later or queued call throws `WALLET_CLOSED`.
+ * records operations. `restore()` never creates wallets; only `create()` does. Every call runs
+ * under the handle's private executor; once `close()` starts, every later or queued call throws
+ * `WALLET_CLOSED`.
  */
 export class EphemeralEngine {
   private closed = false;
@@ -69,19 +79,48 @@ export class EphemeralEngine {
     return wallet;
   }
 
-  async restore(families?: readonly NetworkFamily[]): Promise<EphemeralWalletSnapshot> {
-    if (
-      families !== undefined &&
-      (!Array.isArray(families) ||
-        !families.length ||
-        families.some((family) => !NETWORK_FAMILIES.includes(family)))
-    )
-      throw new WalletError('INVALID_FAMILY', 'Request one or more of: evm, solana, tron.');
-    const requested = families ? [...new Set(families)] : undefined;
+  async restore(
+    families?: readonly NetworkFamily[],
+    selection?: unknown
+  ): Promise<EphemeralWalletSnapshot> {
+    const requested = families === undefined ? undefined : validateFamilies(families);
+    const pins = validateSelection(selection);
     return this.run(async (state) => {
-      await this.core.restoreExisting(state, requested);
+      await this.core.restoreExisting(state, requested, pins);
       return this.snapshot(state);
     });
+  }
+
+  /**
+   * Bind existing wallets and create the missing ones. Concurrent `create()` calls for one
+   * identity within this process run one at a time; across processes the caller must ensure
+   * only one creates a new identity's wallets.
+   */
+  async create(
+    families: readonly NetworkFamily[] = ['evm'],
+    selection?: unknown
+  ): Promise<EphemeralWalletSnapshot> {
+    const requested = validateFamilies(families);
+    const pins = validateSelection(selection);
+    const key = this.core.config.namespace;
+    for (let pending = creating.get(key); pending; pending = creating.get(key))
+      await pending.catch(() => undefined);
+    const task = this.run(async (state) => {
+      await this.core.ensure(state, requested, { create: true, pins });
+      return this.snapshot(state);
+    });
+    creating.set(key, task);
+    try {
+      return await task;
+    } finally {
+      if (creating.get(key) === task) creating.delete(key);
+    }
+  }
+
+  /** Every wallet WaaS holds for this identity, including duplicates (see `restore`'s `wallets`). */
+  listWallets(): Promise<readonly IdentityWallet[]> {
+    if (this.closed) return Promise.reject(closedError());
+    return this.core.listWallets();
   }
 
   inspect(): Promise<EphemeralWalletSnapshot> {

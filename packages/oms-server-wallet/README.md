@@ -171,7 +171,7 @@ Approval that can take longer than the quote lifetime should approve the busines
 
 | Surface | Methods |
 | --- | --- |
-| `wallet` | `inspect()`, `createOrRestore({ families? })`, `rotateCredential()`, `disable()`, `enable()` |
+| `wallet` | `inspect()`, `createOrRestore({ families?, wallets? })`, `listWallets()`, `rotateCredential()`, `disable()`, `enable()` |
 | `wallet.evm` | `prepareTransfer`, `prepareCall`, `execute`, `cancel`, `signMessage`, `getOperation`, `refreshOperation`, `waitForOperation`, `resolveReconciliation`, `listOperations`, `getTransactionStatus` (+ `sendTransfer`, `sendCall` in `allow-immediate` mode; + `signTypedData` with `signing`) |
 | `wallet.solana` | `prepareTransfer`, `execute`, `cancel`, `signMessage`, `getOperation`, `refreshOperation`, `waitForOperation`, `resolveReconciliation`, `listOperations`, `getTransactionStatus` (+ `sendTransfer` in `allow-immediate` mode) |
 | `wallet.tron` | `prepareTransfer`, `prepareCall`, `execute`, `cancel`, `signMessage`, `getOperation`, `refreshOperation`, `waitForOperation`, `resolveReconciliation`, `listOperations`, `getTransactionStatus` (+ `sendTransfer`, `sendCall` in `allow-immediate` mode; + `signTypedData` with `signing`) |
@@ -295,7 +295,7 @@ const signer = createEphemeralServerWallet({
   oidc: { issuer, audience, subject, getIdToken } // sessionLifetimeSeconds defaults to 900
 });
 try {
-  await signer.restore(); // binds wallets that already exist; never creates one
+  await signer.restore(); // binds wallets that already exist; never creates one (see create())
   const { signature } = await signer.evm.signMessage({ chainId: 80002, message: 'hello' });
 } finally {
   await signer.close(); // revokes this handle's credential
@@ -303,7 +303,8 @@ try {
 ```
 
 - **Signing and balances only.** There is no prepare, execute or send, and no operation records or `idempotencyKey`. Transfers, contract calls and swaps need `createServerWallet`, whose records survive a restart.
-- **Never creates wallets.** Provision each identity once with `createServerWallet(...).createOrRestore(...)`. `restore()` binds what exists and throws `WALLET_NOT_INITIALIZED` otherwise; call it before signing or reading balances.
+- **Creating wallets is explicit.** `restore()` binds wallets that exist and throws `WALLET_NOT_INITIALIZED` otherwise; call it before signing or reading balances. `create({ families })` also creates the missing ones. Call `create()` only where a user's wallets are first set up, such as signup, and `restore()` everywhere else: WaaS does not deduplicate wallet creation, and a handle has no lock shared with other processes, so two processes creating one new user's wallets at the same time give that user two wallets per family. Within one process, concurrent `create()` calls for an identity run one at a time. If a create response is lost, the SDK looks for the created wallet and, if it cannot find it, throws `CREATION_UNCERTAIN` instead of creating again.
+- **Duplicate wallets.** If an identity ends up with more than one wallet for a family, restore fails with `WALLET_MISMATCH`. List them with `listWallets()`, choose one (for example the one holding funds), and pass it as `restore({ wallets: { evm: address } })`. A durable wallet remembers the choice; an ephemeral handle needs it on every `restore()`.
 - **`close()`** revokes the credential and makes every later or queued call throw `WALLET_CLOSED`. It is idempotent, and calling it again retries a revoke that failed. A crashed process cannot close, so keep `sessionLifetimeSeconds` short.
 - **No kill switch per identity.** There is no `disable()`: it would only affect one handle. To stop an identity, block it at your OIDC issuer and let credentials expire, or close every handle.
 - **Typed data:** `signTypedData` exists only with a `signing` policy, as on durable wallets. An ephemeral handle cannot see swap reservations held by a durable wallet for the same identity, so the policy should refuse spending authorizations (such as an ERC-20 permit) for an identity with swaps in flight.

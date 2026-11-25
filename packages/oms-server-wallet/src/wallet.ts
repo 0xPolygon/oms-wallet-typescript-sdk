@@ -74,7 +74,12 @@ import {
 } from './storage.js';
 import { WaasTransport } from './transport.js';
 
-type Overrides = { transport?: RpcTransport; clock?: () => number; indexer?: IndexerClient };
+type Overrides = {
+  transport?: RpcTransport;
+  clock?: () => number;
+  indexer?: IndexerClient;
+  creationRecheckDelaysMs?: readonly number[];
+};
 
 /** Makes any option key the factory does not know a compile-time error (no excess-key check on generics). */
 type ExactOptions<TOptions, TKnown> = {
@@ -509,7 +514,8 @@ function buildWalletFacade(params: {
   const base: ServerWalletBase<ApprovalMode, boolean> = {
     inspect: () => engine.core.inspect(),
     createOrRestore: (options?: CreateOrRestoreOptions) =>
-      engine.core.createOrRestore(options?.families),
+      engine.core.createOrRestore(options?.families, options?.wallets),
+    listWallets: () => engine.core.listWallets(),
     rotateCredential: () => engine.core.rotateCredential(),
     disable: () => engine.core.disable(),
     enable: () => engine.core.enable(),
@@ -578,6 +584,7 @@ function instantiateServerWallet(
     executor: options.executor,
     transport,
     clock: overrides.clock,
+    creationRecheckDelaysMs: overrides.creationRecheckDelaysMs,
     authorizeTypedData
   });
 
@@ -744,6 +751,7 @@ function instantiateServerWalletService(
         executor,
         transport,
         clock: overrides.clock,
+        creationRecheckDelaysMs: overrides.creationRecheckDelaysMs,
         authorizeTypedData
       });
       let swapsFacet: unknown;
@@ -840,13 +848,18 @@ function instantiateEphemeralServerWallet(
       executor: createSingleProcessExecutor(),
       transport,
       clock: overrides.clock,
+      creationRecheckDelaysMs: overrides.creationRecheckDelaysMs,
       createWallets: false,
       authorizeTypedData
     })
   );
 
   return Object.freeze({
-    restore: (restoreOptions?: CreateOrRestoreOptions) => engine.restore(restoreOptions?.families),
+    restore: (restoreOptions?: CreateOrRestoreOptions) =>
+      engine.restore(restoreOptions?.families, restoreOptions?.wallets),
+    create: (createOptions?: CreateOrRestoreOptions) =>
+      engine.create(createOptions?.families, createOptions?.wallets),
+    listWallets: () => engine.listWallets(),
     inspect: () => engine.inspect(),
     rotateCredential: () => engine.rotateCredential(),
     close: () => engine.close(),
@@ -895,9 +908,9 @@ export function createEphemeralServerWalletInternal<
 /**
  * Create a memory-only signer for one OIDC identity. It needs no storage, encryption key or
  * distributed lock: each handle holds its own credential, so run one handle per concurrent
- * worker. It signs and reads balances but cannot send, keeps no records and never creates
- * wallets; provision wallets with `createServerWallet` first. `signing` adds `signTypedData`.
- * Call `close()` when done.
+ * worker. It signs and reads balances but cannot send and keeps no records. `create()` creates an
+ * identity's wallets where they are first set up; `restore()` binds them everywhere else.
+ * `signing` adds `signTypedData`. Call `close()` when done.
  */
 export function createEphemeralServerWallet<const TOptions extends EphemeralServerWalletOptions>(
   options: TOptions & ExactOptions<TOptions, EphemeralServerWalletOptions>

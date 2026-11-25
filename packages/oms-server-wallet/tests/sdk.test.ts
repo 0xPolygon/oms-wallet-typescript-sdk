@@ -100,24 +100,34 @@ describe('server wallet lifecycle and transactions', () => {
     expect(h.remote.calls.filter((call) => call.method === 'CompleteAuth')).toHaveLength(2);
     expect(h.remote.calls.filter((call) => call.method === 'SignMessage')).toHaveLength(2);
   });
-  it('reconciles lost create responses without creating another wallet', async () => {
+  it('finds the wallet a lost create response made, within the same call, without creating again', async () => {
     const h = sdkHarness();
     h.remote.failCreate = true;
-    await expect(h.client.createOrRestore()).rejects.toThrow('Lost create');
-    expect((await h.create().createOrRestore()).wallets.evm?.id).toBe('wallet-1');
+    expect((await h.client.createOrRestore()).wallets.evm?.id).toBe('wallet-1');
+    expect((await h.client.inspect()).creationUncertain).toBe(false);
     expect(h.remote.calls.filter((c) => c.method === 'CreateWallet')).toHaveLength(1);
   });
-  it('continues discovery when a create is uncertain instead of creating duplicates', async () => {
+  it('reports CREATION_UNCERTAIN, never creating again, while a lost create stays invisible', async () => {
     const h = sdkHarness();
     h.remote.failCreate = true;
-    await expect(h.client.createOrRestore()).rejects.toThrow();
-    const wallet = h.remote.wallet;
-    h.remote.wallet = undefined;
+    const request = h.remote.request.bind(h.remote);
+    let hidden = true;
+    h.remote.request = async (method, body, credential) => {
+      const response = await request(method, body, credential);
+      return hidden && (method === 'ListWallets' || method === 'CompleteAuth')
+        ? { ...(response as object), wallets: [] }
+        : response;
+    };
+    await expect(h.client.createOrRestore()).rejects.toMatchObject({
+      code: 'CREATION_UNCERTAIN',
+      cause: expect.objectContaining({ message: expect.stringContaining('Lost create') })
+    });
     await expect(h.create().createOrRestore()).rejects.toMatchObject({
       code: 'CREATION_UNCERTAIN'
     });
-    h.remote.wallet = wallet;
+    hidden = false;
     expect((await h.create().createOrRestore()).wallets.evm?.id).toBe('wallet-1');
+    expect(h.remote.calls.filter((c) => c.method === 'CreateWallet')).toHaveLength(1);
   });
   it('serializes concurrent requests from separate SDK instances sharing an executor', async () => {
     const h = sdkHarness();

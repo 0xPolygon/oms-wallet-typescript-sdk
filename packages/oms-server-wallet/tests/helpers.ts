@@ -296,7 +296,7 @@ export function sdkHarness<TApproval extends ApprovalMode = 'allow-immediate'>(
         approval: (overrideApproval ?? approval) as M,
         signing
       },
-      { transport: remote, clock: options.clock }
+      { transport: remote, clock: options.clock, creationRecheckDelaysMs: [0, 0, 0] }
     );
   return { store, remote, executor, create, client: create() };
 }
