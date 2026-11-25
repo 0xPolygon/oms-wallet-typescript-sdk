@@ -1,5 +1,6 @@
 export {
   createEphemeralServerWallet,
+  createEphemeralServerWalletService,
   createServerWallet,
   createServerWalletService
 } from './wallet.js';
@@ -29,7 +30,10 @@ export type {
   ChainQuote,
   CreateOrRestoreOptions,
   EphemeralServerWallet,
+  EphemeralCacheOptions,
   EphemeralServerWalletOptions,
+  EphemeralServerWalletService,
+  EphemeralServerWalletServiceOptions,
   EphemeralWalletLifecycle,
   EvmBalance,
   EvmBalances,

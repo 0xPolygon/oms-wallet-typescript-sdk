@@ -985,6 +985,58 @@ export interface EphemeralServerWalletOptions {
   readonly fetch?: typeof fetch;
 }
 
+/** Handle cache of `createEphemeralServerWalletService`. */
+export interface EphemeralCacheOptions {
+  /** Most handles kept; the least recently used is dropped first. Default 1000. */
+  readonly maxHandles?: number;
+  /** A handle unused for this long is dropped. Default 600,000 (10 minutes). */
+  readonly idleTimeoutMs?: number;
+}
+
+/** Options for `createEphemeralServerWalletService`. */
+export interface EphemeralServerWalletServiceOptions {
+  readonly publishableKey: string;
+  /** Application origin sent to WaaS, when the project restricts origins. */
+  readonly origin?: string;
+  /** `getIdToken(subject)` mints a fresh ID token for that subject on every call. */
+  readonly oidc: ServiceOidcOptions;
+  /** `'allow-immediate'` adds the one-shot `send*` methods. Default `'two-phase'`. */
+  readonly approval?: ApprovalMode;
+  /** `trails(...)` from `/trails` with `scope: 'service'` adds `swaps`. */
+  readonly swaps?: SwapsConfig<'service', unknown>;
+  /** Adds `evm.signTypedData` and `tron.signTypedData`, gated by the policy. */
+  readonly signing?: SigningOptions;
+  readonly cache?: EphemeralCacheOptions;
+  readonly attestation?: AttestationOptions;
+  readonly fetch?: typeof fetch;
+}
+
+/**
+ * In-memory wallets for many identities, from `createEphemeralServerWalletService`. Handles from
+ * `forSubject` have no `close()`: the service owns their lifetime.
+ */
+export interface EphemeralServerWalletService<
+  TApproval extends ApprovalMode = 'two-phase',
+  TSwaps extends SwapsConfig<'service', unknown> | undefined = undefined,
+  TTypedData extends boolean = false
+> {
+  /**
+   * The subject's in-memory handle, from the cache or new. A lookup, not an authorization check:
+   * authenticate the caller first. Call `restore({ families })` before use; it is free when the
+   * handle already holds them.
+   */
+  forSubject(
+    subject: string
+  ): Omit<EphemeralServerWallet<TApproval, undefined, TTypedData>, 'close'> &
+    (TSwaps extends SwapsConfig<'service', infer TFacet> ? { readonly swaps: TFacet } : unknown);
+  /** Drop the subject's handle and revoke its credential (for example when the user signs out). */
+  evict(subject: string): Promise<void>;
+  /** Close every handle and revoke their credentials; later `forSubject` calls throw. */
+  close(): Promise<void>;
+  /** Unattested indexer reads for arbitrary addresses. */
+  readonly indexer: ServiceIndexerFacet;
+}
+
 /** Lifecycle of an in-memory handle (`createEphemeralServerWallet`). */
 export interface EphemeralWalletLifecycle {
   /**

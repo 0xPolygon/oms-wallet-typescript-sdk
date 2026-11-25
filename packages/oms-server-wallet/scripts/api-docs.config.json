@@ -37,7 +37,11 @@
         "createEphemeralServerWallet",
         "EphemeralServerWalletOptions",
         "EphemeralServerWallet",
-        "EphemeralWalletLifecycle"
+        "EphemeralWalletLifecycle",
+        "createEphemeralServerWalletService",
+        "EphemeralServerWalletServiceOptions",
+        "EphemeralServerWalletService",
+        "EphemeralCacheOptions"
       ]
     },
     {

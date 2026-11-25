@@ -110,6 +110,7 @@ writeFileSync(
   join(directory, 'consumer.ts'),
   `import {
   createEphemeralServerWallet,
+  createEphemeralServerWalletService,
   createServerWallet,
   createServerWalletService,
   createSingleProcessExecutor,
@@ -273,6 +274,13 @@ const ephImmediate = createEphemeralServerWallet({ publishableKey: key, oidc, ap
 void ephImmediate.evm.sendTransfer({ idempotencyKey: 'consumer-eph-2', chainId: 80002, to: '0x2222222222222222222222222222222222222222', asset: 'native', amount: '1', onPrepared: async (op) => void op.quote.txnId });
 void ephImmediate.swaps.tick;
 void ephImmediate.evm.waitForTransaction({ txnId: 'txn_1', expiresAt: new Date().toISOString() }, { timeoutMs: 1000 });
+const ephService = createEphemeralServerWalletService({ publishableKey: key, oidc: { issuer: oidc.issuer, audience: oidc.audience, getIdToken: oidc.getIdToken }, approval: 'allow-immediate', swaps: serviceSwaps, cache: { maxHandles: 100 } });
+void ephService.forSubject('alice').evm.sendTransfer;
+void ephService.forSubject('alice').swaps.tick;
+// @ts-expect-error the service owns its handles' lifetime
+void ephService.forSubject('alice').close;
+// @ts-expect-error wallet-scoped trails cannot be passed to the in-memory service
+createEphemeralServerWalletService({ publishableKey: key, oidc: { issuer: oidc.issuer, audience: oidc.audience, getIdToken: oidc.getIdToken }, swaps: walletSwaps });
 // @ts-expect-error an in-memory handle is not a durable ServerWallet
 const asDurable: ServerWallet = eph;
 // @ts-expect-error in-memory handles have no disable()
@@ -349,6 +357,7 @@ export const declServiceSwaps = serviceSwaps;
 export const declEphemeral = eph;
 export const declEphemeralEvm = eph.evm;
 export const declEphemeralImmediate = ephImmediate;
+export const declEphemeralService = ephService;
 export const declSigning = wSigning;
 export const declSigningService = svcSigning;
 export const declEphemeralSigning = ephSigning;
