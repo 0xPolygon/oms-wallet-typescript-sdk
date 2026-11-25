@@ -847,14 +847,12 @@ describe('observation, waitForOperation, describeOperation, indexer facet, and e
 
   it('reads transaction status by txnId without settling operations or creating wallets', async () => {
     const h = sdkHarness();
-    // Works before any wallet is restored (recovery from another process), and never creates one.
-    await Promise.allSettled(
-      [h.client.evm, h.client.solana, h.client.tron].map((facet) =>
-        facet.getTransactionStatus('txn-unknown-1')
-      )
-    );
+    // Before any wallet exists it fails without creating one.
+    for (const facet of [h.client.evm, h.client.solana, h.client.tron])
+      await expect(facet.getTransactionStatus('txn-unknown-1')).rejects.toMatchObject({
+        code: 'WALLET_NOT_INITIALIZED'
+      });
     expect(h.remote.calls.filter((call) => call.method === 'CreateWallet')).toHaveLength(0);
-    expect(h.remote.calls.filter((call) => call.method === 'UseWallet')).toHaveLength(0);
     for (const bad of ['', 'has space', 'x'.repeat(257)])
       await expect(h.client.evm.getTransactionStatus(bad)).rejects.toMatchObject({
         code: 'INVALID_INPUT'

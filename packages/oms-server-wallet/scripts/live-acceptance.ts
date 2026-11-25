@@ -703,6 +703,116 @@ await check('observation: two ephemeral handles signing in with the same ID toke
   }
 });
 
+const sender = () =>
+  createEphemeralServerWallet({
+    publishableKey: key,
+    origin,
+    oidc: { subject, issuer, audience, getIdToken: () => idToken(subject) },
+    attestation: { trustedPcr0s: pcr0s, allowDebugEnclave },
+    approval: 'allow-immediate',
+    fetch: recording
+  });
+if (!execute) skip('in-memory sends', 'Set LIVE_EXECUTE=1 to send from in-memory handles.');
+else {
+  await check(
+    'in-memory handles send in parallel on Amoy, Solana and Tron; another handle waits by txnId',
+    async () => {
+      const [evmHandle, solanaHandle, tronHandle, watcher] = [
+        sender(),
+        sender(),
+        sender(),
+        sender()
+      ];
+      try {
+        await Promise.all([
+          evmHandle.restore({ families: ['evm'] }),
+          solanaHandle.restore({ families: ['solana'] }),
+          tronHandle.restore({ families: ['tron'] })
+        ]);
+        const saved: Record<'evm' | 'solana' | 'tron', { txnId: string; expiresAt: string }> =
+          {} as never;
+        const keep =
+          (family: 'evm' | 'solana' | 'tron') =>
+          (operation: { quote: { txnId: string; expiresAt: string } }) => {
+            saved[family] = { txnId: operation.quote.txnId, expiresAt: operation.quote.expiresAt };
+          };
+        await Promise.all([
+          evmHandle.evm.sendCall({
+            idempotencyKey: id('live-mem-amoy'),
+            chainId: amoy,
+            to: amoyRecipient,
+            value: '0',
+            data: '0x',
+            onPrepared: keep('evm')
+          }),
+          solanaHandle.solana.sendTransfer({
+            idempotencyKey: id('live-mem-sol'),
+            network: 'solana:devnet',
+            to: solanaRecipient,
+            asset: 'native',
+            amount: '10000',
+            onPrepared: keep('solana')
+          }),
+          tronHandle.tron.sendTransfer({
+            idempotencyKey: id('live-mem-trx'),
+            network: 'tron:nile',
+            to: tronRecipient,
+            asset: 'native',
+            amount: '1',
+            maxQuotedFee: process.env.LIVE_TRON_MAX_FEE ?? '2000000',
+            onPrepared: keep('tron')
+          })
+        ]);
+        // A handle with no record of these operations waits on them by txnId alone.
+        const options = { timeoutMs: 180_000, pollIntervalMs: 3_000 };
+        const waited = await Promise.all([
+          watcher.evm.waitForTransaction(saved.evm, options),
+          watcher.solana.waitForTransaction(saved.solana, options),
+          watcher.tron.waitForTransaction(saved.tron, options)
+        ]);
+        const outcomes = waited.map((result) => result.outcome);
+        if (outcomes.some((outcome) => outcome !== 'executed'))
+          throw new Error(`waitForTransaction returned ${JSON.stringify(outcomes)}`);
+        return { txnIds: Object.values(saved).map((transaction) => transaction.txnId), outcomes };
+      } finally {
+        await Promise.allSettled(
+          [evmHandle, solanaHandle, tronHandle, watcher].map((h) => h.close())
+        );
+      }
+    }
+  );
+  await check(
+    'execute after rotating the preparing credential is refused with nothing sent',
+    async () => {
+      const handle = sender();
+      try {
+        await handle.restore({ families: ['evm'] });
+        const prepared = await handle.evm.prepareCall({
+          idempotencyKey: id('live-mem-rotated'),
+          chainId: amoy,
+          to: amoyRecipient,
+          value: '0',
+          data: '0x'
+        });
+        if (prepared.status !== 'quoted') throw new Error(`Prepare ended ${prepared.status}`);
+        await handle.rotateCredential();
+        const refused = await handle.evm
+          .execute({ idempotencyKey: prepared.id, reviewId: prepared.reviewId })
+          .then(
+            () => 'executed',
+            (error: unknown) => (error instanceof WalletError ? error.code : String(error))
+          );
+        if (refused !== 'CREDENTIAL_CHANGED') throw new Error(`execute returned ${refused}`);
+        const status = await handle.evm.getTransactionStatus(prepared.quote.txnId);
+        if (status.status !== 'quoted') throw new Error(`status ${status.status}`);
+        return { refused, status: status.status };
+      } finally {
+        await handle.close();
+      }
+    }
+  );
+}
+
 await check('every WaaS response carried a known attestation format', async () => {
   const unknown = Object.keys(attestations).filter(
     (version) => version !== 'Sequence/1' && version !== 'Sequence/2'

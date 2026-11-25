@@ -57,7 +57,7 @@ so the outcome survives a restart. Settlement codes such as `SUBMISSION_UNCERTAI
 
 | Code | Meaning | What to do |
 | --- | --- | --- |
-| `CONFIGURATION` | Invalid factory options: publishable key, origin, OIDC, storage, executor, attestation, swaps, or an option an ephemeral handle does not take. | Fix the configuration; the message names the field. |
+| `CONFIGURATION` | Invalid factory options: publishable key, origin, OIDC, storage, executor, attestation, swaps, or an option an in-memory handle does not take (`storage`, `executor`). | Fix the configuration; the message names the field. |
 | `RPC_CONFIGURATION` | A Trails chain has no valid HTTPS RPC endpoint. | Configure `chains` in `trails(...)`. |
 | `UNSUPPORTED_PROTOCOL` | The Trails endpoint does not speak the required protocol version. | Point Trails at a supported endpoint. |
 
@@ -87,12 +87,12 @@ so the outcome survives a restart. Settlement codes such as `SUBMISSION_UNCERTAI
 
 | Code | Meaning | What to do |
 | --- | --- | --- |
-| `WALLET_NOT_INITIALIZED` | The family's wallet has not been created or restored on this handle; an ephemeral handle's `restore()` found none on WaaS. | Call `createOrRestore` (durable) or `create()` where the user's wallets are first set up (ephemeral). |
+| `WALLET_NOT_INITIALIZED` | The family's wallet has not been created or restored on this handle; an in-memory handle's `restore()` found none on WaaS; in-memory transactions never create one. | Call `createOrRestore` (durable) or `create()` where the user's wallets are first set up (in-memory). |
 | `WALLET_DISABLED` | The wallet is disabled. | `enable()` it, or stop using it. |
-| `WALLET_CLOSED` | The ephemeral handle was closed. | Create a new handle. |
+| `WALLET_CLOSED` | The in-memory handle or in-memory wallet service was closed. | Create a new handle (or service). |
 | `WALLET_MISMATCH` | WaaS shows a different wallet than the one bound, the identity has several wallets for a family and none was selected, a selected wallet is not the identity's, or a swap belongs to another wallet. | For duplicates, list them with `listWallets()`, choose one (for example the one holding funds) and pass it as `wallets` to `createOrRestore` / `restore`. Otherwise investigate; do not retry blindly. |
 | `WALLET_BUSY` | Too many unresolved swaps for this wallet. | Reconcile existing swaps first. |
-| `CREATION_UNCERTAIN` | A create request has an unknown outcome and the created wallet did not show up when re-checked. | Restore again later (ephemeral: `restore()`, not `create()`); the SDK does not create again. |
+| `CREATION_UNCERTAIN` | A create request has an unknown outcome and the created wallet did not show up when re-checked. | Restore again later (in-memory: `restore()`, not `create()`); the SDK does not create again. |
 | `CREDENTIAL_CHANGED` | The credential that prepared a transaction expired or was replaced (`rotateCredential`, `disable`, `close`) before `execute`; only it can execute the transaction. Nothing was sent (`provenUnsent`). | Prepare it again. |
 | `NO_CREDENTIAL` | No credential is available for the request. | Retry; the SDK signs in again. |
 | `IDEMPOTENCY_CONFLICT` | The idempotency key was already used with different input or mode. | Use a new key for new input. |

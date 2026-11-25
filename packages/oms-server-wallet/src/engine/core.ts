@@ -703,6 +703,18 @@ export class EngineCore {
       );
   }
 
+  /**
+   * A `TransactionStatus` read by `txnId`. WaaS answers it only for a credential with a wallet
+   * bound, so a handle that holds none first binds the identity's existing wallets (never
+   * creating one; `WALLET_NOT_INITIALIZED` if there are none).
+   */
+  async statusCall(state: State, txnId: string): Promise<unknown> {
+    if (!NETWORK_FAMILIES.some((family) => state.wallets[family]))
+      await this.restoreExisting(state);
+    const held = NETWORK_FAMILIES.filter((family) => state.wallets[family]);
+    return this.activeCall(state, 'TransactionStatus', { txnId }, held);
+  }
+
   async readOperation(id: string): Promise<StoredOperationRecord | null> {
     const value = await this.config.store.read(`operation:${id}`);
     return value === null ? null : parseStoredOperation(value);

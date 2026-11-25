@@ -84,6 +84,8 @@ export class FakeWaas implements RpcTransport {
   chainOutcome: 'pending' | 'executed' | 'failed' = 'pending';
   inFlight = 0;
   maxInFlight = 0;
+  /** Credentials that have bound a wallet (UseWallet or CreateWallet). */
+  bound = new Set<string>();
   async request(
     method: string,
     body: Record<string, unknown>,
@@ -95,6 +97,11 @@ export class FakeWaas implements RpcTransport {
       if (nonce <= (this.nonces.get(credential.id) ?? -1n)) throw new UpstreamError(7206, method);
       this.nonces.set(credential.id, nonce);
       if (this.revoked.has(credential.credentialId)) throw new UpstreamError(7207, method);
+      // Like WaaS: a credential reads transaction status only once it has bound a wallet.
+      if (method === 'UseWallet' || method === 'CreateWallet')
+        this.bound.add(credential.credentialId);
+      if (method === 'TransactionStatus' && !this.bound.has(credential.credentialId))
+        throw new UpstreamError(7207, method);
     }
     if (method === 'CommitVerifier') return { verifier: body.handle };
     if (method === 'CompleteAuth')

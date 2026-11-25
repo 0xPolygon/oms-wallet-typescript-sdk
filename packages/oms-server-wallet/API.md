@@ -84,7 +84,7 @@ export interface TypedDataSigningRequest {
     readonly network?: TronNetwork;
     readonly subject: string;
     readonly walletAddress: string;
-    readonly idempotencyKey?: string;
+    readonly idempotencyKey: string;
     readonly digest: `0x${string}`;
     readonly typedData: TypedDataInput;
 }
@@ -338,33 +338,41 @@ Whether a value is a supported EVM chain ID; narrows config or request input wit
 export declare function isSupportedEvmChainId(chainId: unknown): chainId is SupportedEvmChainId;
 ```
 
-## Ephemeral signer
+## In-memory wallet
 
 ### `createEphemeralServerWallet`
 
-Create a memory-only signer for one OIDC identity. It needs no storage, encryption key or
-distributed lock: each handle holds its own credential, so run one handle per concurrent
-worker. It signs and reads balances but cannot send and keeps no records. `create()` creates an
-identity's wallets where they are first set up; `restore()` binds them everywhere else.
-`signing` adds `signTypedData`. Call `close()` when done.
+Create an in-memory wallet for one OIDC identity: the full wallet API of `createServerWallet`
+without storage, an encryption key or a distributed lock. Each handle signs in with its own
+credential and keeps it, its wallets and its operation records in memory, so handles in
+different processes run in parallel; calls on one handle run one at a time. `create()` creates
+an identity's wallets where they are first set up; `restore()` binds them everywhere else.
+Records and `idempotencyKey` protection last as long as the handle. Call `close()` when done.
 
 ```typescript
 export declare function createEphemeralServerWallet<const TOptions extends EphemeralServerWalletOptions>(options: TOptions & {
     readonly [K in Exclude<keyof TOptions, keyof EphemeralServerWalletOptions>]: never;
 }): EphemeralServerWallet<TOptions extends {
+    readonly approval: "allow-immediate";
+} ? "allow-immediate" : "two-phase", TOptions extends {
+    readonly swaps: infer TSwaps extends SwapsConfig<"wallet", unknown>;
+} ? TSwaps : undefined, TOptions extends {
     readonly signing: SigningOptions;
 } ? true : false>;
 ```
 
 ### `EphemeralServerWalletOptions`
 
-Options for `createEphemeralServerWallet`. There is no store, executor, swaps or approval mode.
+Options for `createEphemeralServerWallet`: those of `createServerWallet` without `storage` and
+`executor`. The handle keeps its credential and records in memory and queues its own calls.
 
 ```typescript
 export interface EphemeralServerWalletOptions {
     readonly publishableKey: string;
     readonly origin?: string;
     readonly oidc: WalletOidcOptions;
+    readonly approval?: ApprovalMode;
+    readonly swaps?: SwapsConfig<"wallet", unknown>;
     readonly signing?: SigningOptions;
     readonly attestation?: AttestationOptions;
     readonly fetch?: typeof fetch;
@@ -373,69 +381,104 @@ export interface EphemeralServerWalletOptions {
 
 ### `EphemeralServerWallet`
 
-Memory-only signer for one OIDC identity, from `createEphemeralServerWallet`. It signs and reads
-balances; it cannot prepare or send transactions and keeps no operation records. `restore()`
-binds existing wallets and `create()` creates missing ones. Not assignable to `ServerWallet`.
-Call `close()` when done.
+In-memory wallet for one OIDC identity, from `createEphemeralServerWallet`: the same transfers,
+calls, signing, waits, balances and swaps as `createServerWallet`, with its credential and
+records held in this handle only. Records and `idempotencyKey` protection last as long as the
+handle: after a restart, recover a transaction by the `txnId` your app saved (see `onPrepared`)
+with `getTransactionStatus` or `waitForTransaction`. Each handle signs in with its own
+credential, so handles in different processes run in parallel without a lock; calls on one
+handle run one at a time. There is no `disable()`: stop with `close()`. Not assignable to
+`ServerWallet`.
 
 ```typescript
-export interface EphemeralServerWallet<TTypedData extends boolean = false> {
-    restore(options?: CreateOrRestoreOptions): Promise<EphemeralWalletSnapshot>;
-    create(options?: CreateOrRestoreOptions): Promise<EphemeralWalletSnapshot>;
-    listWallets(): Promise<readonly IdentityWallet[]>;
-    inspect(): Promise<EphemeralWalletSnapshot>;
-    rotateCredential(): Promise<EphemeralWalletSnapshot>;
-    close(): Promise<void>;
-    readonly evm: {
-        signMessage(input: {
-            readonly chainId: SupportedEvmChainId;
-            readonly message: string;
-        }): Promise<SignatureResult>;
-    } & (TTypedData extends true ? {
-        signTypedData(input: {
-            readonly chainId: SupportedEvmChainId;
-            readonly typedData: TypedDataInput;
-        }): Promise<SignatureResult>;
-    } : unknown);
-    readonly solana: {
-        signMessage(input: {
-            readonly message: string;
-        }): Promise<SignatureResult>;
-    };
-    readonly tron: {
-        signMessage(input: {
-            readonly message: string;
-        }): Promise<SignatureResult>;
-    } & (TTypedData extends true ? {
-        signTypedData(input: {
-            readonly network: TronNetwork;
-            readonly typedData: TypedDataInput;
-        }): Promise<SignatureResult>;
-    } : unknown);
+export type EphemeralServerWallet<TApproval extends ApprovalMode = "two-phase", TSwaps extends SwapsConfig<"wallet", unknown> | undefined = undefined, TTypedData extends boolean = false> = EphemeralWalletLifecycle & {
+    readonly evm: EvmFacet<TApproval, TTypedData>;
+    readonly solana: SolanaFacet<TApproval>;
+    readonly tron: TronFacet<TApproval, TTypedData>;
     readonly indexer: WalletIndexerFacet;
+} & (TSwaps extends SwapsConfig<"wallet", infer TFacet> ? {
+    readonly swaps: TFacet;
+} : unknown);
+```
+
+### `EphemeralWalletLifecycle`
+
+Lifecycle of an in-memory handle (`createEphemeralServerWallet`).
+
+```typescript
+export interface EphemeralWalletLifecycle {
+    restore(options?: CreateOrRestoreOptions): Promise<WalletSnapshot>;
+    create(options?: CreateOrRestoreOptions): Promise<WalletSnapshot>;
+    listWallets(): Promise<readonly IdentityWallet[]>;
+    inspect(): Promise<WalletSnapshot>;
+    rotateCredential(): Promise<WalletSnapshot>;
+    close(): Promise<void>;
 }
 ```
 
-### `EphemeralWalletSnapshot`
+### `createEphemeralServerWalletService`
 
-Wallets and credential held by an ephemeral handle.
+In-memory wallets for many identities, for backends serving many users: `forSubject(subject)`
+returns that user's in-memory handle (see `createEphemeralServerWallet`), kept in a bounded
+cache so requests reuse its credential instead of signing in each time. A handle evicted for
+size or idleness is dropped without revoking its credential, so a request still using it
+finishes; `evict(subject)` and `close()` revoke. Like `forSubject` on the durable service, it is
+a lookup, not an authorization check.
 
 ```typescript
-export interface EphemeralWalletSnapshot {
-    readonly wallets: Readonly<Partial<Record<NetworkFamily, RemoteWallet>>>;
-    readonly expiresAt?: string;
-    readonly credentialId?: string;
+export declare function createEphemeralServerWalletService<const TOptions extends EphemeralServerWalletServiceOptions>(options: TOptions & {
+    readonly [K in Exclude<keyof TOptions, keyof EphemeralServerWalletServiceOptions>]: never;
+}): EphemeralServerWalletService<TOptions extends {
+    readonly approval: "allow-immediate";
+} ? "allow-immediate" : "two-phase", TOptions extends {
+    readonly swaps: infer TSwaps extends SwapsConfig<"service", unknown>;
+} ? TSwaps : undefined, TOptions extends {
+    readonly signing: SigningOptions;
+} ? true : false>;
+```
+
+### `EphemeralServerWalletServiceOptions`
+
+Options for `createEphemeralServerWalletService`.
+
+```typescript
+export interface EphemeralServerWalletServiceOptions {
+    readonly publishableKey: string;
+    readonly origin?: string;
+    readonly oidc: ServiceOidcOptions;
+    readonly approval?: ApprovalMode;
+    readonly swaps?: SwapsConfig<"service", unknown>;
+    readonly signing?: SigningOptions;
+    readonly cache?: EphemeralCacheOptions;
+    readonly attestation?: AttestationOptions;
+    readonly fetch?: typeof fetch;
 }
 ```
 
-### `SignatureResult`
+### `EphemeralServerWalletService`
 
-A signature that WaaS produced and then verified.
+In-memory wallets for many identities, from `createEphemeralServerWalletService`. Handles from
+`forSubject` have no `close()`: the service owns their lifetime.
 
 ```typescript
-export interface SignatureResult {
-    readonly signature: string;
-    readonly verified: true;
+export interface EphemeralServerWalletService<TApproval extends ApprovalMode = "two-phase", TSwaps extends SwapsConfig<"service", unknown> | undefined = undefined, TTypedData extends boolean = false> {
+    forSubject(subject: string): Omit<EphemeralServerWallet<TApproval, undefined, TTypedData>, "close"> & (TSwaps extends SwapsConfig<"service", infer TFacet> ? {
+        readonly swaps: TFacet;
+    } : unknown);
+    evict(subject: string): Promise<void>;
+    close(): Promise<void>;
+    readonly indexer: ServiceIndexerFacet;
+}
+```
+
+### `EphemeralCacheOptions`
+
+Handle cache of `createEphemeralServerWalletService`.
+
+```typescript
+export interface EphemeralCacheOptions {
+    readonly maxHandles?: number;
+    readonly idleTimeoutMs?: number;
 }
 ```
 
@@ -563,9 +606,10 @@ export type EvmFacet<TApproval extends ApprovalMode = "two-phase", TTypedData ex
         listOperations(options?: ListOperationsOptions): Promise<OperationPage<EvmOperation>>;
         cancel(input: CancelInput): Promise<EvmOperation>;
         getTransactionStatus(txnId: string): Promise<TransactionStatusView>;
+        waitForTransaction(transaction: TransactionRef, options: WaitForOperationOptions): Promise<TransactionWaitResult>;
     } & (TApproval extends "allow-immediate" ? {
-        sendTransfer(input: EvmTransferInput): Promise<EvmOperation>;
-        sendCall<const abi extends Abi | readonly unknown[] = Abi, functionName extends ContractFunctionName<abi> = ContractFunctionName<abi>>(input: EvmCallInput<abi, functionName>): Promise<EvmOperation>;
+        sendTransfer(input: EvmTransferInput & SendHooks<EvmOperation>): Promise<EvmOperation>;
+        sendCall<const abi extends Abi | readonly unknown[] = Abi, functionName extends ContractFunctionName<abi> = ContractFunctionName<abi>>(input: EvmCallInput<abi, functionName> & SendHooks<EvmOperation>): Promise<EvmOperation>;
     } : unknown) & (TTypedData extends true ? {
         signTypedData(input: EvmSignTypedDataInput): Promise<EvmOperation>;
     } : unknown))]: ({
@@ -580,9 +624,10 @@ export type EvmFacet<TApproval extends ApprovalMode = "two-phase", TTypedData ex
         listOperations(options?: ListOperationsOptions): Promise<OperationPage<EvmOperation>>;
         cancel(input: CancelInput): Promise<EvmOperation>;
         getTransactionStatus(txnId: string): Promise<TransactionStatusView>;
+        waitForTransaction(transaction: TransactionRef, options: WaitForOperationOptions): Promise<TransactionWaitResult>;
     } & (TApproval extends "allow-immediate" ? {
-        sendTransfer(input: EvmTransferInput): Promise<EvmOperation>;
-        sendCall<const abi extends Abi | readonly unknown[] = Abi, functionName extends ContractFunctionName<abi> = ContractFunctionName<abi>>(input: EvmCallInput<abi, functionName>): Promise<EvmOperation>;
+        sendTransfer(input: EvmTransferInput & SendHooks<EvmOperation>): Promise<EvmOperation>;
+        sendCall<const abi extends Abi | readonly unknown[] = Abi, functionName extends ContractFunctionName<abi> = ContractFunctionName<abi>>(input: EvmCallInput<abi, functionName> & SendHooks<EvmOperation>): Promise<EvmOperation>;
     } : unknown) & (TTypedData extends true ? {
         signTypedData(input: EvmSignTypedDataInput): Promise<EvmOperation>;
     } : unknown))[K];
@@ -726,8 +771,9 @@ export type SolanaFacet<TApproval extends ApprovalMode = "two-phase"> = {
         listOperations(options?: ListOperationsOptions): Promise<OperationPage<SolanaOperation>>;
         cancel(input: CancelInput): Promise<SolanaOperation>;
         getTransactionStatus(txnId: string): Promise<TransactionStatusView>;
+        waitForTransaction(transaction: TransactionRef, options: WaitForOperationOptions): Promise<TransactionWaitResult>;
     } & {
-        sendTransfer(input: SolanaTransferInput): Promise<SolanaOperation>;
+        sendTransfer(input: SolanaTransferInput & SendHooks<SolanaOperation>): Promise<SolanaOperation>;
     } : {
         prepareTransfer(input: SolanaTransferInput): Promise<SolanaOperation>;
         execute(input: ExecuteInput): Promise<SolanaOperation>;
@@ -739,6 +785,7 @@ export type SolanaFacet<TApproval extends ApprovalMode = "two-phase"> = {
         listOperations(options?: ListOperationsOptions): Promise<OperationPage<SolanaOperation>>;
         cancel(input: CancelInput): Promise<SolanaOperation>;
         getTransactionStatus(txnId: string): Promise<TransactionStatusView>;
+        waitForTransaction(transaction: TransactionRef, options: WaitForOperationOptions): Promise<TransactionWaitResult>;
     })]: (TApproval extends "allow-immediate" ? {
         prepareTransfer(input: SolanaTransferInput): Promise<SolanaOperation>;
         execute(input: ExecuteInput): Promise<SolanaOperation>;
@@ -750,8 +797,9 @@ export type SolanaFacet<TApproval extends ApprovalMode = "two-phase"> = {
         listOperations(options?: ListOperationsOptions): Promise<OperationPage<SolanaOperation>>;
         cancel(input: CancelInput): Promise<SolanaOperation>;
         getTransactionStatus(txnId: string): Promise<TransactionStatusView>;
+        waitForTransaction(transaction: TransactionRef, options: WaitForOperationOptions): Promise<TransactionWaitResult>;
     } & {
-        sendTransfer(input: SolanaTransferInput): Promise<SolanaOperation>;
+        sendTransfer(input: SolanaTransferInput & SendHooks<SolanaOperation>): Promise<SolanaOperation>;
     } : {
         prepareTransfer(input: SolanaTransferInput): Promise<SolanaOperation>;
         execute(input: ExecuteInput): Promise<SolanaOperation>;
@@ -763,6 +811,7 @@ export type SolanaFacet<TApproval extends ApprovalMode = "two-phase"> = {
         listOperations(options?: ListOperationsOptions): Promise<OperationPage<SolanaOperation>>;
         cancel(input: CancelInput): Promise<SolanaOperation>;
         getTransactionStatus(txnId: string): Promise<TransactionStatusView>;
+        waitForTransaction(transaction: TransactionRef, options: WaitForOperationOptions): Promise<TransactionWaitResult>;
     })[K];
 };
 ```
@@ -845,9 +894,10 @@ export type TronFacet<TApproval extends ApprovalMode = "two-phase", TTypedData e
         listOperations(options?: ListOperationsOptions): Promise<OperationPage<TronOperation>>;
         cancel(input: CancelInput): Promise<TronOperation>;
         getTransactionStatus(txnId: string): Promise<TransactionStatusView>;
+        waitForTransaction(transaction: TransactionRef, options: WaitForOperationOptions): Promise<TransactionWaitResult>;
     } & (TApproval extends "allow-immediate" ? {
-        sendTransfer(input: TronTransferInput): Promise<TronOperation>;
-        sendCall(input: TronCallInput): Promise<TronOperation>;
+        sendTransfer(input: TronTransferInput & SendHooks<TronOperation>): Promise<TronOperation>;
+        sendCall(input: TronCallInput & SendHooks<TronOperation>): Promise<TronOperation>;
     } : unknown) & (TTypedData extends true ? {
         signTypedData(input: TronSignTypedDataInput): Promise<TronOperation>;
     } : unknown))]: ({
@@ -862,9 +912,10 @@ export type TronFacet<TApproval extends ApprovalMode = "two-phase", TTypedData e
         listOperations(options?: ListOperationsOptions): Promise<OperationPage<TronOperation>>;
         cancel(input: CancelInput): Promise<TronOperation>;
         getTransactionStatus(txnId: string): Promise<TransactionStatusView>;
+        waitForTransaction(transaction: TransactionRef, options: WaitForOperationOptions): Promise<TransactionWaitResult>;
     } & (TApproval extends "allow-immediate" ? {
-        sendTransfer(input: TronTransferInput): Promise<TronOperation>;
-        sendCall(input: TronCallInput): Promise<TronOperation>;
+        sendTransfer(input: TronTransferInput & SendHooks<TronOperation>): Promise<TronOperation>;
+        sendCall(input: TronCallInput & SendHooks<TronOperation>): Promise<TronOperation>;
     } : unknown) & (TTypedData extends true ? {
         signTypedData(input: TronSignTypedDataInput): Promise<TronOperation>;
     } : unknown))[K];
@@ -1051,6 +1102,46 @@ Input to `cancel` on the EVM, Solana and Tron facets.
 export interface CancelInput {
     readonly idempotencyKey: string;
 }
+```
+
+### `SendHooks`
+
+Options every `send*` takes besides its transfer or call.
+
+```typescript
+export interface SendHooks<TOperation extends WalletOperation> {
+    readonly onPrepared?: (operation: TOperation & {
+        readonly status: "quoted";
+    }) => void | Promise<void>;
+}
+```
+
+### `TransactionRef`
+
+The transaction `waitForTransaction` waits for: its `txnId` and its quote's `expiresAt`.
+
+```typescript
+export interface TransactionRef {
+    readonly txnId: string;
+    readonly expiresAt: string;
+}
+```
+
+### `TransactionWaitResult`
+
+Result of `waitForTransaction`. `executed` and `failed` are WaaS's final word.
+`reconciliation-required`: WaaS still showed no claim (or no information) two minutes past the
+quote's expiry, which is evidence but not proof that nothing was sent; reconcile before paying
+again. `timed-out` and `aborted` mean the wait ended first; `status` is the last read, if any.
+
+```typescript
+export type TransactionWaitResult = {
+    readonly outcome: "executed" | "failed";
+    readonly status: TransactionStatusView;
+} | {
+    readonly outcome: "reconciliation-required" | "timed-out" | "aborted";
+    readonly status?: TransactionStatusView;
+};
 ```
 
 ### `ResolveReconciliationInput`
@@ -1277,7 +1368,7 @@ WaaS status of a transaction, read by `getTransactionStatus`.
 ```typescript
 export interface TransactionStatusView {
     readonly txnId: string;
-    readonly status: "quoted" | "pending" | "executed" | "failed";
+    readonly status: "quoted" | "pending" | "executed" | "failed" | "unknown";
     readonly txnHash?: string;
 }
 ```
@@ -1312,7 +1403,7 @@ Next safe action from `describeOperation`. Only `safe-to-reprepare` allows a new
 key for the same payment; `resume-original` means repeat the original call with the same key.
 
 ```typescript
-export type OperationNextAction = "await-review" | "resume-original" | "poll-original" | "reconcile-original" | "safe-to-reprepare" | "done";
+export type OperationNextAction = "await-review" | "resume-original" | "poll-original" | "reconcile-original" | "safe-to-reprepare" | "investigate" | "done";
 ```
 
 ## Indexer (unattested)
@@ -1480,7 +1571,7 @@ export declare function isUpstreamError(error: unknown): error is UpstreamError;
 Closed union of safe, machine-readable SDK error codes.
 
 ```typescript
-export type WalletErrorCode = "APPROVAL_REQUIRED" | "ATTESTATION_FAILED" | "CHAIN_READ_FAILED" | "CONFIGURATION" | "CREATION_UNCERTAIN" | "DEBIT_PENDING" | "EXECUTE_REFUSED" | "FEE_ABOVE_QUOTE" | "FEE_LIMIT_EXCEEDED" | "FUNDING_FAILED" | "FUNDING_RECEIPT_UNVERIFIED" | "FUNDING_REVERTED" | "FUNDING_UNKNOWN" | "IDEMPOTENCY_CONFLICT" | "IDENTITY_MISMATCH" | "INDEXER_UNAVAILABLE" | "INSUFFICIENT_BALANCE" | "INTENT_ALREADY_TRACKED" | "INTENT_NOT_FUNDABLE" | "INVALID_ADDRESS" | "INVALID_AMOUNT" | "INVALID_CALL" | "INVALID_FAMILY" | "INVALID_FEE" | "INVALID_IDEMPOTENCY_KEY" | "INVALID_IDENTITY" | "INVALID_INPUT" | "INVALID_JSON" | "INVALID_MESSAGE" | "INVALID_METHOD" | "INVALID_PAGE" | "INVALID_RECOVERY" | "INVALID_RECOVERY_TRANSACTION" | "INVALID_RESPONSE" | "INVALID_STATE" | "INVALID_SWAP" | "INVALID_SWAP_QUOTE" | "INVALID_TRANSFER" | "INVALID_TYPED_DATA" | "NO_CREDENTIAL" | "NO_RECOVERABLE_BALANCE" | "NOT_FOUND" | "OPERATION_CANCELLED" | "PREPARATION_FAILED" | "QUOTE_EXPIRED" | "RECONCILIATION_REQUIRED" | "RECOVERY_CHANGED" | "RECOVERY_EVIDENCE_PENDING" | "RECOVERY_EXPIRED" | "RECOVERY_FAILED" | "RECOVERY_LIMIT" | "RECOVERY_NOT_READY" | "RECOVERY_PENDING" | "REFUND_REQUIRES_REVIEW" | "RESPONSE_TOO_LARGE" | "RPC_CONFIGURATION" | "SETTLEMENT_REQUIRES_REVIEW" | "SIGNATURE_INVALID" | "SIGNING_FAILED" | "SPONSORSHIP_REQUIRED" | "STALE_QUOTE" | "STALE_RECOVERY" | "STALE_REVIEW" | "STORAGE_INTEGRITY" | "SUBMISSION_UNCERTAIN" | "SWAP_ENVIRONMENT_CHANGED" | "SWAP_UNAVAILABLE" | "SWAPS_COORDINATION_REQUIRED" | "SWAPS_DISABLED" | "TRAILS_ABORTED" | "TRAILS_ERROR" | "TRAILS_TIMEOUT" | "TRAILS_UNAVAILABLE" | "TYPED_DATA_REFUSED" | "UNSUPPORTED_CHAIN" | "UNSUPPORTED_NETWORK" | "UNSUPPORTED_PROTOCOL" | "UPSTREAM_ERROR" | "UPSTREAM_REDIRECT" | "UPSTREAM_UNAVAILABLE" | "WALLET_BUSY" | "WALLET_CLOSED" | "WALLET_DISABLED" | "WALLET_MISMATCH" | "WALLET_NOT_INITIALIZED" | "WALLET_PENDING";
+export type WalletErrorCode = "APPROVAL_REQUIRED" | "ATTESTATION_FAILED" | "CHAIN_READ_FAILED" | "CONFIGURATION" | "CREATION_UNCERTAIN" | "CREDENTIAL_CHANGED" | "DEBIT_PENDING" | "EXECUTE_REFUSED" | "FEE_ABOVE_QUOTE" | "FEE_LIMIT_EXCEEDED" | "FUNDING_FAILED" | "FUNDING_RECEIPT_UNVERIFIED" | "FUNDING_REVERTED" | "FUNDING_UNKNOWN" | "IDEMPOTENCY_CONFLICT" | "IDENTITY_MISMATCH" | "INDEXER_UNAVAILABLE" | "INSUFFICIENT_BALANCE" | "INTENT_ALREADY_TRACKED" | "INTENT_NOT_FUNDABLE" | "INVALID_ADDRESS" | "INVALID_AMOUNT" | "INVALID_CALL" | "INVALID_FAMILY" | "INVALID_FEE" | "INVALID_IDEMPOTENCY_KEY" | "INVALID_IDENTITY" | "INVALID_INPUT" | "INVALID_JSON" | "INVALID_MESSAGE" | "INVALID_METHOD" | "INVALID_PAGE" | "INVALID_RECOVERY" | "INVALID_RECOVERY_TRANSACTION" | "INVALID_RESPONSE" | "INVALID_STATE" | "INVALID_SWAP" | "INVALID_SWAP_QUOTE" | "INVALID_TRANSFER" | "INVALID_TYPED_DATA" | "NO_CREDENTIAL" | "NO_RECOVERABLE_BALANCE" | "NOT_FOUND" | "OPERATION_CANCELLED" | "PREPARATION_FAILED" | "QUOTE_EXPIRED" | "RECONCILIATION_REQUIRED" | "RECOVERY_CHANGED" | "RECOVERY_EVIDENCE_PENDING" | "RECOVERY_EXPIRED" | "RECOVERY_FAILED" | "RECOVERY_LIMIT" | "RECOVERY_NOT_READY" | "RECOVERY_PENDING" | "REFUND_REQUIRES_REVIEW" | "RESPONSE_TOO_LARGE" | "RPC_CONFIGURATION" | "SETTLEMENT_REQUIRES_REVIEW" | "SIGNATURE_INVALID" | "SIGNING_FAILED" | "SPONSORSHIP_REQUIRED" | "STALE_QUOTE" | "STALE_RECOVERY" | "STALE_REVIEW" | "STORAGE_INTEGRITY" | "SUBMISSION_UNCERTAIN" | "SWAP_CONFLICT" | "SWAP_ENVIRONMENT_CHANGED" | "SWAP_UNAVAILABLE" | "SWAPS_COORDINATION_REQUIRED" | "SWAPS_DISABLED" | "TRAILS_ABORTED" | "TRAILS_ERROR" | "TRAILS_TIMEOUT" | "TRAILS_UNAVAILABLE" | "TYPED_DATA_REFUSED" | "UNSUPPORTED_CHAIN" | "UNSUPPORTED_NETWORK" | "UNSUPPORTED_PROTOCOL" | "UPSTREAM_ERROR" | "UPSTREAM_REDIRECT" | "UPSTREAM_UNAVAILABLE" | "WALLET_BUSY" | "WALLET_CLOSED" | "WALLET_DISABLED" | "WALLET_MISMATCH" | "WALLET_NOT_INITIALIZED";
 ```
 
 ### `isWalletErrorCode`

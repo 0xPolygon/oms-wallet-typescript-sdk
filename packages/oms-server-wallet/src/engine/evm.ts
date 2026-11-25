@@ -219,10 +219,7 @@ export class EvmEngine {
     return this.core.config.executor.run(async () => {
       const state = await this.core.load();
       return statusView(id, () =>
-        // No families: it signs in if needed but never binds or creates a wallet.
-        this.core
-          .activeCall(state, 'TransactionStatus', { txnId: id }, [])
-          .then((raw) => parseWaas(statusSchema, raw))
+        this.core.statusCall(state, id).then((raw) => parseWaas(statusSchema, raw))
       );
     });
   }

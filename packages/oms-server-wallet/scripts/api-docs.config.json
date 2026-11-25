@@ -104,6 +104,9 @@
       "symbols": [
         "ExecuteInput",
         "CancelInput",
+        "SendHooks",
+        "TransactionRef",
+        "TransactionWaitResult",
         "ResolveReconciliationInput",
         "TypedDataInput",
         "TypedDataDomain",

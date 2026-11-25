@@ -208,35 +208,29 @@ export interface ResolveSwapReconciliationInput {
 
 ### `SwapStore`
 
-Durable swap persistence scoped to one wallet identity.
+Durable swap persistence scoped to one wallet identity. `save` must be an atomic
+compare-and-set (for example `UPDATE … WHERE id = ? AND version = ?`, or an insert that fails
+when the ID or the `intentId` exists), so concurrent workers can never both apply a step.
 
 ```typescript
 export interface SwapStore {
     get(id: string): Promise<StoredSwapEntry | null>;
     findIntent(intentId: string): Promise<string | null>;
-    save(entry: StoredSwapEntry): Promise<void>;
-    list(options: {
-        readonly active?: boolean;
-        readonly offset?: number;
-        readonly limit: number;
-    }): Promise<readonly StoredSwapEntry[]>;
+    save(entry: StoredSwapEntry, options: SwapSaveOptions): Promise<SwapSaveResult>;
+    list(options: SwapListOptions): Promise<readonly StoredSwapEntry[]>;
 }
 ```
 
 ### `NamespacedSwapStore`
 
-Durable swap persistence partitioned by the SDK-computed wallet namespace.
+`SwapStore` partitioned by the SDK-computed wallet namespace; same contract per namespace.
 
 ```typescript
 export interface NamespacedSwapStore {
     get(namespace: string, id: string): Promise<StoredSwapEntry | null>;
     findIntent(namespace: string, intentId: string): Promise<string | null>;
-    save(namespace: string, entry: StoredSwapEntry): Promise<void>;
-    list(namespace: string, options: {
-        readonly active?: boolean;
-        readonly offset?: number;
-        readonly limit: number;
-    }): Promise<readonly StoredSwapEntry[]>;
+    save(namespace: string, entry: StoredSwapEntry, options: SwapSaveOptions): Promise<SwapSaveResult>;
+    list(namespace: string, options: SwapListOptions): Promise<readonly StoredSwapEntry[]>;
 }
 ```
 
@@ -256,7 +250,40 @@ export interface StoredSwapEntry {
     readonly active: boolean;
     readonly nextAt: number | null;
     readonly createdAt: string;
+    readonly reservedChainId: number | null;
     readonly payload: string;
+}
+```
+
+### `SwapSaveOptions`
+
+Options for `save`: the version the caller read (`0` to insert a new entry).
+
+```typescript
+export interface SwapSaveOptions {
+    readonly expectedVersion: number;
+}
+```
+
+### `SwapSaveResult`
+
+Result of `save`. `'conflict'`: the stored version is not `expectedVersion` (another writer saved
+first, or, for `expectedVersion: 0`, the ID already exists). `'intent-taken'`: inserting would
+give a second entry with the same `intentId`.
+
+```typescript
+export type SwapSaveResult = "saved" | "conflict" | "intent-taken";
+```
+
+### `SwapListOptions`
+
+Options for `list`, newest `createdAt` first.
+
+```typescript
+export interface SwapListOptions {
+    readonly active?: boolean;
+    readonly offset?: number;
+    readonly limit: number;
 }
 ```
 

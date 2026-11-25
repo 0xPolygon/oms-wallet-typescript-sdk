@@ -2,7 +2,8 @@ import { describe, expect, it } from 'vitest';
 
 import { UpstreamError } from '@polygonlabs/oms-server-wallet-sdk';
 
-import { sdkHarness } from './helpers.js';
+import { createEphemeralServerWalletInternal } from '../src/wallet.js';
+import { TEST_PUBLISHABLE_KEY, sdkHarness } from './helpers.js';
 
 const transfer = {
   chainId: 137 as const,
@@ -75,7 +76,22 @@ describe('waitForTransaction', () => {
   it('waits by txnId from a handle with no record of the operation', async () => {
     const h = sdkHarness();
     const sent = await h.client.evm.sendTransfer({ idempotencyKey: 'wait-txn-1', ...transfer });
-    const other = h.create();
+    // A fresh in-memory handle that never restored: the read binds existing wallets first.
+    const other = createEphemeralServerWalletInternal(
+      {
+        publishableKey: TEST_PUBLISHABLE_KEY,
+        oidc: {
+          subject: 'customer-1',
+          issuer: 'https://issuer.example',
+          audience: 'oms-server-wallet',
+          getIdToken: async () => ({
+            token: `fixture-${crypto.randomUUID()}`,
+            expiresAt: Math.floor(Date.now() / 1000) + 300
+          })
+        }
+      },
+      { transport: h.remote }
+    );
     const waited = other.evm.waitForTransaction(
       { txnId: sent.quote!.txnId, expiresAt: sent.quote!.expiresAt },
       { timeoutMs: 2000, pollIntervalMs: 10 }
