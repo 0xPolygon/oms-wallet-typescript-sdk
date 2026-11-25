@@ -146,6 +146,12 @@ export class SwapRecordCodec {
   }
 }
 
+/**
+ * How long a funding transaction prepared by another process's credential is left for that
+ * process to execute before this one prepares a new one.
+ */
+const FOREIGN_FUNDING_GRACE_MS = 60_000;
+
 /** A fresh internal operation ID for a retried step: `<base>_r<n>`. */
 function retryId(id: string): string {
   const match = /^(.*)_r([0-9]+)$/.exec(id);
@@ -948,6 +954,20 @@ export class TrailsCoordinator {
     if (record.funding.status === 'quoted') {
       await this.enabledLocked();
       this.sponsored(record.funding);
+      // Prepared moments ago by another process's credential: only that one can execute it, so
+      // give it time to, rather than racing it with a new preparation.
+      const { credentialId } = await this.config.primitives.inspectLocked();
+      if (
+        record.funding.credentialId &&
+        record.funding.credentialId !== credentialId &&
+        this.now() - Date.parse(record.funding.createdAt) < FOREIGN_FUNDING_GRACE_MS
+      )
+        // Write nothing: saving would bump the version and refuse the owner's own next write.
+        throw new WalletError(
+          'SWAP_CONFLICT',
+          'Another process prepared this funding and is executing it.',
+          409
+        );
       await this.availableLocked(record.request.originChainId, record.id, [record.fundingId]);
       await this.funds(record);
       const receipt = await this.receipt(record);

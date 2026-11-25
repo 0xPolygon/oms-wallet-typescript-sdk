@@ -586,6 +586,26 @@ export type WaitResult<TOperation extends WalletOperation> =
     }
   | { readonly outcome: 'timed-out' | 'aborted'; readonly operation?: TOperation };
 
+/** The transaction `waitForTransaction` waits for: its `txnId` and its quote's `expiresAt`. */
+export interface TransactionRef {
+  readonly txnId: string;
+  /** `operation.quote.expiresAt`; needed to know when an unclaimed transaction stops counting. */
+  readonly expiresAt: string;
+}
+
+/**
+ * Result of `waitForTransaction`. `executed` and `failed` are WaaS's final word.
+ * `reconciliation-required`: WaaS still showed no claim (or no information) two minutes past the
+ * quote's expiry, which is evidence but not proof that nothing was sent; reconcile before paying
+ * again. `timed-out` and `aborted` mean the wait ended first; `status` is the last read, if any.
+ */
+export type TransactionWaitResult =
+  | { readonly outcome: 'executed' | 'failed'; readonly status: TransactionStatusView }
+  | {
+      readonly outcome: 'reconciliation-required' | 'timed-out' | 'aborted';
+      readonly status?: TransactionStatusView;
+    };
+
 /** Derived next-action classification returned by `describeOperation`. */
 /**
  * Next safe action from `describeOperation`. Only `safe-to-reprepare` allows a new idempotency
@@ -649,7 +669,11 @@ export interface CancelInput {
 /** WaaS status of a transaction, read by `getTransactionStatus`. */
 export interface TransactionStatusView {
   readonly txnId: string;
-  readonly status: 'quoted' | 'pending' | 'executed' | 'failed';
+  /**
+   * `'unknown'`: WaaS answered without information (it does this under load for transactions
+   * that then execute); read again later.
+   */
+  readonly status: 'quoted' | 'pending' | 'executed' | 'failed' | 'unknown';
   readonly txnHash?: string;
 }
 
@@ -693,16 +717,39 @@ export interface EvmFacetBase {
    * catching up after the quote expired.
    */
   getTransactionStatus(txnId: string): Promise<TransactionStatusView>;
+  /**
+   * Wait for a transaction by `txnId`, for example from another process or after a restart,
+   * without the operation record. Polls outside the wallet's lock; `timeoutMs` up to 300,000.
+   */
+  waitForTransaction(
+    transaction: TransactionRef,
+    options: WaitForOperationOptions
+  ): Promise<TransactionWaitResult>;
 }
 
 /** Immediate one-shot EVM shortcuts, present only when `approval: 'allow-immediate'` is enabled. */
+/** Options every `send*` takes besides its transfer or call. */
+export interface SendHooks<TOperation extends WalletOperation> {
+  /**
+   * Called with the quoted operation after preparing and before `Execute`, and awaited. Save
+   * `operation.quote.txnId` here: if the process dies during `Execute`, that ID is how
+   * `getTransactionStatus` / `waitForTransaction` find out what happened (an in-memory handle
+   * keeps no record past the process). If it throws, nothing is executed and the operation stays
+   * quoted; calling the same `send*` again with the same key calls it again. It runs while the
+   * wallet's lock is held: keep it short and never call back into the wallet from it.
+   */
+  readonly onPrepared?: (
+    operation: TOperation & { readonly status: 'quoted' }
+  ) => void | Promise<void>;
+}
+
 export interface EvmImmediateFacet {
-  sendTransfer(input: EvmTransferInput): Promise<EvmOperation>;
+  sendTransfer(input: EvmTransferInput & SendHooks<EvmOperation>): Promise<EvmOperation>;
   sendCall<
     const abi extends Abi | readonly unknown[] = Abi,
     functionName extends ContractFunctionName<abi> = ContractFunctionName<abi>
   >(
-    input: EvmCallInput<abi, functionName>
+    input: EvmCallInput<abi, functionName> & SendHooks<EvmOperation>
   ): Promise<EvmOperation>;
 }
 
@@ -761,11 +808,19 @@ export interface SolanaFacetBase {
    * catching up after the quote expired.
    */
   getTransactionStatus(txnId: string): Promise<TransactionStatusView>;
+  /**
+   * Wait for a transaction by `txnId`, for example from another process or after a restart,
+   * without the operation record. Polls outside the wallet's lock; `timeoutMs` up to 300,000.
+   */
+  waitForTransaction(
+    transaction: TransactionRef,
+    options: WaitForOperationOptions
+  ): Promise<TransactionWaitResult>;
 }
 
 /** Immediate one-shot Solana shortcut, present only when `approval: 'allow-immediate'` is enabled. */
 export interface SolanaImmediateFacet {
-  sendTransfer(input: SolanaTransferInput): Promise<SolanaOperation>;
+  sendTransfer(input: SolanaTransferInput & SendHooks<SolanaOperation>): Promise<SolanaOperation>;
 }
 
 /** Solana operations. `sendTransfer` exists only with `approval: 'allow-immediate'`. */
@@ -808,12 +863,20 @@ export interface TronFacetBase {
    * catching up after the quote expired.
    */
   getTransactionStatus(txnId: string): Promise<TransactionStatusView>;
+  /**
+   * Wait for a transaction by `txnId`, for example from another process or after a restart,
+   * without the operation record. Polls outside the wallet's lock; `timeoutMs` up to 300,000.
+   */
+  waitForTransaction(
+    transaction: TransactionRef,
+    options: WaitForOperationOptions
+  ): Promise<TransactionWaitResult>;
 }
 
 /** Immediate one-shot Tron shortcuts, present only when `approval: 'allow-immediate'` is enabled. */
 export interface TronImmediateFacet {
-  sendTransfer(input: TronTransferInput): Promise<TronOperation>;
-  sendCall(input: TronCallInput): Promise<TronOperation>;
+  sendTransfer(input: TronTransferInput & SendHooks<TronOperation>): Promise<TronOperation>;
+  sendCall(input: TronCallInput & SendHooks<TronOperation>): Promise<TronOperation>;
 }
 
 /** Tron typed-data signing, present only when the factory receives `signing`. */

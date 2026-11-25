@@ -16,11 +16,17 @@ import type {
   TypedDataInput
 } from '../types.js';
 import type { EngineCore } from './core.js';
+import type { PreparedHook } from './inputs.js';
 
 import { requireChain } from '../environment.js';
 import { WalletError } from '../errors.js';
 import { quoteSchema, statusSchema } from '../protocol.js';
-import { refreshStatus, resolveNotBroadcast, settleExecuteError } from '../settlement.js';
+import {
+  refreshStatus,
+  resolveNotBroadcast,
+  settleExecuteError,
+  statusView
+} from '../settlement.js';
 import { validateTypedData } from '../typed-data.js';
 import { parseWaas } from '../validation.js';
 import {
@@ -62,7 +68,7 @@ export class EvmEngine {
     );
   }
 
-  async sendEvmTransfer(input: EvmTransferInput): Promise<EvmOperation> {
+  async sendEvmTransfer(input: EvmTransferInput, onPrepared?: PreparedHook): Promise<EvmOperation> {
     const id = validateIdempotencyKey(input?.idempotencyKey);
     const transfer = normalizeEvmTransfer({
       chainId: input.chainId,
@@ -73,6 +79,7 @@ export class EvmEngine {
     return this.core.config.executor.run(async () => {
       const prepared = await this.prepareEvmTransferInternal(id, transfer, 'immediate');
       if (prepared.status === 'quoted') {
+        if (onPrepared) await onPrepared(projectEvmOperation(prepared));
         const executed = await this.executeEvmInternal(
           prepared.id,
           ['transfer'],
@@ -93,7 +100,7 @@ export class EvmEngine {
     );
   }
 
-  async sendEvmCall(input: unknown): Promise<EvmOperation> {
+  async sendEvmCall(input: unknown, onPrepared?: PreparedHook): Promise<EvmOperation> {
     const { idempotencyKey, chainId, transaction } = normalizeEvmCall(input);
     return this.core.config.executor.run(async () => {
       const prepared = await this.prepareEvmCallInternal(
@@ -103,6 +110,7 @@ export class EvmEngine {
         'immediate'
       );
       if (prepared.status === 'quoted') {
+        if (onPrepared) await onPrepared(projectEvmOperation(prepared));
         const executed = await this.executeEvmInternal(prepared.id, ['call'], prepared.reviewId);
         return projectEvmOperation(executed);
       }
@@ -210,19 +218,12 @@ export class EvmEngine {
     const id = validateTxnId(txnId);
     return this.core.config.executor.run(async () => {
       const state = await this.core.load();
-      // Checked first so the authenticated call below can never create a wallet.
-      if (!state.wallets.evm)
-        throw new WalletError(
-          'WALLET_NOT_INITIALIZED',
-          'EVM wallet has not been created or restored yet.',
-          409
-        );
-      const result = await this.evmTransactionStatus(state, id);
-      return {
-        txnId: id,
-        status: result.status,
-        ...(result.txnHash ? { txnHash: result.txnHash } : {})
-      };
+      return statusView(id, () =>
+        // No families: it signs in if needed but never binds or creates a wallet.
+        this.core
+          .activeCall(state, 'TransactionStatus', { txnId: id }, [])
+          .then((raw) => parseWaas(statusSchema, raw))
+      );
     });
   }
 

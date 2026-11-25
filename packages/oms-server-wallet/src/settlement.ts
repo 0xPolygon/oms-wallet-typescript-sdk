@@ -239,3 +239,21 @@ export async function resolveNotBroadcast(
   op.error = undefined;
   if (result.txnHash) op.txnHash = result.txnHash;
 }
+
+/**
+ * A public status read by `txnId`. WaaS's inconclusive `TransactionFailed` answer is reported as
+ * `status: 'unknown'` rather than thrown; other refusals, such as `TransactionExpired`, are thrown.
+ */
+export async function statusView(
+  txnId: string,
+  read: () => Promise<TransactionStatus>
+): Promise<{ txnId: string; status: TransactionStatus['status'] | 'unknown'; txnHash?: string }> {
+  try {
+    const result = await read();
+    return { txnId, status: result.status, ...(result.txnHash ? { txnHash: result.txnHash } : {}) };
+  } catch (error) {
+    if (error instanceof UpstreamError && error.upstreamCode === TRANSACTION_FAILED)
+      return { txnId, status: 'unknown' };
+    throw error;
+  }
+}

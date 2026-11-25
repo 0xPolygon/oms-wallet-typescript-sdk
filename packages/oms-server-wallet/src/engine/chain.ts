@@ -19,14 +19,19 @@ import type {
   TypedDataInput
 } from '../types.js';
 import type { EngineCore } from './core.js';
-import type { NormalizedTronCall } from './inputs.js';
+import type { PreparedHook, NormalizedTronCall } from './inputs.js';
 import type { ChainSignRequest } from './signing.js';
 
 import { WalletError } from '../errors.js';
 import { tronToHex } from '../internal/protocol/addresses.js';
 import { TRON_CHAIN_IDS } from '../internal/protocol/networks.js';
 import { chainQuoteSchema } from '../protocol.js';
-import { refreshStatus, resolveNotBroadcast, settleExecuteError } from '../settlement.js';
+import {
+  refreshStatus,
+  resolveNotBroadcast,
+  settleExecuteError,
+  statusView
+} from '../settlement.js';
 import { validateTronTypedData } from '../typed-data.js';
 import { parseWaas } from '../validation.js';
 import {
@@ -67,7 +72,10 @@ export class ChainEngine {
     );
   }
 
-  async sendSolanaTransfer(input: SolanaTransferInput): Promise<SolanaOperation> {
+  async sendSolanaTransfer(
+    input: SolanaTransferInput,
+    onPrepared?: PreparedHook
+  ): Promise<SolanaOperation> {
     const { idempotencyKey, transfer } = normalizeSolanaTransfer(input);
     return this.core.config.executor.run(async () => {
       const prepared = await this.prepareSolanaTransferInternal(
@@ -76,6 +84,7 @@ export class ChainEngine {
         'immediate'
       );
       if (prepared.status === 'quoted') {
+        if (onPrepared) await onPrepared(projectSolanaOperation(prepared));
         const executed = await this.executeChainInternal(
           'solana',
           prepared.id,
@@ -166,11 +175,15 @@ export class ChainEngine {
     );
   }
 
-  async sendTronTransfer(input: TronTransferInput): Promise<TronOperation> {
+  async sendTronTransfer(
+    input: TronTransferInput,
+    onPrepared?: PreparedHook
+  ): Promise<TronOperation> {
     const { idempotencyKey, transfer, maxQuotedFee } = normalizeTronTransfer(input);
     return this.core.config.executor.run(async () =>
       this.sendTronLocked(
-        await this.prepareTronTransferInternal(idempotencyKey, transfer, maxQuotedFee, 'immediate')
+        await this.prepareTronTransferInternal(idempotencyKey, transfer, maxQuotedFee, 'immediate'),
+        onPrepared
       )
     );
   }
@@ -184,7 +197,7 @@ export class ChainEngine {
     );
   }
 
-  async sendTronCall(input: TronCallInput): Promise<TronOperation> {
+  async sendTronCall(input: TronCallInput, onPrepared?: PreparedHook): Promise<TronOperation> {
     const { idempotencyKey, network, target, maxQuotedFee } = normalizeTronCall(input);
     return this.core.config.executor.run(async () =>
       this.sendTronLocked(
@@ -194,12 +207,18 @@ export class ChainEngine {
           target,
           maxQuotedFee,
           'immediate'
-        )
+        ),
+        onPrepared
       )
     );
   }
 
-  private async sendTronLocked(prepared: StoredChainOperation): Promise<TronOperation> {
+  private async sendTronLocked(
+    prepared: StoredChainOperation,
+    onPrepared?: PreparedHook
+  ): Promise<TronOperation> {
+    if (prepared.status === 'quoted' && onPrepared)
+      await onPrepared(projectTronOperation(prepared));
     if (prepared.status === 'quoted')
       return projectTronOperation(
         await this.executeChainInternal(
@@ -647,22 +666,12 @@ export class ChainEngine {
     const id = validateTxnId(txnId);
     return this.core.config.executor.run(async () => {
       const state = await this.core.load();
-      // Checked first so the authenticated call below can never create a wallet.
-      if (!state.wallets[family])
-        throw new WalletError(
-          'WALLET_NOT_INITIALIZED',
-          `${family === 'solana' ? 'Solana' : 'Tron'} wallet has not been created or restored yet.`,
-          409
-        );
-      const result = parseWaas(
-        this.chainStatusSchema(family),
-        await this.core.activeCall(state, 'TransactionStatus', { txnId: id }, [family])
+      return statusView(id, () =>
+        // No families: it signs in if needed but never binds or creates a wallet.
+        this.core
+          .activeCall(state, 'TransactionStatus', { txnId: id }, [])
+          .then((raw) => parseWaas(this.chainStatusSchema(family), raw))
       );
-      return {
-        txnId: id,
-        status: result.status,
-        ...(result.txnHash ? { txnHash: result.txnHash } : {})
-      };
     });
   }
 

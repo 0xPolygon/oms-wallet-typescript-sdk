@@ -110,6 +110,10 @@ describe('several processes advancing one swap', () => {
     const prepared = await h.record();
     expect(prepared.action).toBe('fund');
     await h.wallet.rotateCredential();
+    // A funding prepared under another credential is first left to that credential's process.
+    await h.tick();
+    expect((await h.record()).fundingId).toBe(prepared.fundingId);
+    h.advance(60_000);
     await h.tick();
     const retried = await h.record();
     expect(retried.fundingId).toBe(`${prepared.fundingId}_r1`);

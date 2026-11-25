@@ -31,6 +31,8 @@ export interface LockedEnginePrimitives {
   inspectLocked(): Promise<{
     wallet?: { id: string; address: string };
     disabled: boolean;
+    /** The credential this wallet state signs with, if signed in. */
+    credentialId?: string;
   }>;
   markSwapsCoordinatedLocked(): Promise<void>;
   /**

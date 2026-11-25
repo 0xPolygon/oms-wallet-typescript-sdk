@@ -472,3 +472,7 @@ export function isTransientFailure(error: unknown): boolean {
     error.code === 'RESPONSE_TOO_LARGE'
   );
 }
+
+/** A `send*` caller's `onPrepared`, run with the quoted operation before Execute. */
+// eslint-disable-next-line @typescript-eslint/no-explicit-any -- each family passes its own operation type
+export type PreparedHook = (operation: any) => unknown;

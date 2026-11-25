@@ -41,7 +41,11 @@ export class WalletEngine {
       runLocked: (task) => this.core.config.executor.run(task),
       inspectLocked: async () => {
         const state = await this.core.load();
-        return { wallet: state.wallets.evm, disabled: state.disabled };
+        return {
+          wallet: state.wallets.evm,
+          disabled: state.disabled,
+          credentialId: state.credential?.credentialId
+        };
       },
       markSwapsCoordinatedLocked: async () => {
         const state = await this.core.load();

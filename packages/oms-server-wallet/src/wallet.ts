@@ -1,5 +1,6 @@
 import type { Abi, ContractFunctionName } from 'viem';
 
+import type { PreparedHook } from './engine/inputs.js';
 import type { SwapsConfig } from './internal/swapsBridge.js';
 import type { NetworkFamily } from './protocol.js';
 import type { RpcTransport } from './transport.js';
@@ -29,6 +30,7 @@ import type {
   ServerWalletOptions,
   ServerWalletService,
   ServerWalletServiceOptions,
+  SendHooks,
   ServiceIndexerFacet,
   SigningOptions,
   SolanaFacet,
@@ -46,6 +48,9 @@ import type {
   TronSignMessageInput,
   TronSignTypedDataInput,
   TronTransferInput,
+  TransactionRef,
+  TransactionStatusView,
+  TransactionWaitResult,
   TronTypedDataFacet,
   TypedDataInput,
   TypedDataSigningRequest,
@@ -59,12 +64,13 @@ import type {
 import { WalletEngine } from './engine.js';
 import { EngineCore } from './engine/core.js';
 import { EphemeralEngine } from './engine/ephemeral.js';
+import { validateTxnId } from './engine/inputs.js';
 import { environmentFromKey, resolveAttestationPolicy } from './environment.js';
-import { WalletError } from './errors.js';
+import { UpstreamError, WalletError } from './errors.js';
 import { omsFetch } from './http.js';
 import { IndexerClient } from './indexer.js';
 import { resolveSwapsBinder } from './internal/swapsBridge.js';
-import { isStaleExpiryRead } from './settlement.js';
+import { CLAIM_GRACE_MS, isStaleExpiryRead } from './settlement.js';
 import {
   computeIdentityNamespace,
   createSingleProcessExecutor,
@@ -235,13 +241,21 @@ function sleepAbortable(ms: number, signal?: AbortSignal): Promise<boolean> {
   });
 }
 
-async function waitFor<TOperation extends WalletOperation>(
-  id: string,
-  getLocal: (id: string) => Promise<TOperation | null>,
-  refresh: (id: string, skip: () => boolean) => Promise<TOperation | null>,
+/** Split a `send*` input into what the engine validates and the caller's `onPrepared`. */
+function withoutHook<TInput extends object>(
+  input: TInput & { readonly onPrepared?: unknown }
+): [TInput, PreparedHook | undefined] {
+  if (!input || typeof input !== 'object') return [input, undefined];
+  const { onPrepared, ...rest } = input;
+  if (onPrepared !== undefined && typeof onPrepared !== 'function')
+    throw new WalletError('INVALID_INPUT', 'onPrepared must be a function.');
+  return [rest as TInput, onPrepared as PreparedHook | undefined];
+}
+
+function waitBounds(
   options: WaitForOperationOptions,
-  now: () => number = () => Date.now()
-): Promise<WaitResult<TOperation>> {
+  now: () => number
+): { pollMs: number; deadline: number } {
   if (
     !options ||
     typeof options !== 'object' ||
@@ -251,7 +265,7 @@ async function waitFor<TOperation extends WalletOperation>(
   )
     throw new WalletError(
       'INVALID_INPUT',
-      'waitForOperation requires timeoutMs as an integer between 1 and 300,000.'
+      'Waiting requires timeoutMs as an integer between 1 and 300,000.'
     );
   if (
     options.pollIntervalMs !== undefined &&
@@ -261,8 +275,20 @@ async function waitFor<TOperation extends WalletOperation>(
       'INVALID_INPUT',
       'pollIntervalMs must be a finite number of milliseconds.'
     );
-  const pollMs = Math.max(250, Math.min(options.pollIntervalMs ?? 2_000, 30_000));
-  const deadline = now() + options.timeoutMs;
+  return {
+    pollMs: Math.max(250, Math.min(options.pollIntervalMs ?? 2_000, 30_000)),
+    deadline: now() + options.timeoutMs
+  };
+}
+
+async function waitFor<TOperation extends WalletOperation>(
+  id: string,
+  getLocal: (id: string) => Promise<TOperation | null>,
+  refresh: (id: string, skip: () => boolean) => Promise<TOperation | null>,
+  options: WaitForOperationOptions,
+  now: () => number = () => Date.now()
+): Promise<WaitResult<TOperation>> {
+  const { pollMs, deadline } = waitBounds(options, now);
   const signal = options.signal;
   // Set once the wait gives up, so work still queued behind the lock skips its remote refresh.
   let abandoned = false;
@@ -354,6 +380,49 @@ async function waitFor<TOperation extends WalletOperation>(
   }
 }
 
+/**
+ * Wait for a transaction by `txnId`: `executed` and `failed` end the wait; a transaction WaaS
+ * still shows as unclaimed (or answers without information, or no longer knows) past the quote's
+ * expiry plus the grace window ends it with `reconciliation-required`.
+ */
+async function waitForTxn(
+  transaction: TransactionRef,
+  read: (txnId: string) => Promise<TransactionStatusView>,
+  options: WaitForOperationOptions,
+  now: () => number = () => Date.now()
+): Promise<TransactionWaitResult> {
+  if (!transaction || typeof transaction !== 'object')
+    throw new WalletError('INVALID_INPUT', 'Pass { txnId, expiresAt } from the operation quote.');
+  const txnId = validateTxnId(transaction.txnId);
+  const expiresAt = Date.parse(transaction.expiresAt);
+  if (typeof transaction.expiresAt !== 'string' || !Number.isFinite(expiresAt))
+    throw new WalletError('INVALID_INPUT', 'expiresAt must be the quote expiry as an ISO date.');
+  const { pollMs, deadline } = waitBounds(options, now);
+  const signal = options.signal;
+  let last: TransactionStatusView | undefined;
+  for (;;) {
+    if (signal?.aborted) return { outcome: 'aborted', status: last };
+    if (now() >= deadline) return { outcome: 'timed-out', status: last };
+    let status: TransactionStatusView | undefined;
+    try {
+      status = await read(txnId);
+    } catch (error) {
+      // TransactionExpired / TransactionNotFound: WaaS no longer shows the transaction.
+      if (!(error instanceof UpstreamError) || ![7308, 7309].includes(error.upstreamCode))
+        throw error;
+    }
+    if (status) last = status;
+    if (status?.status === 'executed' || status?.status === 'failed')
+      return { outcome: status.status, status };
+    if (status?.status !== 'pending' && now() >= expiresAt + CLAIM_GRACE_MS)
+      return { outcome: 'reconciliation-required', status: last };
+    const remaining = deadline - now();
+    if (remaining <= 0) return { outcome: 'timed-out', status: last };
+    if (!(await sleepAbortable(Math.min(pollMs, remaining), signal)))
+      return { outcome: 'aborted', status: last };
+  }
+}
+
 const familyLabel: Record<NetworkFamily, string> = { evm: 'EVM', solana: 'Solana', tron: 'Tron' };
 
 /** Balance reads for a handle's own wallets; `addressOf` throws when a family is not held. */
@@ -413,16 +482,19 @@ function buildWalletFacade(params: {
       engine.evm.resolveEvmReconciliation(input),
     listOperations: (options?: ListOperationsOptions) => engine.evm.listEvmOperations(options),
     getTransactionStatus: (txnId: string) => engine.evm.getTransactionStatus(txnId),
+    waitForTransaction: (transaction: TransactionRef, options: WaitForOperationOptions) =>
+      waitForTxn(transaction, (txnId) => engine.evm.getTransactionStatus(txnId), options, clock),
     cancel: (input: CancelInput) => engine.evm.cancelEvm(input?.idempotencyKey)
   };
   const evmImmediate: EvmImmediateFacet = {
-    sendTransfer: (input: EvmTransferInput) => engine.evm.sendEvmTransfer(input),
-    sendCall: <
+    sendTransfer: async (input: EvmTransferInput & SendHooks<EvmOperation>) =>
+      engine.evm.sendEvmTransfer(...withoutHook(input)),
+    sendCall: async <
       const abi extends Abi | readonly unknown[] = Abi,
       functionName extends ContractFunctionName<abi> = ContractFunctionName<abi>
     >(
-      input: EvmCallInput<abi, functionName>
-    ) => engine.evm.sendEvmCall(input)
+      input: EvmCallInput<abi, functionName> & SendHooks<EvmOperation>
+    ) => engine.evm.sendEvmCall(...withoutHook(input))
   };
   const evmTypedData: EvmTypedDataFacet = {
     signTypedData: (input: EvmSignTypedDataInput) =>
@@ -454,10 +526,18 @@ function buildWalletFacade(params: {
       engine.chain.resolveSolanaReconciliation(input),
     listOperations: (options?: ListOperationsOptions) => engine.chain.listSolanaOperations(options),
     getTransactionStatus: (txnId: string) => engine.chain.getSolanaTransactionStatus(txnId),
+    waitForTransaction: (transaction: TransactionRef, options: WaitForOperationOptions) =>
+      waitForTxn(
+        transaction,
+        (txnId) => engine.chain.getSolanaTransactionStatus(txnId),
+        options,
+        clock
+      ),
     cancel: (input: CancelInput) => engine.chain.cancelSolana(input?.idempotencyKey)
   };
   const solanaImmediate: SolanaImmediateFacet = {
-    sendTransfer: (input: SolanaTransferInput) => engine.chain.sendSolanaTransfer(input)
+    sendTransfer: async (input: SolanaTransferInput & SendHooks<SolanaOperation>) =>
+      engine.chain.sendSolanaTransfer(...withoutHook(input))
   };
   const solana = Object.freeze(
     allowImmediate ? { ...solanaBase, ...solanaImmediate } : { ...solanaBase }
@@ -484,11 +564,20 @@ function buildWalletFacade(params: {
       engine.chain.resolveTronReconciliation(input),
     listOperations: (options?: ListOperationsOptions) => engine.chain.listTronOperations(options),
     getTransactionStatus: (txnId: string) => engine.chain.getTronTransactionStatus(txnId),
+    waitForTransaction: (transaction: TransactionRef, options: WaitForOperationOptions) =>
+      waitForTxn(
+        transaction,
+        (txnId) => engine.chain.getTronTransactionStatus(txnId),
+        options,
+        clock
+      ),
     cancel: (input: CancelInput) => engine.chain.cancelTron(input?.idempotencyKey)
   };
   const tronImmediate: TronImmediateFacet = {
-    sendTransfer: (input: TronTransferInput) => engine.chain.sendTronTransfer(input),
-    sendCall: (input: TronCallInput) => engine.chain.sendTronCall(input)
+    sendTransfer: async (input: TronTransferInput & SendHooks<TronOperation>) =>
+      engine.chain.sendTronTransfer(...withoutHook(input)),
+    sendCall: async (input: TronCallInput & SendHooks<TronOperation>) =>
+      engine.chain.sendTronCall(...withoutHook(input))
   };
   const tronTypedData: TronTypedDataFacet = {
     signTypedData: (input: TronSignTypedDataInput) =>
