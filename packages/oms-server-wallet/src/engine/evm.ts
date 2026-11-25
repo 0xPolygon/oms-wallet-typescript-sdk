@@ -253,19 +253,6 @@ export class EvmEngine {
         'This wallet has active Trails swaps coordination. Use createServerWallet with swaps: trails(...) so EVM debits coordinate with swap reservations.',
         409
       );
-    // Authoritative swap reservations in wallet state protect against a misconfigured worker
-    // pointing at an empty or different swap store while sharing wallet state and executor.
-    if (state.swapReservations) {
-      const blocking = Object.entries(state.swapReservations).find(
-        ([, reservation]) => reservation.chainId === chainId
-      );
-      if (blocking)
-        throw new WalletError(
-          'DEBIT_PENDING',
-          `Another debit on chain ${chainId} (swap "${blocking[0]}") must be reconciled first.`,
-          409
-        );
-    }
     if (this.core.gate)
       await this.core.gate.assertChainAvailableLocked(chainId, { exceptOperationId });
   }

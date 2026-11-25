@@ -151,6 +151,7 @@ so the outcome survives a restart. Settlement codes such as `SUBMISSION_UNCERTAI
 | `TRAILS_TIMEOUT` | A Trails request timed out. | Reconcile before retrying a mutation. |
 | `TRAILS_ABORTED` | A Trails request was aborted by its signal. | Reconcile before retrying a mutation. |
 | `TRAILS_UNAVAILABLE` | A Trails request did not complete. | Reconcile before retrying a mutation. |
+| `SWAP_CONFLICT` | Another worker saved this swap first (the swap store's compare-and-set refused the write). | Nothing to undo: read the swap again; the other worker owns that step. `tick()` skips it on its own. |
 | `SWAPS_DISABLED` | New swaps are disabled (`enabled: false`). | Re-enable swaps to start new ones. |
 | `SWAP_UNAVAILABLE` | A swap step failed with an error that is not a `WalletError` (recorded on the swap). | `reconcile` or `tick` later. |
 | `SWAP_ENVIRONMENT_CHANGED` | The swap was created against another Trails endpoint or project. | Restore the original Trails configuration. |

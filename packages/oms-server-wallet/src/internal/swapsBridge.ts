@@ -1,6 +1,6 @@
 import type { RecoveryTransaction } from '../authorization.js';
 import type { Quote } from '../protocol.js';
-import type { StoredEvmOperation, SwapReservation } from '../state.js';
+import type { StoredEvmOperation } from '../state.js';
 
 import { WalletError } from '../errors.js';
 
@@ -33,14 +33,11 @@ export interface LockedEnginePrimitives {
     disabled: boolean;
   }>;
   markSwapsCoordinatedLocked(): Promise<void>;
-  readSwapReservationsLocked(): Promise<Readonly<Record<string, SwapReservation>>>;
-  /** Reserve `chainId` for a swap at the given swap-record version (refreshed on every save). */
-  reserveSwapChainLocked(swapId: string, chainId: number, version: number): Promise<void>;
   /**
-   * Release a swap's reservation if `recordVersion` is newer than the reserved version; a stale
-   * or rolled-back swap record cannot release it. Returns whether anything was released.
+   * Store copies of a swap's internal operations that this wallet store lacks (an in-memory
+   * handle, or another worker's store), so they can be refreshed by `txnId`. Never overwrites.
    */
-  releaseSwapChainLocked(swapId: string, recordVersion: number): Promise<boolean>;
+  adoptEvmOperationsLocked(ops: readonly StoredEvmOperation[]): Promise<void>;
   resolveEvmReconciliationLocked(id: string, txnId: string): Promise<StoredEvmOperation>;
   readEvmOperationsLocked(ids: readonly string[]): Promise<StoredEvmOperation[]>;
   listOpenEvmOperationsLocked(): Promise<StoredEvmOperation[]>;

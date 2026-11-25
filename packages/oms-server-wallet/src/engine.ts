@@ -50,29 +50,14 @@ export class WalletEngine {
           await this.core.save(state);
         }
       },
-      readSwapReservationsLocked: async () => {
-        const state = await this.core.load();
-        return { ...(state.swapReservations ?? {}) };
-      },
-      reserveSwapChainLocked: async (swapId, chainId, version) => {
-        const state = await this.core.load();
-        const current = state.swapReservations?.[swapId];
-        if (current?.chainId === chainId && current.version === version) return;
-        state.swapReservations = {
-          ...(state.swapReservations ?? {}),
-          [swapId]: { chainId, version }
-        };
-        await this.core.save(state);
-      },
-      releaseSwapChainLocked: async (swapId, recordVersion) => {
-        const state = await this.core.load();
-        const current = state.swapReservations?.[swapId];
-        if (!current || recordVersion <= current.version) return false;
-        const next = { ...state.swapReservations };
-        delete next[swapId];
-        state.swapReservations = Object.keys(next).length > 0 ? next : undefined;
-        await this.core.save(state);
-        return true;
+      adoptEvmOperationsLocked: async (ops) => {
+        for (const op of ops) {
+          const local = await this.core.readEvmOperation(op.id);
+          // The swap record's copy wins only when it shows more progress, for example another
+          // process journaled or executed the submission this store still holds as quoted.
+          if (!local || operationProgress(op) > operationProgress(local))
+            await this.core.writeOperation(op);
+        }
       },
       resolveEvmReconciliationLocked: (id, txnId) =>
         this.evm.resolveEvmReconciliationInternal(id, txnId, { allowInternal: true }),
@@ -113,5 +98,22 @@ export class WalletEngine {
       signEvmTypedDataLocked: (id, chainId, typedData, options) =>
         this.evm.signEvmTypedDataInternal(id, chainId, typedData, options)
     };
+  }
+}
+
+/** How far an operation has got: preparing, quoted, submitting, in flight, settled. */
+function operationProgress(op: StoredEvmOperation): number {
+  switch (op.status) {
+    case 'preparing':
+      return 0;
+    case 'quoted':
+      return 1;
+    case 'submitting':
+      return 2;
+    case 'pending':
+    case 'unknown':
+      return 3;
+    default:
+      return 4;
   }
 }

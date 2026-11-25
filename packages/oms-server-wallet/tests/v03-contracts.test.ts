@@ -75,8 +75,8 @@ class MemoryNamespacedSwapStore implements NamespacedSwapStore {
   findIntent(ns: string, intentId: string) {
     return this.bucket(ns).findIntent(intentId);
   }
-  save(ns: string, entry: StoredSwapEntry) {
-    return this.bucket(ns).save(entry);
+  save(ns: string, entry: StoredSwapEntry, options: { expectedVersion: number }) {
+    return this.bucket(ns).save(entry, options);
   }
   list(ns: string, options: { active?: boolean; offset?: number; limit: number }) {
     return this.bucket(ns).list(options);
@@ -1222,53 +1222,6 @@ describe('review-audit boundary regressions', () => {
     expect(first.id).toBe('swap-test-0001');
   });
 
-  it('persists authoritative swap reservations in wallet state so a second worker with an empty swap store cannot bypass DEBIT_PENDING', async () => {
-    const h = await swapHarness();
-    await h.confirm();
-    // Worker 2 shares wallet state + executor, but points at a fresh/empty swap store (e.g. rollout mismatch).
-    const emptySwapStore = new MemorySwapStore();
-    const storeOpt = {
-      scope: 'wallet' as const,
-      adapter: emptySwapStore,
-      encryptionKey: SWAP_ENCRYPTION_KEY
-    };
-    const swapsCfg = trailsInternal(
-      {
-        apiKey: 'trails-key',
-        chains: { 137: 'https://polygon.rpc.example', 8453: 'https://base.rpc.example' },
-        assets: h.fixture.assets,
-        storage: storeOpt
-      },
-      { gateway: h.gateway, chains: h.chains }
-    );
-    // Mutating the caller's store object after trails(...) registration has no effect.
-    (storeOpt as { adapter: MemorySwapStore }).adapter = h.store;
-    const worker2 = createServerWalletInternal(
-      {
-        publishableKey: TEST_PUBLISHABLE_KEY,
-        oidc: {
-          subject: 'customer-1',
-          issuer: 'https://issuer.example',
-          audience: 'oms-server-wallet',
-          getIdToken: async () => ({ token: 'tok', expiresAt: Math.floor(Date.now() / 1000) + 300 })
-        },
-        storage: { encryptedStore: h.waas.store },
-        executor: h.waas.executor,
-        swaps: swapsCfg
-      },
-      { transport: h.waas.remote }
-    );
-    await expect(
-      worker2.evm.prepareTransfer({
-        idempotencyKey: 'bypass-rollout-1',
-        chainId: 137 as const,
-        to: '0x2222222222222222222222222222222222222222',
-        asset: 'native',
-        amount: '1'
-      })
-    ).rejects.toMatchObject({ code: 'DEBIT_PENDING' });
-  });
-
   it('hides internal Trails recovery signatures and child operations from public EVM getOperation / listOperations / refreshOperation', async () => {
     const h = await swapHarness();
     await h.confirm();
@@ -1320,114 +1273,6 @@ describe('review-audit boundary regressions', () => {
 });
 
 describe('deep systems hardening', () => {
-  it('prevents a second worker with an empty swap store from clearing or bypassing an active reservation via quote() or confirm()', async () => {
-    const h = await swapHarness();
-    await h.confirm(); // Reserves chain 137 under swap-test-0001 in wallet state.
-
-    const emptySwapStore = new MemorySwapStore();
-    const worker2 = createServerWalletInternal(
-      {
-        publishableKey: TEST_PUBLISHABLE_KEY,
-        oidc: {
-          subject: 'customer-1',
-          issuer: 'https://issuer.example',
-          audience: 'oms-server-wallet',
-          getIdToken: async () => ({ token: 'tok', expiresAt: Math.floor(Date.now() / 1000) + 300 })
-        },
-        storage: { encryptedStore: h.waas.store },
-        executor: h.waas.executor,
-        swaps: trailsInternal(
-          {
-            apiKey: 'trails-key',
-            chains: { 137: 'https://polygon.rpc.example', 8453: 'https://base.rpc.example' },
-            assets: h.fixture.assets,
-            storage: {
-              scope: 'wallet',
-              adapter: emptySwapStore,
-              encryptionKey: SWAP_ENCRYPTION_KEY
-            }
-          },
-          { gateway: h.gateway, chains: h.chains }
-        )
-      },
-      { transport: h.waas.remote }
-    );
-
-    // Calling quote with the SAME swapId on worker2 MUST fail closed and MUST NOT clear wallet state's reservation!
-    await expect(
-      worker2.swaps.quote({ idempotencyKey: 'swap-test-0001', ...h.fixture.input })
-    ).rejects.toMatchObject({ code: 'DEBIT_PENDING' });
-
-    // Confirming a DIFFERENT swap on the same chain via worker2 MUST also be blocked by wallet state's reservation!
-    const otherQuote = await worker2.swaps.quote({
-      idempotencyKey: 'swap-other-0002',
-      ...h.fixture.input
-    });
-    await expect(
-      worker2.swaps.confirm({ swapId: otherQuote.id, reviewId: otherQuote.quote.reviewId })
-    ).rejects.toMatchObject({ code: 'DEBIT_PENDING' });
-
-    // Ordinary EVM debit on worker2 stays blocked AND names the blocking swapId!
-    await expect(
-      worker2.evm.prepareTransfer({
-        idempotencyKey: 'ordinary-blocked-1',
-        chainId: 137 as const,
-        to: '0x2222222222222222222222222222222222222222',
-        asset: 'native',
-        amount: '1'
-      })
-    ).rejects.toThrow(/swap-test-0001/);
-
-    // Tick on worker2 with missing swap store record retains the reservation (fails closed).
-    await worker2.swaps.tick();
-    const state = JSON.parse((await h.waas.store.read('wallet'))!);
-    expect(state.swapReservations).toMatchObject({ 'swap-test-0001': { chainId: 137 } });
-  });
-
-  it('keeps a reservation whose swap record lags behind it until the swap step is retried', async () => {
-    const h = await swapHarness();
-    const q = await h.quote();
-    // SwapStore.save fails during confirm AFTER wallet state persisted the reservation.
-    h.store.fail = (r) => r.phase === 'preparing';
-    await expect(h.swaps.confirm({ swapId: q.id, reviewId: q.quote.reviewId })).rejects.toThrow(
-      'Simulated storage outage'
-    );
-    h.store.fail = undefined;
-    const held = async () => JSON.parse((await h.waas.store.read('wallet'))!).swapReservations;
-    expect(await held()).toMatchObject({ 'swap-test-0001': { chainId: 137 } });
-    // The stored record is older than the reservation, which a rollback would look like too:
-    // tick() has no evidence it is safe to release, so the hold stays.
-    expect(await h.swaps.tick()).toEqual({ nextAt: null });
-    expect(await held()).toMatchObject({ 'swap-test-0001': { chainId: 137 } });
-    // Retrying the step rewrites record and reservation consistently.
-    expect((await h.swaps.confirm({ swapId: q.id, reviewId: q.quote.reviewId })).phase).toBe(
-      'preparing'
-    );
-    expect(await held()).toMatchObject({ 'swap-test-0001': { chainId: 137 } });
-  });
-
-  it('never lets a rolled-back swap record release a newer reservation', async () => {
-    const h = await swapHarness();
-    const q = await h.quote();
-    const quotedEntry = structuredClone(h.store.entries.get(q.id)!);
-    await h.swaps.confirm({ swapId: q.id, reviewId: q.quote.reviewId });
-    const held = async () => JSON.parse((await h.waas.store.read('wallet'))!).swapReservations;
-    expect(await held()).toMatchObject({ 'swap-test-0001': { chainId: 137 } });
-    // Roll the swap store back to the authentic, unreserved quote-phase record.
-    h.store.entries.set(q.id, quotedEntry);
-    await h.swaps.tick();
-    expect(await held()).toMatchObject({ 'swap-test-0001': { chainId: 137 } });
-    await expect(
-      h.wallet.evm.prepareTransfer({
-        idempotencyKey: 'rollback-debit-1',
-        chainId: 137,
-        to: '0x2222222222222222222222222222222222222222',
-        asset: 'native',
-        amount: '1'
-      })
-    ).rejects.toMatchObject({ code: 'DEBIT_PENDING' });
-  });
-
   it('reloads wallet state after checkEvmDebitGate so gate-driven nonce/credential updates are never overwritten', async () => {
     const h = await swapHarness();
     // Create an open EVM op on chain 137 whose refresh triggers a credential rotation (expiredOnce).

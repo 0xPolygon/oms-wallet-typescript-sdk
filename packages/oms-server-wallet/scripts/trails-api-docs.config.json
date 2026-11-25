@@ -22,7 +22,14 @@
     },
     {
       "label": "Persistence",
-      "symbols": ["SwapStore", "NamespacedSwapStore", "StoredSwapEntry"]
+      "symbols": [
+        "SwapStore",
+        "NamespacedSwapStore",
+        "StoredSwapEntry",
+        "SwapSaveOptions",
+        "SwapSaveResult",
+        "SwapListOptions"
+      ]
     },
     {
       "label": "Views and errors",

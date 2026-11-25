@@ -75,7 +75,6 @@ export interface RecoveryRecord {
   transactionId: string;
   deployment?: StoredEvmOperation;
   transaction?: StoredEvmOperation;
-  ownerBalances?: { asset: string; amount: string }[];
   error?: string;
   received?: RecoveryAsset[];
 }
@@ -102,6 +101,7 @@ export interface SwapRecord {
   nextAt: number | null;
   attempts: number;
   error?: string;
+  /** Internal operation ID of the current funding attempt (a new one after `CREDENTIAL_CHANGED`). */
   fundingId: string;
   funding?: StoredEvmOperation;
   fundingConfirmed: boolean;
@@ -122,34 +122,62 @@ export interface SwapRecord {
 export interface StoredSwapEntry {
   readonly id: string;
   readonly intentId: string;
+  /** Starts at 1 and grows by one on every save; the compare-and-set key. */
   readonly version: number;
   readonly active: boolean;
   readonly nextAt: number | null;
   readonly createdAt: string;
+  /**
+   * The chain this swap currently holds funds on (its funding or recovery), or `null`. While set,
+   * other debits of the wallet on that chain wait (`DEBIT_PENDING`).
+   */
+  readonly reservedChainId: number | null;
   readonly payload: string;
 }
 
-/** Durable swap persistence scoped to one wallet identity. */
+/**
+ * Result of `save`. `'conflict'`: the stored version is not `expectedVersion` (another writer saved
+ * first, or, for `expectedVersion: 0`, the ID already exists). `'intent-taken'`: inserting would
+ * give a second entry with the same `intentId`.
+ */
+export type SwapSaveResult = 'saved' | 'conflict' | 'intent-taken';
+
+/** Options for `save`: the version the caller read (`0` to insert a new entry). */
+export interface SwapSaveOptions {
+  readonly expectedVersion: number;
+}
+
+/** Options for `list`, newest `createdAt` first. */
+export interface SwapListOptions {
+  /** Only entries with `active: true`. */
+  readonly active?: boolean;
+  readonly offset?: number;
+  readonly limit: number;
+}
+
+/**
+ * Durable swap persistence scoped to one wallet identity. `save` must be an atomic
+ * compare-and-set (for example `UPDATE … WHERE id = ? AND version = ?`, or an insert that fails
+ * when the ID or the `intentId` exists), so concurrent workers can never both apply a step.
+ */
 export interface SwapStore {
   get(id: string): Promise<StoredSwapEntry | null>;
   findIntent(intentId: string): Promise<string | null>;
-  save(entry: StoredSwapEntry): Promise<void>;
-  list(options: {
-    readonly active?: boolean;
-    readonly offset?: number;
-    readonly limit: number;
-  }): Promise<readonly StoredSwapEntry[]>;
+  save(entry: StoredSwapEntry, options: SwapSaveOptions): Promise<SwapSaveResult>;
+  /** Entries sorted by `createdAt`, newest first. */
+  list(options: SwapListOptions): Promise<readonly StoredSwapEntry[]>;
 }
 
-/** Durable swap persistence partitioned by the SDK-computed wallet namespace. */
+/** `SwapStore` partitioned by the SDK-computed wallet namespace; same contract per namespace. */
 export interface NamespacedSwapStore {
   get(namespace: string, id: string): Promise<StoredSwapEntry | null>;
   findIntent(namespace: string, intentId: string): Promise<string | null>;
-  save(namespace: string, entry: StoredSwapEntry): Promise<void>;
-  list(
+  save(
     namespace: string,
-    options: { readonly active?: boolean; readonly offset?: number; readonly limit: number }
-  ): Promise<readonly StoredSwapEntry[]>;
+    entry: StoredSwapEntry,
+    options: SwapSaveOptions
+  ): Promise<SwapSaveResult>;
+  list(namespace: string, options: SwapListOptions): Promise<readonly StoredSwapEntry[]>;
 }
 
 /**

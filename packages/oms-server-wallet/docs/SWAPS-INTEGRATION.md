@@ -118,14 +118,36 @@ Implement `SwapStore` (or `NamespacedSwapStore`) over `StoredSwapEntry`:
 | Field on `StoredSwapEntry` | Purpose |
 | --- | --- |
 | `id` | Primary key (local swap ID). |
-| `intentId` | Unique upstream Trails intent ID (indexed for `findIntent`). |
-| `version` | Monotonically increasing record version. |
+| `intentId` | Upstream Trails intent ID; unique per wallet (indexed for `findIntent`). |
+| `version` | Starts at 1 and grows by one on every save; the compare-and-set key. |
 | `active` | Whether the swap has a pending workflow action (indexed for `list({ active: true })`). |
 | `nextAt` | Epoch ms timestamp for the next scheduled `tick()` alarm, or `null` when idle. |
-| `createdAt` | ISO-8601 creation timestamp (sort descending in `list`). |
+| `createdAt` | ISO-8601 creation timestamp (`list` sorts newest first). |
+| `reservedChainId` | The chain the swap currently holds funds on, or `null`. While set, other debits of the wallet on that chain wait (`DEBIT_PENDING`). |
 | `payload` | Opaque string the SDK has already encrypted (AES-256-GCM) and authenticated with the metadata fields above and the wallet namespace. Store it as given; an edited entry fails with `STORAGE_INTEGRITY`. |
 
-`storage.encryptionKey` is 32 base64-encoded bytes. It may be the wallet state key: swap records use a key derived separately for each wallet namespace. The SDK cannot detect a store that returns an older authentic version of an entry, so `save` must never be rolled back (restore a backup only together with the matching wallet state). A wallet-state debit reservation is released only by a swap record newer than the reservation, so a rolled-back swap store keeps the wallet's EVM debits blocked (`DEBIT_PENDING`) until the swap step is retried.
+`save(entry, { expectedVersion })` must be an atomic compare-and-set, and must return:
+
+| Result | When |
+| --- | --- |
+| `'saved'` | The stored version was `expectedVersion` (`0`: no entry with this ID existed) and the entry is written. |
+| `'conflict'` | The stored version differs: another worker saved first. Write nothing. |
+| `'intent-taken'` | Inserting would create a second entry with the same `intentId`. Write nothing. |
+
+In SQL, for example:
+
+```sql
+-- expectedVersion = 0: insert; a unique index on (namespace, intent_id) turns a duplicate into 'intent-taken'
+INSERT INTO swaps (namespace, id, intent_id, version, active, next_at, created_at, reserved_chain_id, payload)
+VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?);
+-- expectedVersion > 0: one row updated is 'saved', none is 'conflict'
+UPDATE swaps SET version = ?, active = ?, next_at = ?, reserved_chain_id = ?, payload = ?
+WHERE namespace = ? AND id = ? AND version = ?;
+```
+
+With that contract, several processes can drive the same wallet's swaps (`tick()`, `confirm`, recovery) without a shared lock: each step is saved before it reaches money, so when two workers race, one gets `SWAP_CONFLICT` and backs off (`tick()` skips it), and every transaction is journaled before `Execute`, so a worker that takes over polls it instead of sending it again.
+
+`storage.encryptionKey` is 32 base64-encoded bytes. It may be the wallet state key: swap records use a key derived separately for each wallet namespace. The SDK cannot detect a store that returns an older authentic version of an entry, so `save` must never be rolled back (restore a backup only together with the matching wallet state).
 
 Always arrange a durable wake-up (`nextAt`) before committing an action that can reach an external service. On Cloudflare Workers, use one SQLite Durable Object per wallet with one alarm set to the earliest active `nextAt`, and never hold `blockConcurrencyWhile` open across network I/O.
 

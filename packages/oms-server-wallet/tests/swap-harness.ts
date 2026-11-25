@@ -2,6 +2,8 @@ import { createSingleProcessExecutor } from '@polygonlabs/oms-server-wallet-sdk'
 import {
   TrailsError,
   type StoredSwapEntry,
+  type SwapSaveOptions,
+  type SwapSaveResult,
   type SwapStore
 } from '@polygonlabs/oms-server-wallet-sdk/trails';
 import { encodeFunctionData } from 'viem';
@@ -38,10 +40,19 @@ export class MemorySwapStore implements SwapStore {
   async findIntent(intent: string) {
     return [...this.entries.values()].find((e) => e.intentId === intent)?.id ?? null;
   }
-  async save(entry: StoredSwapEntry) {
+  /** Compare-and-set, with `intentId` unique: the contract every SwapStore must meet. */
+  async save(
+    entry: StoredSwapEntry,
+    { expectedVersion }: SwapSaveOptions
+  ): Promise<SwapSaveResult> {
     if (this.fail && this.fail(await this.codec!.decode(entry)))
       throw new Error('Simulated storage outage');
+    const current = this.entries.get(entry.id);
+    if ((current?.version ?? 0) !== expectedVersion) return 'conflict';
+    if (!current && [...this.entries.values()].some((other) => other.intentId === entry.intentId))
+      return 'intent-taken';
     this.entries.set(entry.id, structuredClone(entry));
+    return 'saved';
   }
   async list({ active, offset = 0, limit }: { active?: boolean; offset?: number; limit: number }) {
     return structuredClone(
@@ -57,8 +68,8 @@ export class MemorySwapStore implements SwapStore {
     return entry ? this.codec!.decode(entry) : null;
   }
   /** Convenience helper for tests mutating a stored SwapRecord directly. */
-  async putRecord(record: SwapRecord): Promise<void> {
-    this.entries.set(record.id, await this.codec!.encode(record));
+  async putRecord(record: SwapRecord, reservedChainId: number | null = null): Promise<void> {
+    this.entries.set(record.id, await this.codec!.encode(record, reservedChainId));
   }
 }
 
@@ -200,7 +211,16 @@ export async function swapHarness(native = false) {
   };
   const store = new MemorySwapStore();
 
-  const create = (enabled = true, environment = 'default') =>
+  /**
+   * `walletState` defaults to the shared durable store. A separate `MemoryStore` and executor
+   * model another process: its own credential and wallet state, the same swap store and clock.
+   */
+  const create = (
+    enabled = true,
+    environment = 'default',
+    walletState: MemoryStore = walletStore,
+    walletExecutor = executor
+  ) =>
     createServerWalletInternal(
       {
         publishableKey: TEST_PUBLISHABLE_KEY,
@@ -213,8 +233,8 @@ export async function swapHarness(native = false) {
             expiresAt: Math.floor(Date.now() / 1000) + 300
           })
         },
-        storage: { encryptedStore: walletStore },
-        executor,
+        storage: { encryptedStore: walletState },
+        executor: walletExecutor,
         approval: 'allow-immediate',
         swaps: trailsInternal(
           {
@@ -263,6 +283,12 @@ export async function swapHarness(native = false) {
     },
     get swaps() {
       return wallet.swaps;
+    },
+    /** Another process for the same identity: its own wallet state and lock, the same swap store. */
+    async worker() {
+      const other = create(true, 'default', new MemoryStore(), createSingleProcessExecutor());
+      await other.createOrRestore();
+      return other;
     },
     restart(enabled = true, environment = 'default') {
       wallet = create(enabled, environment);

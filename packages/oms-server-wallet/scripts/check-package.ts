@@ -135,13 +135,13 @@ const nsState: NamespacedStateStore = { read: async () => null, write: async () 
 const swapStore: SwapStore = {
   get: async () => null,
   findIntent: async () => null,
-  save: async () => {},
+  save: async () => 'saved' as const,
   list: async () => []
 };
 const nsSwapStore: NamespacedSwapStore = {
   get: async () => null,
   findIntent: async () => null,
-  save: async () => {},
+  save: async () => 'saved' as const,
   list: async () => []
 };
 
@@ -390,7 +390,7 @@ const swapMem = () => {
   return {
     get: async (id) => m.get(id) ?? null,
     findIntent: async (intentId) => [...m.values()].find((e) => e.intentId === intentId)?.id ?? null,
-    save: async (entry) => { m.set(entry.id, entry); },
+    save: async (entry, { expectedVersion }) => { if ((m.get(entry.id)?.version ?? 0) !== expectedVersion) return 'conflict'; m.set(entry.id, entry); return 'saved'; },
     list: async () => [...m.values()]
   };
 };

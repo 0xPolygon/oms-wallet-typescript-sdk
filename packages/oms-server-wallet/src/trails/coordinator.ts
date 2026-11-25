@@ -95,18 +95,20 @@ export class SwapRecordCodec {
       entry.version,
       entry.active,
       entry.nextAt,
-      entry.createdAt
+      entry.createdAt,
+      entry.reservedChainId
     ]);
   }
 
-  async encode(record: SwapRecord): Promise<StoredSwapEntry> {
+  async encode(record: SwapRecord, reservedChainId: number | null): Promise<StoredSwapEntry> {
     const metadata = {
       id: record.id,
       intentId: record.quote.intent.intentId,
       version: record.version,
       active: record.action !== null,
       nextAt: record.nextAt,
-      createdAt: record.createdAt
+      createdAt: record.createdAt,
+      reservedChainId
     };
     return {
       ...metadata,
@@ -144,11 +146,22 @@ export class SwapRecordCodec {
   }
 }
 
+/** A fresh internal operation ID for a retried step: `<base>_r<n>`. */
+function retryId(id: string): string {
+  const match = /^(.*)_r([0-9]+)$/.exec(id);
+  return match ? `${match[1]}_r${Number(match[2]) + 1}` : `${id}_r1`;
+}
+
+const credentialChanged = (error: unknown) =>
+  error instanceof WalletError && error.code === 'CREDENTIAL_CHANGED';
+const swapConflict = (error: unknown) =>
+  error instanceof WalletError && error.code === 'SWAP_CONFLICT';
+
 function scopeSwapStore(store: NamespacedSwapStore, namespace: string): SwapStore {
   return {
     get: (id) => store.get(namespace, id),
     findIntent: (intentId) => store.findIntent(namespace, intentId),
-    save: (entry) => store.save(namespace, entry),
+    save: (entry, options) => store.save(namespace, entry, options),
     list: (options) => store.list(namespace, options)
   };
 }
@@ -241,28 +254,49 @@ export class TrailsCoordinator {
       );
   }
 
-  private async saveLocked(
-    record: SwapRecord,
-    delay: number | null = record.action ? 5000 : null,
-    options: { syncReservation?: boolean } = {}
-  ) {
+  /**
+   * Compare-and-set the record at the version it was read at. Throws `SWAP_CONFLICT` if another
+   * worker saved first (the caller stops: the other worker owns this step), and
+   * `INTENT_ALREADY_TRACKED` if inserting would track an intent twice. The chain the swap holds
+   * is saved with the record, so taking and releasing a hold is part of the same write.
+   */
+  private async saveLocked(record: SwapRecord, delay: number | null = record.action ? 5000 : null) {
+    const expectedVersion = record.version;
     record.version++;
     record.updatedAt = new Date(this.now()).toISOString();
     record.nextAt = delay === null ? null : this.now() + delay;
-    if (options.syncReservation === false) {
-      await this.config.store.save(await this.config.codec.encode(record));
-      return;
-    }
-    const reserved = this.reservedChain(record);
-    // Conservative crash ordering: persist reservation BEFORE swap record when acquiring,
-    // and clear reservation AFTER swap record when releasing.
-    if (reserved !== undefined)
-      await this.config.primitives.reserveSwapChainLocked(record.id, reserved, record.version);
-    await this.config.store.save(await this.config.codec.encode(record));
-    // Released only if this record is newer than the reservation: a save that started from a
-    // stale or rolled-back swap record cannot release a hold taken by a newer one.
-    if (reserved === undefined)
-      await this.config.primitives.releaseSwapChainLocked(record.id, record.version);
+    const result: unknown = await this.config.store.save(
+      await this.config.codec.encode(record, this.reservedChain(record) ?? null),
+      { expectedVersion }
+    );
+    if (result === 'saved') return;
+    record.version = expectedVersion;
+    if (result === 'conflict')
+      throw new WalletError(
+        'SWAP_CONFLICT',
+        'Another worker updated this swap first. Read it again.',
+        409
+      );
+    if (result === 'intent-taken')
+      throw new WalletError(
+        'INTENT_ALREADY_TRACKED',
+        'This intent is already tracked by another swap. Open its existing activity.',
+        409
+      );
+    throw new WalletError(
+      'CONFIGURATION',
+      "SwapStore.save must return 'saved', 'conflict' or 'intent-taken'.",
+      503
+    );
+  }
+
+  /** Give this wallet store the swap's internal operations it lacks, from the record's copies. */
+  private async adoptLocked(record: SwapRecord): Promise<void> {
+    const recovery = this.currentRecovery(record, false);
+    const copies = [record.funding, recovery?.deployment, recovery?.transaction].filter(
+      (op): op is StoredEvmOperation => !!op
+    );
+    if (copies.length) await this.config.primitives.adoptEvmOperationsLocked(copies);
   }
 
   private async activeRecordsLocked(): Promise<SwapRecord[]> {
@@ -300,17 +334,6 @@ export class TrailsCoordinator {
     exceptSwap?: string,
     exceptOperations: readonly string[] = []
   ): Promise<void> {
-    // Check authoritative wallet-state swap reservations first so a worker with an empty or stale
-    // swap store cannot confirm a competing swap or recovery on a reserved chain.
-    const walletReservations = await this.config.primitives.readSwapReservationsLocked();
-    for (const [swapId, reserved] of Object.entries(walletReservations)) {
-      if (swapId !== exceptSwap && reserved.chainId === chainId)
-        throw new WalletError(
-          'DEBIT_PENDING',
-          `Another debit on chain ${chainId} (swap "${swapId}") must be reconciled first.`,
-          409
-        );
-    }
     for (const record of await this.activeRecordsLocked()) {
       if (record.id !== exceptSwap && this.reservedChain(record) === chainId)
         throw new WalletError(
@@ -375,15 +398,6 @@ export class TrailsCoordinator {
           );
         return swapView(existing);
       }
-      // Fail closed if wallet state already holds an active reservation for this swap ID while
-      // this worker's swap store does not have it (e.g. misconfigured rollout store).
-      const reservations = await this.config.primitives.readSwapReservationsLocked();
-      if (id in reservations)
-        throw new WalletError(
-          'DEBIT_PENDING',
-          `Swap "${id}" already holds an active debit reservation in wallet state.`,
-          409
-        );
       const { TrailsContracts } = await this.config.trails.readiness();
       const { intent } = await this.config.trails.quoteIntent(
         request as unknown as Record<string, unknown>
@@ -445,8 +459,20 @@ export class TrailsCoordinator {
         fundingConfirmed: false,
         recoveries: []
       };
-      // Creating an unconfirmed quote never acquires or clears an existing wallet reservation.
-      await this.saveLocked(record, null, { syncReservation: false });
+      try {
+        await this.saveLocked(record, null);
+      } catch (error) {
+        if (!swapConflict(error)) throw error;
+        // Another worker inserted this swap ID first: the same request returns its swap.
+        const raced = await this.loadRecordLocked(id);
+        if (raced.requestHash !== requestHash)
+          throw new WalletError(
+            'IDEMPOTENCY_CONFLICT',
+            'Swap ID was already used with different input.',
+            409
+          );
+        return swapView(raced);
+      }
       return swapView(record);
     });
   }
@@ -557,27 +583,18 @@ export class TrailsCoordinator {
 
   private tick(limit = 3): Promise<TickSwapsResult> {
     return this.config.primitives.runLocked(async () => {
-      // Reconcile orphaned wallet-state reservations (e.g. if SwapStore.save failed during confirm).
-      // Only clear a reservation when the swap record exists in this store, belongs to this wallet,
-      // and no longer reserves a chain; missing records remain fail-closed!
-      const reservations = await this.config.primitives.readSwapReservationsLocked();
-      for (const swapId of Object.keys(reservations)) {
-        const entry = await this.config.store.get(swapId);
-        if (!entry) continue;
-        const record = await this.config.codec.decode(entry, swapId);
-        await this.assertRecordOwnerLocked(record);
-        // Only a stored record newer than the reservation can release it (no affirmative evidence
-        // otherwise, e.g. a rolled-back swap store); a retained hold needs the swap step retried.
-        if (this.reservedChain(record) === undefined)
-          await this.config.primitives.releaseSwapChainLocked(swapId, record.version);
-      }
-
       const active = await this.activeRecordsLocked();
       const due = active
         .filter((r) => r.action && (r.nextAt ?? 0) <= this.now())
         .sort((a, b) => (a.nextAt ?? 0) - (b.nextAt ?? 0));
-      for (const record of due.slice(0, Math.max(1, Math.min(limit, 10))))
-        await this.advanceLocked(record);
+      for (const record of due.slice(0, Math.max(1, Math.min(limit, 10)))) {
+        try {
+          await this.advanceLocked(record);
+        } catch (error) {
+          // Another worker advanced this swap first; it owns the step.
+          if (!swapConflict(error)) throw error;
+        }
+      }
 
       const remaining = await this.activeRecordsLocked();
       let nextAt: number | null = null;
@@ -605,6 +622,7 @@ export class TrailsCoordinator {
       );
     return this.config.primitives.runLocked(async () => {
       const record = await this.loadRecordLocked(swapId);
+      await this.adoptLocked(record);
       // Case 1: funding transaction in RECONCILIATION_REQUIRED
       if (record.funding?.quote?.txnId === txnId) {
         record.funding = await this.config.primitives.resolveEvmReconciliationLocked(
@@ -690,6 +708,7 @@ export class TrailsCoordinator {
     await this.assertRecordOwnerLocked(record);
     try {
       this.checkEnvironment(record);
+      await this.adoptLocked(record);
       if (['prepare-funding', 'activate', 'fund'].includes(record.action ?? '')) {
         record.funding =
           (await this.config.primitives.readEvmOperationsLocked([record.fundingId])).find(
@@ -779,6 +798,7 @@ export class TrailsCoordinator {
         record.action ? (record.phase === 'attention' ? 30_000 : 5000) : null
       );
     } catch (error) {
+      if (swapConflict(error)) throw error;
       record.attempts++;
       record.error = errorCode(error);
       const recovery = this.currentRecovery(record, false);
@@ -939,6 +959,10 @@ export class TrailsCoordinator {
         }
         return;
       }
+      // Journal the submission before Execute, so a worker that takes over polls this txnId
+      // instead of preparing a second funding transfer.
+      const quoted = record.funding;
+      record.funding = { ...quoted, status: 'submitting', submitted: true };
       await this.saveLocked(record);
       try {
         record.funding = await this.config.primitives.executeEvmOperationLocked(
@@ -947,11 +971,20 @@ export class TrailsCoordinator {
           { skipGate: true, bypassReviewId: true }
         );
       } catch (error) {
+        if (credentialChanged(error)) {
+          // Only the credential that prepared it can execute it, and that one is gone: nothing
+          // was sent, so prepare the funding again under a new ID.
+          record.fundingId = retryId(record.fundingId);
+          record.funding = undefined;
+          record.phase = 'preparing';
+          record.action = 'prepare-funding';
+          return;
+        }
         if (!(error instanceof WalletError) || error.code !== 'QUOTE_EXPIRED') throw error;
         record.funding =
           (await this.config.primitives.readEvmOperationsLocked([record.fundingId])).find(
             (op) => op.id === record.fundingId
-          ) ?? record.funding;
+          ) ?? quoted;
       }
     }
     if (record.funding.status === 'executed' && record.funding.txnHash) {
@@ -1098,6 +1131,7 @@ export class TrailsCoordinator {
   }
 
   private async recoveryAllowedLocked(record: SwapRecord) {
+    await this.adoptLocked(record);
     record.funding =
       (await this.config.primitives.readEvmOperationsLocked([record.fundingId])).find(
         (op) => op.id === record.fundingId
@@ -1302,31 +1336,46 @@ export class TrailsCoordinator {
       return;
     }
     await this.enabledLocked(true);
-    recovery.deployment =
+    let op =
       (await this.config.primitives.readEvmOperationsLocked([recovery.deploymentId])).find(
-        (op) => op.id === recovery.deploymentId
+        (candidate) => candidate.id === recovery.deploymentId
       ) ?? recovery.deployment;
-    if (!uncertain(recovery.deployment) && recovery.deployment?.status !== 'executed') {
+    if (op?.status === 'failed' && op.error === 'CREDENTIAL_CHANGED') {
+      recovery.deploymentId = retryId(recovery.deploymentId);
+      op = undefined;
+    }
+    if (!uncertain(op) && op?.status !== 'executed') {
       await this.recoveryAllowedLocked(record);
       await this.recheckRecovery(record, recovery);
     }
     recovery.status = 'deploying';
-    await this.saveLocked(record);
-    recovery.deployment = await this.config.primitives.prepareDeploymentLocked(
-      recovery.deploymentId,
-      recovery.chainId
-    );
-    if (recovery.deployment.status === 'quoted') {
-      this.sponsored(recovery.deployment);
-      recovery.deployment = await this.config.primitives.executeEvmOperationLocked(
+    if (!op || op.status === 'preparing') {
+      await this.saveLocked(record);
+      op = await this.config.primitives.prepareDeploymentLocked(
         recovery.deploymentId,
-        ['deployment'],
-        { skipGate: true, bypassReviewId: true }
+        recovery.chainId
       );
+    }
+    if (op.status === 'quoted') {
+      this.sponsored(op);
+      // Journal the submission before Execute (see fundLocked).
+      recovery.deployment = { ...op, status: 'submitting', submitted: true };
+      await this.saveLocked(record);
+      try {
+        op = await this.config.primitives.executeEvmOperationLocked(
+          recovery.deploymentId,
+          ['deployment'],
+          { skipGate: true, bypassReviewId: true }
+        );
+      } catch (error) {
+        if (!credentialChanged(error)) throw error;
+        recovery.deploymentId = retryId(recovery.deploymentId);
+        recovery.deployment = undefined;
+        return;
+      }
     } else
-      recovery.deployment =
-        (await this.config.primitives.refreshEvmOperationLocked(recovery.deploymentId)) ??
-        recovery.deployment;
+      op = (await this.config.primitives.refreshEvmOperationLocked(recovery.deploymentId)) ?? op;
+    recovery.deployment = op;
     if (
       recovery.deployment.status === 'unknown' &&
       recovery.deployment.error === 'RECONCILIATION_REQUIRED'
@@ -1413,50 +1462,67 @@ export class TrailsCoordinator {
       record.owner,
       recovery.assets
     );
-    await this.saveLocked(record);
-    recovery.transaction = await this.config.primitives.prepareRecoveryLocked(
-      recovery.transactionId,
-      permit
-    );
-    this.sponsored(recovery.transaction);
+    void permit;
     record.action = 'submit-recovery';
   }
 
+  /**
+   * Prepare, journal and execute the recovery transaction in one step, under one credential, so
+   * the prepared transaction is never left for a later step that may hold another credential.
+   */
   private async submitRecoveryLocked(record: SwapRecord) {
     const recovery = this.currentRecovery(record, true);
     await this.enabledLocked(true);
-    const op = await this.config.primitives.refreshEvmOperationLocked(recovery.transactionId);
-    if (!op) throw new WalletError('INVALID_RECOVERY', 'Prepared recovery is missing.', 409);
-    if (op.status === 'quoted') {
-      this.sponsored(op);
-      await this.recoveryAllowedLocked(record);
-      await this.recheckRecovery(record, recovery);
-      await this.availableLocked(recovery.chainId, record.id, [
-        record.fundingId,
-        recovery.deploymentId,
-        recovery.transactionId
-      ]);
-      validateRecoveryTransaction(
-        recovery.built,
-        recovery.prepared,
-        record.quote.intent,
-        record.owner,
-        recovery.assets
-      );
-      recovery.ownerBalances = [];
-      for (const asset of recovery.assets)
-        recovery.ownerBalances.push({
-          asset: asset.asset,
-          amount: await this.config.chains.balance(recovery.chainId, record.owner, asset.asset)
-        });
-      recovery.status = 'submitting';
+    let op =
+      (await this.config.primitives.readEvmOperationsLocked([recovery.transactionId])).find(
+        (candidate) => candidate.id === recovery.transactionId
+      ) ?? recovery.transaction;
+    if (op?.status === 'failed' && op.error === 'CREDENTIAL_CHANGED') {
+      recovery.transactionId = retryId(recovery.transactionId);
+      op = undefined;
+    }
+    if (op && op.status !== 'quoted' && op.status !== 'preparing') {
+      recovery.transaction =
+        (await this.config.primitives.refreshEvmOperationLocked(recovery.transactionId)) ?? op;
+      recovery.status = 'pending';
+      record.action = 'observe-recovery';
+      return;
+    }
+    await this.recoveryAllowedLocked(record);
+    await this.recheckRecovery(record, recovery);
+    await this.availableLocked(recovery.chainId, record.id, [
+      record.fundingId,
+      recovery.deploymentId,
+      recovery.transactionId
+    ]);
+    const permit = validateRecoveryTransaction(
+      recovery.built,
+      recovery.prepared,
+      record.quote.intent,
+      record.owner,
+      recovery.assets
+    );
+    if (!op || op.status === 'preparing') {
       await this.saveLocked(record);
+      op = await this.config.primitives.prepareRecoveryLocked(recovery.transactionId, permit);
+    }
+    this.sponsored(op);
+    // Journal the submission before Execute (see fundLocked).
+    recovery.transaction = { ...op, status: 'submitting', submitted: true };
+    recovery.status = 'submitting';
+    await this.saveLocked(record);
+    try {
       recovery.transaction = await this.config.primitives.executeEvmOperationLocked(
         recovery.transactionId,
         ['recovery'],
         { skipGate: true, bypassReviewId: true }
       );
-    } else recovery.transaction = op;
+    } catch (error) {
+      if (!credentialChanged(error)) throw error;
+      recovery.transactionId = retryId(recovery.transactionId);
+      recovery.transaction = undefined;
+      return;
+    }
     recovery.status = 'pending';
     record.action = 'observe-recovery';
   }
@@ -1508,12 +1574,6 @@ export class TrailsCoordinator {
         recovery.intentAddress,
         asset.asset
       );
-      const ownerAfter = await this.config.chains.balance(
-        recovery.chainId,
-        record.owner,
-        asset.asset
-      );
-      const before = recovery.ownerBalances?.find((b) => b.asset === asset.asset)?.amount;
       const logged = receipt.transfers
         .filter(
           (t) =>
@@ -1522,14 +1582,15 @@ export class TrailsCoordinator {
             t.from === recovery.intentAddress
         )
         .reduce((sum, t) => sum + BigInt(t.amount), 0n);
-      const actual = asset.asset === 'native' ? BigInt(asset.amount) : logged;
-      if (
-        before === undefined ||
-        (asset.asset === 'native' && BigInt(ownerAfter) < BigInt(before) + actual)
-      )
+      // Native transfers emit no logs: the evidence is the intent address's balance going down
+      // from the amount re-checked just before submission. Debits of the owner wallet elsewhere
+      // cannot touch it.
+      const drained = BigInt(asset.amount) - BigInt(remaining);
+      const actual = asset.asset === 'native' ? (drained > 0n ? drained : 0n) : logged;
+      if (asset.asset === 'native' && actual === 0n && BigInt(asset.amount) > 0n)
         throw new WalletError(
           'RECOVERY_EVIDENCE_PENDING',
-          'Confirmed recovery receipt does not yet prove the received native amount.',
+          'The chain does not yet show the recovered native amount leaving the intent address.',
           409
         );
       if (actual > 0n) recovered.push({ ...asset, amount: actual.toString() });
