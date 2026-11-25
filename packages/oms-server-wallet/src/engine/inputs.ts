@@ -25,7 +25,7 @@ export const loneSurrogate =
   /[\uD800-\uDBFF](?![\uDC00-\uDFFF])|(?<![\uD800-\uDBFF])[\uDC00-\uDFFF]/;
 export const isTronSignature = (value: string) => /^0x[0-9a-fA-F]{130}$/.test(value);
 export const isSolanaSignature = (value: string) => base58Decode(value)?.length === 64;
-export const isTronTxid = (value: string) => /^[0-9a-f]{64}$/.test(value);
+export const isTronTxid = (value: string) => /^[0-9a-fA-F]{64}$/.test(value);
 export const abiTypeRegex =
   /^(address|bool|string|bytes([1-9]|[12][0-9]|3[0-2])?|u?int(8|16|24|32|40|48|56|64|72|80|88|96|104|112|120|128|136|144|152|160|168|176|184|192|200|208|216|224|232|240|248|256)?)(\[[0-9]{0,3}\])*$/;
 
@@ -457,4 +457,18 @@ export function requireMessage(message: unknown, checkSurrogates: boolean): stri
   )
     throw new WalletError('INVALID_MESSAGE', 'Messages must contain 1–16,384 UTF-8 bytes.');
   return message;
+}
+
+/**
+ * Whether a prepare or sign request failed without a verified WaaS answer (network failure,
+ * timeout, oversized response or an unexpected error): the operation stays `preparing`, so calling
+ * again with the same key resumes it. A quote or signature that was produced but never received
+ * is harmless: nothing executes it.
+ */
+export function isTransientFailure(error: unknown): boolean {
+  return (
+    !(error instanceof WalletError) ||
+    error.code === 'UPSTREAM_UNAVAILABLE' ||
+    error.code === 'RESPONSE_TOO_LARGE'
+  );
 }

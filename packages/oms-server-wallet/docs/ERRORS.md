@@ -88,7 +88,6 @@ so the outcome survives a restart. Settlement codes such as `SUBMISSION_UNCERTAI
 | Code | Meaning | What to do |
 | --- | --- | --- |
 | `WALLET_NOT_INITIALIZED` | The family's wallet has not been created or restored on this handle; an ephemeral handle's `restore()` found none on WaaS. | Call `createOrRestore` (durable) or `create()` where the user's wallets are first set up (ephemeral). |
-| `WALLET_PENDING` | Swaps need the EVM wallet, which is not restored yet. | Call `createOrRestore`. |
 | `WALLET_DISABLED` | The wallet is disabled. | `enable()` it, or stop using it. |
 | `WALLET_CLOSED` | The ephemeral handle was closed. | Create a new handle. |
 | `WALLET_MISMATCH` | WaaS shows a different wallet than the one bound, the identity has several wallets for a family and none was selected, a selected wallet is not the identity's, or a swap belongs to another wallet. | For duplicates, list them with `listWallets()`, choose one (for example the one holding funds) and pass it as `wallets` to `createOrRestore` / `restore`. Otherwise investigate; do not retry blindly. |
@@ -98,8 +97,8 @@ so the outcome survives a restart. Settlement codes such as `SUBMISSION_UNCERTAI
 | `NO_CREDENTIAL` | No credential is available for the request. | Retry; the SDK signs in again. |
 | `IDEMPOTENCY_CONFLICT` | The idempotency key was already used with different input or mode. | Use a new key for new input. |
 | `NOT_FOUND` | No operation, prepared transaction or swap has that ID. | Check the ID. |
-| `INVALID_STATE` | Stored state is unreadable, or the operation is not in a state that allows the request. | Read the message; unreadable state needs operator attention. |
-| `STORAGE_INTEGRITY` | Encrypted state failed authentication: wrong key, namespace or tampered data. | Check `encryptionKey` and storage; never ignore. |
+| `INVALID_STATE` | The operation is not in a state that allows the request (for example cancelling a submitted one). | Read the message and the operation's status. |
+| `STORAGE_INTEGRITY` | Stored state cannot be trusted: encrypted data failed authentication (wrong key, namespace or tampered data), or a record is corrupt or not in a recognised format. | Check `encryptionKey` and storage; needs operator attention, never ignore. |
 
 ### Review and approval
 

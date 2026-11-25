@@ -214,13 +214,13 @@ const transferId = 'demo-transfer-0001'; // Persist before calling the SDK
 const prepared = await wallet.evm.prepareTransfer({
   idempotencyKey: transferId,
   chainId: 137,
-  to: snapshot.wallets.evm!.address,
+  to: recipient, // a validated address from your own records; never the wallet itself
   asset: 'native',
   amount: parseAmount('0.001', 18)
 });
 
 // 4. After operator / policy approval of the reviewed payload, execute bound to `reviewId`
-if (prepared.status === 'quoted' && prepared.reviewId) {
+if (prepared.status === 'quoted') {
   await wallet.evm.execute({
     idempotencyKey: transferId,
     reviewId: prepared.reviewId

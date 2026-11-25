@@ -27,7 +27,7 @@ export function computeProvenUnsent(op: StoredOperationRecord): boolean {
 /** Fail closed if a record breaks its status guarantees before casting it to the public type. */
 function assertOperationState(op: StoredOperationRecord): void {
   const problem = operationStateProblem(op);
-  if (problem) throw new WalletError('INVALID_STATE', problem, 500);
+  if (problem) throw new WalletError('STORAGE_INTEGRITY', problem, 500);
 }
 
 export function projectEvmOperation(op: StoredEvmOperation): EvmOperation {

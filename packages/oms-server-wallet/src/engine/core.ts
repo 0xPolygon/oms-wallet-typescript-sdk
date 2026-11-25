@@ -743,7 +743,11 @@ export class EngineCore {
       const tail = parseOperationIndexChunk(await this.config.store.read(tailKey));
       const committedLen = meta.total - lastIdx * OPERATION_INDEX_CHUNK_SIZE;
       if (tail.length < committedLen)
-        throw new WalletError('INVALID_STATE', 'Stored operation index chunk is truncated.', 500);
+        throw new WalletError(
+          'STORAGE_INTEGRITY',
+          'Stored operation index chunk is truncated.',
+          500
+        );
       // Slice to meta.total so a crash after writing a chunk and before bumping meta self-heals.
       const committedTail = tail.slice(0, committedLen);
       if (committedTail.includes(id)) return;
@@ -820,7 +824,11 @@ export class EngineCore {
           meta.total - chunkIdx * OPERATION_INDEX_CHUNK_SIZE
         );
         if (rawChunk.length < expectedLen)
-          throw new WalletError('INVALID_STATE', 'Stored operation index chunk is truncated.', 500);
+          throw new WalletError(
+            'STORAGE_INTEGRITY',
+            'Stored operation index chunk is truncated.',
+            500
+          );
         for (const id of rawChunk.slice(0, expectedLen)) {
           if (seen.has(id)) continue;
           seen.add(id);
@@ -866,7 +874,11 @@ export class EngineCore {
           meta.total - chunkIdx * OPERATION_INDEX_CHUNK_SIZE
         );
         if (rawChunk.length < expectedLen)
-          throw new WalletError('INVALID_STATE', 'Stored operation index chunk is truncated.', 500);
+          throw new WalletError(
+            'STORAGE_INTEGRITY',
+            'Stored operation index chunk is truncated.',
+            500
+          );
         loadedChunk = rawChunk.slice(0, expectedLen);
         loadedChunkIdx = chunkIdx;
       }

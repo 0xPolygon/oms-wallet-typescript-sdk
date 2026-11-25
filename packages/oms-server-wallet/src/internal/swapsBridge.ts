@@ -115,8 +115,8 @@ export function resolveSwapsBinder<TScope extends SwapsConfigScope, TFacet>(
     throw new WalletError(
       'CONFIGURATION',
       expectedScope === 'wallet'
-        ? 'createServerWallet requires trails({ store: { scope: "wallet", adapter } }).'
-        : 'createServerWalletService requires trails({ store: { scope: "service", adapter } }).',
+        ? 'createServerWallet requires trails({ storage: { scope: "wallet", adapter, encryptionKey } }).'
+        : 'createServerWalletService requires trails({ storage: { scope: "service", adapter, encryptionKey } }).',
       503
     );
   return binder as SwapsBinder<TScope, TFacet>;

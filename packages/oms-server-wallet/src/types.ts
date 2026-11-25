@@ -597,6 +597,7 @@ export type OperationNextAction =
   | 'poll-original'
   | 'reconcile-original'
   | 'safe-to-reprepare'
+  | 'investigate'
   | 'done';
 
 /** Pure derived decision guidance for orchestrators and agents. */

@@ -66,6 +66,26 @@ describe('EVM execution settlement', () => {
     }
   );
 
+  it('keeps a prepare that failed without a WaaS answer resumable under the same key', async () => {
+    const h = sdkHarness();
+    const request = h.remote.request.bind(h.remote);
+    let drop = true;
+    h.remote.request = async (method, body, credential) => {
+      if (drop && method === 'PrepareEthereumTransaction') throw new Error('socket hang up');
+      return request(method, body, credential);
+    };
+    await expect(
+      h.client.evm.prepareTransfer({ idempotencyKey: 'transient-1', ...transfer })
+    ).rejects.toThrow();
+    const stuck = await h.client.evm.getOperation('transient-1');
+    expect(stuck).toMatchObject({ status: 'preparing' });
+    expect(describeOperation(stuck!).action).toBe('resume-original');
+    drop = false;
+    expect(
+      (await h.client.evm.prepareTransfer({ idempotencyKey: 'transient-1', ...transfer })).status
+    ).toBe('quoted');
+  });
+
   it('treats a TransactionFailed status read as no information and keeps waiting', async () => {
     const h = sdkHarness();
     const prepared = await h.client.evm.prepareTransfer({
@@ -471,10 +491,10 @@ describe('chunked operation index and crash recovery', () => {
     ).toEqual(['prune-op-2']);
     expect(JSON.parse((await h.store.read('openOperationIndex'))!).ids).toEqual(['prune-op-2']);
 
-    // Truncated chunk fails closed with INVALID_STATE.
+    // Truncated chunk fails closed with STORAGE_INTEGRITY.
     await h.store.write('operationIndex:evm:0', JSON.stringify(['prune-op-1']));
     await expect(h.client.evm.listOperations()).rejects.toMatchObject({
-      code: 'INVALID_STATE',
+      code: 'STORAGE_INTEGRITY',
       status: 500
     });
   });

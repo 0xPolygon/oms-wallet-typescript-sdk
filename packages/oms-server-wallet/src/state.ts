@@ -232,7 +232,7 @@ export type StoredChainOperation = z.infer<typeof storedChainOperationSchema>;
 export type StoredOperationRecord = StoredEvmOperation | StoredChainOperation;
 
 const invalid = (message = 'Stored wallet state is not in a recognised format.') =>
-  new WalletError('INVALID_STATE', message, 500);
+  new WalletError('STORAGE_INTEGRITY', message, 500);
 
 /** Validate a stored operation record; fail closed on unrecognized data. */
 export function parseStoredOperation(raw: string): StoredOperationRecord {

@@ -32,6 +32,7 @@ import { parseWaas } from '../validation.js';
 import {
   assertReviewId,
   isSolanaSignature,
+  isTransientFailure,
   isTronTxid,
   needsRefresh,
   normalizeSolanaTransfer,
@@ -543,8 +544,16 @@ export class ChainEngine {
       await this.core.writeOperation(op);
       return op;
     } catch (error) {
-      op.status = 'failed';
-      op.error = error instanceof WalletError ? error.code : 'PREPARATION_FAILED';
+      if (isTransientFailure(error)) {
+        op.status = 'preparing';
+        op.quote = undefined;
+        op.reviewId = undefined;
+        op.fee = undefined;
+        op.feeIndex = undefined;
+      } else {
+        op.status = 'failed';
+        op.error = (error as WalletError).code;
+      }
       await this.core.writeOperation(op);
       throw error;
     }
@@ -686,7 +695,7 @@ export class ChainEngine {
       kind,
       inputHash: hash,
       createdAt: new Date(this.core.now()).toISOString(),
-      status: 'unknown',
+      status: 'preparing',
       submissionMode: 'review',
       ...stored
     };
@@ -696,8 +705,11 @@ export class ChainEngine {
       op.verified = true;
       op.status = 'signed';
     } catch (error) {
-      op.status = 'failed';
-      op.error = error instanceof WalletError ? error.code : 'SIGNING_FAILED';
+      if (isTransientFailure(error)) op.status = 'preparing';
+      else {
+        op.status = 'failed';
+        op.error = (error as WalletError).code;
+      }
       await this.core.writeOperation(op);
       throw error;
     }

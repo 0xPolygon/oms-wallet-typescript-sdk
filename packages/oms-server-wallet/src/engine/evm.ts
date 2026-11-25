@@ -27,6 +27,7 @@ import {
   PUBLIC_EVM_TX_KINDS,
   assertReviewId,
   isInternalEvmOperation,
+  isTransientFailure,
   needsRefresh,
   normalizeEvmCall,
   normalizeEvmTransfer,
@@ -139,7 +140,7 @@ export class EvmEngine {
         chainId,
         inputHash: hash,
         createdAt: new Date(this.core.now()).toISOString(),
-        status: 'unknown',
+        status: 'preparing',
         submissionMode: 'review'
       };
       await this.core.writeOperation(op);
@@ -439,8 +440,14 @@ export class EvmEngine {
       await this.core.writeOperation(op);
       return op;
     } catch (error) {
-      op.status = 'failed';
-      op.error = error instanceof WalletError ? error.code : 'PREPARATION_FAILED';
+      if (isTransientFailure(error)) {
+        op.status = 'preparing';
+        op.quote = undefined;
+        op.reviewId = undefined;
+      } else {
+        op.status = 'failed';
+        op.error = (error as WalletError).code;
+      }
       await this.core.writeOperation(op);
       throw error;
     }
@@ -575,7 +582,7 @@ export class EvmEngine {
       chainId,
       inputHash: hash,
       createdAt: new Date(this.core.now()).toISOString(),
-      status: 'unknown',
+      status: 'preparing',
       submissionMode: 'review',
       ...(options.allowSwapsPrefix ? { internal: true } : {})
     };
@@ -601,8 +608,11 @@ export class EvmEngine {
       op.verified = true;
       op.status = 'signed';
     } catch (error) {
-      op.status = 'failed';
-      op.error = error instanceof WalletError ? error.code : 'SIGNING_FAILED';
+      if (isTransientFailure(error)) op.status = 'preparing';
+      else {
+        op.status = 'failed';
+        op.error = (error as WalletError).code;
+      }
       await this.core.writeOperation(op);
       throw error;
     }

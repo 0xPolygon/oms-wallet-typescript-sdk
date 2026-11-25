@@ -46,9 +46,11 @@ export function describeOperation(operation: WalletOperation): OperationGuidance
         ...base,
         action: 'resume-original',
         reason:
-          operation.submissionMode === 'immediate'
-            ? 'Preparation was interrupted before a quote was stored; nothing was submitted. Repeat the same send* call with the same idempotencyKey and input, or cancel it. Do not start a new idempotencyKey while this one can still be resumed.'
-            : 'Preparation was interrupted before a quote was stored; nothing was submitted. Repeat the same prepare* call with the same idempotencyKey and input, or cancel it. Do not start a new idempotencyKey while this one can still be resumed.'
+          operation.kind === 'sign' || operation.kind === 'signTypedData'
+            ? 'Signing was interrupted or failed without an answer from WaaS. Repeat the same sign* call with the same idempotencyKey and input.'
+            : operation.submissionMode === 'immediate'
+              ? 'Preparation was interrupted before a quote was stored; nothing was submitted. Repeat the same send* call with the same idempotencyKey and input, or cancel it. Do not start a new idempotencyKey while this one can still be resumed.'
+              : 'Preparation was interrupted before a quote was stored; nothing was submitted. Repeat the same prepare* call with the same idempotencyKey and input, or cancel it. Do not start a new idempotencyKey while this one can still be resumed.'
       };
 
     case 'cancelled':
@@ -129,7 +131,8 @@ export function describeOperation(operation: WalletOperation): OperationGuidance
         };
       return {
         ...base,
-        action: 'done',
+        // Not 'done': a reader of 'done' could take it for success. The outcome needs a look.
+        action: 'investigate',
         reason: isSignatureKind(operation.kind)
           ? 'Signing failed or failed verification. Investigate the error and use a new idempotencyKey if still desired.'
           : 'Operation failed. Inspect the error and any on-chain state before authorizing a new business request.'

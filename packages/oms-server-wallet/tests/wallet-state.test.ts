@@ -72,8 +72,8 @@ describe('strict wallet state validation', () => {
   ])('fails closed on %s without contacting WaaS', async (_, value) => {
     const h = sdkHarness();
     await h.store.write('wallet', value);
-    await expect(h.client.inspect()).rejects.toMatchObject({ code: 'INVALID_STATE' });
-    await expect(h.client.createOrRestore()).rejects.toMatchObject({ code: 'INVALID_STATE' });
+    await expect(h.client.inspect()).rejects.toMatchObject({ code: 'STORAGE_INTEGRITY' });
+    await expect(h.client.createOrRestore()).rejects.toMatchObject({ code: 'STORAGE_INTEGRITY' });
     expect(h.remote.calls).toHaveLength(0);
     expect(await h.store.read('wallet')).toBe(value);
   });
@@ -82,7 +82,7 @@ describe('strict wallet state validation', () => {
     const h = sdkHarness();
     await h.store.write('operation:corrupt-op-1', '{"bad":true}');
     await expect(h.client.evm.getOperation('corrupt-op-1')).rejects.toMatchObject({
-      code: 'INVALID_STATE'
+      code: 'STORAGE_INTEGRITY'
     });
   });
 });

@@ -136,7 +136,7 @@ export class SwapRecordCodec {
       candidate.quote?.intent?.intentId !== entry.intentId
     )
       throw new WalletError(
-        'INVALID_STATE',
+        'STORAGE_INTEGRITY',
         'Stored swap entry payload is not in a recognised format.',
         500
       );
@@ -208,7 +208,11 @@ export class TrailsCoordinator {
     if (snapshot.disabled)
       throw new WalletError('WALLET_DISABLED', 'This wallet is disabled.', 409);
     if (!snapshot.wallet)
-      throw new WalletError('WALLET_PENDING', 'Restore this wallet first.', 409);
+      throw new WalletError(
+        'WALLET_NOT_INITIALIZED',
+        'Swaps need the EVM wallet: create or restore it first.',
+        409
+      );
     return snapshot.wallet.address.toLowerCase();
   }
 
@@ -470,7 +474,7 @@ export class TrailsCoordinator {
       funding.amount !== deposit.amount
     )
       throw new WalletError(
-        'INVALID_STATE',
+        'STORAGE_INTEGRITY',
         'Stored swap quote payload failed integrity verification.',
         500
       );
@@ -782,6 +786,7 @@ export class TrailsCoordinator {
         [
           'SPONSORSHIP_REQUIRED',
           'QUOTE_EXPIRED',
+          'RECOVERY_EXPIRED',
           'INVALID_RECOVERY',
           'INVALID_RECOVERY_TRANSACTION',
           'RECOVERY_CHANGED',
@@ -1268,7 +1273,11 @@ export class TrailsCoordinator {
 
   private async recheckRecovery(record: SwapRecord, recovery: RecoveryRecord) {
     if (Date.parse(recovery.expiresAt) <= this.now())
-      throw new WalletError('QUOTE_EXPIRED', 'Recovery review expired. Prepare a new review.', 409);
+      throw new WalletError(
+        'RECOVERY_EXPIRED',
+        'Recovery review expired. Prepare a new review.',
+        409
+      );
     for (const asset of recovery.assets) {
       if (
         (await this.config.chains.balance(

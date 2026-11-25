@@ -780,7 +780,7 @@ describe('observation, waitForOperation, describeOperation, indexer facet, and e
     delete stored.reviewId;
     await h.store.write('operation:broken-quoted-1', JSON.stringify(stored));
     await expect(h.client.evm.getOperation('broken-quoted-1')).rejects.toMatchObject({
-      code: 'INVALID_STATE'
+      code: 'STORAGE_INTEGRITY'
     });
   });
 
@@ -810,7 +810,7 @@ describe('observation, waitForOperation, describeOperation, indexer facet, and e
     const stored = JSON.parse((await h.store.read('operation:bad-code-1'))!);
     await h.store.write('operation:bad-code-1', JSON.stringify({ ...stored, error: 'NOT_A_CODE' }));
     await expect(h.client.evm.getOperation('bad-code-1')).rejects.toMatchObject({
-      code: 'INVALID_STATE'
+      code: 'STORAGE_INTEGRITY'
     });
   });
 
@@ -989,7 +989,7 @@ describe('observation, waitForOperation, describeOperation, indexer facet, and e
         status: 'failed',
         provenUnsent: false
       } as WalletOperation)
-    ).toMatchObject({ action: 'done' });
+    ).toMatchObject({ action: 'investigate' });
     expect(
       describeOperation({
         ...base,
@@ -1523,7 +1523,7 @@ describe('deep systems hardening', () => {
     await h.store.putRecord(rec);
     await expect(
       h.swaps.confirm({ swapId: q.id, reviewId: q.quote.reviewId })
-    ).rejects.toMatchObject({ code: 'INVALID_STATE' });
+    ).rejects.toMatchObject({ code: 'STORAGE_INTEGRITY' });
   });
 
   it('rejects public evm.signTypedData for Sequence Wallet Calls payloads and self verifyingContract', async () => {

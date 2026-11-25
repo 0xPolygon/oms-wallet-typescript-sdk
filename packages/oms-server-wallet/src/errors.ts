@@ -85,8 +85,7 @@ export type WalletErrorCode =
   | 'WALLET_CLOSED'
   | 'WALLET_DISABLED'
   | 'WALLET_MISMATCH'
-  | 'WALLET_NOT_INITIALIZED'
-  | 'WALLET_PENDING';
+  | 'WALLET_NOT_INITIALIZED';
 
 /** Every `WalletErrorCode`; `satisfies` fails the build if this and the union ever differ. */
 const WALLET_ERROR_CODES = {
@@ -175,8 +174,7 @@ const WALLET_ERROR_CODES = {
   WALLET_CLOSED: true,
   WALLET_DISABLED: true,
   WALLET_MISMATCH: true,
-  WALLET_NOT_INITIALIZED: true,
-  WALLET_PENDING: true
+  WALLET_NOT_INITIALIZED: true
 } as const satisfies Record<WalletErrorCode, true>;
 
 /** Whether a string is one of the SDK's `WalletErrorCode`s. */
