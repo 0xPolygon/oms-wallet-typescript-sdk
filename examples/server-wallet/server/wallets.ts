@@ -258,8 +258,8 @@ export async function createWallets(
         emit({
           lane: 'app',
           kind: 'hook',
-          name: 'ID token minted',
-          detail: `for ${subject} · valid 5 min · single use`,
+          name: `Minted a one-time ID token for ${subject.split(':').pop()}`,
+          detail: '(valid 5 min)',
           title: `{ iss: ${issuer.issuer}, aud: ${issuer.audience}, sub: ${subject}, exp: now + 5 min, jti: random }`
         });
         return minted;
@@ -356,11 +356,11 @@ export async function createWallets(
       emit({
         lane: 'app',
         kind: 'hook',
-        name: 'onPrepared',
-        detail:
+        name:
           user.mode === 'memory'
-            ? `saved receipt ${operation.quote.txnId.slice(0, 8)}…${operation.quote.txnId.slice(-6)} to your ledger, before sending`
-            : 'quote ready; sending it now'
+            ? 'Saved the receipt to your ledger before sending'
+            : 'Quote ready, sending it now',
+        detail: '(onPrepared)'
       });
       await saveTxn(user, family, operation);
     };
@@ -546,7 +546,7 @@ export async function createWallets(
             ...tron.items.map(tag('tron'))
           ];
         },
-        (items) => `${items.length} balances read`
+        () => 'Balances read'
       ),
 
     sign: (subject: string, family: Family) =>
@@ -564,7 +564,7 @@ export async function createWallets(
                 : await wallet.tron.signMessage(input);
           return traced(operation);
         },
-        (op) => `signed, verified: ${op.status === 'signed'}`
+        (op) => op.status
       ),
 
     /** Step 1 of two-phase: quote only. Nothing is sent until execute. */
@@ -620,8 +620,8 @@ export async function createWallets(
         },
         ({ reused }) =>
           reused
-            ? 'same operation returned, nothing sent again'
-            : 'no record of this key in this handle: a new quote was made'
+            ? 'Got the same operation back: nothing was sent twice'
+            : 'This handle had no record of the key, so a new quote was made'
       ),
 
     /** In-memory recovery: wait on a saved txnId from any handle, with no record of the operation. */
@@ -644,7 +644,7 @@ export async function createWallets(
           await saveApp();
           return entry;
         },
-        (entry) => entry.outcome ?? ''
+        (entry) => `WaaS says: ${entry.outcome ?? 'no answer'}`
       ),
 
     rotate: (subject: string) =>
@@ -652,7 +652,7 @@ export async function createWallets(
         subject,
         'Rotate credential',
         async (user) => remember(user, await handle(user).rotateCredential()),
-        (u) => `new credential until ${u.expiresAt}`
+        () => 'Old session ended, new session started'
       ),
 
     /** Durable: the kill switch. In-memory: drop the handle (what a restart does). */
@@ -664,7 +664,7 @@ export async function createWallets(
           'Simulate restart',
           // Revokes the credential and forgets every record of this handle.
           () => memory.evict(subject).then(() => user),
-          () => 'handle dropped: records gone, credential revoked'
+          () => 'Handle dropped: its session ended and its records are gone'
         );
       const wallet = durable.forSubject(subject);
       const disabled = (await context.run({ quiet: true }, () => wallet.inspect())).disabled;
@@ -672,7 +672,7 @@ export async function createWallets(
         subject,
         disabled ? 'Enable wallet' : 'Disable wallet',
         async () => remember(user, disabled ? await wallet.enable() : await wallet.disable()),
-        (result) => (result.disabled ? 'disabled' : 'enabled')
+        (result) => (result.disabled ? 'Disabled: every call is refused' : 'Enabled again')
       );
     },
 

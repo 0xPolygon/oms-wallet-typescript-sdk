@@ -1,30 +1,70 @@
 import type { DemoEvent, Family, Mode } from '../shared';
 
-const METHODS: Record<string, string> = {
-  CommitVerifier: 'Start sign-in',
-  CompleteAuth: 'Sign in with ID token',
-  CreateWallet: 'Create wallet',
-  UseWallet: 'Reconnect wallet',
-  ListWallets: 'List wallets',
-  Execute: 'Send transaction',
-  TransactionStatus: 'Check status',
-  SignMessage: 'Sign message',
-  IsValidMessageSignature: 'Verify signature',
-  RevokeCredential: 'End session',
-  GetTokenBalancesDetails: 'Read balances',
-  GetTokenBalances: 'Read balances'
-};
-
-export const plainMethod = (method: string) =>
-  METHODS[method] ?? (method.startsWith('Prepare') ? 'Quote transaction' : method);
-
-/** What a stored key holds, in words. */
-export function plainKey(key: string) {
-  if (key === 'wallet') return 'session and wallets';
-  if (key.startsWith('operation:')) return 'operation';
-  if (/[Ii]ndex/.test(key)) return 'index';
-  return key;
+/** What WaaS did, as a sentence about this user. */
+export function waasSentence(method: string, name: string, chain?: string) {
+  const wallet = chain ? `${name}'s ${chain} wallet` : `${name}'s wallet`;
+  switch (method) {
+    case 'CommitVerifier':
+      return 'WaaS started sign-in';
+    case 'CompleteAuth':
+      return `WaaS signed ${name} in with the ID token`;
+    case 'CreateWallet':
+      return `WaaS created ${wallet}`;
+    case 'UseWallet':
+      return `WaaS reconnected ${wallet}`;
+    case 'ListWallets':
+      return `WaaS listed ${name}'s wallets`;
+    case 'Execute':
+      return 'WaaS sent the transaction';
+    case 'TransactionStatus':
+      return "WaaS checked the transaction's status";
+    case 'SignMessage':
+      return 'WaaS signed the message';
+    case 'IsValidMessageSignature':
+      return 'WaaS confirmed the signature is valid';
+    case 'RevokeCredential':
+      return `WaaS ended ${name}'s session`;
+    default:
+      return method.startsWith('Prepare') ? 'WaaS quoted the transaction' : `WaaS: ${method}`;
+  }
 }
+
+/** What a set of stored keys holds, in words: "the operation and alice's session". */
+export function storedThings(keys: readonly string[], name: string) {
+  const things = new Set<string>();
+  for (const key of keys)
+    things.add(
+      key === 'wallet'
+        ? `${name}'s session`
+        : key.startsWith('operation:')
+          ? 'the operation'
+          : /[Ii]ndex/.test(key)
+            ? 'a lookup index'
+            : key
+    );
+  const order = (thing: string) =>
+    thing === 'the operation' ? 0 : thing.endsWith('session') ? 1 : 2;
+  const list = [...things].sort((a, b) => order(a) - order(b));
+  return list.length > 1 ? `${list.slice(0, -1).join(', ')} and ${list.at(-1)}` : list[0]!;
+}
+
+export function size(bytes: number) {
+  return bytes < 1024 ? `${bytes} B` : `${(bytes / 1024).toFixed(1)} KB`;
+}
+
+/** What an operation status means, in a few words. */
+export const STATUS: Record<string, string> = {
+  preparing: 'Preparing the quote',
+  quoted: 'Quoted, waiting for your approval',
+  submitting: 'Being sent',
+  pending: 'Sent, waiting for the chain',
+  executed: 'Confirmed on chain',
+  signed: 'Signed and verified by WaaS',
+  failed: 'Failed',
+  cancelled: 'Cancelled: nothing was sent',
+  expired: 'Quote expired: nothing was sent',
+  unknown: 'Outcome unknown: reconcile before retrying'
+};
 
 export const LANES = [
   { id: 'app', label: 'Server', hint: 'Your backend: it runs the SDK and mints ID tokens.' },

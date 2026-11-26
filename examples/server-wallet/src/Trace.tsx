@@ -3,7 +3,7 @@ import { Collapsible, CollapsiblePanel, CollapsibleTrigger } from '@ui-sdk/react
 import { Switch, SwitchThumb } from '@ui-sdk/react/switch';
 
 import type { DemoEvent, DemoUser } from '../shared';
-import { codeFor, LANES, plainKey, plainMethod } from './explain';
+import { codeFor, LANES, size, STATUS, storedThings, waasSentence } from './explain';
 import { clock, CopyButton, duration, Hint, ModeBadge, short } from './ui';
 
 type ActionEvent = Extract<DemoEvent, { kind: 'action' }>;
@@ -147,17 +147,24 @@ function ActionCard(props: {
         <span className="summary">
           {waas.length > 0 && (
             <span>
-              {waas.length} WaaS{attested ? ' ✓' : ''}
+              {waas.length} WaaS {waas.length === 1 ? 'call' : 'calls'}
+              {attested ? (waas.length === 1 ? ', attested' : ', all attested') : ''}
             </span>
           )}
-          {writes > 0 && <span>{writes} saved</span>}
-          {waited >= 10 && <span className="lock-wait">queued {duration(waited)}</span>}
-          <span>{end ? duration(end.at - start.at) : 'running'}</span>
+          {writes > 0 && (
+            <span>
+              {writes} database {writes === 1 ? 'write' : 'writes'}
+            </span>
+          )}
+          {waited >= 10 && <span className="lock-wait">waited {duration(waited)}</span>}
+          <span>{end ? `${duration(end.at - start.at)} total` : 'running'}</span>
         </span>
         <span className="time">{clock(start.at)}</span>
       </CollapsibleTrigger>
       <CollapsiblePanel className="action-body">
-        {end?.detail && <p className={`outcome ${end.phase}`}>{end.detail}</p>}
+        {end?.detail && (
+          <p className={`outcome ${end.phase}`}>{STATUS[end.detail] ?? end.detail}</p>
+        )}
         <div className="lanes header">
           <span />
           {LANES.map((lane) => {
@@ -221,7 +228,6 @@ function toRows(events: DemoEvent[], name: string): Row[] {
     if (event.kind === 'store') {
       const run = [event];
       while (events[index + 1]?.kind === 'store') run.push(events[++index] as typeof event);
-      const kinds = [...new Set(run.map((write) => plainKey(write.key)))];
       const bytes = run.reduce((sum, write) => sum + write.bytes, 0);
       rows.push({
         id: event.id,
@@ -230,8 +236,12 @@ function toRows(events: DemoEvent[], name: string): Row[] {
         tone: '',
         text: (
           <span title={run.map((write) => `${write.key} (${write.bytes} B)`).join('\n')}>
-            Saved {run.length === 1 ? 'an encrypted record' : `${run.length} encrypted records`}:{' '}
-            {kinds.join(', ')} <span className="muted">· {bytes.toLocaleString()} B</span>
+            Saved{' '}
+            {storedThings(
+              run.map((write) => write.key),
+              name
+            )}{' '}
+            to your database <span className="muted">(encrypted, {size(bytes)})</span>
           </span>
         )
       });
@@ -260,19 +270,18 @@ function toRows(events: DemoEvent[], name: string): Row[] {
         tone: '',
         text:
           event.phase === 'queued' ? (
-            <>Queued: another call for {name} is still running</>
+            <>{name} was busy with another call, so this one waited</>
           ) : event.phase === 'acquired' ? (
             (event.waitedMs ?? 0) >= 5 ? (
               <>
-                Its turn now, after waiting <b>{duration(event.waitedMs!)}</b>
+                Started after waiting <b>{duration(event.waitedMs!)}</b>
               </>
             ) : (
-              <>Its turn: calls for {name} run one at a time</>
+              <>{name} was free, so this call started right away</>
             )
           ) : (
             <>
-              Done, {name}'s next call can run{' '}
-              <span className="muted">· took {duration(event.heldMs ?? 0)}</span>
+              Finished in {duration(event.heldMs ?? 0)}. {name} is free again
             </>
           )
       });
@@ -283,7 +292,7 @@ function toRows(events: DemoEvent[], name: string): Row[] {
       at: event.at,
       lane: event.lane,
       tone: tone(event),
-      text: <Describe event={event} />
+      text: <Describe event={event} name={name} />
     });
   }
   return rows;
@@ -298,7 +307,7 @@ function tone(event: DemoEvent) {
   return '';
 }
 
-function Describe({ event }: { event: DemoEvent }) {
+function Describe({ event, name }: { event: DemoEvent; name: string }) {
   switch (event.kind) {
     case 'hook':
       return (
@@ -309,7 +318,7 @@ function Describe({ event }: { event: DemoEvent }) {
     case 'operation':
       return (
         <>
-          Operation is now <b>{event.operation.status}</b>
+          <b>{STATUS[event.operation.status] ?? event.operation.status}</b>
           {event.operation.txnId ? (
             <span className="muted"> · txnId {short(event.operation.txnId)}</span>
           ) : null}
@@ -318,11 +327,7 @@ function Describe({ event }: { event: DemoEvent }) {
     case 'waas':
       return (
         <>
-          <b>
-            {plainMethod(event.method)}
-            {event.chain ? ` · ${event.chain}` : ''}
-          </b>{' '}
-          <span className="muted">{event.method}</span> <Latency ms={event.ms} />{' '}
+          <b>{waasSentence(event.method, name, event.chain)}</b> <Latency ms={event.ms} />{' '}
           {event.attested && (
             <Hint
               side="top"
@@ -332,15 +337,17 @@ function Describe({ event }: { event: DemoEvent }) {
                 ✓ attested
               </span>
             </Hint>
-          )}
+          )}{' '}
+          <span className="muted method">{event.method}</span>
         </>
       );
     case 'indexer':
       return (
         <>
-          <b>Read balances{event.chain ? ` · ${event.chain}` : ''}</b>{' '}
-          <span className="muted">{event.method}</span> <Latency ms={event.ms} />{' '}
-          <span className="muted">not attested</span>
+          <b>
+            Read {name}'s {event.chain ? `${event.chain} ` : ''}balance
+          </b>{' '}
+          <Latency ms={event.ms} /> <span className="muted">not attested</span>
         </>
       );
     default:

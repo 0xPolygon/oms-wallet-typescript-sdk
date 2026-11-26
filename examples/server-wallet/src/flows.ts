@@ -175,7 +175,7 @@ export const FLOWS: readonly Flow[] = [
     mode: 'durable',
     title: 'One call at a time',
     why: "A durable user's calls take turns through a per-user lock, so two servers never race.",
-    takeaway: 'The second call waited for the first: its trace card says “queued”.',
+    takeaway: 'The second call waited for the first: its trace card says “waited”.',
     steps: [
       {
         label: 'Run two signatures at once',
