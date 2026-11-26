@@ -9,12 +9,13 @@ import {
 
 import type { Balance, DemoConfig, DemoUser, Family, OperationView, UserDetail } from '../shared';
 import { call } from './api';
-import { sdkCall } from './explain';
+import { sdkCall, TERMS } from './explain';
 import { FLOWS, type Flow, type FlowHelpers } from './flows';
 import {
   Action,
   CHAIN,
   CopyButton,
+  ExplainText,
   explorer,
   FAMILIES,
   FAUCETS,
@@ -23,6 +24,7 @@ import {
   ModeBadge,
   parseUnits,
   short,
+  Term,
   useCountdown
 } from './ui';
 
@@ -88,9 +90,9 @@ export function UserPanel(props: {
             code={memory ? 'evict()' : session.disabled ? 'enable()' : 'disable()'}
             hint={
               memory
-                ? 'Throws the handle away, as a server restart would: the session ends and its records are gone. The wallets stay in WaaS.'
+                ? 'Drops the in-memory wallet handle, as a server restart would: the session ends and local operation records are cleared. The wallets stay in WaaS.'
                 : session.disabled
-                  ? 'Allows calls again.'
+                  ? 'Re-enables this wallet so calls can run again.'
                   : 'The kill switch: every call for this user is refused until you enable it.'
             }
             onClick={() => act('toggle')}
@@ -165,7 +167,11 @@ function Wallets(props: { user: DemoUser; balances?: Balance[]; busy: boolean; o
               {address && <CopyButton value={address} />}
               <span className="balance">
                 {family === 'evm' ? (
-                  <span className="tag sponsored">sponsored</span>
+                  <Hint toggleable text={TERMS.sponsored}>
+                    <span className="tag sponsored" tabIndex={0}>
+                      sponsored
+                    </span>
+                  </Hint>
                 ) : balance ? (
                   empty ? (
                     <a href={FAUCETS[family]} target="_blank" rel="noreferrer">
@@ -183,7 +189,10 @@ function Wallets(props: { user: DemoUser; balances?: Balance[]; busy: boolean; o
         })}
       </div>
       {props.balances && (
-        <p className="hint">Balances come from the indexer: not attested, for display only.</p>
+        <p className="hint">
+          Balances come from the <Term id="indexer">indexer</Term>: not{' '}
+          <Term id="attestation">attested</Term>, for display only.
+        </p>
       )}
     </section>
   );
@@ -255,7 +264,9 @@ function FlowPanel(props: {
       </div>
       {flow && (
         <div className="flow">
-          <p className="flow-why">{flow.why}</p>
+          <p className="flow-why">
+            <ExplainText text={flow.why} />
+          </p>
           <ol>
             {flow.steps.map((step, index) => (
               <li
@@ -264,7 +275,9 @@ function FlowPanel(props: {
               >
                 <div>
                   <strong>{step.label}</strong>
-                  <p className="hint">{notes[index] ?? step.explain}</p>
+                  <p className="hint">
+                    <ExplainText text={notes[index] ?? step.explain} />
+                  </p>
                 </div>
                 {index === next && (
                   <button
@@ -292,7 +305,9 @@ function FlowPanel(props: {
             </button>
           ) : (
             <div className="flow-done">
-              <p className="takeaway">{flow.takeaway}</p>
+              <p className="takeaway">
+                <ExplainText text={flow.takeaway} />
+              </p>
               <div className="row">
                 <button onClick={() => pick(flow.id)} disabled={props.busy}>
                   Run again
@@ -377,8 +392,8 @@ function Workbench(props: {
 
       {family === 'evm' ? (
         <p className="note">
-          A sponsored zero-value call on Polygon Amoy. The project pays the gas, so the wallet needs
-          no funds.
+          A <Term id="sponsored">sponsored</Term> zero-value call on Polygon Amoy. The project pays
+          the gas, so the wallet needs no funds.
         </p>
       ) : (
         <>
@@ -400,7 +415,7 @@ function Workbench(props: {
                 spellCheck={false}
               />
               <FieldDescription>
-                Empty sends to {fallback.label}.
+                Leave blank to send to {fallback.label}.
                 {others.length > 0 && (
                   <>
                     {' '}
@@ -537,8 +552,8 @@ function Records(props: {
         </div>
         <p className="hint">
           {memory
-            ? 'Kept by this handle only. After “Simulate restart” they are gone.'
-            : 'Kept in your database, encrypted: they survive restarts.'}
+            ? 'Kept in server memory only. After “Simulate restart” they are cleared.'
+            : 'Encrypted and stored in your database so they survive restarts.'}
         </p>
         {operations.length === 0 && <p className="empty-line">No operations yet.</p>}
         <div className="operations">
@@ -574,11 +589,13 @@ function Records(props: {
             </h3>
           </div>
           <p className="hint">
-            Your own database: each transaction's receipt (txnId), saved before it was sent. It
-            outlives the handle, so you can always ask WaaS what happened.
+            Your own app database: each transaction&apos;s receipt (<Term id="txnId">txnId</Term>),
+            saved before sending. It survives restarts, so you can always ask WaaS what happened.
           </p>
           {ledger.length === 0 && (
-            <p className="empty-line">No receipts yet. “Send now” saves one.</p>
+            <p className="empty-line">
+              No receipts yet. Quoting or sending a transaction saves one.
+            </p>
           )}
           <div className="ledger-list">
             {ledger.map((entry) => (
@@ -614,8 +631,8 @@ function Records(props: {
             </h3>
           </div>
           <p className="hint">
-            What the SDK wrote to your database for {user.name}: AES-256-GCM ciphertext, readable
-            only with your encryption key.
+            What the SDK wrote to your database for {user.name}: <Term id="aes">AES-256-GCM</Term>{' '}
+            ciphertext, readable only with your encryption key.
           </p>
           <div className="store-list">
             {(allRows ? store : store.slice(0, 5)).map((entry) => (
@@ -673,7 +690,7 @@ function Operation(props: {
           {CHAIN[op.family].name} {KIND[op.kind] ?? op.kind}
         </strong>
         <span className="muted small">{op.chain}</span>
-        <Hint text="The idempotencyKey: retrying with it never repeats the work.">
+        <Hint toggleable text={TERMS.idempotencyKey}>
           <code className="muted small key-chip" tabIndex={0}>
             {op.id}
           </code>
@@ -696,13 +713,13 @@ function Operation(props: {
       </ol>
       <div className="op-meta">
         {op.txnId && (
-          <span title="WaaS transaction ID: the receipt number">
-            txnId <code>{short(op.txnId)}</code>
+          <span>
+            <Term id="txnId">txnId</Term> <code>{short(op.txnId)}</code>
           </span>
         )}
         {op.reviewId && op.status === 'quoted' && (
-          <span title="Binds sending to exactly these quoted terms">
-            reviewId <code>{short(op.reviewId)}</code>
+          <span>
+            <Term id="reviewId">reviewId</Term> <code>{short(op.reviewId)}</code>
           </span>
         )}
         {left && (
@@ -719,10 +736,14 @@ function Operation(props: {
           </a>
         )}
         {op.error && <span className="urgent">{op.error}</span>}
-        {op.provenUnsent && <span>nothing was sent (provenUnsent)</span>}
+        {op.provenUnsent && (
+          <span>
+            nothing was sent (<Term id="provenUnsent">provenUnsent</Term>)
+          </span>
+        )}
       </div>
       <p className="next">
-        <Hint text="The SDK's describeOperation() says what is safe to do next with this operation.">
+        <Hint toggleable text={TERMS.describeOperation}>
           <span className={`next-action ${op.next.action}`} tabIndex={0}>
             {op.next.action}
           </span>

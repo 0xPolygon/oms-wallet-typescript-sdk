@@ -36,18 +36,18 @@ const quote: Step = {
 };
 const restart: Step = {
   label: 'Simulate a restart',
-  explain: 'Throw the handle away, as a crash or deploy would.',
+  explain: 'Drop the in-memory wallet handle, as a server crash or deploy would.',
   async run(h) {
     await h.post('toggle');
-    return 'The handle is gone: its session is cancelled and its Operations list is empty.';
+    return 'In-memory state cleared: the session ended and the Operations list is empty.';
   }
 };
 const signBackIn: Step = {
   label: 'Sign back in',
-  explain: 'A new handle signs in with a fresh ID token and reconnects to the same wallets.',
+  explain: 'Sign in with a fresh ID token and reconnect to the same wallets.',
   async run(h) {
     const user = await h.post<DemoUser>('setup');
-    return `Same wallets: EVM ${user.wallets.evm?.slice(0, 10)}…, nothing created.`;
+    return `Reconnected to the same wallets (EVM ${user.wallets.evm?.slice(0, 10)}…); nothing new was created.`;
   }
 };
 
@@ -78,7 +78,7 @@ export const FLOWS: readonly Flow[] = [
           for (let tries = 0; tries < 40; tries++) {
             const op = (await h.reload()).operations.find((o) => o.id === memo.op!.id);
             if (op?.status === 'executed')
-              return 'Executed. The explorer link is on the operation.';
+              return 'Confirmed on chain. The explorer link is on the operation card.';
             await new Promise((resolve) => setTimeout(resolve, 2000));
           }
           throw new Error('TIMEOUT: still not executed after 80s');
@@ -158,14 +158,14 @@ export const FLOWS: readonly Flow[] = [
       quote,
       {
         label: 'Retry with the same key',
-        explain: 'The same call again, as after a timeout.',
+        explain: 'Send the same call again, as you would after a timeout.',
         async run(h, memo) {
           const { reused } = await h.post<{ reused: boolean }>('retry', {
             idempotencyKey: memo.op!.id
           });
           return reused
-            ? 'The stored operation came back. No second quote.'
-            : 'A new quote was made.';
+            ? 'Returned the stored operation. No second quote was created.'
+            : 'Created a new quote.';
         }
       }
     ]
@@ -174,12 +174,13 @@ export const FLOWS: readonly Flow[] = [
     id: 'lock',
     mode: 'durable',
     title: 'One call at a time',
-    why: "A durable user's calls take turns through a per-user lock, so two servers never race.",
+    why: "A durable user's calls take turns through a per-user call queue, so two servers never race.",
     takeaway: 'The second call waited for the first: its trace card says “waited”.',
     steps: [
       {
         label: 'Run two signatures at once',
-        explain: 'Both calls start together. Watch the Queue lane: the second one waits its turn.',
+        explain:
+          'Both calls start together. Watch the Queue lane: the second one waits for the first to finish.',
         async run(h) {
           await Promise.all([h.post('sign', { family: 'evm' }), h.post('sign', { family: 'evm' })]);
         }
@@ -190,8 +191,9 @@ export const FLOWS: readonly Flow[] = [
     id: 'restart',
     mode: 'memory',
     title: 'Survive a restart',
-    why: 'In-memory handles forget everything on restart. The receipt your app saved is enough to find out what happened.',
-    takeaway: 'No SDK records survived, yet the txnId from your own ledger told you the outcome.',
+    why: 'In-memory wallets lose local state on restart. The receipt your app saved is enough to find out what happened.',
+    takeaway:
+      'No SDK records survived the restart, yet the txnId from your own ledger told you the outcome.',
     steps: [
       {
         label: 'Send now',
@@ -205,12 +207,12 @@ export const FLOWS: readonly Flow[] = [
       signBackIn,
       {
         label: 'Check the receipt',
-        explain: 'Ask WaaS about the saved txnId. No record of the operation is needed.',
+        explain: 'Ask WaaS about the saved txnId. No local record of the operation is needed.',
         async run(h, memo) {
           const entry = await h.post<{ outcome?: string }>('recover', {
             txnId: memo.op!.quote!.txnId
           });
-          return `WaaS says: ${entry.outcome}.`;
+          return `WaaS reported: ${entry.outcome}.`;
         }
       }
     ]
@@ -219,22 +221,23 @@ export const FLOWS: readonly Flow[] = [
     id: 'memory-retry',
     mode: 'memory',
     title: 'Why your app keeps records',
-    why: "In-memory idempotency lasts only as long as the handle. After a restart the SDK can't spot a retry.",
-    takeaway: 'After a restart, a retry made a new quote. Check your own ledger before retrying.',
+    why: "In-memory idempotency lasts only until a restart. After that, the SDK can't recognize a retry.",
+    takeaway:
+      'After a restart, a retry created a new quote. Check your own ledger before retrying.',
     steps: [
       quote,
       restart,
       signBackIn,
       {
         label: 'Retry with the same key',
-        explain: 'The same call again, from the new handle.',
+        explain: 'Send the same call again after the restart.',
         async run(h, memo) {
           const { reused } = await h.post<{ reused: boolean }>('retry', {
             idempotencyKey: memo.op!.id
           });
           return reused
-            ? 'The stored operation came back.'
-            : 'A new quote: the new handle had never seen this key.';
+            ? 'Returned the existing operation.'
+            : 'Created a new quote: after the restart, the SDK had no record of this key.';
         }
       }
     ]

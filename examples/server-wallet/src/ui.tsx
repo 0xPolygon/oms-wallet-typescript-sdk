@@ -1,7 +1,8 @@
-import { useEffect, useState, type ReactElement } from 'react';
+import { Fragment, useEffect, useState, type ReactElement, type ReactNode } from 'react';
 import { Tooltip, TooltipContent, TooltipTrigger } from '@ui-sdk/react/tooltip';
 
 import type { Family, Mode } from '../shared';
+import { TERMS, type TermId } from './explain';
 
 export const FAMILIES: Family[] = ['evm', 'solana', 'tron'];
 export const CHAIN: Record<
@@ -18,14 +19,81 @@ export const FAUCETS: Record<Family, string> = {
   tron: 'https://nileex.io/join/getJoinPage'
 };
 
-export function Hint(props: { text: string; children: ReactElement; side?: 'top' | 'bottom' }) {
+export function Hint(props: {
+  text: string;
+  children: ReactElement;
+  side?: 'top' | 'bottom';
+  toggleable?: boolean;
+}) {
   return (
-    <Tooltip>
+    <Tooltip toggleable={props.toggleable} delay={200}>
       <TooltipTrigger render={props.children} />
       <TooltipContent className="tooltip" side={props.side ?? 'bottom'}>
         {props.text}
       </TooltipContent>
     </Tooltip>
+  );
+}
+
+/** Underlined domain term that explains itself on hover, focus, or tap. */
+export function Term(props: { id: TermId; children: ReactNode; side?: 'top' | 'bottom' }) {
+  return (
+    <Tooltip toggleable delay={200}>
+      <TooltipTrigger className="term">{props.children}</TooltipTrigger>
+      <TooltipContent className="tooltip" side={props.side ?? 'top'}>
+        {TERMS[props.id]}
+      </TooltipContent>
+    </Tooltip>
+  );
+}
+
+const TERM_PATTERNS: readonly [RegExp, TermId][] = [
+  [/\bper-user call queue\b/i, 'queue'],
+  [/\bcall queue\b/i, 'queue'],
+  [/\bID token\b/, 'idToken'],
+  [/\bWaaS\b/, 'waas'],
+  [/\bidempotencyKey\b/, 'idempotencyKey'],
+  [/\breviewId\b/, 'reviewId'],
+  [/\btxnIds?\b/, 'txnId'],
+  [/\bonPrepared\b/, 'onPrepared'],
+  [/\bsponsored\b/i, 'sponsored'],
+  [/\bprovenUnsent\b/, 'provenUnsent']
+];
+
+/** Renders plain copy while turning the first occurrence of known terms into `<Term>` triggers. */
+export function ExplainText({ text }: { text: string }) {
+  const seen = new Set<TermId>();
+  let parts: ReactNode[] = [text];
+  for (const [pattern, id] of TERM_PATTERNS) {
+    const next: ReactNode[] = [];
+    for (const part of parts) {
+      if (typeof part !== 'string' || seen.has(id)) {
+        next.push(part);
+        continue;
+      }
+      const match = pattern.exec(part);
+      if (!match) {
+        next.push(part);
+        continue;
+      }
+      seen.add(id);
+      if (match.index > 0) next.push(part.slice(0, match.index));
+      next.push(
+        <Term key={`${id}-${match.index}`} id={id}>
+          {match[0]}
+        </Term>
+      );
+      const rest = part.slice(match.index + match[0].length);
+      if (rest) next.push(rest);
+    }
+    parts = next;
+  }
+  return (
+    <>
+      {parts.map((part, index) => (
+        <Fragment key={index}>{part}</Fragment>
+      ))}
+    </>
   );
 }
 

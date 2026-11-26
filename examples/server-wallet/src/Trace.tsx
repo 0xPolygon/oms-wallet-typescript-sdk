@@ -3,8 +3,8 @@ import { Collapsible, CollapsiblePanel, CollapsibleTrigger } from '@ui-sdk/react
 import { Switch, SwitchThumb } from '@ui-sdk/react/switch';
 
 import type { DemoEvent, DemoUser } from '../shared';
-import { codeFor, LANES, size, STATUS, storedThings, waasSentence } from './explain';
-import { clock, CopyButton, duration, Hint, ModeBadge, short } from './ui';
+import { codeFor, LANES, size, STATUS, storedThings, TERMS, waasSentence } from './explain';
+import { clock, CopyButton, duration, Hint, short, Term } from './ui';
 
 type ActionEvent = Extract<DemoEvent, { kind: 'action' }>;
 type Group = { id: number; start?: ActionEvent; end?: ActionEvent; events: DemoEvent[] };
@@ -156,7 +156,7 @@ function ActionCard(props: {
               {writes} database {writes === 1 ? 'write' : 'writes'}
             </span>
           )}
-          {waited >= 10 && <span className="lock-wait">waited {duration(waited)}</span>}
+          {waited >= 10 && <span className="lock-wait">waited {duration(waited)} in queue</span>}
           <span>{end ? `${duration(end.at - start.at)} total` : 'running'}</span>
         </span>
         <span className="time">{clock(start.at)}</span>
@@ -170,11 +170,7 @@ function ActionCard(props: {
           {LANES.map((lane) => {
             const unused = memory && (lane.id === 'lock' || lane.id === 'store');
             return (
-              <Hint
-                key={lane.id}
-                side="top"
-                text={unused ? `${lane.hint} Not used by this in-memory user.` : lane.hint}
-              >
+              <Hint key={lane.id} side="top" text={lane.hint} toggleable>
                 <span className={`lane-title ${lane.id} ${unused ? 'dim' : ''}`} tabIndex={0}>
                   {lane.label}
                 </span>
@@ -270,18 +266,24 @@ function toRows(events: DemoEvent[], name: string): Row[] {
         tone: '',
         text:
           event.phase === 'queued' ? (
-            <>{name} was busy with another call, so this one waited</>
+            <>
+              Another call for {name} is running — waiting in <Term id="queue">call queue</Term>
+            </>
           ) : event.phase === 'acquired' ? (
             (event.waitedMs ?? 0) >= 5 ? (
               <>
-                Started after waiting <b>{duration(event.waitedMs!)}</b>
+                Started after waiting <b>{duration(event.waitedMs!)}</b> in {name}&apos;s{' '}
+                <Term id="queue">call queue</Term>
               </>
             ) : (
-              <>{name} was free, so this call started right away</>
+              <>
+                Started immediately — nothing ahead in {name}&apos;s{' '}
+                <Term id="queue">call queue</Term>
+              </>
             )
           ) : (
             <>
-              Finished in {duration(event.heldMs ?? 0)}. {name} is free again
+              Finished in {duration(event.heldMs ?? 0)} — next call for {name} can run
             </>
           )
       });
@@ -312,7 +314,16 @@ function Describe({ event, name }: { event: DemoEvent; name: string }) {
     case 'hook':
       return (
         <span title={event.title}>
-          <b>{event.name}</b> <span className="muted">{event.detail}</span>
+          <b>{event.name}</b>{' '}
+          <span className="muted">
+            {event.detail === '(onPrepared)' ? (
+              <>
+                (<Term id="onPrepared">onPrepared</Term>)
+              </>
+            ) : (
+              event.detail
+            )}
+          </span>
         </span>
       );
     case 'operation':
@@ -320,7 +331,10 @@ function Describe({ event, name }: { event: DemoEvent; name: string }) {
         <>
           <b>{STATUS[event.operation.status] ?? event.operation.status}</b>
           {event.operation.txnId ? (
-            <span className="muted"> · txnId {short(event.operation.txnId)}</span>
+            <span className="muted">
+              {' '}
+              · <Term id="txnId">txnId</Term> {short(event.operation.txnId)}
+            </span>
           ) : null}
         </>
       );
@@ -329,10 +343,7 @@ function Describe({ event, name }: { event: DemoEvent; name: string }) {
         <>
           <b>{waasSentence(event.method, name, event.chain)}</b> <Latency ms={event.ms} />{' '}
           {event.attested && (
-            <Hint
-              side="top"
-              text="The reply carried an AWS Nitro attestation. Before using it, the SDK checks the enclave measurement (PCR0), the signature, freshness, and that it answers this exact request. A failed check fails the action."
-            >
+            <Hint side="top" text={TERMS.attestation} toggleable>
               <span className="attested" tabIndex={0}>
                 ✓ attested
               </span>
@@ -345,7 +356,7 @@ function Describe({ event, name }: { event: DemoEvent; name: string }) {
       return (
         <>
           <b>
-            Read {name}'s {event.chain ? `${event.chain} ` : ''}balance
+            Read {name}&apos;s {event.chain ? `${event.chain} ` : ''}balances
           </b>{' '}
           <Latency ms={event.ms} /> <span className="muted">not attested</span>
         </>

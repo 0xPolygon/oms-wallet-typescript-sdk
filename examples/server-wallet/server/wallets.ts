@@ -477,7 +477,7 @@ export async function createWallets(
         .toLowerCase()
         .replace(/[^a-z0-9-]/g, '-')
         .slice(0, 40);
-      if (!clean) throw new WalletError('INVALID_INPUT', 'Name the user.', 400);
+      if (!clean) throw new WalletError('INVALID_INPUT', 'Enter a user name.', 400);
       // One mode per identity: the mode is part of the subject.
       const subject = `demo:${mode}:${clean}`;
       if (!app.users.some((user) => user.subject === subject)) {
@@ -620,8 +620,8 @@ export async function createWallets(
         },
         ({ reused }) =>
           reused
-            ? 'Got the same operation back: nothing was sent twice'
-            : 'This handle had no record of the key, so a new quote was made'
+            ? 'Returned the existing operation: nothing was sent twice'
+            : 'No record of this key in memory, so a new quote was created'
       ),
 
     /** In-memory recovery: wait on a saved txnId from any handle, with no record of the operation. */
@@ -644,7 +644,7 @@ export async function createWallets(
           await saveApp();
           return entry;
         },
-        (entry) => `WaaS says: ${entry.outcome ?? 'no answer'}`
+        (entry) => `WaaS reported: ${entry.outcome ?? 'no response'}`
       ),
 
     rotate: (subject: string) =>
@@ -664,7 +664,7 @@ export async function createWallets(
           'Simulate restart',
           // Revokes the credential and forgets every record of this handle.
           () => memory.evict(subject).then(() => user),
-          () => 'Handle dropped: its session ended and its records are gone'
+          () => 'In-memory wallet dropped: session ended and local records cleared'
         );
       const wallet = durable.forSubject(subject);
       const disabled = (await context.run({ quiet: true }, () => wallet.inspect())).disabled;

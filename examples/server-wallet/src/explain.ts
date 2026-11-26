@@ -21,7 +21,7 @@ export function waasSentence(method: string, name: string, chain?: string) {
     case 'SignMessage':
       return 'WaaS signed the message';
     case 'IsValidMessageSignature':
-      return 'WaaS confirmed the signature is valid';
+      return 'WaaS verified the signature';
     case 'RevokeCredential':
       return `WaaS ended ${name}'s session`;
     default:
@@ -29,13 +29,13 @@ export function waasSentence(method: string, name: string, chain?: string) {
   }
 }
 
-/** What a set of stored keys holds, in words: "the operation and alice's session". */
+/** What a set of stored keys holds, in words: "the operation and alice's wallet state". */
 export function storedThings(keys: readonly string[], name: string) {
   const things = new Set<string>();
   for (const key of keys)
     things.add(
       key === 'wallet'
-        ? `${name}'s session`
+        ? `${name}'s wallet state`
         : key.startsWith('operation:')
           ? 'the operation'
           : /[Ii]ndex/.test(key)
@@ -43,7 +43,7 @@ export function storedThings(keys: readonly string[], name: string) {
             : key
     );
   const order = (thing: string) =>
-    thing === 'the operation' ? 0 : thing.endsWith('session') ? 1 : 2;
+    thing === 'the operation' ? 0 : thing.endsWith('wallet state') ? 1 : 2;
   const list = [...things].sort((a, b) => order(a) - order(b));
   return list.length > 1 ? `${list.slice(0, -1).join(', ')} and ${list.at(-1)}` : list[0]!;
 }
@@ -56,8 +56,8 @@ export function size(bytes: number) {
 export const STATUS: Record<string, string> = {
   preparing: 'Preparing the quote',
   quoted: 'Quoted, waiting for your approval',
-  submitting: 'Being sent',
-  pending: 'Sent, waiting for the chain',
+  submitting: 'Sending transaction',
+  pending: 'Sent, waiting for on-chain confirmation',
   executed: 'Confirmed on chain',
   signed: 'Signed and verified by WaaS',
   failed: 'Failed',
@@ -66,27 +66,60 @@ export const STATUS: Record<string, string> = {
   unknown: 'Outcome unknown: reconcile before retrying'
 };
 
+export const TERMS = {
+  idToken:
+    'A short-lived JWT your server signs and sends to WaaS to prove which user is acting. WaaS verifies it against your OIDC issuer’s public keys.',
+  waas: 'Wallet-as-a-Service: the signing service running inside an AWS Nitro enclave. It holds wallet keys and signs transactions for your server.',
+  enclave:
+    'An AWS Nitro enclave is an isolated, hardware-backed compute environment with no shell or external access. It cryptographically proves what code is running.',
+  attestation:
+    'A hardware-signed proof from AWS Nitro attached to every WaaS reply. Before using a reply, the SDK verifies the enclave measurement (PCR0), signature, freshness, and that it matches this exact request.',
+  queue:
+    'In durable mode, each user has a one-at-a-time call queue (backed by your ExclusiveExecutor lock) so concurrent requests or multiple servers never race on the same wallet.',
+  sponsored:
+    'Your project pays the network gas fee, so the user’s wallet can send transactions with a zero balance.',
+  twoPhase:
+    'Quote first, then approve and send in a second call. Prevents sending a transaction whose fee or terms were not reviewed.',
+  idempotencyKey:
+    'A unique key you choose for each operation. Retrying with the same key returns the existing operation instead of sending a duplicate transaction.',
+  reviewId:
+    'A token bound to a specific quote’s exact terms. Passing it to execute() guarantees nothing changed between quoting and sending.',
+  txnId:
+    'The receipt ID WaaS assigns when a transaction is quoted. Saving it in your own database lets you check the outcome later, even after a server restart.',
+  onPrepared:
+    'A callback that runs after WaaS quotes a transaction and before it is sent, giving your app a chance to save the txnId first.',
+  provenUnsent:
+    'The SDK verified that this transaction was never submitted on chain (for example, cancelled or expired before sending), so it is safe to start a new one.',
+  indexer:
+    'The read-only service that returns token balances. Unlike WaaS, its replies are not attested, so use balances for display only.',
+  aes: 'Authenticated encryption performed inside the SDK using your encryption key before anything is written. Your database only ever sees opaque ciphertext.',
+  describeOperation:
+    'An SDK helper that inspects an operation’s state and returns the safe next step (such as approve, wait, reconcile, or done).'
+} as const;
+
+export type TermId = keyof typeof TERMS;
+
 export const LANES = [
-  { id: 'app', label: 'Server', hint: 'Your backend: it runs the SDK and mints ID tokens.' },
+  { id: 'app', label: 'Server', hint: 'Your backend: runs the SDK and mints ID tokens.' },
   {
     id: 'lock',
     label: 'Queue',
-    hint: "Durable users run one call at a time, so two servers never act on the same user at once. In-memory users don't use it."
+    hint: 'Per-user call queue (ExclusiveExecutor): runs one call at a time per user so two servers never race (durable mode only).'
   },
   {
     id: 'store',
     label: 'Your DB',
-    hint: 'Your database. It only ever receives AES-256-GCM ciphertext from the SDK. In-memory users skip it.'
+    hint: 'Your database: stores only AES-256-GCM ciphertext from the SDK (durable mode only).'
   },
   {
     id: 'waas',
     label: 'WaaS',
-    hint: 'The signer in an AWS Nitro enclave. It holds the keys, and every reply carries an attestation the SDK checks.'
+    hint: 'The signer in an AWS Nitro enclave: holds the keys and proves every reply with an attestation.'
   },
   {
     id: 'indexer',
     label: 'Indexer',
-    hint: 'The balance service. Its replies are not attested, so balances are for display only.'
+    hint: 'The balance service: replies are not attested, so use balances for display only.'
   }
 ] as const satisfies readonly { id: DemoEvent['lane']; label: string; hint: string }[];
 

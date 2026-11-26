@@ -29,7 +29,7 @@ import type { DemoConfig, DemoEvent, DemoUser, Mode, UserDetail } from '../share
 import { call } from './api';
 import { SETUP_CODE } from './explain';
 import { TracePanel } from './Trace';
-import { CopyButton, Hint, ModeBadge } from './ui';
+import { CopyButton, Hint, ModeBadge, Term } from './ui';
 import { UserPanel } from './UserPanel';
 
 function showError(failure: unknown) {
@@ -133,9 +133,13 @@ export function App() {
           <p className="eyebrow">OMS Server Wallet SDK · live demo</p>
           <h1>Custodial wallets, traced live</h1>
           <p className="model">
-            Your server signs each user in with an ID token it mints. <b>WaaS</b>, a signer in an
-            AWS Nitro enclave, holds the keys and proves every reply with an attestation. Pick a
-            user, try a flow, and watch each step in the live trace.
+            Your server signs each user in with an <Term id="idToken">ID token</Term> it mints.{' '}
+            <Term id="waas">
+              <b>WaaS</b>
+            </Term>
+            , a signer in an <Term id="enclave">AWS Nitro enclave</Term>, holds the keys and proves
+            every reply with an <Term id="attestation">attestation</Term>. Pick a user, try a flow,
+            and watch each step in the live trace.
           </p>
         </div>
         <div className="row">
@@ -153,8 +157,12 @@ export function App() {
                 <dd>Polygon Amoy (sponsored), Solana devnet, Tron Nile</dd>
                 <dt>Approval</dt>
                 <dd>
-                  <code>allow-immediate</code> here, so “Send now” exists. The SDK default is{' '}
-                  <code>two-phase</code>: quote, approve, send.
+                  <code>allow-immediate</code> in this demo so “Send now” is available. The SDK
+                  default is{' '}
+                  <Term id="twoPhase">
+                    <code>two-phase</code>
+                  </Term>{' '}
+                  (quote, approve, send).
                 </dd>
               </dl>
               <div className="code-block">
@@ -256,6 +264,7 @@ function UsersPanel(props: {
               {props.users.length} / {max}
             </span>
             <Hint
+              toggleable
               text={`Demo only: this public sandbox stops at ${max} users because each one creates real testnet wallets. The SDK has no user limit.`}
             >
               <button type="button" className="limit-hint" aria-label="About the user limit">
@@ -294,9 +303,14 @@ function UsersPanel(props: {
             <SegmentedControlItem value="memory">In-memory</SegmentedControlItem>
           </SegmentedControl>
           <FieldDescription>
-            {mode === 'durable'
-              ? 'The SDK keeps an encrypted record of every call in your database. It survives restarts.'
-              : 'The SDK saves nothing. Your app keeps the receipts (txnIds) it needs.'}
+            {mode === 'durable' ? (
+              'The SDK keeps an encrypted record of every call in your database. It survives restarts.'
+            ) : (
+              <>
+                The SDK saves nothing. Your app keeps the receipts (<Term id="txnId">txnIds</Term>)
+                it needs.
+              </>
+            )}
           </FieldDescription>
         </Field>
         <button className="primary" disabled={!!props.busy || full}>
@@ -326,9 +340,9 @@ function UsersPanel(props: {
         <AlertDialogContent className="dialog">
           <AlertDialogTitle>Reset the sandbox?</AlertDialogTitle>
           <AlertDialogDescription>
-            Removes every user, record and trace here, for everyone using this demo, and ends the
-            in-memory sessions. The wallets stay in WaaS: create a user with the same name and mode
-            to get the same addresses back.
+            Removes all users, records, and traces for everyone using this demo, and ends active
+            in-memory sessions. The wallets stay in WaaS: creating a user with the same name and
+            mode restores the same addresses.
           </AlertDialogDescription>
           {props.config?.resetNeedsKey && (
             <Input
@@ -371,8 +385,8 @@ function Launchpad(props: {
     <section className="card launchpad">
       <h2>Start the demo</h2>
       <p className="muted">
-        Each user gets an EVM, a Solana and a Tron wallet. The SDK runs in one of two modes, so the
-        fastest way to see the difference is one user of each.
+        Each user gets EVM, Solana, and Tron wallets. The SDK supports two storage modes — create
+        one user in each to compare them side by side.
       </p>
       <button
         className="primary big"
@@ -390,8 +404,9 @@ function Launchpad(props: {
         <div className="mode-card">
           <ModeBadge mode="durable" />
           <p>
-            The SDK keeps an encrypted record of every call in your database and runs one call at a
-            time per user. Retries, history and the kill switch survive restarts.
+            The SDK keeps an encrypted record of every call in your database and runs calls one at a
+            time through a <Term id="queue">call queue</Term>. Retries, history and the kill switch
+            survive restarts.
           </p>
           <button
             disabled={busy}
@@ -403,8 +418,9 @@ function Launchpad(props: {
         <div className="mode-card">
           <ModeBadge mode="memory" />
           <p>
-            No database and no lock. Your app saves each transaction's receipt (txnId) and can
-            always ask WaaS what happened, even after a restart.
+            No database and no <Term id="queue">call queue</Term>. Your app saves each
+            transaction&apos;s receipt (<Term id="txnId">txnId</Term>) and can always ask WaaS what
+            happened, even after a restart.
           </p>
           <button disabled={busy} onClick={() => props.onStart([{ name: 'bob', mode: 'memory' }])}>
             Create bob only
