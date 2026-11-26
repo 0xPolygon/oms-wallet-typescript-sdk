@@ -1338,10 +1338,6 @@ button.link.inline {
   gap: 8px;
 }
 
-.key-chip {
-  cursor: help;
-}
-
 .stepper.success li.done,
 .stepper.success li.current {
   background: var(--oms-emerald-700);
@@ -1577,14 +1573,6 @@ button.big {
 
 .lane-pill {
   display: none;
-}
-
-[data-slot='tooltip-trigger'] {
-  cursor: help;
-}
-
-.lane-title {
-  cursor: help;
 }
 
 @media (width < 1200px) {
