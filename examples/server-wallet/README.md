@@ -10,8 +10,8 @@ It runs both modes side by side, one per user:
   encrypted by the SDK and written to the app's store (`.data/store.json` under Node, Durable Object
   storage on Cloudflare). Records, idempotency and the kill switch (`disable()`) survive restarts.
 - **In-memory**: `createServerWalletService({ storage: 'memory' })`. Credentials and records live in
-  this process. The app saves each `txnId` from `onPrepared` to its own ledger, and **Drop handle**
-  (what a restart does) followed by **Wait by txnId** shows recovery from a handle with no records.
+  this process. The app saves each `txnId` from `onPrepared` to its own ledger, and **Simulate restart**
+  followed by **Check receipt** shows recovery from a handle with no records.
 
 Live: <https://oms-server-wallet-example.0xsequence.workers.dev> (a shared testnet sandbox).
 
@@ -20,7 +20,9 @@ Live: <https://oms-server-wallet-example.0xsequence.workers.dev> (a shared testn
 ![An in-memory user after the "Survive a restart" flow](docs/memory-restart.png)
 
 Everything runs on testnets: sponsored zero-value calls on Polygon Amoy (no funds needed), and native
-transfers on Solana devnet and Tron Nile (fund the wallet from the faucet links first).
+transfers on Solana devnet and Tron Nile, which are not sponsored: the demo shows each wallet's
+balance and links its faucet until it is funded. Guided flows walk through each behaviour, and
+every step shows up in the live trace.
 
 ## Run it locally
 

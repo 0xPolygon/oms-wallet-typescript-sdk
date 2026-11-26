@@ -4,7 +4,7 @@ import { WalletError } from '@polygonlabs/oms-server-wallet-sdk';
 
 import type { DemoConfig, Family, Mode } from '../shared.ts';
 import { createIssuer } from './oidc.ts';
-import { createWallets, MAX_USERS, subscribe, type Persistence } from './wallets.ts';
+import { createWallets, MAX_USERS, SINKS, subscribe, type Persistence } from './wallets.ts';
 
 type Body = {
   name?: string;
@@ -34,6 +34,7 @@ export async function createApp(env: Record<string, string | undefined>, persist
     issuer: issuer.issuer,
     networks: { evm: 'Polygon Amoy (80002)', solana: 'solana:devnet', tron: 'tron:nile' },
     maxUsers: MAX_USERS,
+    sinks: SINKS,
     resetNeedsKey: !!env.RESET_KEY
   };
 

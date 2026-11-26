@@ -65,7 +65,13 @@ export type DemoEvent = {
       readonly detail?: string;
     }
   | { readonly lane: 'app'; readonly kind: 'reset' }
-  | { readonly lane: 'app'; readonly kind: 'hook'; readonly name: string; readonly detail: string }
+  | {
+      readonly lane: 'app';
+      readonly kind: 'hook';
+      readonly name: string;
+      readonly detail: string;
+      readonly title?: string;
+    }
   | { readonly lane: 'app'; readonly kind: 'operation'; readonly operation: OperationView }
   | {
       readonly lane: 'lock';
@@ -85,6 +91,7 @@ export type DemoEvent = {
       readonly lane: 'waas';
       readonly kind: 'waas';
       readonly method: string;
+      readonly chain?: string;
       readonly ms: number;
       readonly status: number;
       readonly attested: boolean;
@@ -93,6 +100,7 @@ export type DemoEvent = {
       readonly lane: 'indexer';
       readonly kind: 'indexer';
       readonly method: string;
+      readonly chain?: string;
       readonly ms: number;
       readonly status: number;
     }
@@ -115,6 +123,17 @@ export interface DemoConfig {
   readonly issuer: string;
   readonly networks: { readonly evm: string; readonly solana: string; readonly tron: string };
   readonly maxUsers: number;
+  /** Fallback recipients when no other demo user has a wallet on that chain. */
+  readonly sinks: Readonly<Record<Family, string>>;
   /** Whether resetting the sandbox asks for RESET_KEY. */
   readonly resetNeedsKey: boolean;
+}
+
+export interface Balance {
+  readonly family: Family;
+  readonly native: boolean;
+  readonly symbol: string;
+  /** In base units (wei, lamports, sun). */
+  readonly balance: string;
+  readonly decimals: number;
 }

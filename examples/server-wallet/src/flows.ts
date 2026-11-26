@@ -1,4 +1,5 @@
 import type { DemoUser, Mode, UserDetail } from '../shared';
+import { short } from './ui';
 
 export interface FlowHelpers {
   post<T = unknown>(action: string, body?: Record<string, unknown>): Promise<T>;
@@ -30,7 +31,7 @@ const quote: Step = {
   explain: 'WaaS prices a sponsored call on Amoy and returns a reviewId. Nothing is sent.',
   async run(h, memo) {
     memo.op = await h.post<Quoted>('prepare', { family: 'evm' });
-    return `Quoted. txnId ${memo.op.quote?.txnId.slice(0, 12)}… is the receipt number.`;
+    return `Quoted. Its receipt number (txnId) is ${short(memo.op.quote?.txnId ?? '')}.`;
   }
 };
 const restart: Step = {
@@ -174,11 +175,11 @@ export const FLOWS: readonly Flow[] = [
     mode: 'durable',
     title: 'One call at a time',
     why: "A durable user's calls take turns through a per-user lock, so two servers never race.",
-    takeaway: 'The second call waited for the lock: see “waited …ms” in the trace.',
+    takeaway: 'The second call waited for the first: its trace card says “queued”.',
     steps: [
       {
         label: 'Run two signatures at once',
-        explain: 'Both calls start together; watch the Lock lane in the trace.',
+        explain: 'Both calls start together. Watch the Queue lane: the second one waits its turn.',
         async run(h) {
           await Promise.all([h.post('sign', { family: 'evm' }), h.post('sign', { family: 'evm' })]);
         }
@@ -197,7 +198,7 @@ export const FLOWS: readonly Flow[] = [
         explain: 'onPrepared saves the txnId to your ledger before the transaction is sent.',
         async run(h, memo) {
           memo.op = await h.post<Quoted>('send', { family: 'evm' });
-          return `Sent. Receipt ${memo.op.quote?.txnId.slice(0, 12)}… is in your ledger.`;
+          return `Sent. Receipt ${short(memo.op.quote?.txnId ?? '')} is in your ledger.`;
         }
       },
       restart,

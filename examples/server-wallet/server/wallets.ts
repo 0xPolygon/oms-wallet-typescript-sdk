@@ -33,8 +33,14 @@ import type { Issuer } from './oidc.ts';
 
 export const FAMILIES: readonly Family[] = ['evm', 'solana', 'tron'];
 const AMOY = 80002 as const;
-/** Sponsored zero-value calls go here: they need no funds and change nothing. */
-const SINK = '0x000000000000000000000000000000000000dEaD';
+const LABEL: Record<Family, string> = { evm: 'EVM', solana: 'Solana', tron: 'Tron' };
+const KIND: Record<Family, string> = { evm: 'call', solana: 'transfer', tron: 'transfer' };
+/** Fallback recipients when no other demo user has a wallet on that chain. */
+export const SINKS: Record<Family, string> = {
+  evm: '0x000000000000000000000000000000000000dEaD',
+  solana: '1nc1nerator11111111111111111111111111111111',
+  tron: 'T9yD14Nj9j7xAB4dbGeiX9h8unkKHxuWwb'
+};
 const TRON_MAX_FEE = '2000000'; // 2 TRX, in sun
 
 // ---------------------------------------------------------------------------------------------
@@ -80,6 +86,33 @@ export function subscribe(listener: (event: DemoEvent) => void) {
   return () => listeners.delete(listener);
 }
 
+const CHAIN_NAMES: Record<string, string> = {
+  '80002': 'Amoy',
+  'solana:devnet': 'Solana devnet',
+  'tron:nile': 'Tron Nile',
+  ethereum: 'EVM',
+  evm: 'EVM',
+  solana: 'Solana',
+  tron: 'Tron'
+};
+
+/** Which chain a traced request is about, read from its body or, for wallet calls, its reply. */
+async function chainOf(body: unknown, response: Response) {
+  const text = typeof body === 'string' ? body : '';
+  const requested =
+    /"chainIds":\[(\d+)/.exec(text)?.[1] ??
+    /"networks":\["([^"]+)"/.exec(text)?.[1] ??
+    /"network(?:Family)?":"([^"]+)"/.exec(text)?.[1];
+  if (requested) return CHAIN_NAMES[requested] ?? requested;
+  if (!/(Use|Create)Wallet/.test(response.url)) return undefined;
+  const reply = await response
+    .clone()
+    .text()
+    .catch(() => '');
+  const family = /"networkFamily":"([^"]+)"/.exec(reply)?.[1];
+  return family ? (CHAIN_NAMES[family] ?? family) : undefined;
+}
+
 /** Every WaaS and indexer request, with its latency and whether it carried an attestation. */
 const tracedFetch: typeof fetch = async (input, init) => {
   const started = performance.now();
@@ -87,16 +120,18 @@ const tracedFetch: typeof fetch = async (input, init) => {
   const ms = Math.round(performance.now() - started);
   const path = new URL(String(input instanceof Request ? input.url : input)).pathname;
   const method = path.split('/').pop() ?? path;
+  const chain = await chainOf(init?.body, response);
   if (/^\/v1\/Waas(Public)?\//.test(path))
     emit({
       lane: 'waas',
       kind: 'waas',
       method,
+      chain,
       ms,
       status: response.status,
       attested: response.headers.has('X-Attestation-Document')
     });
-  else emit({ lane: 'indexer', kind: 'indexer', method, ms, status: response.status });
+  else emit({ lane: 'indexer', kind: 'indexer', method, chain, ms, status: response.status });
   return response;
 };
 
@@ -223,8 +258,9 @@ export async function createWallets(
         emit({
           lane: 'app',
           kind: 'hook',
-          name: 'ID token',
-          detail: `minted { iss: ${issuer.issuer}, aud: ${issuer.audience}, sub: ${subject}, exp: +5 min }, single use`
+          name: 'ID token minted',
+          detail: `for ${subject} · valid 5 min · single use`,
+          title: `{ iss: ${issuer.issuer}, aud: ${issuer.audience}, sub: ${subject}, exp: now + 5 min, jti: random }`
         });
         return minted;
       }
@@ -323,8 +359,8 @@ export async function createWallets(
         name: 'onPrepared',
         detail:
           user.mode === 'memory'
-            ? `saved txnId ${operation.quote.txnId.slice(0, 10)}… to the app ledger`
-            : 'quote ready; Execute follows'
+            ? `saved receipt ${operation.quote.txnId.slice(0, 8)}…${operation.quote.txnId.slice(-6)} to your ledger, before sending`
+            : 'quote ready; sending it now'
       });
       await saveTxn(user, family, operation);
     };
@@ -422,12 +458,13 @@ export async function createWallets(
     await saveApp();
   }
 
-  const transferTo = (user: DemoUser, family: Family, to?: string) => {
-    const recipient = to?.trim() || (family === 'evm' ? SINK : user.wallets[family]);
-    if (!recipient)
-      throw new WalletError('INVALID_INPUT', `Create the ${family} wallet first.`, 400);
-    return recipient;
-  };
+  /** The recipient typed in, else another demo user's wallet on that chain, else a sink. */
+  const transferTo = (user: DemoUser, family: Family, to?: string) =>
+    to?.trim() ||
+    (family === 'evm'
+      ? SINKS.evm
+      : (app.users.find((other) => other.subject !== user.subject && other.wallets[family])
+          ?.wallets[family] ?? SINKS[family]));
   const key = (family: Family) =>
     `${family}-${Date.now().toString(36)}-${crypto.randomUUID().slice(0, 6)}`;
 
@@ -465,7 +502,11 @@ export async function createWallets(
     setup: (subject: string) =>
       act(
         subject,
-        'create or restore wallets',
+        findUser(subject).mode === 'durable'
+          ? 'Create or restore wallets'
+          : Object.keys(findUser(subject).wallets).length
+            ? 'Sign back in'
+            : 'Create wallets',
         async (user) => {
           const wallet = handle(user);
           const snapshot =
@@ -476,16 +517,13 @@ export async function createWallets(
                 : await wallet.create({ families });
           return remember(user, snapshot);
         },
-        (user) =>
-          Object.entries(user.wallets)
-            .map(([f, a]) => `${f} ${a.slice(0, 8)}…`)
-            .join(', ')
+        () => 'EVM, Solana and Tron wallets ready'
       ),
 
     balances: (subject: string) =>
       act(
         subject,
-        'read balances',
+        'Read balances',
         async (user) => {
           const wallet = handle(user);
           const [evm, solana, tron] = await Promise.all([
@@ -493,20 +531,28 @@ export async function createWallets(
             wallet.indexer.getSolanaBalances({ networks: ['solana:devnet'] }),
             wallet.indexer.getTronBalances({ networks: ['tron:nile'] })
           ]);
-          return [...evm.items, ...solana.items, ...tron.items].map((item) => ({
-            chain: 'chainId' in item ? `Amoy` : item.network,
-            symbol: item.symbol,
-            balance: item.balance,
-            decimals: item.decimals ?? 18
-          }));
+          const tag =
+            (family: Family) =>
+            (item: (typeof evm.items)[number] | (typeof solana.items)[number]) => ({
+              family,
+              native: item.asset === 'native',
+              symbol: item.symbol,
+              balance: item.balance,
+              decimals: item.decimals ?? 18
+            });
+          return [
+            ...evm.items.map(tag('evm')),
+            ...solana.items.map(tag('solana')),
+            ...tron.items.map(tag('tron'))
+          ];
         },
-        (items) => `${items.length} balances`
+        (items) => `${items.length} balances read`
       ),
 
     sign: (subject: string, family: Family) =>
       act(
         subject,
-        `sign a ${family} message`,
+        `Sign ${LABEL[family]} message`,
         async (user) => {
           const wallet = handle(user);
           const input = { idempotencyKey: key(family), message: `Hello from ${user.name}` };
@@ -525,7 +571,7 @@ export async function createWallets(
     prepare: (subject: string, family: Family, to?: string, amount?: string) =>
       act(
         subject,
-        `prepare ${family}`,
+        `Quote ${LABEL[family]} ${KIND[family]}`,
         (user) => quote(user, key(family), { family, mode: 'prepare', to, amount }),
         (op) => op.status
       ),
@@ -534,7 +580,7 @@ export async function createWallets(
     execute: (subject: string, family: Family, idempotencyKey: string, reviewId: string) =>
       act(
         subject,
-        `execute ${family}`,
+        `Approve & send ${LABEL[family]} quote`,
         async (user) => {
           const operation = await handle(user)[family].execute({ idempotencyKey, reviewId });
           follow(user, family, operation.id, operation.status);
@@ -546,7 +592,7 @@ export async function createWallets(
     cancel: (subject: string, family: Family, idempotencyKey: string) =>
       act(
         subject,
-        `cancel ${family}`,
+        `Cancel ${LABEL[family]} quote`,
         async (user) => traced(await handle(user)[family].cancel({ idempotencyKey })),
         (op) => op.status
       ),
@@ -555,7 +601,7 @@ export async function createWallets(
     send: (subject: string, family: Family, to?: string, amount?: string) =>
       act(
         subject,
-        `send ${family}`,
+        `Send ${LABEL[family]} ${KIND[family]}`,
         (user) => quote(user, key(family), { family, mode: 'send', to, amount }),
         (op) => op.status
       ),
@@ -564,7 +610,7 @@ export async function createWallets(
     retry: (subject: string, idempotencyKey: string) =>
       act(
         subject,
-        'retry with the same key',
+        'Retry with the same key',
         async (user) => {
           const input = app.inputs[idempotencyKey];
           if (!input) throw new WalletError('INVALID_INPUT', 'Unknown idempotencyKey.', 404);
@@ -582,7 +628,7 @@ export async function createWallets(
     recover: (subject: string, txnId: string) =>
       act(
         subject,
-        'recover by txnId',
+        'Check receipt by txnId',
         async (user) => {
           const entry = app.ledger.find(
             (candidate) => candidate.txnId === txnId && candidate.subject === subject
@@ -604,7 +650,7 @@ export async function createWallets(
     rotate: (subject: string) =>
       act(
         subject,
-        'rotate credential',
+        'Rotate credential',
         async (user) => remember(user, await handle(user).rotateCredential()),
         (u) => `new credential until ${u.expiresAt}`
       ),
@@ -615,7 +661,7 @@ export async function createWallets(
       if (user.mode === 'memory')
         return act(
           subject,
-          'simulate restart (drop handle)',
+          'Simulate restart',
           // Revokes the credential and forgets every record of this handle.
           () => memory.evict(subject).then(() => user),
           () => 'handle dropped: records gone, credential revoked'
@@ -624,7 +670,7 @@ export async function createWallets(
       const disabled = (await context.run({ quiet: true }, () => wallet.inspect())).disabled;
       return act(
         subject,
-        disabled ? 'enable wallet' : 'disable wallet (kill switch)',
+        disabled ? 'Enable wallet' : 'Disable wallet',
         async () => remember(user, disabled ? await wallet.enable() : await wallet.disable()),
         (result) => (result.disabled ? 'disabled' : 'enabled')
       );
