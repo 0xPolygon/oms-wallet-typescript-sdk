@@ -1,13 +1,18 @@
 import { expect, it } from 'vitest';
 import { Address, Payload } from '@0xsequence/wallet-primitives';
 import { bytesToHex, encodeFunctionData, hexToBytes } from 'viem';
-import { validateRecoveryTransaction } from '@polygonlabs/oms-server-wallet-sdk/trails';
-import { recoveryContext, deployAbi } from '../src/trails/recovery-transaction.js';
+import {
+  deployAbi,
+  recoveryContext,
+  validateRecoveryTransaction
+} from '../src/trails/recovery-transaction.js';
+import { WalletEngine } from '../src/engine.js';
+import { createSingleProcessExecutor } from '@polygonlabs/oms-server-wallet-sdk';
 import { intentSchema } from '../src/trails/protocol.js';
 import { validateTypedData } from '../src/typed-data.js';
 import { owner, token, quoteFixture, recoveryFixture } from './fixtures/trails.js';
 import { executeData } from './swap-harness.js';
-import { sdkHarness } from './helpers.js';
+import { FakeWaas, MemoryStore } from './helpers.js';
 
 const balances = [{ asset: token, amount: '1000' }];
 function built() {
@@ -19,28 +24,50 @@ function built() {
       to: prepared.intentAddress,
       data: executeData(prepared.payload.encoded),
       value: '0',
-      chainId: 137,
+      chainId: 137 as const,
       intentAddress: prepared.intentAddress,
       payloadHash: prepared.payloadHash,
       requiresDeploy: false
     }
   };
 }
+function engineHarness() {
+  const store = new MemoryStore();
+  const remote = new FakeWaas();
+  const engine = new WalletEngine({
+    namespace: 'test',
+    subject: 'customer-1',
+    issuer: 'https://issuer.example',
+    audience: 'oms-server-wallet',
+    getIdToken: async () => ({
+      token: `fixture-${crypto.randomUUID()}`,
+      expiresAt: Math.floor(Date.now() / 1000) + 300
+    }),
+    store,
+    executor: createSingleProcessExecutor(),
+    transport: remote
+  });
+  return { engine, primitives: engine.lockedPrimitives(), remote };
+}
+
 it('validates an intent execute envelope and grants a non-forgeable zero-value capability', async () => {
   const { prepared, intent, tx } = built();
   const capability = validateRecoveryTransaction(tx, prepared, intent, owner, balances);
   expect(Object.isFrozen(capability)).toBe(true);
-  const h = sdkHarness();
-  await h.client.createOrRestore();
-  const operation = await h.client.prepareRecoveryTransaction('recovery-test', capability);
+  const h = engineHarness();
+  await h.engine.core.createOrRestore();
+  const operation = await h.primitives.prepareRecoveryLocked('swp_recovery_test', capability);
   expect(operation.kind).toBe('recovery');
   expect(h.remote.calls.find((c) => c.method === 'PrepareEthereumTransaction')?.body).toMatchObject(
     { to: tx.to, data: tx.data, value: '0', mode: 'relayer' }
   );
-  expect(() => h.client.prepareRecoveryTransaction('forged-test', { ...capability })).toThrow();
-  await h.client.executeOperation(operation.id);
+  expect(() => h.primitives.prepareRecoveryLocked('swp_forged_test', { ...capability })).toThrow();
+  await h.primitives.executeEvmOperationLocked(operation.id, ['recovery'], {
+    skipGate: true,
+    bypassReviewId: true
+  });
   h.remote.txnStatus = 'executed';
-  expect((await h.client.getOperation(operation.id))?.status).toBe('executed');
+  expect((await h.primitives.refreshEvmOperationLocked(operation.id))?.status).toBe('executed');
 });
 it('validates the separate factory + guest envelope when the intent wallet needs deployment', () => {
   const { prepared, intent, tx } = built();
@@ -104,7 +131,7 @@ it('rejects calldata suffixes, altered signed calls, changed targets, hashes, ch
     { ...tx, data: `${tx.data}00` },
     { ...tx, to: owner },
     { ...tx, value: '1' },
-    { ...tx, chainId: 8453 },
+    { ...tx, chainId: 8453 as const },
     { ...tx, payloadHash: `0x${'ff'.repeat(32)}` },
     { ...tx, data: executeData(`${prepared.payload.encoded}00`) },
     { ...tx, requiresDeploy: true },
@@ -114,20 +141,22 @@ it('rejects calldata suffixes, altered signed calls, changed targets, hashes, ch
     expect(() => validateRecoveryTransaction(variant, prepared, intent, owner, balances)).toThrow();
 });
 it('prepares only the managed wallet self-call for owner deployment, and rejects unsponsored recovery', async () => {
-  const h = sdkHarness();
-  await h.client.createOrRestore();
-  await h.client.prepareDeployment('deployment-test', 8453);
+  const h = engineHarness();
+  await h.engine.core.createOrRestore();
+  await h.primitives.prepareDeploymentLocked('swp_deployment_test', 8453);
   expect(h.remote.calls.find((c) => c.method === 'PrepareEthereumTransaction')?.body).toMatchObject(
     { network: '8453', to: owner, value: '0', data: '0x', mode: 'relayer' }
   );
   h.remote.sponsored = false;
-  await expect(h.client.prepareDeployment('deployment-fail', 137)).rejects.toMatchObject({
+  await expect(
+    h.primitives.prepareDeploymentLocked('swp_deployment_fail', 137)
+  ).rejects.toMatchObject({
     code: 'SPONSORSHIP_REQUIRED'
   });
   const { prepared, intent, tx } = built();
   await expect(
-    h.client.prepareRecoveryTransaction(
-      'recovery-fail',
+    h.primitives.prepareRecoveryLocked(
+      'swp_recovery_fail',
       validateRecoveryTransaction(tx, prepared, intent, owner, balances)
     )
   ).rejects.toMatchObject({ code: 'SPONSORSHIP_REQUIRED' });

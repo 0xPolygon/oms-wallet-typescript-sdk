@@ -1,47 +1,38 @@
 import { z } from 'zod';
 
+import type { AttestationOptions, ResolvedEnvironment } from './environment.js';
 import type { Credential } from './protocol.js';
 
-import { environmentFromKey } from './environment.js';
+import { environmentFromKey, resolveAttestationPolicy } from './environment.js';
 import { UpstreamError, WalletError } from './errors.js';
+import { boundedText } from './http.js';
 import {
   ATTESTATION_BOUND_HEADER,
   ATTESTATION_DOCUMENT_HEADER,
   ATTESTATION_NONCE_HEADER,
-  normalizeTrustedPcr0s,
   randomAttestationNonce,
-  trustsDebugEnclave,
   verifyAttestationDocument
 } from './internal/protocol/attestation.js';
 import { signatureHeader } from './protocol.js';
 
+export { boundedText } from './http.js';
+
+/** Internal RPC seam. The public factory always builds an attested `WaasTransport`. */
 export interface RpcTransport {
   request(method: string, body: Record<string, unknown>, credential?: Credential): Promise<unknown>;
 }
-export { boundedText } from './http.js';
-import { boundedText } from './http.js';
 
 /** Every WaaS response is verified. There is deliberately no skip-attestation switch. */
 export class WaasTransport implements RpcTransport {
-  private readonly environment;
+  private readonly environment: ResolvedEnvironment;
   private readonly pcrs: ReadonlySet<string>;
   constructor(
     private readonly key: string,
-    trustedPcr0s: readonly string[],
+    attestation: AttestationOptions = {},
     private readonly fetcher: typeof fetch = fetch
   ) {
     this.environment = environmentFromKey(key);
-    try {
-      this.pcrs = normalizeTrustedPcr0s(trustedPcr0s);
-    } catch {
-      throw new WalletError('CONFIGURATION', 'Configure approved enclave PCR0 measurements.', 503);
-    }
-    if (this.environment.stage === 'production' && trustsDebugEnclave(this.pcrs))
-      throw new WalletError(
-        'CONFIGURATION',
-        'Debug enclaves are not permitted in production.',
-        503
-      );
+    this.pcrs = resolveAttestationPolicy(this.environment, attestation);
   }
   async request(
     method: string,
@@ -65,16 +56,41 @@ export class WaasTransport implements RpcTransport {
         body
       );
     const fetcher = this.fetcher;
-    const response = await fetcher(this.environment.origin + path, {
-      method: 'POST',
-      body,
-      headers,
-      redirect: 'manual',
-      signal: AbortSignal.timeout(20_000)
-    });
-    if (response.status >= 300 && response.status < 400)
+    const unavailable = (cause: unknown) =>
+      new WalletError('UPSTREAM_UNAVAILABLE', `WaaS ${method} request did not complete.`, 502, {
+        cause
+      });
+    let response: Response;
+    try {
+      response = await fetcher(this.environment.origin + path, {
+        method: 'POST',
+        body,
+        headers,
+        redirect: 'manual',
+        signal: AbortSignal.timeout(20_000)
+      });
+    } catch (error) {
+      // Anything the fetch call throws is a transport failure, even a WalletError: only a verified
+      // WaaS response may produce an UpstreamError, which settlement treats as attested evidence.
+      throw unavailable(error);
+    }
+    if (response.status >= 300 && response.status < 400) {
+      await response.body?.cancel().catch(() => undefined);
       throw new WalletError('UPSTREAM_REDIRECT', 'WaaS redirects are not permitted.', 502);
-    const responseBody = await boundedText(response);
+    }
+    let responseBody: string;
+    try {
+      responseBody = await boundedText(response);
+    } catch (error) {
+      // Only the SDK's own size and UTF-8 checks pass through; stream failures are wrapped.
+      if (
+        error instanceof WalletError &&
+        !(error instanceof UpstreamError) &&
+        (error.code === 'RESPONSE_TOO_LARGE' || error.code === 'INVALID_RESPONSE')
+      )
+        throw error;
+      throw unavailable(error);
+    }
     try {
       const encodedDocument = response.headers.get(ATTESTATION_DOCUMENT_HEADER);
       if (!encodedDocument || encodedDocument.length > 64_000)

@@ -17,6 +17,8 @@ export function canonicalJson(value: unknown, maxBytes = 262_144): string {
       throw new Error('Expected JSON object');
     return Object.fromEntries(
       Object.entries(value)
+        // Like JSON.stringify, an undefined property is omitted rather than encoded.
+        .filter(([, entry]) => entry !== undefined)
         .sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0))
         .map(([key, entry]) => {
           if (['__proto__', 'constructor', 'prototype'].includes(key))

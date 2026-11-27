@@ -1,13 +1,15 @@
 import {
-  ServerWallet,
-  SerialExecutor,
+  createSingleProcessExecutor,
   UpstreamError,
-  type StateStore,
-  type RpcTransport
+  type ApprovalMode,
+  type SigningOptions,
+  type StateStore
 } from '@polygonlabs/oms-server-wallet-sdk';
 import type { Credential } from '../src/protocol.js';
+import type { RpcTransport } from '../src/transport.js';
 
 import { base58Encode, hexToTron } from '../src/internal/protocol/addresses.js';
+import { createServerWalletInternal } from '../src/wallet.js';
 
 /** A Solana or Tron transaction as WaaS v1.2.0 keeps it: claimed as pending before broadcast. */
 export interface FakeChainTxn {
@@ -26,6 +28,8 @@ export const SOLANA_ADDRESS = base58Encode(new Uint8Array(32).fill(1));
 export const SOLANA_RECIPIENT = base58Encode(new Uint8Array(32).fill(2));
 export const TRON_ADDRESS = hexToTron('0x3333333333333333333333333333333333333333');
 export const TRON_RECIPIENT = hexToTron('0x4444444444444444444444444444444444444444');
+export const TEST_PUBLISHABLE_KEY = 'pk_dev_live_test_key';
+
 const created: Record<string, FakeWallet> = {
   solana: { id: 'wallet-sol', address: SOLANA_ADDRESS, networkFamily: 'solana', type: 'solana' },
   tron: { id: 'wallet-trx', address: TRON_ADDRESS, networkFamily: 'tron', type: 'tron' }
@@ -40,6 +44,7 @@ export class MemoryStore implements StateStore {
     this.values.set(key, value);
   }
 }
+
 export class FakeWaas implements RpcTransport {
   wallet: FakeWallet | undefined;
   /** Solana, Tron and any extra wallets the identity holds besides the EVM one. */
@@ -48,6 +53,7 @@ export class FakeWaas implements RpcTransport {
   pageSize = 100;
   calls: { method: string; body: Record<string, unknown>; credential?: string }[] = [];
   nonces = new Map<string, bigint>();
+  private evmTxnCount = 0;
   revoked = new Set<string>();
   sponsored = true;
   failCreate = false;
@@ -78,6 +84,8 @@ export class FakeWaas implements RpcTransport {
   chainOutcome: 'pending' | 'executed' | 'failed' = 'pending';
   inFlight = 0;
   maxInFlight = 0;
+  /** Credentials that have bound a wallet (UseWallet or CreateWallet). */
+  bound = new Set<string>();
   async request(
     method: string,
     body: Record<string, unknown>,
@@ -89,6 +97,11 @@ export class FakeWaas implements RpcTransport {
       if (nonce <= (this.nonces.get(credential.id) ?? -1n)) throw new UpstreamError(7206, method);
       this.nonces.set(credential.id, nonce);
       if (this.revoked.has(credential.credentialId)) throw new UpstreamError(7207, method);
+      // Like WaaS: a credential reads transaction status only once it has bound a wallet.
+      if (method === 'UseWallet' || method === 'CreateWallet')
+        this.bound.add(credential.credentialId);
+      if (method === 'TransactionStatus' && !this.bound.has(credential.credentialId))
+        throw new UpstreamError(7207, method);
     }
     if (method === 'CommitVerifier') return { verifier: body.handle };
     if (method === 'CompleteAuth')
@@ -166,7 +179,7 @@ export class FakeWaas implements RpcTransport {
     }
     if (method === 'PrepareEthereumTransaction')
       return {
-        txnId: 'txn-1',
+        txnId: `txn-${++this.evmTxnCount}`,
         status: 'quoted',
         sponsored: this.sponsored,
         expiresAt: new Date(Date.now() + 60_000).toISOString()
@@ -198,13 +211,20 @@ export class FakeWaas implements RpcTransport {
   }
   private prepareChain(family: 'solana' | 'tron') {
     const txnId = `${family === 'solana' ? 'sol' : 'trx'}-txn-${this.chainTxns.size + 1}`;
-    // Tron is sponsored when delegated resources cover it; otherwise it costs TRX.
     const feeOptions =
       this.chainSponsored || family === 'solana'
         ? []
         : [
             {
-              token: { network: 'tron:nile', name: 'TRX', symbol: 'TRX', type: 'NATIVE' },
+              // Live WaaS shape: null for values the token does not have.
+              token: {
+                network: 'tron:nile',
+                name: 'TRX',
+                symbol: 'TRX',
+                type: 'NATIVE',
+                decimals: null,
+                contractAddress: null
+              },
               value: this.tronFee,
               displayValue: (Number(this.tronFee) / 1e6).toString()
             }
@@ -252,22 +272,38 @@ export class FakeWaas implements RpcTransport {
     };
   }
 }
-export function sdkHarness() {
+
+/**
+ * Durable wallet over the fake WaaS. Typed-data signing is enabled with an allow-all policy unless
+ * `signing` replaces it; tests of the opt-in itself construct wallets without it.
+ */
+export function sdkHarness<TApproval extends ApprovalMode = 'allow-immediate'>(
+  options: { approval?: TApproval; clock?: () => number; signing?: SigningOptions } = {}
+) {
+  const signing: SigningOptions = options.signing ?? { authorizeTypedData: () => true };
   const store = new MemoryStore();
   const remote = new FakeWaas();
-  const executor = new SerialExecutor();
-  const create = () =>
-    new ServerWallet({
-      subject: 'customer-1',
-      issuer: 'https://issuer.example',
-      audience: 'oms-server-wallet',
-      store,
-      executor,
-      transport: remote,
-      tokenProvider: async () => ({
-        token: `fixture-${crypto.randomUUID()}`,
-        expiresAt: Math.floor(Date.now() / 1000) + 300
-      })
-    });
-  return { store, remote, create, client: create() };
+  const executor = createSingleProcessExecutor();
+  const approval = (options.approval ?? 'allow-immediate') as TApproval;
+  const create = <M extends ApprovalMode = TApproval>(overrideApproval?: M) =>
+    createServerWalletInternal(
+      {
+        publishableKey: TEST_PUBLISHABLE_KEY,
+        oidc: {
+          subject: 'customer-1',
+          issuer: 'https://issuer.example',
+          audience: 'oms-server-wallet',
+          getIdToken: async () => ({
+            token: `fixture-${crypto.randomUUID()}`,
+            expiresAt: Math.floor(Date.now() / 1000) + 300
+          })
+        },
+        storage: { encryptedStore: store },
+        executor,
+        approval: (overrideApproval ?? approval) as M,
+        signing
+      },
+      { transport: remote, clock: options.clock, creationRecheckDelaysMs: [0, 0, 0] }
+    );
+  return { store, remote, executor, create, client: create() };
 }

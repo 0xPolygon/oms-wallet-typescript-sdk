@@ -1,298 +1,388 @@
 # @polygonlabs/oms-server-wallet-sdk
 
-Standalone ESM TypeScript SDK targeting WaaS v1.2.0, with EVM, Solana and Tron wallets, OIDC authentication, encrypted credential persistence, attested responses, verified message signing, and sponsored native/ERC-20 transfers. Requires Web Crypto and Fetch (Node 22+ or Workers with `nodejs_compat`). It has no dashboard, Hono, D1, or embedded wallet SDK dependency.
+Standalone ESM TypeScript SDK targeting WaaS v1.2.0 for attested OMS server wallets across **EVM**, **Solana**, and **Tron**, with OIDC authentication, encrypted durable state or in-memory handles, verified signing, sponsored transfers and contract calls, and optional durable Trails swaps and recovery (`/trails`).
+
+Requires Web Crypto and Fetch (**Node 22+** or Cloudflare Workers with `nodejs_compat`). Zero dashboard, Hono, D1, or browser wallet SDK dependencies.
+
+- [Root TypeScript API Reference](API.md)
+- [Trails Swaps TypeScript API Reference](TRAILS-API.md)
+- [Node.js Integration Walkthrough](docs/NODE-INTEGRATION.md)
+- [Backend Swaps & Recovery Guide](docs/SWAPS-INTEGRATION.md)
+
+## Choose a mode
+
+| | Durable (`storage: { adapter, encryptionKey }` or `{ encryptedStore }`) | In-memory (`storage: 'memory'`) |
+| --- | --- | --- |
+| For | Backends that want the SDK to keep operation records, idempotency and reconciliation across restarts | Stateless backends and workers that keep their own records (payout rows and so on) |
+| You provide | A `StateStore`, an encryption key and a lock per user (`executor`) | `storage: 'memory'` and OIDC (no `executor`); each handle signs in and keeps its credential in memory |
+| Parallelism | One call at a time per user, across every process | One call at a time per handle; handles in different processes run in parallel |
+| Records and `idempotencyKey` | Survive restarts | Last as long as the handle; recover by `txnId` (`onPrepared`, `waitForTransaction`) |
+| Kill switch | `disable()` / `enable()` | `close()` per handle; stop minting ID tokens for the user |
+
+Both modes have the same wallet API: transfers, contract calls, signing, waits, balances and Trails swaps. Use one mode per user.
 
 ## Installation
 
 ```sh
-npm install @polygonlabs/oms-server-wallet-sdk@0.2.0
+npm install @polygonlabs/oms-server-wallet-sdk@0.3.0
 ```
 
-For a step-by-step guide to integrating this package into your own Node.js / TypeScript backend, see the [OIDC, wallet creation, signing, and transaction walkthrough](docs/NODE-INTEGRATION.md).
+## Quick start (single-identity wallet)
 
-## Integration
+Use `createServerWallet` when each runtime instance owns one identity (such as one Cloudflare Durable Object per wallet):
 
 ```ts
 import {
-  ServerWallet,
-  WaasTransport,
-  EncryptedStore,
-  SerialExecutor,
-  IndexerClient,
+  createServerWallet,
+  createSingleProcessExecutor,
+  describeOperation,
   parseAmount,
-  environmentFromKey,
-  type StateStore,
+  type StateStore
 } from '@polygonlabs/oms-server-wallet-sdk';
 
-// Implement durable reads/writes in a namespace dedicated to this identity.
 declare const persistence: StateStore;
-declare const publishableKey: string;
-declare const approvedPcr0s: string[];
-declare const encryptionKeyBase64: string; // 32 random bytes, base64 encoded
-declare const applicationOrigin: string; // Origin allowed for the OMS publishable key
-declare const issuer: string;
-declare const audience: string;
-declare const subject: string;
-declare function issueIdToken(): Promise<{ token: string; expiresAt: number }>;
 
-// Reuse exactly one executor per identity in a single process/DO instance.
-const executor = new SerialExecutor();
-const environment = environmentFromKey(publishableKey);
-const namespace = JSON.stringify([
-  environment.origin,
-  environment.projectId,
-  issuer,
-  audience,
-  subject,
-]);
-// Server requests use the project's allowed Origin, just like the walkthrough.
-const fetcher: typeof fetch = (input, init) => {
-  const headers = new Headers(
-    init?.headers ?? (input instanceof Request ? input.headers : undefined),
-  );
-  headers.set('Origin', applicationOrigin);
-  return fetch(input, { ...init, headers });
-};
-const wallet = new ServerWallet({
-  subject,
-  issuer,
-  audience,
-  tokenProvider: issueIdToken,
-  transport: new WaasTransport(publishableKey, approvedPcr0s, fetcher),
-  store: new EncryptedStore(persistence, encryptionKeyBase64, namespace),
-  executor,
+const wallet = createServerWallet({
+  publishableKey: process.env.OMS_PUBLISHABLE_KEY!,
+  oidc: {
+    issuer: process.env.OIDC_ISSUER!,
+    audience: process.env.OIDC_AUDIENCE!,
+    subject: 'customer:12345',
+    // Mint a new ID token on every call: WaaS rejects a token that was already used to sign in.
+    getIdToken: () => issueIdToken('customer:12345') // { token, expiresAt (Unix seconds) }
+  },
+  storage: {
+    // SDK encrypts state with AES-256-GCM bound to the canonical wallet namespace.
+    adapter: persistence,
+    encryptionKey: process.env.ENCRYPTION_KEY! // 32 random bytes, base64-encoded
+  },
+  // Required: reuse one executor per identity. Use a distributed lock in clustered Node.
+  executor: createSingleProcessExecutor()
 });
 
-const snapshot = await wallet.createOrRestore();
-const balances = await new IndexerClient(publishableKey, fetcher).getBalances(
-  snapshot.wallet!.address,
-);
-const signed = await wallet.signMessage(crypto.randomUUID(), 137, 'Hello OMS');
+const snapshot = await wallet.createOrRestore({ families: ['evm', 'solana', 'tron'] });
 
-const operationId = crypto.randomUUID(); // persist and reuse on retries
-const prepared = await wallet.prepareTransfer(operationId, {
+// Sign and verify an EVM message
+const signed = await wallet.evm.signMessage({
+  idempotencyKey: crypto.randomUUID(),
+  chainId: 137,
+  message: 'Hello OMS'
+});
+
+// Two-phase sponsored transfer (default: `send*` shortcuts are omitted unless explicitly enabled)
+const transferId = crypto.randomUUID(); // Persist and reuse on retries
+const prepared = await wallet.evm.prepareTransfer({
+  idempotencyKey: transferId,
   chainId: 137,
   to: '0x2222222222222222222222222222222222222222',
   asset: 'native', // or an ERC-20 contract address
-  amount: parseAmount('0.001', 18), // decimal string in base units
+  amount: parseAmount('0.001', 18)
 });
-// Obtain application/operator confirmation of the prepared payload first.
-if (prepared.status === 'quoted') await wallet.executeTransfer(operationId);
-const status = await wallet.getOperation(operationId);
+
+// Present reviewed terms to your policy engine / operator, then execute bound to `reviewId`:
+if (prepared.status === 'quoted' && prepared.reviewId) {
+  await wallet.evm.execute({ idempotencyKey: transferId, reviewId: prepared.reviewId });
+}
+
+// Observe without holding the wallet lock across sleeps
+const result = await wallet.evm.waitForOperation(transferId, { timeoutMs: 30_000 });
+const guidance = describeOperation(result.operation);
 ```
 
-The token provider supplies an ES256 OIDC ID token accepted by the project's configured issuer/audience. `expiresAt` is Unix time in **seconds**. The SDK generates its own P-256 credential, commits the JWT hash, completes authentication, discovers/binds the same wallet, and renews credentials automatically. Default credential lifetime is six hours; expiry recovery starts within sixty seconds of expiration.
+## Multi-tenant backends (`createServerWalletService`)
 
-Verified unknown, expired, or revoked/unauthorized credential responses trigger one reauthentication attempt. Persistent authorization failures propagate without a retry loop. `WalletSnapshot.credentialId` is the WaaS SHA-256 credential identifier; the request signature uses the corresponding raw public key internally.
-
-## Storage and concurrency contract
-
-`StateStore.read(key)` returns a string or null; `write(key, value)` must finish durable persistence before resolving. The store namespace and encryption context must be stable, unique to the project/environment/issuer/audience/subject, and shared by every instance for that identity. Never share a namespace between identities. Credential keys must use encrypted persistence, as in the example.
-
-`ExclusiveExecutor.run(task)` holds exclusive ownership for the **entire async task**, including remote I/O. All SDK instances using the same state must share that ownership. `SerialExecutor` is sufficient only within one Node process or a single per-wallet Durable Object. Clustered Node backends need a coordinator with equivalent exclusive ownership across processes, including crash recovery; allocating nonces alone is insufficient. The dashboard's Worker adapter supplies one Durable Object per wallet.
-
-Each RPC nonce is durably advanced before dispatch. All WaaS responses must pass Nitro root/certificate/COSE/PCR0/freshness/nonce/body-binding checks. There is no attestation bypass. Transport uses bounded responses, 20-second request timeouts, and refuses redirects. An all-zero debug PCR0 can be explicitly configured for a nonproduction environment; production keys reject it.
-
-## Wallet families and state migration
-
-An identity holds at most one wallet per network family: `evm`, `solana` and `tron`. `createOrRestore()` creates or restores the EVM wallet, as before; `createOrRestore({ families: ['evm', 'solana', 'tron'] })` does so for each family listed. `WalletSnapshot.wallet` is still the EVM wallet, and `WalletSnapshot.wallets` holds every family's. Before creating a family's first wallet, the SDK lists the identity's wallets and adopts one it finds, so no family ever gets a second wallet. An identity that already has two wallets of a family in use fails with `WALLET_MISMATCH`; families it doesn't use are ignored. `rotate()` and `setDisabled(false)` restore every family held.
-
-Wallet state written by 0.2.x is migrated the first time it is loaded, keeping its credential, nonce and operations, and rewritten in the new format through the same store. Stored state that matches neither format fails with `INVALID_STATE` before any request is made. Once migrated, state can't be read by an earlier version, so roll back only from a backup taken before upgrading.
-
-## Operations and recovery
-
-| Method                                  | Behavior                                                            |
-| --------------------------------------- | ------------------------------------------------------------------- |
-| `inspect()`                             | Public snapshot; does not authenticate or return private material.  |
-| `createOrRestore({ families? })`        | Recover one wallet per requested family (default EVM); reauth.      |
-| `rotate()`                              | Self-revoke the current credential, then authenticate a fresh one.  |
-| `setDisabled(boolean)`                  | Disable before revocation; block auth until explicitly re-enabled.  |
-| `signMessage(id, chainId, message)`     | Sign plain text and verify with WaaS wallet-aware verification.     |
-| `signTypedData(id, chainId, typedData)` | Validate EIP-712 domain/data, sign, and verify with WaaS.           |
-| `prepareTransfer(id, transfer)`         | Validate a native/ERC-20 transfer; require sponsored quote.         |
-| `executeTransfer(id)`                   | Submit the stored quote once; reconcile repeated calls.             |
-| `prepareUserOperation(id, operation)`   | Encode and quote one sponsored contract call for review.            |
-| `executeUserOperation(id)`              | Submit the stored contract-call quote once.                         |
-| `sendUserOperation(id, operation)`      | Prepare and submit a sponsored contract call in one step.           |
-| `getOperation(id)`                      | Return persisted result; poll pending/uncertain transfer status.    |
-| `listOpenOperations(legacyIds?)`        | Unsettled EVM operations, without authenticating or polling.        |
-| `readOperations(ids)`                   | The stored EVM operations with these IDs, without polling.          |
-
-Idempotency IDs must contain 8–100 letters, digits, underscores, or hyphens. Changed input under the same ID raises `IDEMPOTENCY_CONFLICT`. Reusing an ID never prepares another transfer, except one whose preparation was interrupted before its quote was stored: nothing was sent, so it is quoted again. A new quote after expiry requires a new ID and operator review. A signature that fails, or does not verify, is recorded as `failed`; signing again needs a new ID.
-
-`unknown` is a meaningful state, including a lost execution response. Keep polling `getOperation`; never generate another send merely because the first response was lost. EVM operations settle like Solana and Tron ones (see below): refusals WaaS returns only before claiming the transaction mark the operation `failed` at once, and an operation WaaS still reports expired and unclaimed two minutes past its quote's expiry becomes `expired`. Executing a quote the SDK already knows has expired marks it `expired` and raises `QUOTE_EXPIRED`. `CREATION_UNCERTAIN` prevents blind replacement-wallet creation. Disabled wallets cannot reauthenticate even to poll a status; previously submitted transfers may still complete upstream.
-
-`WalletError` exposes a safe code, message, and HTTP-oriented status. `UpstreamError` also exposes the numeric WaaS error code and RPC method. Raw tokens, private keys, and upstream response bodies are excluded. Validation failures, unsigned gateway failures, and attestation failures must be surfaced instead of weakening verification.
-
-`IndexerClient.getBalances(address, page?)` returns base-unit strings, metadata, a fetch timestamp, per-chain errors, and `nextPage`. Keep errors separate from zero balances and follow pagination. Unknown token decimals stay unknown.
-
-## Solana wallets
-
-`wallet.solana` is the identity's Solana wallet, an Ed25519 account on `solana:mainnet` or `solana:devnet`. It shares the `ServerWallet`'s credential, store and executor, and is created on first use. Transfers are sponsored by the project's Solana fee payer; a transfer that would not be sponsored fails with `SPONSORSHIP_REQUIRED`.
-
-```ts
-const transferId = crypto.randomUUID(); // persist and reuse on retries
-const sent = await wallet.solana.sendTransfer(transferId, {
-  network: 'solana:devnet',
-  to: '9WzDXwBbmkg8ZTbNMqUxvQRAyrZzDsGYdLVL9zYtAWWM',
-  asset: 'native', // or an SPL or Token-2022 mint address
-  amount: '1000000' // base units: 0.001 SOL in lamports
-});
-const settled = await wallet.solana.getOperation(transferId); // pending, executed or failed
-```
-
-| Method                              | Behavior                                                         |
-| ----------------------------------- | ---------------------------------------------------------------- |
-| `solana.prepareTransfer(id, input)` | Validate a SOL or token transfer and quote it; nothing is sent.  |
-| `solana.executeTransfer(id)`        | Submit the stored quote once.                                    |
-| `solana.sendTransfer(id, input)`    | Prepare and submit in one turn of the executor.                  |
-| `solana.signMessage(id, message)`   | Sign a Solana off-chain message and verify it with WaaS.         |
-| `solana.getOperation(id)`           | Return the persisted operation, polling a transfer in flight.    |
-| `solana.listOperations()`           | Persisted Solana operations, without authenticating or polling.  |
-
-**Quotes expire in about a minute**, with the blockhash they are built on. Review has to be quick or automated; `sendTransfer` prepares and submits without releasing the executor in between. Executing a quote the SDK already knows has expired fails with `TRANSACTION_EXPIRED` and marks the operation `expired` without calling WaaS: nothing was sent, so prepare it again under a new ID. Once Execute has been called, WaaS answers `TransactionExpired` both for an expired quote and for a transaction already claimed for broadcast, and its status reads are not strongly consistent, so the SDK keeps the operation `unknown` until a status shows the claim or, two minutes past the quote's expiry, WaaS still reports it expired unclaimed. Only then does it become `expired`. Refusals WaaS returns only before claiming, such as an invalid fee option, mark it `failed` at once.
-
-Solana and Tron operations share the store and ID space with EVM ones, so an ID can't be reused across families. `listOperations()` and `getOperation(id)` on the `ServerWallet` still return EVM operations only.
-
-`IndexerClient.getSolanaBalances(address, networks?)` returns SOL (9 decimals) and SPL/Token-2022 balances in base units, with the token program, plus per-network errors. Balances come from the indexer, not the attested enclave: use them for display and preflight checks, not as proof of funds.
-
-## Tron wallets
-
-`wallet.tron` is the identity's Tron wallet, a secp256k1 account with a Base58Check (`T…`) address on `tron:mainnet` or `tron:nile`. Tron has no relayer: a transaction spends the wallet's bandwidth and energy and burns TRX for whatever its delegated resources don't cover.
-
-**Fees are sponsored-only by default.** A transaction is sent without TRX only when delegated resources cover it; otherwise preparing it fails with `SPONSORSHIP_REQUIRED`. To let the wallet pay, set `maxFee` in sun: the quoted fee is paid if it is at most `maxFee`, or preparing fails with `FEE_LIMIT_EXCEEDED`. WaaS prices the transaction again when it executes and refuses it, with nothing sent, if the cost rose above the quote (`failed`, `FEE_ABOVE_QUOTE`). `maxFee` is part of the request, so changing it needs a new ID.
-
-**These limits apply to the quote, not to the chain.** The signed transaction carries no `maxFee`. A TRX transfer can only burn bandwidth (and the account activation fee) that the quote already priced. A contract call is capped on chain only by the fee limit WaaS seals into it, 1.2 times the estimated energy of the whole call, and the quote does not expose that limit. If the wallet's delegated resources are used up or withdrawn between the execution-time re-check and inclusion, or the call needs more energy than estimated, the wallet can burn TRX up to that limit, even on a sponsored quote.
-
-```ts
-const callId = crypto.randomUUID(); // persist and reuse on retries
-await wallet.tron.sendContractCall(callId, {
-  network: 'tron:nile',
-  contract: 'TXYZopYRdj2D9XRtbG411XZZ3kM5VkAeBf',
-  method: 'transfer', // the name only; WaaS builds the signature from the argument types
-  args: [
-    { type: 'address', value: 'TJRabPrwbZy45sbavfcjinPJC18kjpRTv8' },
-    { type: 'uint256', value: '2500000' }
-  ],
-  maxFee: '30000000' // allow up to 30 TRX in fees; omit to require delegated resources
-});
-```
-
-| Method                                     | Behavior                                                            |
-| ------------------------------------------ | ------------------------------------------------------------------- |
-| `tron.prepareTransaction(id, input)`       | Quote a TRX transfer, or a call with pre-encoded `data`.            |
-| `tron.prepareContractCall(id, input)`      | Quote a contract call that WaaS ABI-encodes from typed arguments.   |
-| `tron.execute(id)`                         | Submit the stored quote once, paying the accepted fee if any.       |
-| `tron.sendTransaction(id, input)`          | Prepare and submit a transaction in one turn of the executor.       |
-| `tron.sendContractCall(id, input)`         | Prepare and submit a contract call in one turn of the executor.     |
-| `tron.signMessage(id, message)`            | Sign a TIP-191 message and verify it with WaaS.                     |
-| `tron.signTypedData(id, network, data)`    | Validate TIP-712 data for the network, sign and verify it.          |
-| `tron.getOperation(id)` / `listOperations` | As for Solana.                                                      |
-
-Omitting `data` sends TRX (`value` must be positive); any `data`, even `0x`, makes it a contract call. Amounts are in sun as decimal strings. TIP-712 data must name the network's chain ID (`TRON_CHAIN_IDS`) and a verifying contract; `T…` and hex addresses are both accepted and hash the same. Quotes last 15 minutes, and expiry is handled as for Solana.
-
-`IndexerClient.getTronBalances(address, networks?)` returns TRX (6 decimals, in sun) and TRC-20 balances, with the same caveat as other indexer balances.
-
-## Contract calls
-
-`sendUserOperation`, `prepareUserOperation` and `executeUserOperation` are not in 0.2.0; they ship in the next release. `sendUserOperation` calls any contract from the wallet with sponsored gas. Describe the call with an ABI, the name of a function in it and its arguments, which the SDK encodes with viem, or pass pre-encoded `data`. With a typed ABI (`as const`, or viem's `erc20Abi`), function names and arguments are type-checked:
-
-```ts
-const erc20Abi = [
-  {
-    type: 'function',
-    name: 'transfer',
-    stateMutability: 'nonpayable',
-    inputs: [
-      { name: 'to', type: 'address' },
-      { name: 'amount', type: 'uint256' },
-    ],
-    outputs: [{ type: 'bool' }],
-  },
-] as const;
-
-const paymentId = crypto.randomUUID(); // persist and reuse on retries
-const payment = await wallet.sendUserOperation(paymentId, {
-  chainId: 137,
-  calls: [
-    {
-      to: '0x3c499c542cef5e3811e1192ce70d8cc03d5c3359', // USDC on Polygon
-      abi: erc20Abi,
-      functionName: 'transfer',
-      args: ['0x2222222222222222222222222222222222222222', 2_500_000n],
-      // value: '0', // optional native amount in base units
-    },
-  ],
-});
-// Poll getOperation(payment.id) until it is executed or failed.
-```
-
-Use `prepareUserOperation`, then `executeUserOperation` with the same ID, when an operator should review the encoded `transaction` before it is sent. The same idempotency rules apply: retrying an ID returns the stored operation and never submits the call again. WaaS executes one call per transaction, so `calls` must contain exactly one call; calls to the wallet's own address are refused.
-
-This is the SDK's only path for arbitrary contract calls. Never build `to`, `data`, `abi`, `functionName` or `args` from untrusted input such as a browser request; decide the target, function, arguments and value on your server and check them there. Approvals, allowances and operator rights that a call grants outlast the operation, and `WalletSwaps` does not track them. Do not expose arbitrary contract calls as a dashboard endpoint.
-
-## Trails swaps and recovery
-
-The optional `@polygonlabs/oms-server-wallet-sdk/trails` entry point, added in **0.2.0**, provides `WalletSwaps`, `TrailsClient`, `EvmChainReader`, quote/recovery validation and persistent execution contracts. See the [standalone backend swaps guide](docs/SWAPS-INTEGRATION.md) for complete orchestration and host storage/scheduling requirements.
+For Node backends operating many identities, configure shared settings once with `createServerWalletService` and obtain a handle for each host-authenticated subject via `forSubject(subject)`:
 
 ```ts
 import {
-  TrailsClient,
-  buildSwapRequest,
-  validateSwapQuote,
-} from '@polygonlabs/oms-server-wallet-sdk/trails';
+  createServerWalletService,
+  createSingleProcessExecutorPool,
+  type NamespacedStateStore
+} from '@polygonlabs/oms-server-wallet-sdk';
 
-const trails = new TrailsClient({
-  apiKey: trailsApiKey, // Separate from the OMS publishable key; backend only.
-  origin: applicationOrigin, // Exact origin, without a trailing slash.
-});
-const { TrailsContracts } = await trails.readiness();
-const assets = [
-  { chainId: 137, asset: '0x3c499c542cef5e3811e1192ce70d8cc03d5c3359', decimals: 6 },
-  { chainId: 8453, asset: '0x833589fcd6edb6e08f4c7c32d4f71b54bda02913', decimals: 6 },
-]; // Host-approved asset policy, not input supplied by a dashboard request.
-const request = buildSwapRequest(
-  snapshot.wallet!.address,
-  {
-    originChainId: 137,
-    originAsset: assets[0].asset,
-    destinationChainId: 8453,
-    destinationAsset: assets[1].asset,
-    amount: '10000000', // Base units; never pass a floating-point token amount.
+declare const storage: NamespacedStateStore;
+
+const wallets = createServerWalletService({
+  publishableKey: process.env.OMS_PUBLISHABLE_KEY!,
+  oidc: {
+    issuer: process.env.OIDC_ISSUER!,
+    audience: process.env.OIDC_AUDIENCE!,
+    getIdToken: (subject) => issueIdToken(subject)
   },
-  assets,
-);
-const { intent } = await trails.quoteIntent(request);
-const reviewed = await validateSwapQuote(intent, request, TrailsContracts);
-// Persist and review the snapshot/digest before any funding workflow.
-// This quote-only example does not activate or fund the swap.
-// Use WalletSwaps for durable execution, reconciliation and recovery.
+  storage: {
+    adapter: storage,
+    encryptionKey: process.env.ENCRYPTION_KEY!
+  },
+  // Single-process Node only; clustered deployments must supply a distributed ExecutorProvider.
+  executor: createSingleProcessExecutorPool()
+});
+
+// `forSubject` is a lookup, not authorization — authenticate the caller first.
+const wallet = wallets.forSubject(authenticatedUserId);
 ```
 
-`TrailsClient` supports `readiness`, `getChains`, `getTokenList`, `getExactInputRoutes`, `quoteIntent`, `executeIntent`, `getIntent` and `prepareIntentRecovery`. Calls are bounded, reject redirects and unsafe integer JSON, support caller cancellation, and never automatically retry. `TrailsError` contains the method, HTTP status and numeric upstream code without upstream bodies or keys. There is no `CommitIntent` call. Readiness requires the **wire value `v1.5`**; `v1_5` is only an upstream enum identifier.
+`forSubject` does no I/O, and `createOrRestore` makes no WaaS call once the identity holds a valid credential and the requested wallets (it reads stored state only); it signs in again when the credential is within a minute of expiry. Handles can be cached or created per request. Several handles for the same subject are safe as long as your `ExecutorProvider` serializes by namespace, so they all queue behind one lock: `createSingleProcessExecutorPool` does this within a process, and a distributed provider must lock per namespace too.
 
-Quote validation binds the owner/recipient, chains, assets, budget, slippage, expiry, contracts and deposit precondition. It reconstructs native/ERC-20 funding calldata locally and returns an independent snapshot plus a base64url SHA-256 digest. Keep the snapshot and digest in authoritative storage; the digest is not an authentication token. The host must review any changed quote and require WaaS sponsorship when it eventually prepares the funding transfer.
+## Attestation & trust policy
 
-`validateRecoveryPayload(prepared, intent, owner, balances)` decodes Sequence v3 calls, binds the recorded intent address/chain, restricts native/ERC-20 transfers and TrailsUtils sweeps to the owner and reviewed assets, and checks the EIP-712 hash. Supply fresh, host-observed `{asset, amount}` balances **on that intent chain**, never balances supplied by a browser. The returned `typedData` can be passed to `wallet.signTypedData`; that generic primitive validates the domain and encoding, while the caller remains responsible for the authorization's meaning. Do not expose arbitrary typed-data signing as a dashboard endpoint.
+Every WaaS response is verified against AWS Nitro attestation (root certificate, COSE signature, PCR0 allowlist, freshness, nonce, and request/response body binding). There is no skip-attestation switch.
 
-`WalletSwaps` implements durable activation, sponsored funding, settlement, delayed-deposit repair and separately confirmed source/destination recovery. Route ordinary transfers through the same coordinator; persist encrypted private records and durable wake-ups before external mutations. Recovery includes sponsored owner deployment when needed, verified typed-data signing and validation of the returned intent execution/deployment envelope. See [rollout and acceptance](https://github.com/0xsequence-demos/waas-server-wallets/blob/master/docs/SWAPS-ROLLOUT.md) for the live scenarios verified so far and recovery checks still pending.
+- **Staging & production keys (`pk_live_*`, `pk_sdbx_*`, `pk_stg_*`)**: default to the SDK's stage-pinned PCR0 measurements. Passing `attestation: { trustedPcr0s }` **replaces** those defaults (empty or malformed lists fail closed). All-zero debug PCR0s are unconditionally rejected.
+- **Local & dev keys (`pk_dev_*`, `pk_local_*`)**: require explicit `attestation: { allowDebugEnclave: true }` to accept an all-zero debug enclave measurement, or explicit non-debug `trustedPcr0s`.
 
-For explicit live discovery checks, set `TRAILS_API_KEY` and run `pnpm test:trails` in the [demo repository](https://github.com/0xsequence-demos/waas-server-wallets). Setting `TRAILS_TEST_WALLET` additionally requests Polygon USDC → Base USDC and Polygon POL → USDC quotes without funding or executing them. Ordinary tests use synthetic fixtures and make no network calls.
+## Approval modes & `reviewId`
 
-Version `0.2.0` adds swap/recovery capabilities; the API is not yet declared stable. Pin the version and review changes before upgrading. Licensed under [Apache-2.0](LICENSE-APACHE-2.0); see [NOTICE](NOTICE) for verifier provenance. Both files are included in the npm package.
+By default (`approval: 'two-phase'`), one-shot `send*` shortcuts are omitted at **both the TypeScript type and runtime surface** so review-gated integrations cannot accidentally bypass approval.
+
+- `execute({ idempotencyKey, reviewId })` requires the opaque `reviewId` returned by `prepare*`, binding execution to the exact reviewed terms, fee/sponsor policy, quote ID, and expiry. `reviewId` binds terms — it is **not** caller authorization; expose `execute` only to your trusted backend approver.
+- Pass `approval: 'allow-immediate'` when your backend enforces authorization before calling one-shot `sendTransfer` / `sendCall`. Even in immediate mode, `submissionMode` is persisted before quoting so a `send*` call can never adopt or execute a quote prepared for manual review (`APPROVAL_REQUIRED`).
+
+## Typed-data signing is opt-in
+
+`signTypedData` exists on `wallet.evm` and `wallet.tron` (in both modes) only when the factory receives a `signing` policy, at both the type and runtime level. Typed data can authorize anything a contract accepts, such as permits, orders and approvals, so the policy decides each request:
+
+```ts
+const wallet = createServerWallet({
+  // ...
+  signing: {
+    // Runs under the wallet's lock, after SDK validation and before WaaS is called.
+    authorizeTypedData: ({ typedData, family, chainId }) =>
+      family === 'evm' && chainId === 137 && typedData.primaryType === 'Order'
+  }
+});
+```
+
+The request is a frozen copy of exactly what will be signed: the digest, the subject, the wallet address, the chain, and the typed data reduced to the fields its types declare (undeclared message fields are dropped before signing). Only a literal `true` approves; anything else throws `TYPED_DATA_REFUSED` and records nothing, so the same key can be retried. Both families refuse a domain whose `verifyingContract` is the wallet, and EVM refuses Sequence wallet `Calls`.
+
+## Payout lifecycle: operations, attempts and approval
+
+An operation's ID is the `idempotencyKey` you choose (`getOperation(idempotencyKey)`). Keys are 8–100 letters, digits, `_` or `-`. Retrying the same step with the same key and input is safe: `prepare*` returns the stored operation, and `execute` with the same `reviewId` returns its current state instead of submitting again.
+
+Quotes are short-lived. Measured on WaaS v1.2.0:
+
+| Chain | Quote lifetime |
+| --- | --- |
+| EVM (Polygon, Amoy and other EVM networks) | about 15 minutes |
+| Tron | about 15 minutes |
+| Solana | about 60 seconds (the blockhash lifetime) |
+
+Model one business payout as a series of **attempts**, each with its own key, for example `payout-123-a1`, `payout-123-a2`:
+
+1. `prepare*` under the current attempt key and store the `reviewId` and `quote.expiresAt` with your payout.
+2. Approve, then `execute({ idempotencyKey, reviewId })` before the quote expires.
+3. Wait with `waitForOperation`. Only the `'executed'` outcome means the transaction went through.
+4. Start a new attempt only when `describeOperation(operation).action` is `'safe-to-reprepare'` (a quote that expired before `execute`, a cancelled operation, or a refusal with `provenUnsent: true`). For `'resume-original'` (`preparing`: a `prepare*` or `send*` that did not finish), call the same method again with the same key and input. For `'poll-original'` or `'reconcile-original'`, keep waiting on or reconciling the same operation. Any other choice could pay twice.
+
+To replace a quoted operation, for example after the business terms changed, `cancel({ idempotencyKey })` it first: it becomes terminal `cancelled` with `provenUnsent: true`, `execute` refuses it from then on (`OPERATION_CANCELLED`), and the next attempt key is safe. Only `preparing` and `quoted` operations can be cancelled.
+
+Approval that can take longer than the quote lifetime should approve the business terms (recipient, asset, amount, limits) rather than a specific quote: after approval, prepare and execute right away, re-approving only if the new terms differ. On Solana this is the only practical pattern.
+
+## Uniform wallet grammar
+
+| Surface | Methods |
+| --- | --- |
+| `wallet` | `inspect()`, `createOrRestore({ families?, wallets? })`, `listWallets()`, `rotateCredential()`, `disable()`, `enable()`; in-memory handles have `restore()`, `create()` and `close()` instead of `createOrRestore`, `disable` and `enable` |
+| `wallet.evm` | `prepareTransfer`, `prepareCall`, `execute`, `cancel`, `signMessage`, `getOperation`, `refreshOperation`, `waitForOperation`, `resolveReconciliation`, `listOperations`, `getTransactionStatus`, `waitForTransaction` (+ `sendTransfer`, `sendCall` in `allow-immediate` mode; + `signTypedData` with `signing`) |
+| `wallet.solana` | `prepareTransfer`, `execute`, `cancel`, `signMessage`, `getOperation`, `refreshOperation`, `waitForOperation`, `resolveReconciliation`, `listOperations`, `getTransactionStatus`, `waitForTransaction` (+ `sendTransfer` in `allow-immediate` mode) |
+| `wallet.tron` | `prepareTransfer`, `prepareCall`, `execute`, `cancel`, `signMessage`, `getOperation`, `refreshOperation`, `waitForOperation`, `resolveReconciliation`, `listOperations`, `getTransactionStatus`, `waitForTransaction` (+ `sendTransfer`, `sendCall` in `allow-immediate` mode; + `signTypedData` with `signing`) |
+| `wallet.indexer` | Unattested `getEvmBalances({ chainIds?, page? })`, `getSolanaBalances({ networks? })`, `getTronBalances({ networks? })` |
+| `wallet.swaps` | Present only when `swaps: trails(...)` is passed: `quote`, `confirm`, `get`, `list`, `reconcile`, `tick`, `prepareRecovery`, `confirmRecovery`, `resolveReconciliation` |
+
+### EVM networks
+
+Every EVM network the client SDK (`@polygonlabs/oms-wallet`) supports is accepted, mainnets and testnets: Ethereum and Sepolia, Polygon and Polygon Amoy (`80002`), Arbitrum, Arbitrum Sepolia and Arbitrum Nova, Optimism and Optimism Sepolia, Base and Base Sepolia, BNB Chain and its testnet, Avalanche and its testnet, and Katana. `SupportedEvmChainId` lists their chain IDs, and `EVM_NETWORKS`, `SOLANA_NETWORKS` and `TRON_NETWORKS` list the supported networks at runtime. Sponsorship is configured per project and network in WaaS; an unsponsored network quotes with `SPONSORSHIP_REQUIRED`.
+
+EVM `chainId` inputs are typed `SupportedEvmChainId`, so an unsupported chain fails to compile. A literal inside an object you build first widens to `number`; write `chainId: 137 as const`, annotate the object (`const transfer: EvmTransferInput = { … }`), or narrow a configured value with `isSupportedEvmChainId(chainId)`.
+
+### EVM contract calls (`wallet.evm.prepareCall` / `sendCall`)
+
+Describe a sponsored EVM contract call with a typed ABI (`as const` or viem's `erc20Abi`) or pre-encoded hex `data`:
+
+```ts
+import { erc20Abi } from 'viem';
+
+const prepared = await wallet.evm.prepareCall({
+  idempotencyKey: crypto.randomUUID(),
+  chainId: 137,
+  to: '0x3c499c542cef5e3811e1192ce70d8cc03d5c3359', // USDC on Polygon
+  abi: erc20Abi,
+  functionName: 'transfer',
+  args: ['0x2222222222222222222222222222222222222222', 2_500_000n]
+});
+```
+
+Never build `to`, `data`, `abi`, `functionName`, `args`, or `typedData` from untrusted browser input; validate targets and arguments server-side.
+
+### Solana & Tron
+
+- **Solana** (`solana:mainnet`, `solana:devnet`): Ed25519 account with mandatory fee-payer sponsorship (`SPONSORSHIP_REQUIRED`). Quotes expire in ~1 minute with their blockhash.
+- **Tron** (`tron:mainnet`, `tron:nile`): secp256k1 account (`T…`). Sponsored-only by default (delegated energy and bandwidth). Set `maxQuotedFee` in sun to allow paying TRX when the quote is not sponsored.
+
+`maxQuotedFee` bounds the **quoted** fee, not energy burned on chain. The SDK refuses a quote whose TRX fee option is above it (`FEE_LIMIT_EXCEEDED`) and pays that option at `execute`; WaaS refuses `Execute` if the transaction was re-priced above the quote (`FEE_ABOVE_QUOTE`, nothing sent). The fee actually burned is what the chain charges for the sealed transaction, and the SDK does not verify any energy limit WaaS sets.
+
+Tron mirrors EVM: `prepareTransfer` moves TRX (`asset: 'native'`, amount in sun) or a TRC-20 token (`asset` is the token contract, amount in its base units), and the SDK builds the token's `transfer(address,uint256)` call:
+
+```ts
+const prepared = await wallet.tron.prepareTransfer({
+  idempotencyKey: 'payout-123-a1',
+  network: 'tron:mainnet',
+  to: recipient, // T… address
+  asset: 'TR7NHqjeKQxGTCi8q8ZY4pL8otSzgjLj6t', // USDT on Tron
+  amount: parseAmount('25', 6), // '25000000'
+  maxQuotedFee: '20000000' // pay up to 20 TRX when delegated energy does not cover it
+});
+```
+
+`prepareCall` makes any other contract call, either with a function name and typed arguments (`{ to, method: 'approve', args: [{ type: 'address', value }, { type: 'uint256', value: '1' }] }`, where `method` is the bare name, not a signature) or with calldata (`{ to, data, value? }`).
+
+WaaS simulates the call while quoting; a call that would revert (for example, an insufficient token balance) is refused with `UPSTREAM_ERROR` (`upstreamCode` 7200).
+
+### Observation, settlement & `describeOperation`
+
+- `getOperation(id)` is a **local read** (never authenticates or polls WaaS). Use `refreshOperation(id)` for one remote status poll, or `waitForOperation(id, { timeoutMs, pollIntervalMs?, signal? })` to poll outside exclusive ownership with distinct outcomes: a finished operation reports its terminal status (`'executed' | 'failed' | 'expired' | 'signed' | 'cancelled'`), and `'reconciliation-required' | 'timed-out' | 'aborted'` mean the wait ended first (`'aborted'` is your `AbortSignal`). Only `'executed'` means the transaction went through. The deadline and the signal also bound a wait for the lock or a status read in progress.
+- **Pre-submit quote expiry** marks the operation terminal `expired` (`QUOTE_EXPIRED`, `provenUnsent: true`) and never calls WaaS `Execute`.
+- **Ambiguous `Execute` (lost response)** stays **open** (`status: 'unknown'`). If WaaS still answers `TransactionExpired` two minutes past quote expiry without claim evidence, the operation escalates to `error: 'RECONCILIATION_REQUIRED'` while remaining open (`status: 'unknown'`) and retaining swap debit reservations — because an eventually-consistent negative read is a heuristic, not proof nothing was broadcast. Once an operator verifies out of band that nothing was broadcast, call `resolveReconciliation({ idempotencyKey, txnId, resolution: 'not-broadcast' })` (or `wallet.swaps.resolveReconciliation({ swapId, txnId, resolution: 'not-broadcast' })` for swap funding/recovery), which re-checks WaaS under lock before releasing reservations and marks the operation `expired` with `operatorResolved: true`. A stale `TransactionExpired` read inside the grace window leaves the operation unchanged, so `waitForOperation` keeps polling.
+- `getTransactionStatus(txnId)` reads the current WaaS status of a transaction by the `txnId` from its quote, for reconciling from your own records. It works before any wallet is restored, never changes a stored operation and never creates a wallet. `status: 'unknown'` means WaaS answered without information (it does under load); read again. Like any status read, a `quoted` or `TransactionExpired` answer is not proof that nothing was broadcast while WaaS is still catching up after the quote expired.
+- `waitForTransaction({ txnId, expiresAt }, { timeoutMs })` waits on a transaction by `txnId` from any handle or process, without the operation record: `executed` or `failed`, or `reconciliation-required` when WaaS still shows no claim two minutes past the quote's expiry.
+- **A transaction can only be executed by the credential that prepared it.** Preparing renews a credential that would expire before the quote, and `execute` never re-signs in: if the credential was rotated in between, `execute` fails with `CREDENTIAL_CHANGED` and nothing is sent; prepare again.
+- A `prepare*` or `sign*` call that fails without an answer from WaaS (network error, timeout) leaves the operation `preparing`; call it again with the same key and input.
+- `describeOperation(op)` derives a pure next-action recommendation (`await-review`, `resume-original`, `poll-original`, `reconcile-original`, `safe-to-reprepare`, `investigate`, or `done`) strictly from validated evidence, with original IDs. `investigate` is a failure whose outcome needs a look: never treat it as success, and never as safe to pay again.
+
+### Unattested indexer reads (`wallet.indexer` / `service.indexer`)
+
+Indexer balances are **not attested by the WaaS enclave**; use them for display and preflight checks only, never as proof of funds. `wallet.indexer.*` snapshots the initialized address under lock, releases the lock before HTTP I/O, never authenticates or creates a wallet, and throws `WALLET_NOT_INITIALIZED` (distinct from a zero balance) if that family has not been created or restored yet.
+
+## Trails swaps & recovery (`@polygonlabs/oms-server-wallet-sdk/trails`)
+
+Enable swaps on a server wallet with `swaps: trails(...)`. Use the same wallet for ordinary EVM debits and swaps — both automatically share one executor and one debit coordination gate.
+
+```ts
+import { createServerWallet, createSingleProcessExecutor } from '@polygonlabs/oms-server-wallet-sdk';
+import { trails, type SwapStore } from '@polygonlabs/oms-server-wallet-sdk/trails';
+
+declare const swapStore: SwapStore;
+
+const wallet = createServerWallet({
+  publishableKey: process.env.OMS_PUBLISHABLE_KEY!,
+  oidc: { issuer, audience, subject, getIdToken },
+  storage: { adapter: persistence, encryptionKey: process.env.ENCRYPTION_KEY! },
+  executor: createSingleProcessExecutor(),
+  swaps: trails({
+    apiKey: process.env.TRAILS_API_KEY!,
+    chains: { 137: process.env.POLYGON_RPC_URL!, 8453: process.env.BASE_RPC_URL! },
+    assets: [
+      { chainId: 137, asset: '0x3c499c542cef5e3811e1192ce70d8cc03d5c3359', decimals: 6, symbol: 'USDC' },
+      { chainId: 8453, asset: '0x833589fcd6edb6e08f4c7c32d4f71b54bda02913', decimals: 6, symbol: 'USDC' }
+    ],
+    storage: { scope: 'wallet', adapter: swapStore, encryptionKey: process.env.ENCRYPTION_KEY! },
+    environment: 'my-trails-project'
+  })
+});
+
+const quoted = await wallet.swaps.quote({
+  idempotencyKey: crypto.randomUUID(),
+  originChainId: 137,
+  originAsset: '0x3c499c542cef5e3811e1192ce70d8cc03d5c3359',
+  destinationChainId: 8453,
+  destinationAsset: '0x833589fcd6edb6e08f4c7c32d4f71b54bda02913',
+  amount: '10000000',
+  slippageBps: 50
+});
+await wallet.swaps.confirm({ swapId: quoted.id, reviewId: quoted.quote.reviewId });
+await wallet.swaps.tick();
+```
+
+See [docs/SWAPS-INTEGRATION.md](docs/SWAPS-INTEGRATION.md) and [TRAILS-API.md](TRAILS-API.md) for service-scoped stores (`scope: 'service'`), durable alarm scheduling, and separately reviewed recovery.
+
+## In-memory storage (`storage: 'memory'`)
+
+Pass `storage: 'memory'` (and omit `executor`) to `createServerWallet` or `createServerWalletService` for the full wallet API with nothing to store: no `StateStore`, encryption key or lock. Each handle signs in with its own credential and keeps it, its wallets and its operation records in memory, so handles in different processes run in parallel; calls on one handle run one at a time.
+
+```ts
+import { createServerWallet } from '@polygonlabs/oms-server-wallet-sdk';
+
+const wallet = createServerWallet({
+  publishableKey,
+  oidc: { issuer, audience, subject, getIdToken }, // sessionLifetimeSeconds defaults to 3600
+  storage: 'memory',
+  approval: 'allow-immediate'
+});
+await wallet.restore({ families: ['evm'] }); // in signup, call create() instead
+const paid = await wallet.evm.sendTransfer({
+  idempotencyKey: `payout-${payoutId}-a1`,
+  chainId: 137,
+  to: recipient,
+  asset: 'native',
+  amount: parseAmount('0.001', 18),
+  // Awaited before Execute: save the txnId so a crash can be reconciled.
+  onPrepared: (operation) => payouts.saveTxnId(payoutId, operation.quote.txnId, operation.quote.expiresAt)
+});
+await wallet.close(); // revokes this handle's credential
+```
+
+- **Records live as long as the handle.** `idempotencyKey` protects retries on this handle only: a retry that lands on another process or a new handle prepares a new transaction. Your app owns duplicate protection across processes, for example with the `txnId` it saves in `onPrepared`, and recovers with `getTransactionStatus(txnId)` or `waitForTransaction({ txnId, expiresAt })`, which work from any handle.
+- **Creating wallets is explicit.** `restore()` binds wallets that exist and throws `WALLET_NOT_INITIALIZED` otherwise; transactions never create one. `create({ families })` also creates the missing ones. Call `create()` only where a user's wallets are first set up, such as signup, and `restore()` everywhere else: WaaS does not deduplicate wallet creation, so two processes creating one new user's wallets at the same time give that user two wallets per family. Within one process, concurrent `create()` calls for a user run one at a time. If a create response is lost, the SDK looks for the created wallet and, if it cannot find it, throws `CREATION_UNCERTAIN` instead of creating again.
+- **Duplicate wallets.** If a user ends up with more than one wallet for a family, restore fails with `WALLET_MISMATCH`. List them with `listWallets()`, choose one (for example the one holding funds), and pass it as `restore({ wallets: { evm: address } })` (durable: `createOrRestore({ wallets })`, which remembers the choice).
+- **Swaps** work the same way (`swaps: trails(...)`). Their records live in the Trails `storage`, which every process of a user must share; its compare-and-set contract makes concurrent processes safe (see the swaps guide).
+- **Parallel sends from one wallet** are limited by the chain, not the SDK: in testing, Solana handled 12 at once, while EVM (relayed) and Tron started failing or refusing beyond about 4. Failures were clean (nothing sent twice); keep same-wallet bursts small on EVM and Tron.
+- **`close()`** revokes the credential and makes every later or queued call throw `WALLET_CLOSED`. A crashed process cannot close, so keep `sessionLifetimeSeconds` modest. There is no `disable()`: to stop a user everywhere, stop minting their ID tokens and close their handles.
+- **Fresh ID tokens.** Every handle signs in, and WaaS rejects an ID token that another sign-in already used, so `getIdToken` must mint a new token on each call.
+
+For many users, `createServerWalletService({ ..., storage: 'memory' })` keeps one handle per user in a bounded cache, so a request reuses its credential instead of signing in again:
+
+```ts
+const wallets = createServerWalletService({
+  publishableKey,
+  oidc: { issuer, audience, getIdToken: (subject) => issueIdToken(subject) },
+  storage: 'memory',
+  approval: 'allow-immediate',
+  cache: { maxHandles: 1000, idleTimeoutMs: 600_000 }
+});
+const wallet = wallets.forSubject(authenticatedUserId); // a lookup, not authorization
+await wallet.restore({ families: ['evm'] }); // free on a warm handle
+```
+
+A handle evicted for size or idleness is dropped without revoking its credential, so a request still using it finishes. `wallets.evict(subject)` (for example at sign-out) and `wallets.close()` (at shutdown) revoke.
+
+## Errors
+
+Every error the SDK raises is a `WalletError` with a stable `code`, a safe `message` and an HTTP-style `status`. WaaS refusals are `UpstreamError` (`upstreamCode`, `method`), Trails refusals are `TrailsError` from `/trails`, and malformed upstream responses are `INVALID_RESPONSE`, never a raw validation error. Errors thrown by your own hooks (`getIdToken`, store adapters, executors, `signing.authorizeTypedData`) pass through unchanged. Use `isWalletError` / `isUpstreamError` and branch on `code`. [docs/ERRORS.md](docs/ERRORS.md) lists every code with what it means and what to do.
+
+## Storage & concurrency
+
+- `StateStore.write` / `NamespacedStateStore.write` must complete durable persistence before resolving.
+- `ExclusiveExecutor.run` must hold exclusive ownership for the entire async task, including remote I/O. `createSingleProcessExecutor` / `createSingleProcessExecutorPool` are sufficient only within one Node process or a single per-wallet Durable Object. Construct one wallet (and executor) per Durable Object instance — never a fresh `createSingleProcessExecutor()` per HTTP request — and never call back into the wallet from `getIdToken`, store adapters, or custom `fetch` hooks (which would deadlock the executor).
+- Once swaps are enabled and confirmed on a wallet, keep `swaps: trails({ ..., enabled: false })` if you later pause new swaps rather than removing `swaps` entirely, so existing reservations stay coordinated.
+- The SDK computes the canonical namespace (`JSON.stringify([waasOrigin, projectId, issuer, audience, subject])`) from the routed **WaaS API origin**, ignoring a trailing slash on the issuer, and binds AES-256-GCM AAD to it. Unrecognized or corrupted state fails closed with `STORAGE_INTEGRITY`.
+- Restoring a database backup after newer nonces or submissions have been sent requires upstream reconciliation — a backup alone is not a safe rollback.
+
+### Distributed executors
+
+A clustered backend supplies an `ExecutorProvider` backed by a distributed lock, one lock per namespace. One `run` can make several sequential WaaS requests, each with a 20-second timeout (for example, a sign-in and wallet discovery followed by `Execute`), so:
+
+- The SDK requires a single active owner per namespace for the whole task. In 0.3.0 it has no fencing token or ownership-loss signal, so it cannot stop a task whose lock was lost: once started, a task runs to completion.
+- Hold the lock for the whole task and renew it while the task runs (a heartbeat), with a lease of minutes, not seconds, so it cannot expire under a live task.
+- Treat a lost lease as an incident: do not let another holder start on that namespace until the previous process is known to have stopped. The store contract has no compare-and-set, so the lock is the only guard against two workers interleaving credential nonces and operation records.
+- Never run wallet calls from inside `getIdToken`, a store adapter or a custom `fetch`: the lock is not re-entrant.
+
+## Custody: protect the OIDC signing key
+
+WaaS trusts ID tokens from your registered issuer. Whoever can mint an ID token for a subject, together with your publishable key (which is not a secret), controls that subject's wallet. Treat the issuer's signing key as the custody key for every wallet:
+
+- Keep it in a KMS or HSM and sign ID tokens there; never ship it in application config or images.
+- Mint tokens only inside the backend path that has already authorized the end user, and only for that user's subject.
+- Rotate it by publishing the new key in your JWKS under a new `kid` before switching, then retire the old one.
+- Mint a fresh token on every `getIdToken` call: WaaS rejects a token that was already used to sign in.
 
 ## Development
-
-This package lives in the [`oms-wallet-typescript-sdk`](https://github.com/0xPolygon/oms-wallet-typescript-sdk) workspace. Use the Node and pnpm versions pinned at the repository root, and run commands from the root:
 
 ```sh
 pnpm install --frozen-lockfile
 pnpm lint
 pnpm --filter @polygonlabs/oms-server-wallet-sdk typecheck
 pnpm --filter @polygonlabs/oms-server-wallet-sdk test:coverage
-pnpm --filter @polygonlabs/oms-server-wallet-sdk test:package # pack, then install into a clean consumer with install scripts disabled
+pnpm --filter @polygonlabs/oms-server-wallet-sdk test:package
+pnpm --filter @polygonlabs/oms-server-wallet-sdk check:api
 ```
 
-`pnpm --filter @polygonlabs/oms-server-wallet-sdk test:live` runs live acceptance with the variables listed in `scripts/live-acceptance.ts`: sign-in, restoring wallets after a restart, credential rotation and disabling, EVM signing and a sponsored transfer quote on Polygon, Solana devnet and Tron Nile wallets, and the attestation format WaaS sends, read from `packages/oms-server-wallet/.env`. EVM transfers are only quoted; Solana and Tron transfers are only quoted unless `LIVE_EXECUTE=1`. It writes its report to `.data/live-acceptance.json`, and records attested WaaS responses that can be copied to `tests/fixtures/live/` for offline verification. Each recording includes the request's signature header, which a `Sequence/2` attestation binds: keep raw recordings private, and use a disposable credential for fixtures you commit.
-
-Every pull request needs a changeset (`pnpm exec changeset`, or `pnpm exec changeset add --empty` for CI, docs and tooling changes). Releases are CI-only; see the repository's [PUBLISHING.md](../../PUBLISHING.md).
+Licensed under [Apache-2.0](LICENSE-APACHE-2.0); see [NOTICE](NOTICE) for verifier provenance.

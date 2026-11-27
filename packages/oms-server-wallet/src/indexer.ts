@@ -1,15 +1,14 @@
-import { getAddress } from 'viem';
+import { getAddress, isAddress } from 'viem';
 import { z } from 'zod';
-
-import type { SolanaNetwork } from './solana.js';
-import type { TronNetwork } from './tron.js';
 
 import { CHAINS, environmentFromKey, requireChain } from './environment.js';
 import { WalletError } from './errors.js';
+import { boundedText } from './http.js';
 import { isSolanaAddress, isTronAddress } from './internal/protocol/addresses.js';
-import { SOLANA_NETWORKS } from './solana.js';
-import { boundedText } from './transport.js';
-import { TRON_NETWORKS } from './tron.js';
+import { SOLANA_NETWORKS, TRON_NETWORKS } from './internal/protocol/networks.js';
+
+export type SolanaNetwork = (typeof SOLANA_NETWORKS)[number];
+export type TronNetwork = (typeof TRON_NETWORKS)[number];
 
 const quantity = z.string().regex(/^[0-9]+$/);
 const rowSchema = z.object({
@@ -43,39 +42,47 @@ const responseSchema = z.object({
     .object({ page: z.number().int(), pageSize: z.number().int(), more: z.boolean() })
     .optional()
 });
-export interface Balance {
-  chainId: number;
-  asset: string;
-  name: string;
-  symbol: string;
-  balance: string;
-  decimals?: number;
-  balanceUSD?: string;
+
+/** Single EVM native or ERC-20 balance from the unattested indexer. */
+export interface EvmBalance {
+  readonly chainId: number;
+  readonly asset: string;
+  readonly name: string;
+  readonly symbol: string;
+  readonly balance: string;
+  readonly decimals?: number;
+  readonly balanceUSD?: string;
 }
-export interface Balances {
-  items: Balance[];
-  errors: { chainId: number; message: string }[];
-  nextPage?: number;
-  fetchedAt: string;
+
+/** Paginated EVM balances from the unattested indexer. */
+export interface EvmBalances {
+  readonly items: readonly EvmBalance[];
+  readonly errors: readonly { readonly chainId: number; readonly message: string }[];
+  readonly nextPage?: number;
+  readonly fetchedAt: string;
 }
-/** A Solana or Tron balance. `asset` is `native` or the token's mint or contract address. */
+
+/** A Solana or Tron balance. `asset` is `'native'` or the token's mint or contract address. */
 export interface ChainBalance {
-  network: string;
-  asset: 'native' | string;
-  name: string;
-  symbol: string;
+  readonly network: string;
+  readonly asset: 'native' | string;
+  readonly name: string;
+  readonly symbol: string;
   /** Base units: lamports or sun for the native asset. */
-  balance: string;
-  decimals: number;
-  balanceUSD?: string;
+  readonly balance: string;
+  readonly decimals: number;
+  readonly balanceUSD?: string;
   /** The Solana token program that owns the mint. */
-  tokenProgram?: 'spl-token' | 'token-2022';
+  readonly tokenProgram?: 'spl-token' | 'token-2022';
 }
+
+/** Solana or Tron balances from the unattested indexer. */
 export interface ChainBalances {
-  items: ChainBalance[];
-  errors: { network: string; message: string }[];
-  fetchedAt: string;
+  readonly items: readonly ChainBalance[];
+  readonly errors: readonly { readonly network: string; readonly message: string }[];
+  readonly fetchedAt: string;
 }
+
 const nativeDecimals = { solana: 9, tron: 6 } as const;
 const gatewayRowSchema = z.object({
   network: z.string(),
@@ -159,18 +166,37 @@ export class IndexerClient {
       );
     const requested = [...new Set(networks)];
     const fetcher = this.fetcher;
-    const response = await fetcher(url, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json', 'Api-Key': this.key, Webrpc: webrpc },
-      body: JSON.stringify({
-        networks: requested,
-        filter: { accountAddresses: [address], omitNativeBalances: false },
-        omitMetadata: false
-      }),
-      redirect: 'manual',
-      signal: AbortSignal.timeout(20_000)
-    });
-    const body = await boundedText(response);
+    const unavailable = (cause: unknown) =>
+      new WalletError('INDEXER_UNAVAILABLE', 'Balance service request did not complete.', 502, {
+        cause
+      });
+    let response: Response;
+    try {
+      response = await fetcher(url, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'Api-Key': this.key, Webrpc: webrpc },
+        body: JSON.stringify({
+          networks: requested,
+          filter: { accountAddresses: [address], omitNativeBalances: false },
+          omitMetadata: false
+        }),
+        redirect: 'manual',
+        signal: AbortSignal.timeout(20_000)
+      });
+    } catch (error) {
+      throw unavailable(error);
+    }
+    let body: string;
+    try {
+      body = await boundedText(response);
+    } catch (error) {
+      if (
+        error instanceof WalletError &&
+        (error.code === 'RESPONSE_TOO_LARGE' || error.code === 'INVALID_RESPONSE')
+      )
+        throw error;
+      throw unavailable(error);
+    }
     if (!response.ok)
       throw new WalletError(
         'INDEXER_UNAVAILABLE',
@@ -233,28 +259,61 @@ export class IndexerClient {
       .map((error) => ({ network: error.network, message: error.reason }));
     return { items, errors, fetchedAt: new Date().toISOString() };
   }
-  async getBalances(walletAddress: string, page = 0): Promise<Balances> {
+  async getBalances(
+    walletAddress: string,
+    options: { readonly chainIds?: readonly number[]; readonly page?: number } = {}
+  ): Promise<EvmBalances> {
+    if (typeof walletAddress !== 'string' || !isAddress(walletAddress))
+      throw new WalletError('INVALID_ADDRESS', 'Provide a valid EVM wallet address.');
     const address = getAddress(walletAddress);
+    const page = options.page ?? 0;
     if (!Number.isInteger(page) || page < 0 || page > 1000)
       throw new WalletError('INVALID_PAGE', 'Invalid balance page.');
+    const requestedChainIds = options.chainIds
+      ? [...new Set(options.chainIds)]
+      : CHAINS.map((c) => c.id);
+    if (!Array.isArray(requestedChainIds) || !requestedChainIds.length)
+      throw new WalletError('UNSUPPORTED_CHAIN', 'Select one or more configured EVM networks.');
+    for (const id of requestedChainIds) requireChain(id);
+    const requestedSet = new Set<number>(requestedChainIds);
+
     const fetcher = this.fetcher;
-    const response = await fetcher(this.environment.indexerUrl, {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        'Api-Key': this.key,
-        Webrpc: 'webrpc@v0.31.2;gen-typescript@v0.23.1;sequence-indexer@v0.4.0'
-      },
-      body: JSON.stringify({
-        chainIds: CHAINS.map((c) => c.id),
-        filter: { accountAddresses: [address], omitNativeBalances: false, contractStatus: 'ALL' },
-        omitMetadata: false,
-        page: { page, pageSize: 40 }
-      }),
-      redirect: 'manual',
-      signal: AbortSignal.timeout(20_000)
-    });
-    const body = await boundedText(response);
+    const unavailable = (cause: unknown) =>
+      new WalletError('INDEXER_UNAVAILABLE', 'Balance service request did not complete.', 502, {
+        cause
+      });
+    let response: Response;
+    try {
+      response = await fetcher(this.environment.indexerUrl, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Api-Key': this.key,
+          Webrpc: 'webrpc@v0.31.2;gen-typescript@v0.23.1;sequence-indexer@v0.4.0'
+        },
+        body: JSON.stringify({
+          chainIds: requestedChainIds,
+          filter: { accountAddresses: [address], omitNativeBalances: false, contractStatus: 'ALL' },
+          omitMetadata: false,
+          page: { page, pageSize: 40 }
+        }),
+        redirect: 'manual',
+        signal: AbortSignal.timeout(20_000)
+      });
+    } catch (error) {
+      throw unavailable(error);
+    }
+    let body: string;
+    try {
+      body = await boundedText(response);
+    } catch (error) {
+      if (
+        error instanceof WalletError &&
+        (error.code === 'RESPONSE_TOO_LARGE' || error.code === 'INVALID_RESPONSE')
+      )
+        throw error;
+      throw unavailable(error);
+    }
     if (!response.ok)
       throw new WalletError(
         'INDEXER_UNAVAILABLE',
@@ -275,14 +334,14 @@ export class IndexerClient {
         502
       );
     const result = parsed.data;
-    const items: Balance[] = [];
-    const errors: Balances['errors'] = [];
+    const items: EvmBalance[] = [];
+    const errors: { chainId: number; message: string }[] = [];
     for (const [native, groups] of [
       [true, result.nativeBalances],
       [false, result.balances]
     ] as const) {
       for (const group of groups) {
-        if (!CHAINS.some((chain) => chain.id === group.chainId)) continue;
+        if (!requestedSet.has(group.chainId)) continue;
         if (group.errorReason) {
           errors.push({ chainId: group.chainId, message: group.errorReason });
           continue;
@@ -322,9 +381,9 @@ export class IndexerClient {
         }
       }
     }
-    for (const chain of CHAINS)
-      if (!result.nativeBalances.some((group) => group.chainId === chain.id))
-        errors.push({ chainId: chain.id, message: 'Native balance unavailable.' });
+    for (const chainId of requestedChainIds)
+      if (!result.nativeBalances.some((group) => group.chainId === chainId))
+        errors.push({ chainId, message: 'Native balance unavailable.' });
     return {
       items,
       errors,

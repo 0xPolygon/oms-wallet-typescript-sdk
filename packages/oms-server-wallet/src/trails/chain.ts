@@ -3,6 +3,10 @@ import { z } from 'zod';
 
 import { requireChain } from '../environment.js';
 import { WalletError } from '../errors.js';
+import { parseOrThrow } from '../validation.js';
+
+const chainReadFailed = () =>
+  new WalletError('CHAIN_READ_FAILED', 'The chain RPC returned an unexpected response.', 502);
 import { boundedText } from '../http.js';
 import { canonicalJson } from '../json.js';
 import { addressSchema, hashSchema } from './protocol.js';
@@ -94,11 +98,12 @@ export class EvmChainReader implements ChainReader {
       )
         throw new Error();
       return value.result;
-    } catch {
+    } catch (error) {
       throw new WalletError(
         'CHAIN_READ_FAILED',
         'Could not verify current on-chain state. Try again later.',
-        502
+        502,
+        { cause: error }
       );
     }
   }
@@ -126,14 +131,16 @@ export class EvmChainReader implements ChainReader {
     }
   }
   async code(chainId: number, address: string): Promise<string> {
-    return hex.parse(
-      await this.rpc(chainId, 'eth_getCode', [addressSchema.parse(address), 'latest'])
+    return parseOrThrow(
+      hex,
+      await this.rpc(chainId, 'eth_getCode', [addressSchema.parse(address), 'latest']),
+      chainReadFailed
     );
   }
   async receipt(chainId: number, hash: string): Promise<ChainReceipt | null> {
     const result = await this.rpc(chainId, 'eth_getTransactionReceipt', [hashSchema.parse(hash)]);
     if (result === null) return null;
-    const receipt = rpcReceipt.parse(result);
+    const receipt = parseOrThrow(rpcReceipt, result, chainReadFailed);
     if (receipt.transactionHash.toLowerCase() !== hash.toLowerCase())
       throw new WalletError('CHAIN_READ_FAILED', 'Mismatched transaction receipt.', 502);
     const transfers = receipt.logs

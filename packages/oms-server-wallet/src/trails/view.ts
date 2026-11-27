@@ -1,16 +1,19 @@
-import type { Operation } from '../client.js';
+import type { StoredEvmOperation } from '../state.js';
 import type { SwapRecord, SwapView, TransactionView } from './types.js';
 
-export const transactionView = (op?: Operation): TransactionView | undefined =>
+export const transactionView = (op?: StoredEvmOperation): TransactionView | undefined =>
   op
     ? {
         status: op.status,
+        ...(op.quote?.txnId ? { txnId: op.quote.txnId } : {}),
         hash: publicHash(op.txnHash),
         chainId: op.chainId,
-        sponsored: op.quote?.sponsored === true
+        sponsored: op.quote?.sponsored === true,
+        ...(op.error ? { error: op.error } : {})
       }
     : undefined;
-export function publicHash(hash?: string | null) {
+
+export function publicHash(hash?: string | null): string | undefined {
   return hash &&
     /^0x[0-9a-fA-F]{64}$/.test(hash) &&
     !/^0x0{64}$/.test(hash) &&
@@ -18,6 +21,7 @@ export function publicHash(hash?: string | null) {
     ? hash
     : undefined;
 }
+
 /** Explicit projection: never spreads private records, signatures, typed data or upstream errors. */
 export function swapView(record: SwapRecord): SwapView {
   const intent = record.quote.intent;
@@ -33,6 +37,9 @@ export function swapView(record: SwapRecord): SwapView {
         }
       : undefined,
     phase: record.phase,
+    ...((record.phase === 'succeeded' || record.phase === 'refunded') && record.outcomeEvidence
+      ? { outcomeEvidence: record.outcomeEvidence }
+      : {}),
     createdAt: record.createdAt,
     updatedAt: record.updatedAt,
     confirmedAt: record.confirmedAt,
@@ -40,7 +47,7 @@ export function swapView(record: SwapRecord): SwapView {
     nextAt: record.nextAt,
     upstreamStatus: record.upstreamStatus,
     quote: {
-      revision: record.quote.digest,
+      reviewId: record.quote.digest,
       expiresAt: record.quote.expiresAt,
       intentId: intent.intentId,
       expectedOutput: intent.quote.toAmount,
@@ -87,7 +94,7 @@ export function swapView(record: SwapRecord): SwapView {
       source: r.source,
       chainId: r.chainId,
       intentAddress: r.intentAddress,
-      revision: r.revision,
+      reviewId: r.revision,
       expiresAt: r.expiresAt,
       assets: r.assets.map((a) => ({ ...a })),
       requiresOwnerDeployment: r.requiresOwnerDeployment,

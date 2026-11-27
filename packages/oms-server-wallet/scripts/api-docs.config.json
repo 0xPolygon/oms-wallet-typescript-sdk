@@ -1,0 +1,151 @@
+{
+  "groups": [
+    {
+      "label": "Factories and setup",
+      "symbols": [
+        "createServerWallet",
+        "createServerWalletService",
+        "ServerWalletOptions",
+        "SigningOptions",
+        "TypedDataSigningRequest",
+        "ServerWalletServiceOptions",
+        "WalletOidcOptions",
+        "ServiceOidcOptions",
+        "AttestationOptions",
+        "ApprovalMode",
+        "SwapsConfig",
+        "ServerWallet",
+        "ServerWalletBase",
+        "ServerWalletService",
+        "WalletSnapshot",
+        "CreateOrRestoreOptions",
+        "WalletSelection",
+        "IdentityWallet",
+        "NetworkFamily",
+        "RemoteWallet",
+        "SupportedEvmChainId",
+        "EvmNetwork",
+        "EVM_NETWORKS",
+        "SOLANA_NETWORKS",
+        "TRON_NETWORKS",
+        "isSupportedEvmChainId"
+      ]
+    },
+    {
+      "label": "In-memory handles",
+      "symbols": [
+        "InMemoryServerWallet",
+        "InMemoryWalletLifecycle",
+        "InMemoryServerWalletService",
+        "InMemoryCacheOptions"
+      ]
+    },
+    {
+      "label": "Storage and concurrency",
+      "symbols": [
+        "createSingleProcessExecutor",
+        "createSingleProcessExecutorPool",
+        "ExclusiveExecutor",
+        "ExecutorProvider",
+        "StateStore",
+        "NamespacedStateStore",
+        "WalletStorageOption",
+        "ServiceStorageOption"
+      ]
+    },
+    {
+      "label": "EVM",
+      "symbols": [
+        "EvmFacet",
+        "EvmTransferInput",
+        "EvmTransfer",
+        "EvmCallInput",
+        "EvmSignMessageInput",
+        "EvmSignTypedDataInput",
+        "EvmOperation",
+        "Quote",
+        "parseAmount"
+      ]
+    },
+    {
+      "label": "Solana",
+      "symbols": [
+        "SolanaFacet",
+        "SolanaNetwork",
+        "SolanaTransferInput",
+        "SolanaTransfer",
+        "SolanaSignMessageInput",
+        "SolanaOperation"
+      ]
+    },
+    {
+      "label": "Tron",
+      "symbols": [
+        "TronFacet",
+        "TronNetwork",
+        "TronTransferInput",
+        "TronTransfer",
+        "TronCallInput",
+        "TronMaxQuotedFee",
+        "TronAbiArg",
+        "TronSignMessageInput",
+        "TronSignTypedDataInput",
+        "TronOperation",
+        "ChainQuote",
+        "FeeOption"
+      ]
+    },
+    {
+      "label": "Execution, observation and guidance",
+      "symbols": [
+        "ExecuteInput",
+        "CancelInput",
+        "SendHooks",
+        "TransactionRef",
+        "TransactionWaitResult",
+        "ResolveReconciliationInput",
+        "TypedDataInput",
+        "TypedDataDomain",
+        "TypedDataField",
+        "OperationBase",
+        "OperationState",
+        "OperationStatus",
+        "SubmissionMode",
+        "WalletOperation",
+        "ListOperationsOptions",
+        "OperationPage",
+        "WaitForOperationOptions",
+        "WaitResult",
+        "TransactionStatusView",
+        "describeOperation",
+        "OperationGuidance",
+        "OperationNextAction"
+      ]
+    },
+    {
+      "label": "Indexer (unattested)",
+      "symbols": [
+        "WalletIndexerFacet",
+        "ServiceIndexerFacet",
+        "GetEvmBalancesOptions",
+        "GetSolanaBalancesOptions",
+        "GetTronBalancesOptions",
+        "EvmBalances",
+        "EvmBalance",
+        "ChainBalances",
+        "ChainBalance"
+      ]
+    },
+    {
+      "label": "Errors",
+      "symbols": [
+        "WalletError",
+        "UpstreamError",
+        "isWalletError",
+        "isUpstreamError",
+        "WalletErrorCode",
+        "isWalletErrorCode"
+      ]
+    }
+  ]
+}

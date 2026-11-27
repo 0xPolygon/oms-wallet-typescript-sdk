@@ -1,27 +1,25 @@
 import { describe, expect, it } from 'vitest';
-import {
-  EncryptedStore,
-  SerialExecutor,
-  ServerWallet,
-  parseAmount,
-  environmentFromKey
-} from '@polygonlabs/oms-server-wallet-sdk';
-import { MemoryStore, sdkHarness } from './helpers.js';
+import { createSingleProcessExecutor, parseAmount } from '@polygonlabs/oms-server-wallet-sdk';
+import { environmentFromKey } from '../src/environment.js';
+import { EncryptedStore } from '../src/storage.js';
+import { createServerWalletInternal } from '../src/wallet.js';
+import { MemoryStore, TEST_PUBLISHABLE_KEY, sdkHarness } from './helpers.js';
 
 const transfer = {
-  chainId: 137,
+  chainId: 137 as const,
   to: '0x2222222222222222222222222222222222222222',
   asset: 'native',
   amount: '1000000000000000'
 };
+
 describe('server wallet lifecycle and transactions', () => {
   it('rejects invalid addresses and base-unit amounts before authentication or preparation', async () => {
     const h = sdkHarness();
     await expect(
-      h.client.prepareTransfer('invalid-1', { ...transfer, to: '0x123' })
+      h.client.evm.prepareTransfer({ idempotencyKey: 'invalid-1', ...transfer, to: '0x123' })
     ).rejects.toMatchObject({ code: 'INVALID_ADDRESS' });
     await expect(
-      h.client.prepareTransfer('invalid-2', { ...transfer, amount: '1.2' })
+      h.client.evm.prepareTransfer({ idempotencyKey: 'invalid-2', ...transfer, amount: '1.2' })
     ).rejects.toMatchObject({ code: 'INVALID_TRANSFER' });
     expect(h.remote.calls).toHaveLength(0);
   });
@@ -40,7 +38,7 @@ describe('server wallet lifecycle and transactions', () => {
     state.credential.expiresAt = new Date(0).toISOString();
     await h.store.write('wallet', JSON.stringify(state));
     const restored = await h.create().createOrRestore();
-    expect(restored.wallet).toEqual(first.wallet);
+    expect(restored.wallets.evm).toEqual(first.wallets.evm);
     expect(restored.credentialId).not.toBe(first.credentialId);
     expect(h.remote.calls.filter((c) => c.method === 'CreateWallet')).toHaveLength(1);
     expect(h.remote.calls.some((c) => c.method === 'UseWallet')).toBe(true);
@@ -49,19 +47,35 @@ describe('server wallet lifecycle and transactions', () => {
     const h = sdkHarness();
     await h.client.createOrRestore();
     h.remote.expiredOnce = true;
-    expect((await h.client.signMessage('sign-001', 137, 'hello')).verified).toBe(true);
+    expect(
+      (
+        await h.client.evm.signMessage({
+          idempotencyKey: 'sign-001',
+          chainId: 137 as const,
+          message: 'hello'
+        })
+      ).verified
+    ).toBe(true);
     expect(h.remote.calls.filter((c) => c.method === 'CompleteAuth')).toHaveLength(2);
   });
   it('recovers from verified remote revocation and accepts already-revoked keys on disable', async () => {
     const h = sdkHarness();
     const initial = await h.client.createOrRestore();
     h.remote.revoked.add(initial.credentialId!);
-    expect((await h.client.signMessage('revoked-1', 137, 'hello')).verified).toBe(true);
+    expect(
+      (
+        await h.client.evm.signMessage({
+          idempotencyKey: 'revoked-1',
+          chainId: 137 as const,
+          message: 'hello'
+        })
+      ).verified
+    ).toBe(true);
     const restored = await h.client.inspect();
-    expect(restored.wallet).toEqual(initial.wallet);
+    expect(restored.wallets.evm).toEqual(initial.wallets.evm);
     expect(restored.credentialId).not.toBe(initial.credentialId);
     h.remote.revoked.add(restored.credentialId!);
-    expect((await h.client.setDisabled(true)).disabled).toBe(true);
+    expect((await h.client.disable()).disabled).toBe(true);
     expect((await h.client.inspect()).credentialId).toBeUndefined();
   });
   it('does not repeatedly reauthenticate when authorization remains denied', async () => {
@@ -74,37 +88,57 @@ describe('server wallet lifecycle and transactions', () => {
       }
       return request(method, body, credential);
     };
-    await expect(h.client.signMessage('denied-1', 137, 'hello')).rejects.toMatchObject({
+    await expect(
+      h.client.evm.signMessage({
+        idempotencyKey: 'denied-1',
+        chainId: 137 as const,
+        message: 'hello'
+      })
+    ).rejects.toMatchObject({
       upstreamCode: 7207
     });
     expect(h.remote.calls.filter((call) => call.method === 'CompleteAuth')).toHaveLength(2);
     expect(h.remote.calls.filter((call) => call.method === 'SignMessage')).toHaveLength(2);
   });
-  it('reconciles lost create responses without creating another wallet', async () => {
+  it('finds the wallet a lost create response made, within the same call, without creating again', async () => {
     const h = sdkHarness();
     h.remote.failCreate = true;
-    await expect(h.client.createOrRestore()).rejects.toThrow('Lost create');
-    expect((await h.create().createOrRestore()).wallet?.id).toBe('wallet-1');
+    expect((await h.client.createOrRestore()).wallets.evm?.id).toBe('wallet-1');
+    expect((await h.client.inspect()).creationUncertain).toBe(false);
     expect(h.remote.calls.filter((c) => c.method === 'CreateWallet')).toHaveLength(1);
   });
-  it('continues discovery when a create is uncertain instead of creating duplicates', async () => {
+  it('reports CREATION_UNCERTAIN, never creating again, while a lost create stays invisible', async () => {
     const h = sdkHarness();
     h.remote.failCreate = true;
-    await expect(h.client.createOrRestore()).rejects.toThrow();
-    const wallet = h.remote.wallet;
-    h.remote.wallet = undefined;
+    const request = h.remote.request.bind(h.remote);
+    let hidden = true;
+    h.remote.request = async (method, body, credential) => {
+      const response = await request(method, body, credential);
+      return hidden && (method === 'ListWallets' || method === 'CompleteAuth')
+        ? { ...(response as object), wallets: [] }
+        : response;
+    };
+    await expect(h.client.createOrRestore()).rejects.toMatchObject({
+      code: 'CREATION_UNCERTAIN',
+      cause: expect.objectContaining({ message: expect.stringContaining('Lost create') })
+    });
     await expect(h.create().createOrRestore()).rejects.toMatchObject({
       code: 'CREATION_UNCERTAIN'
     });
-    h.remote.wallet = wallet;
-    expect((await h.create().createOrRestore()).wallet?.id).toBe('wallet-1');
+    hidden = false;
+    expect((await h.create().createOrRestore()).wallets.evm?.id).toBe('wallet-1');
+    expect(h.remote.calls.filter((c) => c.method === 'CreateWallet')).toHaveLength(1);
   });
   it('serializes concurrent requests from separate SDK instances sharing an executor', async () => {
     const h = sdkHarness();
     await h.client.createOrRestore();
     await Promise.all(
       Array.from({ length: 12 }, (_, i) =>
-        h.create().signMessage(`message-${i}`, 137, `hello ${i}`)
+        h.create().evm.signMessage({
+          idempotencyKey: `message-${i}`,
+          chainId: 137 as const,
+          message: `hello ${i}`
+        })
       )
     );
     expect(h.remote.maxInFlight).toBe(1);
@@ -112,15 +146,18 @@ describe('server wallet lifecycle and transactions', () => {
   it('rejects unsponsored transfers and never executes them', async () => {
     const h = sdkHarness();
     h.remote.sponsored = false;
-    await expect(h.client.prepareTransfer('transfer-1', transfer)).rejects.toMatchObject({
+    await expect(
+      h.client.evm.prepareTransfer({ idempotencyKey: 'transfer-1', ...transfer })
+    ).rejects.toMatchObject({
       code: 'SPONSORSHIP_REQUIRED'
     });
-    expect((await h.client.executeTransfer('transfer-1')).status).toBe('failed');
+    expect((await h.client.evm.getOperation('transfer-1'))?.status).toBe('failed');
     expect(h.remote.calls.some((c) => c.method === 'Execute')).toBe(false);
   });
   it('encodes only ERC-20 transfer calldata and preserves large integer amounts', async () => {
     const h = sdkHarness();
-    await h.client.prepareTransfer('transfer-2', {
+    await h.client.evm.prepareTransfer({
+      idempotencyKey: 'transfer-2',
       ...transfer,
       asset: '0x3333333333333333333333333333333333333333',
       amount: '123456789012345678901234567890'
@@ -134,30 +171,56 @@ describe('server wallet lifecycle and transactions', () => {
   });
   it('returns the same operation for retries and rejects changed inputs', async () => {
     const h = sdkHarness();
-    const op = await h.client.prepareTransfer('transfer-3', transfer);
-    expect(await h.create().prepareTransfer('transfer-3', transfer)).toEqual(op);
+    const op = await h.client.evm.prepareTransfer({ idempotencyKey: 'transfer-3', ...transfer });
+    expect(
+      await h.create().evm.prepareTransfer({ idempotencyKey: 'transfer-3', ...transfer })
+    ).toEqual(op);
     await expect(
-      h.client.prepareTransfer('transfer-3', { ...transfer, amount: '1' })
+      h.client.evm.prepareTransfer({ idempotencyKey: 'transfer-3', ...transfer, amount: '1' })
     ).rejects.toMatchObject({ code: 'IDEMPOTENCY_CONFLICT' });
     expect(h.remote.calls.filter((c) => c.method === 'PrepareEthereumTransaction')).toHaveLength(1);
   });
   it('reconciles an ambiguous execution without sending it twice', async () => {
     const h = sdkHarness();
-    await h.client.prepareTransfer('transfer-4', transfer);
+    const prepared = await h.client.evm.prepareTransfer({
+      idempotencyKey: 'transfer-4',
+      ...transfer
+    });
     h.remote.failExecute = true;
-    expect((await h.client.executeTransfer('transfer-4')).status).toBe('unknown');
-    expect((await h.create().executeTransfer('transfer-4')).status).toBe('pending');
+    expect(
+      (
+        await h.client.evm.execute({
+          idempotencyKey: 'transfer-4',
+          reviewId: prepared.reviewId!
+        })
+      ).status
+    ).toBe('unknown');
+    expect(
+      (
+        await h.create().evm.execute({
+          idempotencyKey: 'transfer-4',
+          reviewId: prepared.reviewId!
+        })
+      ).status
+    ).toBe('pending');
     h.remote.txnStatus = 'executed';
-    expect((await h.client.getOperation('transfer-4'))?.txnHash).toBe(`0x${'ab'.repeat(32)}`);
+    expect((await h.client.evm.refreshOperation('transfer-4'))?.txnHash).toBe(
+      `0x${'ab'.repeat(32)}`
+    );
     expect(h.remote.calls.filter((c) => c.method === 'Execute')).toHaveLength(1);
   });
   it('refuses expired quotes without submitting', async () => {
     const h = sdkHarness();
-    await h.client.prepareTransfer('transfer-5', transfer);
+    const prepared = await h.client.evm.prepareTransfer({
+      idempotencyKey: 'transfer-5',
+      ...transfer
+    });
     const op = JSON.parse((await h.store.read('operation:transfer-5'))!);
     op.quote.expiresAt = new Date(0).toISOString();
     await h.store.write('operation:transfer-5', JSON.stringify(op));
-    await expect(h.client.executeTransfer('transfer-5')).rejects.toMatchObject({
+    await expect(
+      h.client.evm.execute({ idempotencyKey: 'transfer-5', reviewId: prepared.reviewId! })
+    ).rejects.toMatchObject({
       code: 'QUOTE_EXPIRED'
     });
   });
@@ -165,37 +228,46 @@ describe('server wallet lifecycle and transactions', () => {
     const h = sdkHarness();
     const first = await h.client.createOrRestore();
     h.remote.failRevoke = true;
-    await expect(h.client.setDisabled(true)).rejects.toThrow();
-    await expect(h.create().signMessage('disabled-1', 137, 'hello')).rejects.toMatchObject({
+    await expect(h.client.disable()).rejects.toThrow();
+    await expect(
+      h
+        .create()
+        .evm.signMessage({ idempotencyKey: 'disabled-1', chainId: 137 as const, message: 'hello' })
+    ).rejects.toMatchObject({
       code: 'WALLET_DISABLED'
     });
-    await expect(h.client.setDisabled(false)).rejects.toThrow();
+    await expect(h.client.enable()).rejects.toThrow();
     expect((await h.client.inspect()).disabled).toBe(true);
     h.remote.failRevoke = false;
-    const enabled = await h.create().setDisabled(false);
+    const enabled = await h.create().enable();
     expect(h.remote.revoked.has(first.credentialId!)).toBe(true);
-    expect(enabled.wallet).toEqual(first.wallet);
+    expect(enabled.wallets.evm).toEqual(first.wallets.evm);
     expect(enabled.disabled).toBe(false);
   });
   it('rotates by self-revoking the old key and authenticating a fresh credential', async () => {
     const h = sdkHarness();
     const before = await h.client.createOrRestore();
-    const after = await h.client.rotate();
+    const after = await h.client.rotateCredential();
     expect(h.remote.revoked.has(before.credentialId!)).toBe(true);
     expect(after.credentialId).not.toBe(before.credentialId);
-    expect(after.wallet).toEqual(before.wallet);
+    expect(after.wallets.evm).toEqual(before.wallets.evm);
   });
   it('rejects mismatched authenticated identities', async () => {
     const h = sdkHarness();
-    const client = new ServerWallet({
-      subject: 'other-customer',
-      issuer: 'https://issuer.example',
-      audience: 'oms-server-wallet',
-      tokenProvider: async () => ({ token: 'x', expiresAt: 100 }),
-      store: h.store,
-      executor: new SerialExecutor(),
-      transport: h.remote
-    });
+    const client = createServerWalletInternal(
+      {
+        publishableKey: TEST_PUBLISHABLE_KEY,
+        oidc: {
+          subject: 'other-customer',
+          issuer: 'https://issuer.example',
+          audience: 'oms-server-wallet',
+          getIdToken: async () => ({ token: 'x', expiresAt: 100 })
+        },
+        storage: { encryptedStore: h.store },
+        executor: createSingleProcessExecutor()
+      },
+      { transport: h.remote }
+    );
     await expect(client.createOrRestore()).rejects.toMatchObject({ code: 'IDENTITY_MISMATCH' });
     expect(h.remote.calls.some((c) => c.method === 'CreateWallet')).toBe(false);
   });
@@ -214,6 +286,7 @@ describe('server wallet lifecycle and transactions', () => {
     expect(h.remote.calls.some((call) => call.method === 'CreateWallet')).toBe(false);
   });
 });
+
 describe('encryption, amounts, environment routing', () => {
   it('binds encrypted state to the owner and record and detects tampering', async () => {
     const raw = new MemoryStore();
@@ -239,7 +312,12 @@ describe('encryption, amounts, environment routing', () => {
     const first = await raw.read('wallet');
     await store.write('wallet', 'same');
     expect(await raw.read('wallet')).not.toEqual(first);
-    expect(() => new EncryptedStore(raw, btoa('short'), 'subject')).toThrow();
+    expect(() => new EncryptedStore(raw, btoa('short'), 'subject')).toThrow(
+      expect.objectContaining({ code: 'CONFIGURATION', status: 503 })
+    );
+    expect(() => new EncryptedStore(raw, 'not-valid-base64!!!', 'subject')).toThrow(
+      expect.objectContaining({ code: 'CONFIGURATION', status: 503 })
+    );
   });
   it('parses amounts without floating-point rounding', () => {
     expect(parseAmount('12345678901234567890.123456', 6)).toBe('12345678901234567890123456');

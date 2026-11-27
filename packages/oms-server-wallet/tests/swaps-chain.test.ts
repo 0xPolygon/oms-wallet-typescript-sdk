@@ -1,6 +1,7 @@
 import { expect, it, vi } from 'vitest';
 import { toEventSelector, encodeFunctionData, erc20Abi } from 'viem';
-import { EvmChainReader, TrailsClient } from '@polygonlabs/oms-server-wallet-sdk/trails';
+import { EvmChainReader } from '../src/trails/chain.js';
+import { TrailsClient } from '../src/trails/client.js';
 import { owner, token, intentId, recoveryFixture, word } from './fixtures/trails.js';
 import { swapHarness, executeData } from './swap-harness.js';
 
@@ -133,5 +134,15 @@ it('uses exact API mutation contracts with no commit and keeps recovery payload/
     refundToAddress: owner,
     signature: '0x1234',
     payload: prepared.payload
+  });
+});
+
+it('reports malformed RPC results as CHAIN_READ_FAILED, never a raw validation error', async () => {
+  const hash = `0x${'ab'.repeat(32)}`;
+  await expect(rpc({ transactionHash: 42 }).client.receipt(137, hash)).rejects.toMatchObject({
+    code: 'CHAIN_READ_FAILED'
+  });
+  await expect(rpc(42).client.code(137, owner)).rejects.toMatchObject({
+    code: 'CHAIN_READ_FAILED'
   });
 });

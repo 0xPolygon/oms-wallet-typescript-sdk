@@ -117,9 +117,9 @@ describe('Sequence recovery authorization', () => {
     const variants = [
       { ...fixture, intentId: `0x${'00'.repeat(32)}` },
       { ...fixture, intentProtocol: 'v1' },
-      { ...fixture, chainId: 1 },
+      { ...fixture, chainId: 1 as const },
       { ...fixture, intentAddress: owner },
-      { ...fixture, payload: { ...fixture.payload, chainId: 1 } },
+      { ...fixture, payload: { ...fixture.payload, chainId: 1 as const } },
       { ...fixture, payload: { ...fixture.payload, intentAddress: owner } },
       { ...fixture, payload: { ...fixture.payload, encoding: 'json' } },
       { ...fixture, payload: { ...fixture.payload, encoded: `${fixture.payload.encoded}00` } },

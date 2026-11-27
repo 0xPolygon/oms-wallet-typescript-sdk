@@ -1,127 +1,179 @@
-# Backend swaps with SDK 0.2.0
+# Backend swaps and recovery with `@polygonlabs/oms-server-wallet-sdk/trails`
 
-`@polygonlabs/oms-server-wallet-sdk/trails` adds exact-input swaps and bridges, durable sponsored funding, settlement tracking, and separately authorized recovery. These capabilities are available in **0.2.0**. Install and pin `@polygonlabs/oms-server-wallet-sdk@0.2.0` from npm.
+`@polygonlabs/oms-server-wallet-sdk/trails` adds exact-input cross-chain swaps, durable sponsored funding, settlement verification, delayed-deposit repair, and separately reviewed recovery directly onto your server wallet via `swaps: trails(...)`.
 
-First create a `ServerWallet` using the [Node integration guide](NODE-INTEGRATION.md). Keep its credential executor, encrypted state store, OIDC provider, audience, origin and attestation policy. The swap module has no dependency on the demo dashboard, Cloudflare, Hono, D1 or React.
+Ordinary EVM debits (`wallet.evm.prepareTransfer`, `wallet.evm.prepareCall`, `wallet.evm.execute`, and `send*` when enabled) and swaps (`wallet.swaps.*`) automatically share **one identity executor** and **one debit coordination gate** — there is no second executor to manage and no separate wrapper to remember.
 
-## Construct the workflow
+## 1. Enable swaps on a wallet or service
+
+### Single-identity wallet (e.g. Cloudflare Durable Object)
 
 ```ts
-import { SerialExecutor } from '@polygonlabs/oms-server-wallet-sdk';
 import {
-  EvmChainReader,
-  TrailsClient,
-  WalletSwaps,
-  type SwapStore,
-} from '@polygonlabs/oms-server-wallet-sdk/trails';
+  createServerWallet,
+  createSingleProcessExecutor,
+  type StateStore
+} from '@polygonlabs/oms-server-wallet-sdk';
+import { trails, type SwapStore } from '@polygonlabs/oms-server-wallet-sdk/trails';
 
-// Supply a durable implementation of SwapStore (contract below).
+declare const stateStore: StateStore;
 declare const swapStore: SwapStore;
-// `wallet` is the ServerWallet constructed in the Node integration guide.
-// Must be distinct from the wallet's executor: swap methods call the wallet from inside this one,
-// and WalletSwaps refuses the wallet's own executor.
-const workflowExecutor = new SerialExecutor();
-const swaps = new WalletSwaps({
-  wallet,
-  store: swapStore,
-  executor: workflowExecutor,
-  enabled: true,
-  environment: JSON.stringify(['https://trails-api.sequence.app', 'my-trails-project']),
-  trails: new TrailsClient({
-    apiKey: process.env.TRAILS_API_KEY!,
-    origin: process.env.APP_ORIGIN!,
-  }),
-  chains: new EvmChainReader({
-    137: process.env.POLYGON_RPC_URL!,
-    8453: process.env.BASE_RPC_URL!,
-  }),
-  assets: [
-    {
-      chainId: 137,
-      asset: '0x3c499c542cef5e3811e1192ce70d8cc03d5c3359',
-      decimals: 6,
-      symbol: 'USDC',
+
+const wallet = createServerWallet({
+  publishableKey: env.OMS_PUBLISHABLE_KEY,
+  oidc: { issuer, audience, subject, getIdToken },
+  storage: { adapter: stateStore, encryptionKey: env.ENCRYPTION_KEY },
+  executor: createSingleProcessExecutor(),
+  swaps: trails({
+    apiKey: env.TRAILS_API_KEY,
+    chains: {
+      137: env.POLYGON_RPC_URL,
+      8453: env.BASE_RPC_URL
     },
-    {
-      chainId: 8453,
-      asset: '0x833589fcd6edb6e08f4c7c32d4f71b54bda02913',
-      decimals: 6,
-      symbol: 'USDC',
-    },
-  ],
+    assets: [
+      { chainId: 137, asset: '0x3c499c542cef5e3811e1192ce70d8cc03d5c3359', decimals: 6, symbol: 'USDC' },
+      { chainId: 8453, asset: '0x833589fcd6edb6e08f4c7c32d4f71b54bda02913', decimals: 6, symbol: 'USDC' }
+    ],
+    storage: { scope: 'wallet', adapter: swapStore, encryptionKey: process.env.ENCRYPTION_KEY! },
+    environment: 'my-trails-project'
+  })
 });
 ```
 
-Use a separate Trails API key. Set `environment` to a stable endpoint/project identifier, never a secret or key hash. Key rotation within the same project preserves this identifier. Changing it prevents old work from replaying against another project. Keep the original service configuration available until pending work is reconciled.
+### Multi-tenant service (Node backend)
 
-Asset policy belongs to your backend. Intersect a curated contract registry with `getChains()` and `getTokenList()` and verify decimals; do not let a caller add contracts or choose recipients. The current API's `GetExactInputRoutes` is an empty stub, so use a validated `QuoteIntent` to establish route availability. Native input uses `asset: 'native'`. Chain IDs, assets and amounts are checked again in the SDK.
-
-`EvmChainReader` uses configured HTTPS JSON-RPC endpoints, checks `eth_chainId` on every batch, bounds responses, rejects redirects, and uses deadlines. Supply an endpoint for every enabled origin, destination and recovery chain. The OMS indexer supplies portfolio display values; current RPC balances authorize spending.
-
-## Review, confirm and resume
+Pass `storage: { scope: 'service', adapter: namespacedSwapStore, encryptionKey }` to `trails(...)` and pass it to `createServerWalletService`:
 
 ```ts
-const quote = await swaps.quoteSwap(crypto.randomUUID(), {
+import {
+  createServerWalletService,
+  createSingleProcessExecutorPool,
+  type NamespacedStateStore
+} from '@polygonlabs/oms-server-wallet-sdk';
+import { trails, type NamespacedSwapStore } from '@polygonlabs/oms-server-wallet-sdk/trails';
+
+declare const stateStorage: NamespacedStateStore;
+declare const swapStorage: NamespacedSwapStore;
+
+const wallets = createServerWalletService({
+  publishableKey: process.env.OMS_PUBLISHABLE_KEY!,
+  oidc: { issuer, audience, getIdToken },
+  storage: { adapter: stateStorage, encryptionKey: process.env.ENCRYPTION_KEY! },
+  executor: createSingleProcessExecutorPool(),
+  swaps: trails({
+    apiKey: process.env.TRAILS_API_KEY!,
+    chains: { 137: process.env.POLYGON_RPC_URL!, 8453: process.env.BASE_RPC_URL! },
+    assets: approvedAssets,
+    storage: { scope: 'service', adapter: swapStorage, encryptionKey: process.env.ENCRYPTION_KEY! },
+    environment: 'my-trails-project'
+  })
+});
+
+const wallet = wallets.forSubject(authenticatedSubject);
+```
+
+- A `wallet`-scoped `trails(...)` handle cannot be passed to `createServerWalletService` or bound to a second wallet namespace (`CONFIGURATION`).
+- Once a swap is confirmed on a wallet, the SDK persists a coordination marker in wallet state so a separately constructed plain `createServerWallet` pointing at the same state refuses EVM debits (`SWAPS_COORDINATION_REQUIRED`) instead of bypassing swap reservations.
+
+## 2. Quote, review, confirm, and tick
+
+```ts
+const quoted = await wallet.swaps.quote({
+  idempotencyKey: crypto.randomUUID(),
   originChainId: 137,
   originAsset: '0x3c499c542cef5e3811e1192ce70d8cc03d5c3359',
   destinationChainId: 8453,
   destinationAsset: '0x833589fcd6edb6e08f4c7c32d4f71b54bda02913',
-  amount: '10000000', // 10 USDC, as an exact base-unit decimal string
-  slippageBps: 50,
+  amount: '10000000', // 10 USDC in base units
+  slippageBps: 50
 });
-// Present quote.input/expected/minimum output, fees, route and expiry to your operator.
-// Only after their confirmation:
-await swaps.confirmSwap(quote.id, quote.quote.revision);
-// A durable scheduler continues the work independently of the request/browser:
-await swaps.tick();
-const current = await swaps.getSwap(quote.id);
+
+// Present expected/minimum output, fees, providers, and expiry to your approver.
+// Only after approval:
+await wallet.swaps.confirm({
+  swapId: quoted.id,
+  reviewId: quoted.quote.reviewId
+});
+
+// Drive durable progress from your scheduler / Durable Object alarm:
+const { nextAt } = await wallet.swaps.tick({ limit: 3 });
+// If nextAt !== null, schedule your next alarm/timer for nextAt.
+
+const current = await wallet.swaps.get(quoted.id);
+const page = await wallet.swaps.list({ limit: 25 });
 ```
 
-Quote, confirmation, recovery and detail methods return a sanitized `SwapView`; list returns an array and `tick` returns after its bounded batch. The reviewed revision is a base64url SHA-256 digest, not an authentication token. Reusing a quote ID with changed input fails. A new review uses a new ID. Repeated confirmation is idempotent. Distinct local IDs cannot fund the same tracked upstream intent.
+`succeeded` and `refunded` carry `outcomeEvidence`. `'provider-reported'` means the Trails receipt
+reports the outcome and its recipient, token and amount match the quote, but the SDK did not read
+the destination or refund transfer on chain: verify it on chain before treating funds as
+delivered. `'chain-verified'` (a completed recovery) means the SDK read the received amounts on
+chain itself.
 
-Confirmation persists authorization and returns promptly. `tick()` performs a bounded batch and persists the next action/time. Funding is prepared through WaaS with mandatory sponsorship. Trails `ExecuteIntent` activates the route **before** the deposit; there is no `CommitIntent` call. The SDK re-reads activation before funding. Funding is sent once, under a stable child operation ID, and an uncertain result is reconciled using the original WaaS transaction ID. It is never replaced with another deposit, even after expiry or restart.
+## 3. Persistence & alarm scheduling contract
 
-Settlement requires a successful funding receipt and Trails' matching destination, token and minimum output. ERC-20 funding also requires the exact transfer event. A transaction hash alone is insufficient. Eligible late-deposit repair uses `RetryIntent` with the verified existing hash and fresh status checks; it does not send funds again. Automatic refunds expose the actual reported asset, amount and network. Slow or failed providers remain observable with bounded backoff.
+Implement `SwapStore` (or `NamespacedSwapStore`) over `StoredSwapEntry`:
 
-The host must use `swaps.prepareTransfer()` / `swaps.executeTransfer()` for ordinary transfers and `swaps.prepareUserOperation()` / `swaps.executeUserOperation()` (or `swaps.sendUserOperation()`) for contract calls from this same wallet. Route credential rotation, enable/disable and ordinary signing through `swaps.walletCommand(() => wallet.method(...))`. Otherwise a separate caller can bypass the debit coordinator. Supply `legacyOperationIds` from existing storage when upgrading an integration whose operations predate `ServerWallet.listOperations()`.
+| Field on `StoredSwapEntry` | Purpose |
+| --- | --- |
+| `id` | Primary key (local swap ID). |
+| `intentId` | Upstream Trails intent ID; unique per wallet (indexed for `findIntent`). |
+| `version` | Starts at 1 and grows by one on every save; the compare-and-set key. |
+| `active` | Whether the swap has a pending workflow action (indexed for `list({ active: true })`). |
+| `nextAt` | Epoch ms timestamp for the next scheduled `tick()` alarm, or `null` when idle. |
+| `createdAt` | ISO-8601 creation timestamp (`list` sorts newest first). |
+| `reservedChainId` | The chain the swap currently holds funds on, or `null`. While set, other debits of the wallet on that chain wait (`DEBIT_PENDING`). |
+| `payload` | Opaque string the SDK has already encrypted (AES-256-GCM) and authenticated with the metadata fields above and the wallet namespace. Store it as given; an edited entry fails with `STORAGE_INTEGRITY`. |
 
-Do not expose IDs starting with `swp_` through ordinary signing/transfer/status APIs; that namespace belongs to internal child operations. Do not expose `executeOperation()` or `prepareRecoveryTransaction()` as arbitrary HTTP calls. The latter accepts only a validated, in-process recovery capability, not a caller-supplied JSON transaction.
+`save(entry, { expectedVersion })` must be an atomic compare-and-set, and must return:
 
-## Persistence and scheduling contract
+| Result | When |
+| --- | --- |
+| `'saved'` | The stored version was `expectedVersion` (`0`: no entry with this ID existed) and the entry is written. |
+| `'conflict'` | The stored version differs: another worker saved first. Write nothing. |
+| `'intent-taken'` | Inserting would create a second entry with the same `intentId`. Write nothing. |
 
-Implement `SwapStore` with these methods:
+In SQL, for example:
 
-| Method                          | Requirement                                                                                                                                |
-| ------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------ |
-| `get(id)`                       | Return the private authoritative record in this wallet's namespace, or null.                                                               |
-| `findIntent(intentId)`          | Return the local ID already tracking this intent, or null; enforce uniqueness in storage.                                                  |
-| `save(record)`                  | Atomically persist the full record, version, pending action and `nextAt` before resolving.                                                 |
-| `list({active, offset, limit})` | Return bounded records ordered by creation time; `active: true` includes every record with a pending action, including attention/recovery. |
+```sql
+-- expectedVersion = 0: insert; a unique index on (namespace, intent_id) turns a duplicate into 'intent-taken'
+INSERT INTO swaps (namespace, id, intent_id, version, active, next_at, created_at, reserved_chain_id, payload)
+VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?);
+-- expectedVersion > 0: one row updated is 'saved', none is 'conflict'
+UPDATE swaps SET version = ?, active = ?, next_at = ?, reserved_chain_id = ?, payload = ?
+WHERE namespace = ? AND id = ? AND version = ?;
+```
 
-Encrypt private records. They contain prepared transactions, canonical authorizations and signatures and must never be returned to browsers. Only expose `SwapView` / `swapView(record)`. Bind encryption to wallet identity and store key using `EncryptedStore`, or an equivalent authenticated scheme. Persist keys independently of ephemeral processes.
+With that contract, several processes can safely drive the **same** swap (`tick()`, `reconcile()`, recovery) without a shared lock: each step is saved before it reaches money, so when two workers race on one swap, one gets `SWAP_CONFLICT` and backs off (`tick()` skips it), and every transaction is journaled before `Execute`, so a worker that takes over polls it instead of sending it again. Note that per-row CAS only serializes updates to one `swapId`: if multiple processes without a shared lock can call `confirm()` concurrently on two **different** swaps on the same chain, serialize confirmations per wallet/chain (or add a partial unique index on `(namespace, reserved_chain_id)` where `reserved_chain_id IS NOT NULL`).
 
-`save` must arrange a durable wake-up **before** committing an action that can reach an external service. If scheduling fails, fail the save and do not submit. A wake-up without a committed record is harmless; a committed submission without a wake-up is not. Persist scheduling/outbox metadata together with the record and use a shared exclusive workflow executor across every instance operating that wallet. A single-process Node `SerialExecutor` does not coordinate separate processes.
+`storage.encryptionKey` is 32 base64-encoded bytes. It may be the wallet state key: swap records use a key derived separately for each wallet namespace. The SDK cannot detect a store that returns an older authentic version of an entry, so `save` must never be rolled back (restore a backup only together with the matching wallet state).
 
-On Workers, use one SQLite Durable Object per wallet, one alarm for its earliest due action, bounded batches, and explicit rearming after outages; platform retries are finite. On Node, discover due records from persistent storage at startup and on a timer; the timer must not be the only copy of outstanding work. Await active batches on shutdown. Never keep `blockConcurrencyWhile` open during upstream calls.
+Always arrange a durable wake-up (`nextAt`) before committing an action that can reach an external service. On Cloudflare Workers, use one SQLite Durable Object per wallet with one alarm set to the earliest active `nextAt`, and never hold `blockConcurrencyWhile` open across network I/O.
 
-Keep catalog/UI projections separate. A projection write failure retains a dirty outbox and must not roll back or repeat a wallet submission. Use monotonically increasing versions so a late projection cannot overwrite newer state. The demo dashboard's [SQL adapter](https://github.com/0xsequence-demos/waas-server-wallets/blob/master/apps/server/swaps-store.ts), [Node runner](https://github.com/0xsequence-demos/waas-server-wallets/blob/master/apps/server/node-runner.ts), and [Worker coordinator](https://github.com/0xsequence-demos/waas-server-wallets/blob/master/apps/server/worker.ts) are complete examples of this contract; adapt their database interfaces to your backend. The SDK itself imports none of them.
+## 4. Separately reviewed recovery
 
-## Separately reviewed recovery
+When a funded swap terminates without settling or stalls past the progress threshold:
 
 ```ts
-const reviewed = await swaps.prepareRecovery(swapId, crypto.randomUUID(), 'destination');
-const recovery = reviewed.recoveries.at(-1)!;
-// Show actual assets/amounts/network and requiresOwnerDeployment before authorization.
-await swaps.confirmRecovery(swapId, recovery.id, recovery.revision);
-// Continue the existing durable scheduler. Read status through getSwap().
+const recoveryKey = `${quoted.id}-recovery-1`; // store it before calling, like any idempotency key
+const prepared = await wallet.swaps.prepareRecovery({
+  swapId: quoted.id,
+  idempotencyKey: recoveryKey,
+  source: 'destination' // or 'origin'
+});
+// A recovery's id is its idempotency key. Find it by key: the list also holds earlier recoveries.
+const recovery = prepared.recoveries.find((r) => r.id === recoveryKey);
+if (!recovery) throw new Error(`Recovery ${recoveryKey} missing from swap ${quoted.id}`);
+// Show recovery.assets, recovery.chainId, and recovery.requiresOwnerDeployment before confirming:
+await wallet.swaps.confirmRecovery({
+  swapId: quoted.id,
+  recoveryId: recovery.id,
+  reviewId: recovery.reviewId
+});
+// Continue driving progress with `wallet.swaps.tick()`.
 ```
 
-Prepare from `origin` or `destination` using the recorded intent addresses. Recovery is available after a terminal route outcome or a prolonged stall with no recent progress, and never races locally uncertain funding or another active recovery. It can return an intermediate asset rather than the requested output. The review expires after five minutes; changed balances require another review.
+- Pre-submit local quote expiry on funding marks the swap `expired` (`QUOTE_EXPIRED`) and releases the origin-chain debit reservation.
+- Ambiguous funding or recovery submissions that remain unconfirmed past the post-expiry grace window escalate to `RECONCILIATION_REQUIRED` while staying open and **retaining** the debit reservation until reconciled. After out-of-band verification that nothing was broadcast, call `wallet.swaps.resolveReconciliation({ swapId, txnId, resolution: 'not-broadcast' })` to re-check WaaS under lock and release the reservation.
+- To pause new swaps on a wallet that already has `swapsCoordinated` active, keep passing `swaps: trails({ ..., enabled: false })` instead of omitting `swaps`.
 
-The SDK checks the Sequence v3 envelope, typed data, digest, recipient, chain, call flags and sweep/transfer targets. It retains the original API envelope. A recognized non-delegate utility sweep is converted into a separately stored, exact direct-refund authorization before review/signing, because the utility sweeps its own balances rather than the intent’s; see the [source-backed compatibility correction](https://github.com/0xsequence-demos/waas-server-wallets/blob/master/docs/SWAPS.md#recovery-compatibility-correction-2026-09-18). Direct refund envelopes stay unchanged. If the owner wallet is undeployed on that chain, the review discloses a sponsored zero-value self-call for deployment. The workflow waits for code before signing, checks the signature with WaaS, and rejects an EIP-6492 wrapper in this recovery path. It then validates Trails' returned transaction, including the separate factory/guest deployment batch when the **intent wallet** needs deployment. Arbitrary delegates, approvals, unrelated calls and native funding of a recovery transaction are rejected.
-
-Recoveries have stable deployment/signing/submission IDs and survive restart. `received` records confirmed amounts; `partial` retains evidence when recovery returns less or leaves residual funds and permits a fresh review. ERC-20 received amounts come from transfer logs to the managed wallet; native recovery uses verified owner balance changes. Uncertain submissions keep the chain reserved until resolved. A feature pause (`enabled: false`) stops new swaps/funding but allows tracking and separately confirmed recovery; disabling the wallet also blocks recovery signing and automatic reauthentication.
-
-## Deployment acceptance
-
-Offline tests cover protocol validation, failures, storage, browser flows and both runtimes. Funded acceptance still must prove the configured WaaS/Trails deployments support sponsored execution and deployed/initially undeployed-owner recovery. See the explicit [rollout and acceptance checklist](https://github.com/0xsequence-demos/waas-server-wallets/blob/master/docs/SWAPS-ROLLOUT.md). The library does not claim that mock success establishes live sponsorship or recovery compatibility.
+See [TRAILS-API.md](../TRAILS-API.md) for the complete Trails API reference.

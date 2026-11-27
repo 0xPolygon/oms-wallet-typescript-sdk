@@ -1,8 +1,8 @@
 import { encodeFunctionData, erc20Abi, zeroAddress } from 'viem';
 import { z } from 'zod';
 
-import type { Transfer } from '../client.js';
-import type { TrailsContracts } from './protocol.js';
+import type { EvmTransfer } from '../types.js';
+import type { TrailsContracts, TrailsIntent } from './protocol.js';
 
 import { sha256 } from '../encoding.js';
 import { requireChain } from '../environment.js';
@@ -17,25 +17,57 @@ import {
 } from './protocol.js';
 
 const nativeAlias = '0xeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee';
+
 export function tokenAddress(asset: string): `0x${string}` {
   return asset === 'native' || asset.toLowerCase() === nativeAlias
     ? zeroAddress
     : addressSchema.parse(asset);
 }
+
+/** Host-approved asset policy entry for Trails swaps. */
 export interface SwapAsset {
-  chainId: number;
-  asset: string;
-  decimals: number;
-  symbol?: string;
+  readonly chainId: number;
+  readonly asset: string;
+  readonly decimals: number;
+  readonly symbol?: string;
 }
+
+/** Exact-input swap parameters. */
 export interface SwapRequest {
-  originChainId: number;
-  originAsset: string;
-  destinationChainId: number;
-  destinationAsset: string;
-  amount: string;
-  slippageBps?: 10 | 50 | 100;
+  readonly originChainId: number;
+  readonly originAsset: string;
+  readonly destinationChainId: number;
+  readonly destinationAsset: string;
+  /** Positive base-unit decimal string. */
+  readonly amount: string;
+  readonly slippageBps?: 10 | 50 | 100;
 }
+
+export interface SwapQuoteRequest {
+  readonly ownerAddress: `0x${string}`;
+  readonly originChainId: number;
+  readonly originTokenAddress: `0x${string}`;
+  readonly originTokenAmount: string;
+  readonly destinationChainId: number;
+  readonly destinationTokenAddress: `0x${string}`;
+  readonly destinationToAddress: `0x${string}`;
+  readonly tradeType: 'EXACT_INPUT';
+  readonly fundMethod: 'WALLET';
+  readonly mode: 'SWAP';
+  readonly onlyNativeGasFee: boolean;
+  readonly options: {
+    readonly intentProtocol: 'v1.5';
+    readonly slippageTolerance: number;
+  };
+}
+
+export interface SwapQuote {
+  readonly intent: TrailsIntent;
+  readonly funding: EvmTransfer;
+  readonly digest: string;
+  readonly expiresAt: string;
+}
+
 const inputSchema = z
   .object({
     originChainId: chainSchema,
@@ -47,8 +79,12 @@ const inputSchema = z
   })
   .strict();
 
-/** Assets must come from host policy, never from the dashboard request itself. */
-export function buildSwapRequest(owner: string, input: SwapRequest, assets: readonly SwapAsset[]) {
+/** Assets must come from host policy, never from an untrusted caller. */
+export function buildSwapRequest(
+  owner: string,
+  input: SwapRequest,
+  assets: readonly SwapAsset[]
+): SwapQuoteRequest {
   try {
     const request = inputSchema.parse(input);
     requireChain(request.originChainId);
@@ -86,11 +122,11 @@ export function buildSwapRequest(owner: string, input: SwapRequest, assets: read
       destinationChainId: request.destinationChainId,
       destinationTokenAddress,
       destinationToAddress: ownerAddress,
-      tradeType: 'EXACT_INPUT' as const,
-      fundMethod: 'WALLET' as const,
-      mode: 'SWAP' as const,
+      tradeType: 'EXACT_INPUT',
+      fundMethod: 'WALLET',
+      mode: 'SWAP',
       onlyNativeGasFee: true,
-      options: { intentProtocol: 'v1.5' as const, slippageTolerance: request.slippageBps / 10_000 }
+      options: { intentProtocol: 'v1.5', slippageTolerance: request.slippageBps / 10_000 }
     };
   } catch {
     throw new WalletError(
@@ -100,16 +136,13 @@ export function buildSwapRequest(owner: string, input: SwapRequest, assets: read
   }
 }
 
-export type SwapQuoteRequest = ReturnType<typeof buildSwapRequest>;
-export type SwapQuote = Awaited<ReturnType<typeof validateSwapQuote>>;
-
 /** No wallet mutation. A coordinator must persist/review this snapshot before funding. */
 export async function validateSwapQuote(
   raw: unknown,
   request: SwapQuoteRequest,
   contracts: TrailsContracts,
   now = Date.now()
-) {
+): Promise<SwapQuote> {
   try {
     const intent = intentSchema.parse(raw);
     const expectedContracts = contractsSchema.parse(contracts);
@@ -217,13 +250,13 @@ export async function validateSwapQuote(
       intent.quote.maxSlippage > request.options.slippageTolerance + Number.EPSILON
     )
       throw new Error('Quote amounts/slippage');
-    const funding: Transfer = {
+    const funding: EvmTransfer = {
       chainId: deposit.chainId,
       to: deposit.toAddress,
       asset: native ? 'native' : request.originTokenAddress,
       amount: deposit.amount
     };
-    const snapshot = JSON.parse(canonicalJson(intent)) as typeof intent;
+    const snapshot = JSON.parse(canonicalJson(intent)) as TrailsIntent;
     return {
       intent: snapshot,
       funding,

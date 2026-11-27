@@ -1,11 +1,8 @@
 import { expect, it } from 'vitest';
 import { Payload } from '@0xsequence/wallet-primitives';
 import { encodeFunctionData, hexToBytes, decodeFunctionData, erc20Abi } from 'viem';
-import {
-  recoveryAuthorization,
-  validateRecoveryPayload
-} from '@polygonlabs/oms-server-wallet-sdk/trails';
-import { sweepAbi } from '../src/trails/recovery.js';
+import { recoveryAuthorization } from '../src/trails/recovery-authorization.js';
+import { sweepAbi, validateRecoveryPayload } from '../src/trails/recovery.js';
 import { intentSchema, recoverySchema } from '../src/trails/protocol.js';
 import {
   contracts,
@@ -117,7 +114,11 @@ it('journals the original envelope and signs/builds only the reviewed direct ref
     ])
   );
   h.recovery = raw;
-  const view = await h.swaps.prepareRecovery('swap-test-0001', 'recovery-sweep-01', 'origin');
+  const view = await h.swaps.prepareRecovery({
+    swapId: 'swap-test-0001',
+    idempotencyKey: 'recovery-sweep-01',
+    source: 'origin'
+  });
   const record = await h.record();
   expect(record.recoveries[0].originalPrepared).toEqual(raw);
   expect(record.recoveries[0].prepared.payloadHash).not.toBe(raw.payloadHash);
@@ -130,7 +131,11 @@ it('journals the original envelope and signs/builds only the reviewed direct ref
     requiresDeploy: false,
     payloadHash: prepared.payloadHash
   });
-  await h.swaps.confirmRecovery(view.id, 'recovery-sweep-01', view.recoveries[0].revision);
+  await h.swaps.confirmRecovery({
+    swapId: view.id,
+    recoveryId: 'recovery-sweep-01',
+    reviewId: view.recoveries[0].reviewId
+  });
   await h.tick(3);
   h.waas.remote.txnStatus = 'executed';
   h.flags.recovered = true;

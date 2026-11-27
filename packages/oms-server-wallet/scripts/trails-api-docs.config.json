@@ -1,0 +1,48 @@
+{
+  "groups": [
+    {
+      "label": "Setup",
+      "symbols": ["trails", "TrailsOptions", "TrailsStorageOption", "SwapAsset", "SwapsConfig"]
+    },
+    {
+      "label": "Swaps facet",
+      "symbols": [
+        "SwapsFacet",
+        "QuoteSwapInput",
+        "SwapRequest",
+        "ConfirmSwapInput",
+        "ListSwapsOptions",
+        "SwapListPage",
+        "TickSwapsOptions",
+        "TickSwapsResult",
+        "PrepareRecoveryInput",
+        "ConfirmRecoveryInput",
+        "ResolveSwapReconciliationInput"
+      ]
+    },
+    {
+      "label": "Persistence",
+      "symbols": [
+        "SwapStore",
+        "NamespacedSwapStore",
+        "StoredSwapEntry",
+        "SwapSaveOptions",
+        "SwapSaveResult",
+        "SwapListOptions"
+      ]
+    },
+    {
+      "label": "Views and errors",
+      "symbols": [
+        "SwapView",
+        "SwapPhase",
+        "SwapOutcomeEvidence",
+        "RecoveryView",
+        "RecoveryStatus",
+        "RecoveryAsset",
+        "TransactionView",
+        "TrailsError"
+      ]
+    }
+  ]
+}

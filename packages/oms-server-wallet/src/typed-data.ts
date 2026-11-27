@@ -6,6 +6,29 @@ import { WalletError } from './errors.js';
 import { tronToHex } from './internal/protocol/addresses.js';
 import { canonicalJson } from './json.js';
 
+/** Typed EIP-712 / TIP-712 domain binding the chain and verifying contract. */
+export interface TypedDataDomain {
+  readonly name?: string;
+  readonly version?: string;
+  readonly chainId: number | string;
+  readonly verifyingContract: string;
+  readonly salt?: `0x${string}`;
+}
+
+/** Single typed-data struct field definition. */
+export interface TypedDataField {
+  readonly name: string;
+  readonly type: string;
+}
+
+/** Bounded EIP-712 (EVM) or TIP-712 (Tron) payload accepted by `signTypedData`. */
+export interface TypedDataInput {
+  readonly domain: TypedDataDomain;
+  readonly types: Readonly<Record<string, readonly TypedDataField[]>>;
+  readonly primaryType: string;
+  readonly message: Readonly<Record<string, unknown>>;
+}
+
 const address = z
   .string()
   .regex(/^0x[0-9a-fA-F]{40}$/)
@@ -120,7 +143,22 @@ function normalize(json: unknown, chainId: number) {
   )
     throw new Error('Domain type must bind the selected chain and contract');
   const types: typeof data.types = { ...data.types, EIP712Domain: domainTypes };
-  const normalized = { ...data, domain: { ...data.domain, chainId }, types };
+  // Keep only the fields the types declare: those are what the digest signs, so WaaS and a
+  // signing policy see exactly the signed content and nothing a reader could mistake for it.
+  const signed = (type: string, value: unknown): unknown => {
+    const array = /^(.*)\[[0-9]*\]$/.exec(type);
+    if (array) return Array.isArray(value) ? value.map((v) => signed(array[1], v)) : value;
+    if (!Object.hasOwn(types, type) || !value || typeof value !== 'object' || Array.isArray(value))
+      return value;
+    const struct = value as Record<string, unknown>;
+    return Object.fromEntries(
+      types[type]
+        .filter((field) => Object.hasOwn(struct, field.name))
+        .map((field) => [field.name, signed(field.type, struct[field.name])])
+    );
+  };
+  const message = signed(data.primaryType, data.message) as Record<string, unknown>;
+  const normalized = { ...data, domain: { ...data.domain, chainId }, types, message };
   const digest = hashTypedData(normalized);
   return { typedData: normalized, digest };
 }

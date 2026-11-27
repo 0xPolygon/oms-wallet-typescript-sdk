@@ -1,4 +1,6 @@
-import { UpstreamError } from './errors.js';
+import type { WalletErrorCode } from './errors.js';
+
+import { UpstreamError, WalletError } from './errors.js';
 import { WaasErrorCode } from './internal/protocol/waasErrors.js';
 
 /**
@@ -12,15 +14,25 @@ import { WaasErrorCode } from './internal/protocol/waasErrors.js';
  * claimed, so it never proves on its own that nothing was sent.
  */
 export const TRANSACTION_EXPIRED = WaasErrorCode.TransactionExpired;
+const TRANSACTION_NOT_FOUND = WaasErrorCode.TransactionNotFound;
+/**
+ * WaaS has answered `TransactionStatus` with this, under load, for transactions that then went
+ * `pending` and `executed`, so a status read that fails with it carries no information.
+ */
+const TRANSACTION_FAILED = WaasErrorCode.TransactionFailed;
+
+/** A status read that says WaaS has no live transaction: expired, or not found. */
+function isAbsenceRead(error: unknown): error is UpstreamError {
+  return (
+    error instanceof UpstreamError &&
+    (error.upstreamCode === TRANSACTION_EXPIRED || error.upstreamCode === TRANSACTION_NOT_FOUND)
+  );
+}
+
 /**
  * Execute refusals WaaS v1.2.0 returns only before it claims the transaction, for EVM (relayer
  * mode), Solana and Tron alike, so the request sent nothing. Any other error, such as a failed
  * broadcast, can follow the claim.
- *
- * The credential middleware rejects a request before Execute runs (invalid signature, missing or
- * expired key, usage limit, nonce replay). TransactionFailed and WalletProviderError are raised
- * only while building, pricing or signing, before the claim; after it, WaaS answers only
- * TransactionBroadcastFailed or TransactionSimulationFailed, which polling settles.
  */
 export const PRE_CLAIM_REFUSALS: ReadonlySet<number> = new Set([
   WaasErrorCode.InvalidSignature,
@@ -33,15 +45,18 @@ export const PRE_CLAIM_REFUSALS: ReadonlySet<number> = new Set([
   WaasErrorCode.Unauthorized,
   WaasErrorCode.UnsupportedNetwork,
   WaasErrorCode.UnsupportedTransactionMode,
-  WaasErrorCode.TransactionFailed,
-  WaasErrorCode.WalletProviderError,
+  // Not TransactionFailed or WalletProviderError: WaaS has answered TransactionFailed for
+  // transactions that went on to execute, so neither proves that nothing was sent.
   WaasErrorCode.TransactionNotFound,
   WaasErrorCode.InvalidFeeOption
 ]);
+
 const FEE_REFUSED = WaasErrorCode.InvalidFeeOption;
+
 /**
- * How long after a quote's expiry an unconfirmed submission can still be claimed by an Execute
- * that started in time; until then an expired quote does not prove nothing was sent.
+ * Grace window after quote expiry before an unconfirmed submission still returning
+ * `TransactionExpired` escalates to `RECONCILIATION_REQUIRED` (remaining open, never silently
+ * releasing debit reservations or claiming proof that nothing was broadcast).
  */
 export const CLAIM_GRACE_MS = 120_000;
 
@@ -53,16 +68,17 @@ export interface TransactionStatus {
 /** The fields settlement reads and writes on an EVM, Solana or Tron operation. */
 export interface Settleable {
   status: string;
-  error?: string;
+  error?: WalletErrorCode;
   txnHash?: string;
   quote?: { expiresAt: string };
+  preClaimRefused?: boolean;
 }
 
 /**
  * Settle a failed Execute. A refusal WaaS returns only before claiming means this request sent
- * nothing, and it is the only Execute for the operation. Anything else stays unknown unless the
- * status shows the claim: WaaS reads transaction status without strong consistency, so a
- * `quoted` or expired answer just after the request may predate the claim.
+ * nothing, and it is the only Execute for the operation. Anything else stays `unknown` unless the
+ * status shows the claim: WaaS reads transaction status without strong consistency, so a `quoted`
+ * or expired answer just after the request may predate the claim.
  */
 export async function settleExecuteError(
   op: Settleable,
@@ -72,6 +88,7 @@ export async function settleExecuteError(
   if (error instanceof UpstreamError && PRE_CLAIM_REFUSALS.has(error.upstreamCode)) {
     op.status = 'failed';
     op.error = error.upstreamCode === FEE_REFUSED ? 'FEE_ABOVE_QUOTE' : 'EXECUTE_REFUSED';
+    op.preClaimRefused = true;
     return;
   }
   op.status = 'unknown';
@@ -88,17 +105,31 @@ export async function settleExecuteError(
   }
 }
 
-/** Whether WaaS has already shown that it claimed the transaction for broadcast. */
+/**
+ * Whether a status refresh failed only because WaaS answered `TransactionExpired` inside the
+ * post-expiry grace window. That read can predate the claim, so the operation stays as stored and
+ * callers poll again later.
+ */
+export function isStaleExpiryRead(error: unknown): boolean {
+  return error instanceof UpstreamError && error.upstreamCode === TRANSACTION_EXPIRED;
+}
+
+/** Whether WaaS has already shown that it claimed (or executed) the transaction. */
 function claimed(op: Settleable): boolean {
-  return op.status === 'pending' || !!op.txnHash;
+  return op.status === 'pending' || op.status === 'executed' || !!op.txnHash;
 }
 
 /**
- * Poll an operation in flight. Evidence of a claim is kept: WaaS reads transaction status without
- * strong consistency, so a later read can still show the row from before the claim (`quoted`, or
- * TransactionExpired). An ambiguous Execute is never retried, even when status still says quoted.
- * TransactionStatus answers TransactionExpired only while the row still reads as quoted; past the
- * grace period an operation with no evidence of a claim is treated as expired.
+ * Poll an operation in flight. Evidence only moves forward: WaaS reads transaction status without
+ * strong consistency, so a later read can still show the row from before the claim (`quoted`,
+ * `TransactionExpired` or `TransactionNotFound`). A claimed operation keeps its claim, and an
+ * `executed` one stays executed; a refresh can only fill in its missing hash. An ambiguous Execute
+ * is never retried. For an unclaimed operation, an absence read inside the post-expiry grace
+ * window leaves it unchanged so callers keep polling; past the window it escalates the still-open
+ * operation to `RECONCILIATION_REQUIRED` rather than marking it `expired` or releasing debit
+ * reservations. `TransactionNotFound` before the quote expired is not explained by expiry and is
+ * rethrown. A `TransactionFailed` read is treated as no information: it changes nothing, except
+ * that an unclaimed operation still escalates once the grace window has passed.
  */
 export async function refreshStatus(
   op: Settleable,
@@ -109,20 +140,120 @@ export async function refreshStatus(
   try {
     result = await status();
   } catch (error) {
-    if (!(error instanceof UpstreamError) || error.upstreamCode !== TRANSACTION_EXPIRED)
-      throw error;
-    // A stale read of a claimed transaction: keep the claim and poll again.
+    const inconclusive =
+      error instanceof UpstreamError && error.upstreamCode === TRANSACTION_FAILED;
+    if (!inconclusive && !isAbsenceRead(error)) throw error;
     if (claimed(op)) return;
-    if (!op.quote || now < Date.parse(op.quote.expiresAt) + CLAIM_GRACE_MS) throw error;
-    op.status = 'expired';
-    op.error = 'TRANSACTION_EXPIRED';
+    if (!op.quote) {
+      if (inconclusive) return;
+      throw error;
+    }
+    const expiry = Date.parse(op.quote.expiresAt);
+    if (!inconclusive && error.upstreamCode === TRANSACTION_NOT_FOUND && now < expiry) throw error;
+    if (now < expiry + CLAIM_GRACE_MS) return;
+    // Heuristic grace elapsed without authoritative proof nothing was broadcast: keep open.
+    op.status = 'unknown';
+    op.error = 'RECONCILIATION_REQUIRED';
+    return;
+  }
+  if (op.status === 'executed') {
+    if (result.status === 'executed' && result.txnHash && !op.txnHash) op.txnHash = result.txnHash;
     return;
   }
   if (result.status === 'quoted') {
-    if (!claimed(op)) op.status = 'unknown';
+    if (!claimed(op)) {
+      op.status = 'unknown';
+      // A submission WaaS still shows as unclaimed past the grace window escalates like an
+      // absence read: kept open for reconciliation, never treated as proof nothing was sent.
+      if (op.quote && now >= Date.parse(op.quote.expiresAt) + CLAIM_GRACE_MS)
+        op.error = 'RECONCILIATION_REQUIRED';
+    }
   } else {
     op.status = result.status;
     op.error = undefined;
   }
   if (result.txnHash) op.txnHash = result.txnHash;
+}
+
+/**
+ * Settle an operator's report that an unconfirmed submission was not broadcast. Only an open
+ * `RECONCILIATION_REQUIRED` operation with no transaction hash qualifies, and WaaS is asked again
+ * first: a claimed status settles the operation from that evidence instead. It is marked `expired`
+ * with `operatorResolved` only when WaaS still answers `TransactionExpired` or `TransactionNotFound`
+ * past the grace window.
+ * The caller persists the operation; every refusal throws without changing it.
+ */
+export async function resolveNotBroadcast(
+  op: Settleable & { quote?: { txnId: string; expiresAt: string }; operatorResolved?: boolean },
+  txnId: string,
+  status: () => Promise<TransactionStatus>,
+  now: () => number
+): Promise<void> {
+  if (op.status !== 'unknown' || op.error !== 'RECONCILIATION_REQUIRED' || !op.quote)
+    throw new WalletError(
+      'INVALID_STATE',
+      'Only operations in unknown / RECONCILIATION_REQUIRED can be resolved.',
+      409
+    );
+  if (op.quote.txnId !== txnId)
+    throw new WalletError(
+      'STALE_REVIEW',
+      'Provided txnId does not match the stored operation quote.',
+      409
+    );
+  if (op.txnHash)
+    throw new WalletError(
+      'INVALID_STATE',
+      'Cannot resolve an operation with an observed transaction hash as not-broadcast.',
+      409
+    );
+  let result: TransactionStatus;
+  try {
+    result = await status();
+  } catch (error) {
+    if (!isAbsenceRead(error)) throw error;
+    if (now() < Date.parse(op.quote.expiresAt) + CLAIM_GRACE_MS)
+      throw new WalletError(
+        'RECONCILIATION_REQUIRED',
+        'Cannot resolve before the post-expiry grace window has elapsed.',
+        409
+      );
+    op.status = 'expired';
+    op.error = 'QUOTE_EXPIRED';
+    op.operatorResolved = true;
+    return;
+  }
+  if (result.status === 'quoted') {
+    if (now() < Date.parse(op.quote.expiresAt) + CLAIM_GRACE_MS)
+      throw new WalletError(
+        'RECONCILIATION_REQUIRED',
+        'WaaS still reports this transaction as quoted; cannot resolve before the post-expiry grace window has elapsed.',
+        409
+      );
+    op.status = 'expired';
+    op.error = 'QUOTE_EXPIRED';
+    op.operatorResolved = true;
+    return;
+  }
+  op.status = result.status;
+  op.error = undefined;
+  if (result.txnHash) op.txnHash = result.txnHash;
+}
+
+/**
+ * A public status read by `txnId`. WaaS's inconclusive `TransactionFailed` answer is reported as
+ * `status: 'unknown'` rather than thrown; other refusals, such as `TransactionExpired`, are thrown.
+ */
+export async function statusView(
+  txnId: string,
+  read: () => Promise<TransactionStatus>
+): Promise<{ txnId: string; status: TransactionStatus['status'] | 'unknown'; txnHash?: string }> {
+  try {
+    const result = await read();
+    return { txnId, status: result.status, ...(result.txnHash ? { txnHash: result.txnHash } : {}) };
+  } catch (error) {
+    if (error instanceof UpstreamError && error.upstreamCode === TRANSACTION_FAILED)
+      return { txnId, status: 'unknown' };
+    throw error;
+  }
 }

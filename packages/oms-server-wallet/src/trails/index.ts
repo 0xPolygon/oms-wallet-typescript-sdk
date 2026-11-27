@@ -1,26 +1,31 @@
-export { TrailsClient, TrailsError } from './client.js';
-export type { TrailsClientOptions } from './client.js';
-export { buildSwapRequest, validateSwapQuote, tokenAddress } from './quote.js';
-export type { SwapRequest, SwapAsset, SwapQuote, SwapQuoteRequest } from './quote.js';
-export { validateRecoveryPayload } from './recovery.js';
-export type { TrailsIntent, TrailsToken, TrailsContracts, PreparedRecovery } from './protocol.js';
-export { WalletSwaps } from './swaps.js';
-export { EvmChainReader } from './chain.js';
-export type { ChainReader, ChainReceipt } from './chain.js';
-export { validateRecoveryTransaction } from './recovery-transaction.js';
-export { swapView } from './view.js';
+export { trails } from './coordinator.js';
+export { TrailsError } from './client.js';
+export type { SwapsConfig } from '../internal/swapsBridge.js';
+export type { SwapAsset, SwapRequest } from './quote.js';
 export type {
-  SwapRecord,
-  SwapStore,
-  SwapGateway,
-  WalletSwapsOptions,
-  SwapView,
-  SwapPhase,
-  SwapAction,
-  RecoveryRecord,
-  RecoveryView,
+  ConfirmRecoveryInput,
+  ConfirmSwapInput,
+  ListSwapsOptions,
+  NamespacedSwapStore,
+  PrepareRecoveryInput,
+  QuoteSwapInput,
   RecoveryAsset,
+  RecoveryStatus,
+  RecoveryView,
+  ResolveSwapReconciliationInput,
+  StoredSwapEntry,
+  SwapListOptions,
+  SwapListPage,
+  SwapOutcomeEvidence,
+  SwapPhase,
+  SwapsFacet,
+  SwapSaveOptions,
+  SwapSaveResult,
+  SwapStore,
+  SwapView,
+  TickSwapsOptions,
+  TickSwapsResult,
+  TrailsOptions,
+  TrailsStorageOption,
   TransactionView
 } from './types.js';
-export type { TrailsReceipt, BuiltRecovery } from './protocol.js';
-export { recoveryAuthorization } from './recovery-authorization.js';

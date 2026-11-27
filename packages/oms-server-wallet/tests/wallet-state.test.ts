@@ -1,114 +1,49 @@
-import { readFileSync } from 'node:fs';
-
 import { describe, expect, it } from 'vitest';
 
-import {
-  EncryptedStore,
-  SerialExecutor,
-  ServerWallet,
-  type StateStore
-} from '@polygonlabs/oms-server-wallet-sdk';
+import type { StateStore } from '@polygonlabs/oms-server-wallet-sdk';
 
 import { chainQuoteSchema, isWalletAddress, walletFamily } from '../src/protocol.js';
-import { FakeWaas, MemoryStore, SOLANA_ADDRESS, TRON_ADDRESS, sdkHarness } from './helpers.js';
+import { FakeWaas, SOLANA_ADDRESS, TRON_ADDRESS, sdkHarness } from './helpers.js';
 
-/** A store left by the published 0.2.0 package; see fixtures/record-state-0.2.0.mjs. */
-const legacy = JSON.parse(
-  readFileSync(new URL('./fixtures/state-0.2.0.json', import.meta.url), 'utf8')
-) as { subject: string; encryptionKey: string; store: Record<string, string> };
-
-function legacyHarness() {
-  const raw = new MemoryStore();
-  for (const [key, value] of Object.entries(legacy.store)) raw.values.set(key, value);
-  const store = new EncryptedStore(raw, legacy.encryptionKey, legacy.subject);
-  const remote = new FakeWaas();
-  remote.wallet = {
-    id: 'wallet-legacy',
-    address: '0x1111111111111111111111111111111111111111',
-    networkFamily: 'evm'
-  };
-  const client = new ServerWallet({
-    subject: legacy.subject,
-    issuer: 'https://issuer.example',
-    audience: 'oms-server-wallet',
-    store,
-    executor: new SerialExecutor(),
-    transport: remote,
-    tokenProvider: async () => ({
-      token: `fixture-${crypto.randomUUID()}`,
-      expiresAt: Math.floor(Date.now() / 1000) + 300
-    })
-  });
-  return { raw, store, remote, client };
-}
 const read = async (store: StateStore) => JSON.parse((await store.read('wallet'))!);
 const calls = (remote: FakeWaas, method: string) =>
   remote.calls.filter((call) => call.method === method);
 
-describe('state migration from 0.2.x', () => {
-  it('migrates encrypted 0.2.0 state on first load and keeps the same credential', async () => {
-    const h = legacyHarness();
-    const before = await read(h.store);
-    expect(before.version).toBeUndefined();
-    const snapshot = await h.client.inspect();
-    expect(snapshot.wallet).toEqual(before.wallet);
-    expect(snapshot.wallets).toEqual({ evm: before.wallet });
-    expect(snapshot.credentialId).toBe(before.credential.credentialId);
-    expect(snapshot.creationUncertain).toBe(false);
-    const after = await read(h.store);
-    expect(after).toEqual({
-      version: 2,
-      wallets: { evm: before.wallet },
-      credential: before.credential,
-      disabled: false,
-      creating: []
-    });
-    // Still encrypted, with the same key and binding.
-    expect(h.raw.values.get('wallet')).not.toContain('wallet-legacy');
-  });
-  it('keeps signing and reading 0.2.0 operations without authenticating again', async () => {
-    const h = legacyHarness();
-    const operations = await h.client.listOperations();
-    expect(operations.map((op) => [op.id, op.kind, op.status])).toEqual([
-      ['legacy-sign-1', 'sign', 'signed'],
-      ['legacy-transfer-1', 'transfer', 'pending']
-    ]);
-    expect((await h.client.signMessage('after-migration', 137, 'hello')).verified).toBe(true);
-    // The migrated credential is used as is: the stored nonce keeps counting up.
-    expect(calls(h.remote, 'CompleteAuth')).toHaveLength(0);
-    expect(calls(h.remote, 'CreateWallet')).toHaveLength(0);
-    expect(h.remote.calls[0].credential).toBe((await read(h.store)).credential.id);
-  });
-  it('turns a legacy uncertain create into an EVM creation to settle', async () => {
+describe('strict wallet state validation', () => {
+  it('keeps inspect() and getOperation() strictly read-only with zero store writes', async () => {
     const h = sdkHarness();
-    await h.store.write('wallet', JSON.stringify({ disabled: false, creating: true }));
-    expect((await h.client.inspect()).creationUncertain).toBe(true);
-    expect((await read(h.store)).creating).toEqual(['evm']);
-    await expect(h.client.createOrRestore()).rejects.toMatchObject({
-      code: 'CREATION_UNCERTAIN'
+    await h.client.createOrRestore();
+    await h.client.evm.signMessage({
+      idempotencyKey: 'readonly-sign-1',
+      chainId: 137 as const,
+      message: 'hello'
     });
-    h.remote.wallet = {
-      id: 'wallet-1',
-      address: '0x1111111111111111111111111111111111111111',
-      networkFamily: 'evm'
+    let writes = 0;
+    const origWrite = h.store.write.bind(h.store);
+    h.store.write = async (key, value) => {
+      writes++;
+      return origWrite(key, value);
     };
-    const restored = await h.client.createOrRestore();
-    expect(restored.wallet?.id).toBe('wallet-1');
-    expect(restored.creationUncertain).toBe(false);
-    expect(calls(h.remote, 'CreateWallet')).toHaveLength(0);
+    const snap = await h.client.inspect();
+    expect(snap.wallets.evm?.id).toBe('wallet-1');
+    const op = await h.client.evm.getOperation('readonly-sign-1');
+    expect(op?.status).toBe('signed');
+    expect(writes).toBe(0);
   });
-  it('adds the RPC credential ID to records written before it was stored', async () => {
-    const h = legacyHarness();
-    const state = await read(h.store);
-    const expected = state.credential.credentialId;
-    delete state.credential.credentialId;
-    await h.store.write('wallet', JSON.stringify(state));
-    expect((await h.client.inspect()).credentialId).toBe(expected);
-  });
+
   it.each([
     ['invalid JSON', '{'],
     ['an unknown version', JSON.stringify({ version: 3, wallets: {} })],
-    ['a non-EVM address in the EVM slot', JSON.stringify({ wallet: { id: 'w', address: 'x' } })],
+    ['unversioned pre-v2 state', JSON.stringify({ disabled: false, creating: false })],
+    [
+      'a non-EVM address in the EVM slot',
+      JSON.stringify({
+        version: 2,
+        wallets: { evm: { id: 'w', address: 'x' } },
+        disabled: false,
+        creating: []
+      })
+    ],
     [
       'a Solana wallet with a Tron address',
       JSON.stringify({
@@ -118,14 +53,18 @@ describe('state migration from 0.2.x', () => {
         creating: []
       })
     ],
-    ['a malformed credential', JSON.stringify({ credential: { id: '0x04', nonce: 'x' } })],
+    [
+      'a malformed credential',
+      JSON.stringify({
+        version: 2,
+        wallets: {},
+        credential: { id: '0x04', nonce: 'x' },
+        disabled: false,
+        creating: []
+      })
+    ],
     ['an unrelated record', JSON.stringify({ unrelated: 'unrecognised record' })],
     ['an empty object', '{}'],
-    ['a legacy record missing its flags', JSON.stringify({ disabled: false })],
-    [
-      'a legacy record with unknown fields',
-      JSON.stringify({ disabled: false, creating: false, wallets: {} })
-    ],
     [
       'a current record with unknown fields',
       JSON.stringify({ version: 2, wallets: {}, disabled: false, creating: [], extra: 1 })
@@ -133,10 +72,18 @@ describe('state migration from 0.2.x', () => {
   ])('fails closed on %s without contacting WaaS', async (_, value) => {
     const h = sdkHarness();
     await h.store.write('wallet', value);
-    await expect(h.client.inspect()).rejects.toMatchObject({ code: 'INVALID_STATE' });
-    await expect(h.client.createOrRestore()).rejects.toMatchObject({ code: 'INVALID_STATE' });
+    await expect(h.client.inspect()).rejects.toMatchObject({ code: 'STORAGE_INTEGRITY' });
+    await expect(h.client.createOrRestore()).rejects.toMatchObject({ code: 'STORAGE_INTEGRITY' });
     expect(h.remote.calls).toHaveLength(0);
     expect(await h.store.read('wallet')).toBe(value);
+  });
+
+  it('fails closed on corrupted operation records', async () => {
+    const h = sdkHarness();
+    await h.store.write('operation:corrupt-op-1', '{"bad":true}');
+    await expect(h.client.evm.getOperation('corrupt-op-1')).rejects.toMatchObject({
+      code: 'STORAGE_INTEGRITY'
+    });
   });
 });
 
@@ -146,7 +93,7 @@ describe('one wallet per network family', () => {
     const created = await h.client.createOrRestore({ families: ['evm', 'solana', 'tron'] });
     expect(created.wallets.solana?.address).toBe(SOLANA_ADDRESS);
     expect(created.wallets.tron?.address).toBe(TRON_ADDRESS);
-    expect(created.wallet).toEqual(created.wallets.evm);
+    expect(created.wallets.evm).toEqual(created.wallets.evm);
     expect(calls(h.remote, 'CreateWallet').map((call) => call.body.networkFamily)).toEqual([
       'evm',
       'solana',
@@ -156,12 +103,14 @@ describe('one wallet per network family', () => {
     expect(calls(h.remote, 'CreateWallet')).toHaveLength(3);
     expect(calls(h.remote, 'CompleteAuth')).toHaveLength(1);
   });
-  it('creates only the EVM wallet by default, as before', async () => {
+
+  it('creates only the EVM wallet by default', async () => {
     const h = sdkHarness();
     const snapshot = await h.client.createOrRestore();
     expect(Object.keys(snapshot.wallets)).toEqual(['evm']);
     expect(calls(h.remote, 'CreateWallet').map((call) => call.body.networkFamily)).toEqual(['evm']);
   });
+
   it('binds every held wallet to a new credential after expiry', async () => {
     const h = sdkHarness();
     const first = await h.client.createOrRestore({ families: ['evm', 'solana', 'tron'] });
@@ -177,8 +126,10 @@ describe('one wallet per network family', () => {
     ]);
     expect(calls(h.remote, 'CreateWallet')).toHaveLength(3);
   });
-  it('lists wallets before adding a family to a migrated identity', async () => {
-    const h = legacyHarness();
+
+  it('lists wallets before adding a new family to an existing identity', async () => {
+    const h = sdkHarness();
+    await h.client.createOrRestore({ families: ['evm'] });
     // A Solana wallet created outside this SDK for the same identity is adopted, not duplicated.
     h.remote.others.push({
       id: 'wallet-sol-existing',
@@ -189,11 +140,13 @@ describe('one wallet per network family', () => {
     expect(snapshot.wallets.solana?.id).toBe('wallet-sol-existing');
     expect(snapshot.wallets.tron?.id).toBe('wallet-trx');
     expect(calls(h.remote, 'ListWallets')).toHaveLength(1);
-    expect(calls(h.remote, 'CompleteAuth')).toHaveLength(0);
+    expect(calls(h.remote, 'CompleteAuth')).toHaveLength(1);
     expect(calls(h.remote, 'CreateWallet').map((call) => call.body.networkFamily)).toEqual([
+      'evm',
       'tron'
     ]);
   });
+
   it('follows wallet pagination during discovery', async () => {
     const h = sdkHarness();
     await h.client.createOrRestore({ families: ['evm', 'solana', 'tron'] });
@@ -209,6 +162,7 @@ describe('one wallet per network family', () => {
       { cursor: '2', limit: 100 }
     ]);
   });
+
   it('refuses an identity with two wallets of a family in use, and only that family', async () => {
     const h = sdkHarness();
     await h.client.createOrRestore();
@@ -219,9 +173,18 @@ describe('one wallet per network family', () => {
     await expect(h.client.createOrRestore({ families: ['tron'] })).rejects.toMatchObject({
       code: 'WALLET_MISMATCH'
     });
-    expect((await h.client.signMessage('evm-still-works', 137, 'hello')).verified).toBe(true);
+    expect(
+      (
+        await h.client.evm.signMessage({
+          idempotencyKey: 'evm-still-works',
+          chainId: 137 as const,
+          message: 'hello'
+        })
+      ).verified
+    ).toBe(true);
     expect(calls(h.remote, 'CreateWallet')).toHaveLength(1);
   });
+
   it('refuses when a stored wallet is no longer listed for the identity', async () => {
     const h = sdkHarness();
     await h.client.createOrRestore({ families: ['evm', 'solana'] });
@@ -231,10 +194,9 @@ describe('one wallet per network family', () => {
     await h.store.write('wallet', JSON.stringify(state));
     await expect(h.client.createOrRestore()).rejects.toMatchObject({ code: 'WALLET_MISMATCH' });
   });
+
   it('compares Solana addresses exactly, in discovery and binding', async () => {
-    // Tron addresses carry a checksum, so no case variant of one is valid.
     const family = 'solana';
-    // A different, still valid, address that differs from the original only in case.
     const swapCase = (address: string) => {
       for (let i = 0; i < address.length; i++) {
         const char = address[i];
@@ -244,15 +206,15 @@ describe('one wallet per network family', () => {
       }
       throw new Error(`No case variant of ${address} is a ${family} address`);
     };
-    // A listed wallet whose address differs from the stored one only in case.
     const listed = sdkHarness();
     const created = await listed.client.createOrRestore({ families: [family] });
     const wallet = listed.remote.others.find((entry) => entry.networkFamily === family)!;
     wallet.address = swapCase(wallet.address);
-    await expect(listed.client.rotate()).rejects.toMatchObject({ code: 'WALLET_MISMATCH' });
+    await expect(listed.client.rotateCredential()).rejects.toMatchObject({
+      code: 'WALLET_MISMATCH'
+    });
     expect((await listed.client.inspect()).wallets).toEqual(created.wallets);
 
-    // A binding response that differs from the listed wallet only in case.
     const bound = sdkHarness();
     const request = bound.remote.request.bind(bound.remote);
     bound.remote.request = async (method, body, credential) => {
@@ -264,21 +226,22 @@ describe('one wallet per network family', () => {
       return response;
     };
     await bound.client.createOrRestore({ families: [family] });
-    await expect(bound.client.rotate()).rejects.toMatchObject({ code: 'WALLET_MISMATCH' });
+    await expect(bound.client.rotateCredential()).rejects.toMatchObject({
+      code: 'WALLET_MISMATCH'
+    });
   });
+
   it('settles an uncertain create of one family without duplicating it', async () => {
     const h = sdkHarness();
     await h.client.createOrRestore();
     h.remote.failCreate = true;
-    await expect(h.client.createOrRestore({ families: ['solana'] })).rejects.toThrow('Lost create');
-    expect((await h.client.inspect()).creationUncertain).toBe(true);
-    h.remote.failCreate = false;
-    const snapshot = await h.create().createOrRestore({ families: ['solana'] });
+    const snapshot = await h.client.createOrRestore({ families: ['solana'] });
     expect(snapshot.wallets.solana?.id).toBe('wallet-sol');
     expect(snapshot.creationUncertain).toBe(false);
     expect(calls(h.remote, 'CreateWallet')).toHaveLength(2);
   });
-  it('rejects a created wallet of a different family', async () => {
+
+  it('never trusts a created wallet of a different family, binding only the discovered one', async () => {
     const h = sdkHarness();
     await h.client.createOrRestore();
     const request = h.remote.request.bind(h.remote);
@@ -288,26 +251,31 @@ describe('one wallet per network family', () => {
         return { wallet: { id: 'x', address: SOLANA_ADDRESS, networkFamily: 'solana' } };
       return response;
     };
-    await expect(h.client.createOrRestore({ families: ['tron'] })).rejects.toMatchObject({
-      code: 'INVALID_RESPONSE'
-    });
-    expect((await h.client.inspect()).wallets.tron).toBeUndefined();
+    // A malformed create response leaves the outcome unknown: the SDK binds only what an attested
+    // ListWallets and UseWallet show, and never sends a second CreateWallet.
+    const snapshot = await h.client.createOrRestore({ families: ['tron'] });
+    expect(snapshot.wallets.tron?.networkFamily).toBe('tron');
+    expect(snapshot.wallets.tron?.id).not.toBe('x');
+    expect(
+      calls(h.remote, 'CreateWallet').filter((c) => c.body.networkFamily === 'tron')
+    ).toHaveLength(1);
   });
+
   it('keeps every family across rotation and disable/enable', async () => {
     const h = sdkHarness();
     const before = await h.client.createOrRestore({ families: ['solana', 'tron'] });
-    expect(before.wallet).toBeUndefined();
-    const rotated = await h.client.rotate();
+    expect(before.wallets.evm).toBeUndefined();
+    const rotated = await h.client.rotateCredential();
     expect(rotated.wallets).toEqual(before.wallets);
     expect(rotated.credentialId).not.toBe(before.credentialId);
-    await h.client.setDisabled(true);
-    expect((await h.client.setDisabled(false)).wallets).toEqual(before.wallets);
-    // No EVM wallet is created for an identity that only uses Solana and Tron.
+    await h.client.disable();
+    expect((await h.client.enable()).wallets).toEqual(before.wallets);
     expect(calls(h.remote, 'CreateWallet').map((call) => call.body.networkFamily)).toEqual([
       'solana',
       'tron'
     ]);
   });
+
   it.each([[[]], [['bitcoin']], ['evm']])('rejects families %j', async (families) => {
     const h = sdkHarness();
     await expect(

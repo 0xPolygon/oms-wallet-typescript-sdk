@@ -1,66 +1,97 @@
-import { SerialExecutor } from '@polygonlabs/oms-server-wallet-sdk';
+import { createSingleProcessExecutor } from '@polygonlabs/oms-server-wallet-sdk';
 import {
-  WalletSwaps,
   TrailsError,
-  type SwapRecord,
-  type SwapStore,
-  type SwapGateway,
-  type ChainReader,
-  type TrailsIntent,
-  type TrailsReceipt,
-  type PreparedRecovery
+  type StoredSwapEntry,
+  type SwapSaveOptions,
+  type SwapSaveResult,
+  type SwapStore
 } from '@polygonlabs/oms-server-wallet-sdk/trails';
 import { encodeFunctionData } from 'viem';
+
+import type { ChainReader } from '../src/trails/chain.js';
+import type { PreparedRecovery, TrailsIntent, TrailsReceipt } from '../src/trails/protocol.js';
+import type { SwapGateway, SwapRecord } from '../src/trails/types.js';
+
+import { type SwapRecordCodec, trailsInternal } from '../src/trails/coordinator.js';
 import { executeAbi } from '../src/trails/recovery-transaction.js';
-import { sdkHarness } from './helpers.js';
+import { createServerWalletInternal } from '../src/wallet.js';
 import {
+  contracts,
+  intentId,
+  originIntent,
+  owner,
   quoteFixture,
   recoveryFixture,
-  contracts,
-  owner,
-  originIntent,
-  token,
-  intentId
+  token
 } from './fixtures/trails.js';
+import { FakeWaas, MemoryStore, TEST_PUBLISHABLE_KEY } from './helpers.js';
+
+/** Test-only 32-byte base64 key for swap record encryption. */
+export const SWAP_ENCRYPTION_KEY = Buffer.alloc(32, 7).toString('base64');
 
 export class MemorySwapStore implements SwapStore {
-  records = new Map<string, SwapRecord>();
+  entries = new Map<string, StoredSwapEntry>();
   fail?: (record: SwapRecord) => boolean;
+  /** The codec the bound coordinator uses, so tests can read and write records. */
+  codec?: SwapRecordCodec;
   async get(id: string) {
-    return structuredClone(this.records.get(id) ?? null);
+    return structuredClone(this.entries.get(id) ?? null);
   }
-  async findIntent(intentId: string) {
-    return [...this.records.values()].find((r) => r.quote.intent.intentId === intentId)?.id ?? null;
+  async findIntent(intent: string) {
+    return [...this.entries.values()].find((e) => e.intentId === intent)?.id ?? null;
   }
-  async save(record: SwapRecord) {
-    if (this.fail?.(record)) throw new Error('Simulated storage outage');
-    this.records.set(record.id, structuredClone(record));
+  /** Compare-and-set, with `intentId` unique: the contract every SwapStore must meet. */
+  async save(
+    entry: StoredSwapEntry,
+    { expectedVersion }: SwapSaveOptions
+  ): Promise<SwapSaveResult> {
+    if (this.fail && this.fail(await this.codec!.decode(entry)))
+      throw new Error('Simulated storage outage');
+    const current = this.entries.get(entry.id);
+    if ((current?.version ?? 0) !== expectedVersion) return 'conflict';
+    if (!current && [...this.entries.values()].some((other) => other.intentId === entry.intentId))
+      return 'intent-taken';
+    this.entries.set(entry.id, structuredClone(entry));
+    return 'saved';
   }
   async list({ active, offset = 0, limit }: { active?: boolean; offset?: number; limit: number }) {
     return structuredClone(
-      [...this.records.values()]
-        .filter((r) => !active || !!r.action)
+      [...this.entries.values()]
+        .filter((e) => !active || e.active)
         .sort((a, b) => b.createdAt.localeCompare(a.createdAt))
         .slice(offset, offset + limit)
     );
   }
+  /** Convenience helper for tests inspecting internal persisted SwapRecord state. */
+  async getRecord(id: string): Promise<SwapRecord | null> {
+    const entry = this.entries.get(id);
+    return entry ? this.codec!.decode(entry) : null;
+  }
+  /** Convenience helper for tests mutating a stored SwapRecord directly. */
+  async putRecord(record: SwapRecord, reservedChainId: number | null = null): Promise<void> {
+    this.entries.set(record.id, await this.codec!.encode(record, reservedChainId));
+  }
 }
+
 export const executeData = (payload: string, signature = '0x1234') =>
   encodeFunctionData({
     abi: executeAbi,
     functionName: 'execute',
     args: [payload as `0x${string}`, signature as `0x${string}`]
   });
+
 export async function swapHarness(native = false) {
-  const waas = sdkHarness();
-  const original = waas.remote.request.bind(waas.remote);
-  waas.remote.request = async (...args) => {
+  const walletStore = new MemoryStore();
+  const remote = new FakeWaas();
+  const executor = createSingleProcessExecutor();
+  const original = remote.request.bind(remote);
+  remote.request = async (...args) => {
     const result = await original(...args);
     if (args[0] === 'PrepareEthereumTransaction')
       (result as { expiresAt: string }).expiresAt = new Date(Date.now() + 3_600_000).toISOString();
     return result;
   };
-  await waas.client.createOrRestore();
+
   let clock = Date.now();
   const fixture = quoteFixture(native);
   let intent: TrailsIntent = {
@@ -179,36 +210,64 @@ export async function swapHarness(native = false) {
     }
   };
   const store = new MemorySwapStore();
-  const workflow = new SerialExecutor();
-  const legacyIds: string[] = [];
-  const create = (enabled = true, environment = 'default') =>
-    new WalletSwaps({
-      wallet: waas.create(),
-      legacyOperationIds: async () => legacyIds,
-      trails: gateway,
-      chains,
-      store,
-      assets: fixture.assets,
-      executor: workflow,
-      enabled,
-      clock: () => clock,
-      environment
-    });
-  let swaps = create();
-  const quote = async (id = 'swap-test-0001') => swaps.quoteSwap(id, fixture.input);
+
+  /**
+   * `walletState` defaults to the shared durable store. A separate `MemoryStore` and executor
+   * model another process: its own credential and wallet state, the same swap store and clock.
+   */
+  const create = (
+    enabled = true,
+    environment = 'default',
+    walletState: MemoryStore = walletStore,
+    walletExecutor = executor
+  ) =>
+    createServerWalletInternal(
+      {
+        publishableKey: TEST_PUBLISHABLE_KEY,
+        oidc: {
+          subject: 'customer-1',
+          issuer: 'https://issuer.example',
+          audience: 'oms-server-wallet',
+          getIdToken: async () => ({
+            token: `fixture-${crypto.randomUUID()}`,
+            expiresAt: Math.floor(Date.now() / 1000) + 300
+          })
+        },
+        storage: { encryptedStore: walletState },
+        executor: walletExecutor,
+        approval: 'allow-immediate',
+        swaps: trailsInternal(
+          {
+            apiKey: 'fixture-trails-key',
+            chains: { 137: 'https://polygon.rpc.example', 8453: 'https://base.rpc.example' },
+            assets: fixture.assets,
+            storage: { scope: 'wallet', adapter: store, encryptionKey: SWAP_ENCRYPTION_KEY },
+            enabled,
+            environment
+          },
+          { gateway, chains, clock: () => clock, onCodec: (codec) => (store.codec = codec) }
+        )
+      },
+      { transport: remote, clock: () => clock }
+    );
+
+  let wallet = create();
+  await wallet.createOrRestore();
+
+  const quote = async (idempotencyKey = 'swap-test-0001') =>
+    wallet.swaps.quote({ idempotencyKey, ...fixture.input });
   const confirm = async () => {
     const q = await quote();
-    return swaps.confirmSwap(q.id, q.quote.revision);
+    return wallet.swaps.confirm({ swapId: q.id, reviewId: q.quote.reviewId });
   };
   const tick = async (count = 1) => {
     for (let i = 0; i < count; i++) {
       clock += 5001;
-      await swaps.tick();
+      await wallet.swaps.tick();
     }
   };
   return {
-    waas,
-    legacyIds,
+    waas: { store: walletStore, remote, executor },
     fixture,
     flags,
     gateway,
@@ -219,11 +278,51 @@ export async function swapHarness(native = false) {
     confirm,
     tick,
     create,
+    get wallet() {
+      return wallet;
+    },
     get swaps() {
-      return swaps;
+      return wallet.swaps;
+    },
+    /** An in-memory handle (`storage: 'memory'`) for the same identity and swap store. */
+    async ephemeralWorker() {
+      const handle = createServerWalletInternal(
+        {
+          publishableKey: TEST_PUBLISHABLE_KEY,
+          oidc: {
+            subject: 'customer-1',
+            issuer: 'https://issuer.example',
+            audience: 'oms-server-wallet',
+            getIdToken: async () => ({
+              token: `fixture-${crypto.randomUUID()}`,
+              expiresAt: Math.floor(Date.now() / 1000) + 300
+            })
+          },
+          storage: 'memory',
+          approval: 'allow-immediate',
+          swaps: trailsInternal(
+            {
+              apiKey: 'fixture-trails-key',
+              chains: { 137: 'https://polygon.rpc.example', 8453: 'https://base.rpc.example' },
+              assets: fixture.assets,
+              storage: { scope: 'wallet', adapter: store, encryptionKey: SWAP_ENCRYPTION_KEY }
+            },
+            { gateway, chains, clock: () => clock }
+          )
+        },
+        { transport: remote, clock: () => clock }
+      );
+      await handle.restore({ families: ['evm'] });
+      return handle;
+    },
+    /** Another process for the same identity: its own wallet state and lock, the same swap store. */
+    async worker() {
+      const other = create(true, 'default', new MemoryStore(), createSingleProcessExecutor());
+      await other.createOrRestore();
+      return other;
     },
     restart(enabled = true, environment = 'default') {
-      swaps = create(enabled, environment);
+      wallet = create(enabled, environment);
     },
     get intent() {
       return intent;
@@ -246,6 +345,6 @@ export async function swapHarness(native = false) {
     advance(ms: number) {
       clock += ms;
     },
-    record: async () => (await store.get('swap-test-0001'))!
+    record: async () => (await store.getRecord('swap-test-0001'))!
   };
 }

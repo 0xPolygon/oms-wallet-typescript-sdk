@@ -8,10 +8,14 @@
   "types": "./dist/index.d.ts",
   "files": [
     "dist",
+    "docs",
+    "API.md",
+    "TRAILS-API.md",
     "NOTICE",
     "LICENSE-APACHE-2.0",
     "CHANGELOG.md"
   ],
+  "sideEffects": false,
   "exports": {
     ".": {
       "@polygonlabs/source": "./src/index.ts",
@@ -62,6 +66,11 @@
     "clean": "rm -rf dist out-tsc *.tsbuildinfo",
     "typecheck": "tsc -b",
     "build": "pnpm clean && tsc -b tsconfig.lib.json",
+    "generate:api": "pnpm build && pnpm generate:api:built",
+    "generate:api:built": "API_DOCS_PROJECT_ROOT=. API_DOCS_DECLARATION_ENTRY=dist/index.d.ts API_DOCS_CONFIG=scripts/api-docs.config.json API_DOCS_OUTPUT=API.md node ../oms-wallet/scripts/generate-api-docs.cjs && API_DOCS_PROJECT_ROOT=. API_DOCS_DECLARATION_ENTRY=dist/trails/index.d.ts API_DOCS_CONFIG=scripts/trails-api-docs.config.json API_DOCS_OUTPUT=TRAILS-API.md node ../oms-wallet/scripts/generate-api-docs.cjs",
+    "check:api": "pnpm build && pnpm check:api:built",
+    "check:api:built": "API_DOCS_PROJECT_ROOT=. API_DOCS_DECLARATION_ENTRY=dist/index.d.ts API_DOCS_CONFIG=scripts/api-docs.config.json API_DOCS_OUTPUT=API.md node ../oms-wallet/scripts/generate-api-docs.cjs --check && API_DOCS_PROJECT_ROOT=. API_DOCS_DECLARATION_ENTRY=dist/trails/index.d.ts API_DOCS_CONFIG=scripts/trails-api-docs.config.json API_DOCS_OUTPUT=TRAILS-API.md node ../oms-wallet/scripts/generate-api-docs.cjs --check",
+    "codegen-drift-check": "pnpm run build && pnpm run check:api:built",
     "test": "vitest run",
     "test:watch": "vitest",
     "test:coverage": "vitest run --coverage",
