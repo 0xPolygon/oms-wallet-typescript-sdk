@@ -1,5 +1,25 @@
 # @polygonlabs/oms-wallet
 
+## 0.5.1
+
+### Patch Changes
+
+- [#121](https://github.com/0xPolygon/oms-wallet-typescript-sdk/pull/121) [`b91320a`](https://github.com/0xPolygon/oms-wallet-typescript-sdk/commit/b91320a98cda58dc3eb09644ab74c9c0d8c099b0) Thanks [@tolgahan-arikan](https://github.com/tolgahan-arikan)! - Enclave attestation now accepts the `Sequence/2` format alongside `Sequence/1`.
+  
+  - A `Sequence/2` attestation also binds the request's `OMS-Wallet-Signature` header, so a response proves which credential signed the request the enclave answered. Both SDKs verify it against the header they sent.
+  - Unknown attestation formats are rejected.
+  - Upgrade before WaaS switches to `Sequence/2`: earlier versions reject those responses (`@polygonlabs/oms-wallet` during wallet import; `@polygonlabs/oms-server-wallet-sdk` on every request).
+
+- [#118](https://github.com/0xPolygon/oms-wallet-typescript-sdk/pull/118) [`59dfb6e`](https://github.com/0xPolygon/oms-wallet-typescript-sdk/commit/59dfb6eeae302012b34d6e45652822ba8fc4611f) Thanks [@tolgahan-arikan](https://github.com/tolgahan-arikan)! - When an Execute request fails after it was sent without a final answer from the wallet API (a transport failure or timeout, `'7311'` `TransactionBroadcastFailed`, or a 5xx), the SDK now sends Execute again with the same `txnId` up to three times (after 1, 2 and 4 seconds) before it reports `OMS_TRANSACTION_EXECUTION_UNCONFIRMED`. The wallet API executes a `txnId` at most once, so a resend cannot submit the transaction twice. Any other wallet API answer stops the resends, as does the SDK seeing, before starting one, that the session that sent the first request has ended or that the active wallet has changed. A resend answered with an error reports `OMS_TRANSACTION_EXECUTION_UNCONFIRMED` with the `txnId` and that `upstreamError`, because the earlier send may still land.
+  
+  For EVM relayer transactions, the wallet API sends the stored bundle again if the relayer never accepted it. For Solana and Tron, a resend returns the transaction's current status without broadcasting again, so a Solana or Tron Execute that failed after the wallet API claimed it now resolves through status polling (usually `pending`) instead of failing as `OMS_TRANSACTION_EXECUTION_UNCONFIRMED`. An EVM resend that the wallet API sends to the relayer restarts its 2-minute grace window, so a transaction the relayer never accepted can stay `pending` for up to 2 minutes after the last such resend before it turns `failed`; do not prepare a replacement while it is `pending`.
+  
+  A first Execute answered with `'7200'` (`InvalidRequest`), `'7308'` (`TransactionNotFound`), `'7310'` (`InvalidFeeOption`) or `'7315'` (`GuardRejected`) now fails as a request error with no `txnId` on every network, not only `'7200'` and `'7310'` on Tron: the wallet API returns these codes only before it claims the transaction, so nothing was submitted. `'7315'` is reported as `OMS_HTTP_ERROR` with upstream name `WebrpcEndpointError`, because the bundled wallet API client predates that code; the others as `OMS_REQUEST_FAILED`.
+
+- [#121](https://github.com/0xPolygon/oms-wallet-typescript-sdk/pull/121) [`b91320a`](https://github.com/0xPolygon/oms-wallet-typescript-sdk/commit/b91320a98cda58dc3eb09644ab74c9c0d8c099b0) Thanks [@tolgahan-arikan](https://github.com/tolgahan-arikan)! - Publishable keys are checked more strictly: the project part must be letters and digits, and the secret part letters, digits and `-`. Other characters now fail with `Invalid publishableKey.` instead of reaching request headers.
+
+- [#121](https://github.com/0xPolygon/oms-wallet-typescript-sdk/pull/121) [`b91320a`](https://github.com/0xPolygon/oms-wallet-typescript-sdk/commit/b91320a98cda58dc3eb09644ab74c9c0d8c099b0) Thanks [@tolgahan-arikan](https://github.com/tolgahan-arikan)! - Updates `@peculiar/x509` to 2.x and `cbor-x` to 1.6.6, the versions the server wallet SDK uses for attestation.
+
 ## 0.5.0
 
 ### Minor Changes
