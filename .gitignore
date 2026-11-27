@@ -21,6 +21,9 @@ examples/smart-session/wrangler.deploy.generated.json
 .codex/
 dist
 packages/oms-server-wallet/.data/
+examples/server-wallet/.data/
+examples/server-wallet/.wrangler/
+examples/server-wallet/.dev.vars
 packages/oms-server-wallet/.env
 coverage/
 .idea

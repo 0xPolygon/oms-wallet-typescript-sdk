@@ -84,6 +84,7 @@ Repo-local agent skills live under `.agents/skills/` (agent-neutral); `.claude/s
 - `examples/helpers/privy-import-worker/`: Cloudflare Worker used by the local and deployed React examples
   to create and immediately HPKE-export disposable Privy wallets without exposing Privy secrets.
 - `examples/shared/`: Private `oms-example-shared` workspace package — shared browser-example design tokens, base styles, components, utilities, and Vite aliases. Declares its own `@polygonlabs/oms-wallet` and `react` dependencies so its source resolves inside each example build.
+- `examples/server-wallet/`: Local Node backend on `@polygonlabs/oms-server-wallet-sdk` (durable and in-memory users side by side) with a Vite React app that triggers actions and traces WaaS requests, locks, encrypted writes and operation status live. The same app deploys as a Cloudflare Worker with one Durable Object (`pnpm --filter server-wallet-example deploy`). Needs a WaaS-registered OIDC issuer in `.env.local` / Worker secrets.
 - `examples/smart-session/`: Cloudflare Worker, D1 migrations, wallet-owner approval app, and admin dashboard demonstrating isolated backend-owned RACs with Polygon Amoy and mainnet smart sessions.
 - `packages/oms-wallet/docs/error-contracts.md`: Public error contract matrix and expectations.
 - `packages/oms-wallet/docs/session-expiry-flow.md`: Session expiry, reauthentication, and related wallet behavior notes.
@@ -135,6 +136,7 @@ Repo-local agent skills live under `.agents/skills/` (agent-neutral); `.claude/s
 - `pnpm build:node-example`: Typecheck the Node example.
 - `pnpm build:node-contract-deploy-example`: Typecheck the Node contract deploy example.
 - `pnpm build:privy-import-worker`: Typecheck and dry-run the Privy import Worker deployment.
+- `pnpm build:server-wallet-example`: Typecheck and build the server wallet example.
 - `pnpm build:smart-session-example`: Typecheck and build the smart-session client and dashboard assets.
 - `pnpm dev:example`: Start the React demo dev server.
 - `pnpm dev:custom-google-redirect-example`: Start the local custom Google redirect React demo dev server on port `5173`.
@@ -146,6 +148,7 @@ Repo-local agent skills live under `.agents/skills/` (agent-neutral); `.claude/s
 - `pnpm dev:node-contract-deploy-example`: Run the interactive Node contract deploy example.
 - `pnpm dev:privy-import-worker`: Run the Privy import Worker locally on port `8788`.
 - `pnpm deploy:privy-import-worker`: Validate and deploy the Privy import Worker.
+- `pnpm dev:server-wallet-example`: Run the server wallet example (API, browser app and live trace) on port `5190`.
 - `pnpm dev:smart-session-example`: Run the smart-session Worker, client app, and dashboard on ports `8787`, `5173`, and `5174`.
 - `pnpm --filter @polygonlabs/oms-wallet test:watch`: Run the SDK's Vitest suite in watch mode during local development (the connector has the same script).
 
@@ -161,7 +164,7 @@ example code.
 4. Run `pnpm --filter @polygonlabs/oms-wallet test:types` directly when changing public generics, overloads, exported types, OIDC provider typing, or `packages/oms-wallet/src/index.ts`.
 5. Run `pnpm --filter @polygonlabs/oms-wallet-wagmi-connector test` and `pnpm --filter @polygonlabs/oms-wallet-wagmi-connector build` when changing the wagmi connector package.
 6. Run `pnpm --filter @polygonlabs/oms-wallet-privacy test`, `pnpm --filter @polygonlabs/oms-wallet-privacy build` and `pnpm build:privacy-example` when changing the privacy package or the core extension, reserved-message, call-time wallet binding or `onPrepared` behaviour it relies on.
-7. Run `pnpm --filter @polygonlabs/oms-server-wallet-sdk test:coverage` and `test:package` when changing the server SDK.
+7. Run `pnpm --filter @polygonlabs/oms-server-wallet-sdk test:coverage` and `test:package` when changing the server SDK, and `pnpm build:server-wallet-example` when its public API changes.
 8. Run `pnpm --filter oms-wallet-protocol sync`, then `pnpm --filter oms-wallet-protocol test` and both SDK suites, when changing `packages/oms-wallet-protocol`.
 9. Run `pnpm build:node-example` when SDK exports, module resolution, or Node example usage changes.
 10. Run `pnpm build` before release/build-output work or package entrypoint changes, and `pnpm check:exports` (publint) after it when entrypoints, `exports`, or the `files` set change. Example builds do not require a prior `pnpm build` — examples resolve the SDK from source via the `@polygonlabs/source` condition.
@@ -225,7 +228,7 @@ execution commands.
 - The generated WaaS header records the upstream schema path and generation command. This repo does not currently include that schema; if regenerating the client, document the schema source and exact command used.
 - The wagmi connector's SDK peer dependency is intentionally `workspace:^` in source and its SDK dev dependency is intentionally `workspace:*`. Release with pnpm so the published peer gets the compatible release range; do not hand-edit that peer to a literal version.
 - `pnpm-lock.yaml` is the dependency lockfile. Update it through pnpm, not by hand.
-- `dist/`, `examples/react/dist/`, `examples/custom-google-redirect/dist/`, `examples/custom-auth0-id-token/dist/`, `examples/wagmi/dist/`, `examples/trails-actions/dist/`, `examples/privacy/dist/`, and `*.tsbuildinfo` files are build outputs and should not be edited as source.
+- `dist/`, `examples/react/dist/`, `examples/custom-google-redirect/dist/`, `examples/custom-auth0-id-token/dist/`, `examples/wagmi/dist/`, `examples/trails-actions/dist/`, `examples/privacy/dist/`, `examples/server-wallet/dist/`, and `*.tsbuildinfo` files are build outputs and should not be edited as source.
 
 ## Security and Configuration
 
