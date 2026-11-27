@@ -1284,10 +1284,27 @@ describe('WalletClient Execute refused before submission', () => {
   it.each([
     { name: 'InvalidSignature', code: '7201', status: 400 },
     { name: 'UsageLimitExceeded', code: '7205', status: 429 },
-    { name: 'Unauthorized', code: '7207', status: 401 }
-  ] as const)(
+    { name: 'Unauthorized', code: '7207', status: 401 },
+    { name: 'InvalidRequest', code: '7200', status: 400 },
+    { name: 'TransactionNotFound', code: '7308', status: 404 },
+    { name: 'InvalidFeeOption', code: '7310', status: 400 },
+    // The generated client predates GuardRejected, so it reports the code as an endpoint error.
+    {
+      name: 'GuardRejected',
+      code: '7315',
+      status: 403,
+      sdkCode: 'OMS_HTTP_ERROR',
+      upstreamName: 'WebrpcEndpointError'
+    }
+  ] as {
+    name: Parameters<typeof waasErrorResponse>[0];
+    code: string;
+    status: number;
+    sdkCode?: string;
+    upstreamName?: string;
+  }[])(
     'reports an Execute refused with $name ($code) as a request failure',
-    async ({ name, code, status }) => {
+    async ({ name, code, status, sdkCode, upstreamName }) => {
       const walletAddress = '0x1111111111111111111111111111111111111111';
       const fetchMock = vi.fn(async (input: RequestInfo | URL) => {
         const url = input.toString();
@@ -1313,10 +1330,10 @@ describe('WalletClient Execute refused before submission', () => {
         .catch((caught: unknown) => caught);
       expect(error).toMatchObject({
         name: 'OMSWalletRequestError',
-        code: 'OMS_REQUEST_FAILED',
+        code: sdkCode ?? 'OMS_REQUEST_FAILED',
         operation: 'wallet.execute',
         status,
-        upstreamError: { service: 'waas', name, code }
+        upstreamError: { service: 'waas', name: upstreamName ?? name, code }
       });
       expect((error as { txnId?: string }).txnId).toBeUndefined();
       expect(requestCount(fetchMock, '/Execute')).toBe(1);

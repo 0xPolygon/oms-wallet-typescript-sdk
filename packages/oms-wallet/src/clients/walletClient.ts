@@ -3096,13 +3096,9 @@ export class WalletClientImpl implements WalletClient {
         const waasCode =
           sdkError.upstreamError?.service === 'waas' ? (sdkError.upstreamError.code ?? '') : '';
         // 7314: the relayer refused a reverting transaction. The others: WaaS refused the Execute
-        // before submitting anything, or, for Tron, while it priced it again.
+        // before submitting anything.
         const refused =
-          waasCode === '7314' ||
-          EXECUTE_REFUSED_BEFORE_SUBMISSION_CODES.has(waasCode) ||
-          (typeof params.network === 'string' &&
-            isTronNetwork(params.network) &&
-            TRON_EXECUTE_REFUSED_BEFORE_SUBMISSION_CODES.has(waasCode));
+          waasCode === '7314' || EXECUTE_REFUSED_BEFORE_SUBMISSION_CODES.has(waasCode);
         if (attempt === 0) {
           if (!wasRequestSent(executeSignal)) {
             // The first request never left this client, so nothing was submitted.
@@ -3121,18 +3117,12 @@ export class WalletClientImpl implements WalletClient {
           }
         }
         lastUnconfirmed = sdkError;
-        // After an earlier send a refusal settles only this request: that send may still land.
-        // 7309 on the first send is an expired quote; on a resend, a WaaS without idempotent
-        // Execute may be reporting the earlier send's claim. 7200 on a resend: the session's
-        // permissions changed since the first send, so WaaS refuses every resend.
-        if (
-          refused ||
-          isCredentialEndedError(sdkError) ||
-          waasCode === '7309' ||
-          (attempt > 0 && waasCode === '7200')
-        ) {
-          break;
-        }
+        // Only a request that may not have reached the relayer is sent again: no WaaS answer
+        // (transport failure or timeout), TransactionBroadcastFailed (7311), or a 5xx. Any other
+        // WaaS answer is final for this txnId, and after an earlier send it settles only this
+        // request, since that send may still land.
+        const waasAnswered = waasCode !== '' && Number(waasCode) >= 0;
+        if (waasAnswered && waasCode !== '7311' && (sdkError.status ?? 0) < 500) break;
       }
     }
     if (!executed) {
@@ -4416,21 +4406,26 @@ function normalizeJsonBigInts<T>(value: T): T {
   ) as T;
 }
 
-/** WaaS codes with which an Execute is refused before anything is submitted. */
+/**
+ * WaaS codes with which an Execute is refused before anything is submitted, on every network: the
+ * credential middleware's refusals (7201, 7205, 7206, 7207), and InvalidRequest (7200),
+ * TransactionNotFound (7308), InvalidFeeOption (7310) and GuardRejected (7315), which WaaS v1.2.0
+ * and later raise only before they claim the transaction as pending (rpc/transaction.go `Execute`,
+ * rpc/solana_transaction.go and rpc/tron_transaction.go). After the claim WaaS answers only
+ * TransactionBroadcastFailed (7311) or, for EVM, TransactionSimulationFailed (7314).
+ * TransactionExpired (7309) is left out: WaaS also returns it for a transaction an earlier Execute
+ * already claimed.
+ */
 const EXECUTE_REFUSED_BEFORE_SUBMISSION_CODES: ReadonlySet<string> = new Set([
+  '7200',
   '7201',
   '7205',
   '7206',
-  '7207'
+  '7207',
+  '7308',
+  '7310',
+  '7315'
 ]);
-/**
- * WaaS codes with which a Tron Execute is refused before anything is submitted. In WaaS v1.2.0,
- * `executeTron` raises InvalidRequest (7200) and InvalidFeeOption (7310) only while it prices the
- * transaction again, before it claims the transaction as pending and broadcasts it
- * (rpc/tron_transaction.go `executeTron`). TransactionExpired is left out: WaaS also returns it for a
- * transaction an earlier Execute already claimed.
- */
-const TRON_EXECUTE_REFUSED_BEFORE_SUBMISSION_CODES: ReadonlySet<string> = new Set(['7200', '7310']);
 /** After WaaS answers GetCredential with WebrpcBadRoute, how long until it is asked again. */
 const CREDENTIAL_REFRESH_UNSUPPORTED_RETRY_MS = 15 * 60_000;
 const MAX_SESSION_EXPIRY_TIMER_MS = 2_147_483_647;

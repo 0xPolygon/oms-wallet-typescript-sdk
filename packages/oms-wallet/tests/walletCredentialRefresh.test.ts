@@ -1538,10 +1538,11 @@ describe('WalletClient request deadline', () => {
   it.each([
     ['TransactionExpired', 7309, 400],
     ['TransactionSimulationFailed', 7314, 400],
-    ['InvalidSignature', 7201, 401],
-    ['Unauthorized', 7207, 403],
-    ['KeyNotFound', 7202, 401],
-    ['InvalidRequest', 7200, 400]
+    ['InvalidSignature', 7201, 400],
+    ['Unauthorized', 7207, 401],
+    ['KeyNotFound', 7202, 404],
+    ['InvalidRequest', 7200, 400],
+    ['UnsupportedNetwork', 7304, 400]
   ])(
     'keeps an Execute unconfirmed when WaaS answers its resend with %s',
     async (name, code, status) => {
@@ -1573,6 +1574,47 @@ describe('WalletClient request deadline', () => {
       expect(wallet.session === undefined).toBe(code === 7202);
     }
   );
+
+  it('does not resend a first Execute that WaaS answered with a 4xx other than 7311', async () => {
+    vi.useFakeTimers();
+    const fetchMock = stubWaasWithSignal({
+      '/PrepareEthereumTransaction': () => sponsoredPrepareResponse(),
+      '/Execute': () => waasExecuteError('TransactionExpired', 7309, 400)
+    });
+    const wallet = createWalletWithSession(walletAddress);
+
+    const result = sendTransaction(wallet);
+    await vi.advanceTimersByTimeAsync(7_000);
+
+    expect(await result).toMatchObject({
+      code: 'OMS_TRANSACTION_EXECUTION_UNCONFIRMED',
+      txnId: 'txn-1',
+      upstreamError: { service: 'waas', code: '7309' }
+    });
+    expect(requestCount(fetchMock, '/Execute')).toBe(1);
+  });
+
+  it('resends an Execute that WaaS answered with a 5xx', async () => {
+    vi.useFakeTimers();
+    let executes = 0;
+    const fetchMock = stubWaasWithSignal({
+      '/PrepareEthereumTransaction': () => sponsoredPrepareResponse(),
+      '/Execute': () => {
+        executes += 1;
+        return executes === 1
+          ? waasExecuteError('DatabaseError', 7102, 500)
+          : jsonResponse({ status: 'pending' });
+      },
+      '/TransactionStatus': () => jsonResponse({ status: 'executed', txnHash: '0xhash' })
+    });
+    const wallet = createWalletWithSession(walletAddress);
+
+    const result = sendTransaction(wallet);
+    await vi.advanceTimersByTimeAsync(1_000);
+
+    expect(await result).toMatchObject({ txnId: 'txn-1', status: 'executed' });
+    expect(requestCount(fetchMock, '/Execute')).toBe(2);
+  });
 
   it('stops resending an Execute once the session that sent it ends', async () => {
     vi.useFakeTimers();
