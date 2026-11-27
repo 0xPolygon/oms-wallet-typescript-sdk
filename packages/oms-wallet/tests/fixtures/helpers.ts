@@ -73,6 +73,10 @@ export function waasErrorResponse(
     | 'KeyNotFound'
     | 'PreconditionFailed'
     | 'Unauthorized'
+    | 'InvalidRequest'
+    | 'TransactionNotFound'
+    | 'InvalidFeeOption'
+    | 'GuardRejected'
     | 'WebrpcBadRoute' = 'KeyExpired'
 ) {
   const { code, status } = {
@@ -82,6 +86,10 @@ export function waasErrorResponse(
     KeyNotFound: { code: 7202, status: 404 },
     PreconditionFailed: { code: 7206, status: 412 },
     Unauthorized: { code: 7207, status: 401 },
+    InvalidRequest: { code: 7200, status: 400 },
+    TransactionNotFound: { code: 7308, status: 404 },
+    InvalidFeeOption: { code: 7310, status: 400 },
+    GuardRejected: { code: 7315, status: 403 },
     WebrpcBadRoute: { code: -2, status: 404 }
   }[name];
   return jsonResponse({ code, name, message: name, status }, status);
